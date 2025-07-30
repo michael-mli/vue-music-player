@@ -99,7 +99,7 @@ export const usePlayerStore = defineStore('player', () => {
       } catch (error) {
         console.error('Failed to play audio:', error)
         // Handle autoplay policy restrictions
-        if (error.name === 'NotAllowedError') {
+        if (error instanceof Error && error.name === 'NotAllowedError') {
           console.warn('Autoplay blocked by browser. User interaction required.')
         }
       }

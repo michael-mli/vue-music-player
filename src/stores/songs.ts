@@ -258,8 +258,8 @@ export const useSongsStore = defineStore('songs', () => {
     const startIndex = (currentPage.value - 1) * pageSize.value
     const endIndex = Math.min(startIndex + pageSize.value, songs.value.length)
     
-    const titlePromises = []
-    const songsToUpdate = []
+    const titlePromises: Promise<string>[] = []
+    const songsToUpdate: Array<{ index: number; song: Song }> = []
     
     for (let i = startIndex; i < endIndex; i++) {
       const song = songs.value[i]
