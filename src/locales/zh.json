@@ -1,0 +1,72 @@
+{
+  "app": {
+    "title": "Mic's 音乐播放器",
+    "subtitle": "现代音乐体验"
+  },
+  "navigation": {
+    "home": "首页",
+    "search": "搜索",
+    "library": "音乐库",
+    "playlists": "播放列表",
+    "favorites": "收藏"
+  },
+  "player": {
+    "play": "播放",
+    "pause": "暂停",
+    "next": "下一首",
+    "previous": "上一首",
+    "shuffle": "随机播放",
+    "repeat": "重复播放",
+    "volume": "音量",
+    "mute": "静音",
+    "unmute": "取消静音",
+    "currentlyPlaying": "正在播放",
+    "queue": "播放队列"
+  },
+  "library": {
+    "songs": "歌曲",
+    "artists": "艺术家",
+    "albums": "专辑",
+    "recentlyPlayed": "最近播放",
+    "search": "搜索歌曲、艺术家或歌词...",
+    "noResults": "未找到歌曲",
+    "totalSongs": "{count} 首歌曲"
+  },
+  "playlist": {
+    "create": "创建播放列表",
+    "name": "播放列表名称",
+    "addToPlaylist": "添加到播放列表",
+    "removeFromPlaylist": "从播放列表移除",
+    "deletePlaylist": "删除播放列表",
+    "emptyPlaylist": "播放列表为空"
+  },
+  "lyrics": {
+    "title": "歌词",
+    "noLyrics": "该歌曲暂无歌词",
+    "loading": "正在加载歌词..."
+  },
+  "settings": {
+    "language": "语言",
+    "theme": "主题",
+    "dark": "深色",
+    "light": "浅色",
+    "volume": "音量",
+    "notifications": "通知"
+  },
+  "common": {
+    "loading": "加载中...",
+    "error": "发生错误",
+    "retry": "重试",
+    "cancel": "取消",
+    "save": "保存",
+    "delete": "删除",
+    "edit": "编辑",
+    "close": "关闭"
+  },
+  "pwa": {
+    "install": "安装应用",
+    "updateAvailable": "有可用更新",
+    "update": "更新",
+    "offline": "您当前处于离线状态"
+  }
+}

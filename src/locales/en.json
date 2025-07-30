@@ -1,0 +1,72 @@
+{
+  "app": {
+    "title": "Mic's Music Player",
+    "subtitle": "Modern music experience"
+  },
+  "navigation": {
+    "home": "Home",
+    "search": "Search",
+    "library": "Your Library",
+    "playlists": "Playlists",
+    "favorites": "Favorites"
+  },
+  "player": {
+    "play": "Play",
+    "pause": "Pause",
+    "next": "Next",
+    "previous": "Previous",
+    "shuffle": "Shuffle",
+    "repeat": "Repeat",
+    "volume": "Volume",
+    "mute": "Mute",
+    "unmute": "Unmute",
+    "currentlyPlaying": "Currently Playing",
+    "queue": "Queue"
+  },
+  "library": {
+    "songs": "Songs",
+    "artists": "Artists",
+    "albums": "Albums",
+    "recentlyPlayed": "Recently Played",
+    "search": "Search songs, artists, or lyrics...",
+    "noResults": "No songs found",
+    "totalSongs": "{count} songs"
+  },
+  "playlist": {
+    "create": "Create Playlist",
+    "name": "Playlist Name",
+    "addToPlaylist": "Add to Playlist",
+    "removeFromPlaylist": "Remove from Playlist",
+    "deletePlaylist": "Delete Playlist",
+    "emptyPlaylist": "This playlist is empty"
+  },
+  "lyrics": {
+    "title": "Lyrics",
+    "noLyrics": "No lyrics available for this song",
+    "loading": "Loading lyrics..."
+  },
+  "settings": {
+    "language": "Language",
+    "theme": "Theme",
+    "dark": "Dark",
+    "light": "Light",
+    "volume": "Volume",
+    "notifications": "Notifications"
+  },
+  "common": {
+    "loading": "Loading...",
+    "error": "An error occurred",
+    "retry": "Retry",
+    "cancel": "Cancel",
+    "save": "Save",
+    "delete": "Delete",
+    "edit": "Edit",
+    "close": "Close"
+  },
+  "pwa": {
+    "install": "Install App",
+    "updateAvailable": "Update Available",
+    "update": "Update",
+    "offline": "You are offline"
+  }
+}
