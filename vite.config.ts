@@ -67,5 +67,14 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 5173
-  }
+  },
+  build: {
+    rollupOptions: {
+      external: (id) => {
+        // Prevent copying the music directory during build
+        return id.includes('public/music')
+      }
+    }
+  },
+  publicDir: false
 })
