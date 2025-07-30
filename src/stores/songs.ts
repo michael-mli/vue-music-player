@@ -13,24 +13,43 @@ export const useSongsStore = defineStore('songs', () => {
   const currentPage = ref(1)
   const pageSize = ref(config.songsPerPage)
 
+  // State for search with lyrics
+  const searchResults = ref<Song[]>([])
+  const isSearching = ref(false)
+
   // Getters
   const filteredSongs = computed(() => {
     if (!searchQuery.value) return songs.value
     
+    // Return search results if we have them from lyrics search
+    if (searchResults.value.length > 0 || isSearching.value) {
+      return searchResults.value
+    }
+    
+    // Fallback to basic title search
     const query = searchQuery.value.toLowerCase()
     return songs.value.filter(song => 
-      song.title.toLowerCase().includes(query) ||
-      song.lyrics?.toLowerCase().includes(query)
+      song.title.toLowerCase().includes(query)
     )
   })
 
   const paginatedSongs = computed(() => {
     const start = (currentPage.value - 1) * pageSize.value
     const end = start + pageSize.value
+    return songs.value.slice(start, end)
+  })
+
+  const paginatedSearchSongs = computed(() => {
+    const start = (currentPage.value - 1) * pageSize.value
+    const end = start + pageSize.value
     return filteredSongs.value.slice(start, end)
   })
 
   const totalPages = computed(() => {
+    return Math.ceil(songs.value.length / pageSize.value)
+  })
+
+  const totalSearchPages = computed(() => {
     return Math.ceil(filteredSongs.value.length / pageSize.value)
   })
 
@@ -105,13 +124,126 @@ export const useSongsStore = defineStore('songs', () => {
     }
   }
 
-  function searchSongs(query: string) {
+  async function searchSongs(query: string) {
     searchQuery.value = query
     currentPage.value = 1
+    
+    // Require at least 2 characters
+    if (!query.trim() || query.trim().length < 2) {
+      searchResults.value = []
+      isSearching.value = false
+      return
+    }
+    
+    isSearching.value = true
+    searchResults.value = []
+    
+    try {
+      const queryLower = query.toLowerCase().trim()
+      const queryWords = queryLower.split(/\s+/).filter(word => word.length > 0)
+      const matchingSongs: Song[] = []
+      
+      // Helper function to check if text matches all query words
+      const matchesAllWords = (text: string) => {
+        const textLower = text.toLowerCase()
+        return queryWords.every(word => textLower.includes(word))
+      }
+      
+      // First pass: Get all title matches (fast)
+      const titleMatches: Song[] = []
+      const songsToCheckLyrics: Song[] = []
+      
+      for (const song of songs.value) {
+        if (matchesAllWords(song.title)) {
+          titleMatches.push({ ...song, matchType: 'title' })
+        } else {
+          songsToCheckLyrics.push(song)
+        }
+      }
+      
+      // Add title matches immediately
+      matchingSongs.push(...titleMatches)
+      searchResults.value = [...matchingSongs]
+      
+      // Second pass: Check lyrics for songs without title matches (smaller batches, smarter caching)
+      const batchSize = 10 // Reduced batch size for better responsiveness
+      
+      for (let i = 0; i < songsToCheckLyrics.length && isSearching.value; i += batchSize) {
+        const batch = songsToCheckLyrics.slice(i, i + batchSize)
+        
+        // Process batch in parallel
+        const batchPromises = batch.map(async (song) => {
+          try {
+            // Check if lyrics already loaded and cached
+            if (song.lyrics) {
+              if (matchesAllWords(song.lyrics)) {
+                return { ...song, matchType: 'lyrics' as const }
+              }
+              return null
+            }
+            
+            // Load lyrics
+            const lyricsResponse = await songService.getMockLyrics(song.id)
+            if (lyricsResponse.success) {
+              // Always cache the lyrics for future searches
+              const songIndex = songs.value.findIndex(s => s.id === song.id)
+              if (songIndex !== -1) {
+                songs.value[songIndex] = { ...songs.value[songIndex], lyrics: lyricsResponse.data }
+              }
+              
+              // Check if it matches our search
+              if (matchesAllWords(lyricsResponse.data)) {
+                return { ...song, lyrics: lyricsResponse.data, matchType: 'lyrics' as const }
+              }
+            }
+            return null
+          } catch (error) {
+            console.error(`Error loading lyrics for song ${song.id}:`, error)
+            return null
+          }
+        })
+        
+        const batchResults = await Promise.all(batchPromises)
+        const validResults = batchResults.filter(result => result !== null) as Song[]
+        
+        if (validResults.length > 0) {
+          matchingSongs.push(...validResults)
+          // Update results progressively
+          searchResults.value = [...matchingSongs]
+        }
+        
+        // Break if search query changed (user typed something else)
+        if (searchQuery.value.toLowerCase().trim() !== queryLower) {
+          break
+        }
+        
+        // Yield control to keep UI responsive
+        if (i + batchSize < songsToCheckLyrics.length) {
+          await new Promise(resolve => setTimeout(resolve, 5))
+        }
+      }
+      
+      // Final update if still searching
+      if (isSearching.value && searchQuery.value.toLowerCase().trim() === queryLower) {
+        searchResults.value = matchingSongs
+      }
+    } catch (error) {
+      console.error('Error during search:', error)
+      searchResults.value = []
+    } finally {
+      isSearching.value = false
+    }
   }
 
   function clearSearch() {
     searchQuery.value = ''
+    searchResults.value = []
+    isSearching.value = false
+    currentPage.value = 1
+  }
+
+  function resetToLibraryMode() {
+    clearSearch()
     currentPage.value = 1
   }
 
@@ -189,11 +321,15 @@ export const useSongsStore = defineStore('songs', () => {
     searchQuery,
     currentPage,
     pageSize,
+    searchResults,
+    isSearching,
     
     // Getters
     filteredSongs,
     paginatedSongs,
+    paginatedSearchSongs,
     totalPages,
+    totalSearchPages,
     favoriteSongs,
     
     // Actions
@@ -202,6 +338,7 @@ export const useSongsStore = defineStore('songs', () => {
     getSongLyrics,
     searchSongs,
     clearSearch,
+    resetToLibraryMode,
     setPage,
     nextPage,
     previousPage,

@@ -137,7 +137,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { MusicalNoteIcon, HeartIcon } from '@heroicons/vue/24/outline'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
@@ -145,6 +145,11 @@ import type { Song } from '@/types'
 
 const playerStore = usePlayerStore()
 const songsStore = useSongsStore()
+
+// Clear any search state when entering library mode
+onMounted(() => {
+  songsStore.resetToLibraryMode()
+})
 
 const songs = computed(() => songsStore.songs)
 const paginatedSongs = computed(() => songsStore.paginatedSongs)

@@ -87,14 +87,22 @@ export const usePlayerStore = defineStore('player', () => {
     if (audioElement.value) {
       audioElement.value.src = getMusicUrl(`link.${song.id}.mp3`)
       audioElement.value.load()
-      play()
+      await play()
     }
   }
 
-  function play() {
+  async function play() {
     if (audioElement.value && currentSong.value) {
-      audioElement.value.play()
-      updateMediaSession()
+      try {
+        await audioElement.value.play()
+        updateMediaSession()
+      } catch (error) {
+        console.error('Failed to play audio:', error)
+        // Handle autoplay policy restrictions
+        if (error.name === 'NotAllowedError') {
+          console.warn('Autoplay blocked by browser. User interaction required.')
+        }
+      }
     }
   }
 
@@ -104,11 +112,11 @@ export const usePlayerStore = defineStore('player', () => {
     }
   }
 
-  function togglePlay() {
+  async function togglePlay() {
     if (isPlaying.value) {
       pause()
     } else {
-      play()
+      await play()
     }
   }
 
@@ -192,7 +200,7 @@ export const usePlayerStore = defineStore('player', () => {
 
   async function handleSongEnd() {
     if (repeat.value === 'one') {
-      play()
+      await play()
     } else {
       await nextSong()
     }
@@ -208,10 +216,10 @@ export const usePlayerStore = defineStore('player', () => {
         ]
       })
 
-      navigator.mediaSession.setActionHandler('play', play)
+      navigator.mediaSession.setActionHandler('play', () => play())
       navigator.mediaSession.setActionHandler('pause', pause)
-      navigator.mediaSession.setActionHandler('nexttrack', nextSong)
-      navigator.mediaSession.setActionHandler('previoustrack', previousSong)
+      navigator.mediaSession.setActionHandler('nexttrack', () => nextSong())
+      navigator.mediaSession.setActionHandler('previoustrack', () => previousSong())
     }
   }
 

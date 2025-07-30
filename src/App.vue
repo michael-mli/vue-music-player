@@ -86,12 +86,35 @@ onMounted(async () => {
     playlistsStore.fetchPlaylists()
   ])
   
+  // Auto-play a random song after data is loaded
+  await startRandomSong()
+  
   // Check for PWA install prompt
   checkInstallPrompt()
   
   // Check for app updates
   checkForUpdates()
 })
+
+async function startRandomSong() {
+  try {
+    // Get a random song from the loaded songs
+    const randomSongs = songsStore.getRandomSongs(1)
+    if (randomSongs.length > 0) {
+      const randomSong = randomSongs[0]
+      
+      // Create a queue with more random songs for continuous playback
+      const queue = songsStore.getRandomSongs(20)
+      
+      // Play the random song
+      await playerStore.playSong(randomSong, queue, 0)
+      
+      console.log(`Auto-started playing: ${randomSong.title}`)
+    }
+  } catch (error) {
+    console.warn('Could not auto-start random song:', error)
+  }
+}
 
 function checkInstallPrompt() {
   // Check if app can be installed
@@ -119,24 +142,24 @@ function handleUpdate() {
 }
 
 // Global keyboard shortcuts
-window.addEventListener('keydown', (e) => {
+window.addEventListener('keydown', async (e) => {
   if (e.target && (e.target as HTMLElement).tagName === 'INPUT') return
   
   switch (e.code) {
     case 'Space':
       e.preventDefault()
-      playerStore.togglePlay()
+      await playerStore.togglePlay()
       break
     case 'ArrowRight':
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault()
-        playerStore.nextSong()
+        await playerStore.nextSong()
       }
       break
     case 'ArrowLeft':
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault()
-        playerStore.previousSong()
+        await playerStore.previousSong()
       }
       break
     case 'KeyL':

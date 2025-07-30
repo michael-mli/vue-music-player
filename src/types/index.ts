@@ -5,6 +5,7 @@ export interface Song {
   duration?: number
   lyrics?: string
   isFavorite: boolean
+  matchType?: 'title' | 'lyrics'
 }
 
 export interface Playlist {
