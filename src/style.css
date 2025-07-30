@@ -14,8 +14,16 @@
   
   #app {
     height: 100vh;
+    height: 100dvh; /* Use dynamic viewport height on mobile */
     display: flex;
     flex-direction: column;
+  }
+  
+  /* Mobile safe area adjustments */
+  @supports (padding: max(0px)) {
+    #app {
+      padding-bottom: max(0px, env(safe-area-inset-bottom));
+    }
   }
 }
 

@@ -8,7 +8,7 @@
       <!-- Mobile Sidebar Overlay -->
       <div 
         v-if="showMobileSidebar"
-        class="md:hidden fixed inset-0 z-40 flex"
+        class="md:hidden fixed inset-0 z-50 flex"
       >
         <div 
           @click="showMobileSidebar = false"
@@ -18,7 +18,7 @@
       </div>
       
       <!-- Main View -->
-      <main class="flex-1 flex flex-col bg-gradient-to-b from-spotify-dark to-spotify-black">
+      <main class="flex-1 flex flex-col bg-gradient-to-b from-spotify-dark to-spotify-black pb-28 sm:pb-0">
         <!-- Header -->
         <Header @toggle-sidebar="showMobileSidebar = !showMobileSidebar" />
         
@@ -32,7 +32,7 @@
           <!-- Lyrics Panel - Desktop: sidebar, Mobile: overlay -->
           <LyricsPanel 
             v-if="showLyrics" 
-            class="lg:relative lg:w-80 absolute inset-x-0 bottom-0 top-0 lg:top-auto lg:bottom-auto z-50 lg:z-auto"
+            class="lg:relative lg:w-80 absolute inset-x-0 bottom-28 top-0 lg:top-auto lg:bottom-auto z-30 lg:z-auto"
             @close="showLyrics = false"
           />
         </div>

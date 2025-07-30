@@ -1,8 +1,8 @@
 <template>
   <!-- Mobile Layout -->
-  <div class="h-24 bg-spotify-dark border-t border-spotify-light sm:hidden">
+  <div class="fixed bottom-0 left-0 right-0 h-28 bg-spotify-dark border-t border-spotify-light sm:hidden z-40">
     <!-- Current Song Info - Mobile -->
-    <div v-if="currentSong" class="flex items-center px-2 py-1 border-b border-spotify-light">
+    <div v-if="currentSong" class="flex items-center px-2 py-1.5 border-b border-spotify-light h-12">
       <div class="w-8 h-8 bg-spotify-light rounded mr-2 flex items-center justify-center">
         <MusicalNoteIcon class="w-4 h-4 text-gray-400" />
       </div>
@@ -24,7 +24,7 @@
     </div>
     
     <!-- Player Controls - Mobile -->
-    <div class="flex items-center justify-between px-2 py-1">
+    <div class="flex items-center justify-between px-2 py-2 h-16">
       <div class="flex items-center space-x-1">
         <button 
           @click="toggleShuffle"
