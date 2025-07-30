@@ -3,10 +3,10 @@
     <div class="p-6">
       <!-- Welcome Section -->
       <div class="mb-8">
-        <h1 class="text-3xl font-bold text-white mb-2">
+        <h1 class="text-3xl font-bold text-white dark:text-white text-light-text-primary mb-2">
           {{ getGreeting() }}
         </h1>
-        <p class="text-gray-400">{{ $t('app.subtitle') }}</p>
+        <p class="text-gray-400 dark:text-gray-400 text-light-text-secondary">{{ $t('app.subtitle') }}</p>
       </div>
       
       <!-- Quick Actions -->
@@ -38,7 +38,7 @@
       
       <!-- Recently Played -->
       <section class="mb-8">
-        <h2 class="text-xl font-bold text-white mb-4">
+        <h2 class="text-xl font-bold text-white dark:text-white text-light-text-primary mb-4">
           {{ $t('library.recentlyPlayed') }}
         </h2>
         <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">

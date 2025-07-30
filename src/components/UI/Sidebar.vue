@@ -1,8 +1,8 @@
 <template>
-  <aside class="w-64 bg-spotify-black flex flex-col">
+  <aside class="w-64 bg-spotify-black dark:bg-spotify-black bg-light-bg flex flex-col">
     <!-- Logo -->
     <div class="p-6">
-      <h1 class="text-white text-xl font-bold">{{ $t('app.title') }}</h1>
+      <h1 class="text-white dark:text-white text-light-text-primary text-xl font-bold">{{ $t('app.title') }}</h1>
     </div>
     
     <!-- Navigation -->
@@ -11,8 +11,8 @@
         <li>
           <RouterLink 
             to="/" 
-            class="flex items-center px-4 py-3 rounded-md text-sm font-medium transition-colors duration-200 hover:bg-spotify-light"
-            :class="{ 'bg-spotify-light text-white': $route.name === 'Home', 'text-gray-300': $route.name !== 'Home' }"
+            class="flex items-center px-4 py-3 rounded-md text-sm font-medium transition-colors duration-200 hover:bg-spotify-light dark:hover:bg-spotify-light hover:bg-light-border"
+            :class="{ 'bg-spotify-light dark:bg-spotify-light bg-light-border text-white dark:text-white text-light-text-primary': $route.name === 'Home', 'text-gray-300 dark:text-gray-300 text-light-text-secondary': $route.name !== 'Home' }"
           >
             <HomeIcon class="w-5 h-5 mr-3" />
             {{ $t('navigation.home') }}
@@ -21,8 +21,8 @@
         <li>
           <RouterLink 
             to="/search" 
-            class="flex items-center px-4 py-3 rounded-md text-sm font-medium transition-colors duration-200 hover:bg-spotify-light"
-            :class="{ 'bg-spotify-light text-white': $route.name === 'Search', 'text-gray-300': $route.name !== 'Search' }"
+            class="flex items-center px-4 py-3 rounded-md text-sm font-medium transition-colors duration-200 hover:bg-spotify-light dark:hover:bg-spotify-light hover:bg-light-border"
+            :class="{ 'bg-spotify-light dark:bg-spotify-light bg-light-border text-white dark:text-white text-light-text-primary': $route.name === 'Search', 'text-gray-300 dark:text-gray-300 text-light-text-secondary': $route.name !== 'Search' }"
           >
             <MagnifyingGlassIcon class="w-5 h-5 mr-3" />
             {{ $t('navigation.search') }}
@@ -31,8 +31,8 @@
         <li>
           <RouterLink 
             to="/library" 
-            class="flex items-center px-4 py-3 rounded-md text-sm font-medium transition-colors duration-200 hover:bg-spotify-light"
-            :class="{ 'bg-spotify-light text-white': $route.name === 'Library', 'text-gray-300': $route.name !== 'Library' }"
+            class="flex items-center px-4 py-3 rounded-md text-sm font-medium transition-colors duration-200 hover:bg-spotify-light dark:hover:bg-spotify-light hover:bg-light-border"
+            :class="{ 'bg-spotify-light dark:bg-spotify-light bg-light-border text-white dark:text-white text-light-text-primary': $route.name === 'Library', 'text-gray-300 dark:text-gray-300 text-light-text-secondary': $route.name !== 'Library' }"
           >
             <BuildingLibraryIcon class="w-5 h-5 mr-3" />
             {{ $t('navigation.library') }}
@@ -43,7 +43,7 @@
       <!-- Playlists Section -->
       <div class="mt-8">
         <div class="flex items-center justify-between px-4 py-2">
-          <h3 class="text-sm font-medium text-gray-300 uppercase tracking-wider">
+          <h3 class="text-sm font-medium text-gray-300 dark:text-gray-300 text-light-text-secondary uppercase tracking-wider">
             {{ $t('navigation.playlists') }}
           </h3>
           <button 
@@ -58,7 +58,7 @@
           <li v-for="playlist in playlists" :key="playlist.id">
             <RouterLink 
               :to="`/playlist/${playlist.id}`"
-              class="block px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-spotify-light rounded-md transition-colors duration-200"
+              class="block px-4 py-2 text-sm text-gray-300 dark:text-gray-300 text-light-text-secondary hover:text-white dark:hover:text-white hover:text-light-text-primary hover:bg-spotify-light dark:hover:bg-spotify-light hover:bg-light-border rounded-md transition-colors duration-200"
             >
               {{ playlist.name }}
             </RouterLink>
@@ -68,13 +68,13 @@
     </nav>
     
     <!-- User Menu -->
-    <div class="p-4 border-t border-spotify-light">
+    <div class="p-4 border-t border-spotify-light dark:border-spotify-light border-light-border">
       <div class="flex items-center">
         <div class="w-8 h-8 bg-spotify-green rounded-full flex items-center justify-center">
           <UserIcon class="w-5 h-5 text-white" />
         </div>
         <div class="ml-3 flex-1">
-          <p class="text-sm font-medium text-white">User</p>
+          <p class="text-sm font-medium text-white dark:text-white text-light-text-primary">{{ $t('common.user') }}</p>
         </div>
         <LanguageSwitcher />
       </div>

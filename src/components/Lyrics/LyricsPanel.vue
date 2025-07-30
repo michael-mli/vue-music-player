@@ -1,7 +1,7 @@
 <template>
-  <aside class="w-full lg:w-80 bg-spotify-dark border-l border-spotify-light flex flex-col">
-    <div class="p-4 border-b border-spotify-light flex items-center justify-between">
-      <h2 class="text-lg font-bold text-white">{{ $t('lyrics.title') }}</h2>
+  <aside class="w-full lg:w-80 bg-spotify-dark dark:bg-spotify-dark bg-light-card border-l border-spotify-light dark:border-spotify-light border-light-border flex flex-col">
+    <div class="p-4 border-b border-spotify-light dark:border-spotify-light border-light-border flex items-center justify-between">
+      <h2 class="text-lg font-bold text-white dark:text-white text-light-text-primary">{{ $t('lyrics.title') }}</h2>
       <button 
         @click="$emit('close')"
         class="lg:hidden p-1 rounded-full text-gray-400 hover:text-white transition-colors duration-200"
@@ -12,15 +12,15 @@
     </div>
     
     <div class="flex-1 overflow-y-auto spotify-scrollbar p-4">
-      <div v-if="loading" class="text-center text-gray-400">
+      <div v-if="loading" class="text-center text-gray-400 dark:text-gray-400 text-light-text-secondary">
         {{ $t('lyrics.loading') }}
       </div>
       
-      <div v-else-if="lyrics" class="text-white leading-relaxed whitespace-pre-line">
+      <div v-else-if="lyrics" class="text-white dark:text-white text-light-text-primary leading-relaxed whitespace-pre-line">
         {{ lyrics }}
       </div>
       
-      <div v-else class="text-center text-gray-400">
+      <div v-else class="text-center text-gray-400 dark:text-gray-400 text-light-text-secondary">
         {{ $t('lyrics.noLyrics') }}
       </div>
     </div>

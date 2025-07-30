@@ -1,16 +1,16 @@
 <template>
   <div class="library-view h-full overflow-y-auto spotify-scrollbar">
     <div class="p-6">
-      <h1 class="text-3xl font-bold text-white mb-6">{{ $t('navigation.library') }}</h1>
+      <h1 class="text-3xl font-bold text-white dark:text-white text-light-text-primary mb-6">{{ $t('navigation.library') }}</h1>
       
       <div class="mb-6 flex items-center justify-between">
-        <p class="text-gray-400">{{ $t('library.totalSongs', { count: songs.length }) }}</p>
+        <p class="text-gray-400 dark:text-gray-400 text-light-text-secondary">{{ $t('library.totalSongs', { count: songs.length }) }}</p>
         <div v-if="isLoadingTitles" class="text-spotify-green text-sm flex items-center">
           <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-spotify-green" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
-          Loading song titles...
+          {{ $t('library.loadingTitles') }}
         </div>
       </div>
       
@@ -19,17 +19,17 @@
           v-for="(song, index) in paginatedSongs" 
           :key="song.id"
           @click="playSong(song, index)"
-          class="flex items-center p-3 rounded-lg hover:bg-spotify-light cursor-pointer group transition-colors duration-200"
+          class="flex items-center p-3 rounded-lg hover:bg-spotify-light dark:hover:bg-spotify-light hover:bg-light-border cursor-pointer group transition-colors duration-200"
         >
           <div class="w-8 text-center mr-4">
-            <span class="text-gray-400 text-sm">{{ song.id }}</span>
+            <span class="text-gray-400 dark:text-gray-400 text-light-text-secondary text-sm">{{ song.id }}</span>
           </div>
-          <div class="w-10 h-10 bg-spotify-dark rounded mr-3 flex items-center justify-center">
+          <div class="w-10 h-10 bg-spotify-dark dark:bg-spotify-dark bg-light-border rounded mr-3 flex items-center justify-center">
             <MusicalNoteIcon class="w-5 h-5 text-gray-400" />
           </div>
           <div class="flex-1 min-w-0">
-            <p class="text-white font-medium truncate">{{ song.title }}</p>
-            <p class="text-gray-400 text-sm">{{ formatDuration(song.duration) }}</p>
+            <p class="text-white dark:text-white text-light-text-primary font-medium truncate">{{ song.title }}</p>
+            <p class="text-gray-400 dark:text-gray-400 text-light-text-secondary text-sm">{{ formatDuration(song.duration) }}</p>
           </div>
           <button 
             @click.stop="toggleFavorite(song)"

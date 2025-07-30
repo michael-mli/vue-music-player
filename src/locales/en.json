@@ -21,7 +21,8 @@
     "mute": "Mute",
     "unmute": "Unmute",
     "currentlyPlaying": "Currently Playing",
-    "queue": "Queue"
+    "queue": "Queue",
+    "toggleLyrics": "Toggle Lyrics"
   },
   "library": {
     "songs": "Songs",
@@ -30,7 +31,8 @@
     "recentlyPlayed": "Recently Played",
     "search": "Search songs, artists, or lyrics...",
     "noResults": "No songs found",
-    "totalSongs": "{count} songs"
+    "totalSongs": "{count} songs",
+    "loadingTitles": "Loading song titles..."
   },
   "playlist": {
     "create": "Create Playlist",
@@ -61,7 +63,8 @@
     "save": "Save",
     "delete": "Delete",
     "edit": "Edit",
-    "close": "Close"
+    "close": "Close",
+    "user": "User"
   },
   "pwa": {
     "install": "Install App",

@@ -21,7 +21,8 @@
     "mute": "静音",
     "unmute": "取消静音",
     "currentlyPlaying": "正在播放",
-    "queue": "播放队列"
+    "queue": "播放队列",
+    "toggleLyrics": "切换歌词"
   },
   "library": {
     "songs": "歌曲",
@@ -30,7 +31,8 @@
     "recentlyPlayed": "最近播放",
     "search": "搜索歌曲、艺术家或歌词...",
     "noResults": "未找到歌曲",
-    "totalSongs": "{count} 首歌曲"
+    "totalSongs": "{count} 首歌曲",
+    "loadingTitles": "正在加载歌曲标题..."
   },
   "playlist": {
     "create": "创建播放列表",
@@ -61,7 +63,8 @@
     "save": "保存",
     "delete": "删除",
     "edit": "编辑",
-    "close": "关闭"
+    "close": "关闭",
+    "user": "用户"
   },
   "pwa": {
     "install": "安装应用",
