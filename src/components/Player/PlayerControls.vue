@@ -91,6 +91,14 @@
         </button>
         
         <button 
+          @click="shareSong"
+          class="p-1 rounded-full text-gray-400 hover:text-white transition-colors duration-200"
+          :disabled="!currentSong"
+        >
+          <ShareIcon class="w-4 h-4" />
+        </button>
+        
+        <button 
           @click="toggleMute"
           class="p-1 rounded-full text-gray-400 hover:text-white transition-colors duration-200"
         >
@@ -221,6 +229,16 @@
         <PlusIcon class="w-5 h-5" />
       </button>
       
+      <!-- Share song button -->
+      <button 
+        @click="shareSong"
+        class="p-2 rounded-full text-gray-400 hover:text-white transition-colors duration-200 mr-2"
+        title="Share Song"
+        :disabled="!currentSong"
+      >
+        <ShareIcon class="w-5 h-5" />
+      </button>
+      
       <button 
         @click="toggleMute"
         class="p-2 rounded-full text-gray-400 hover:text-white transition-colors duration-200 mr-2"
@@ -257,7 +275,8 @@ import {
   MusicalNoteIcon,
   HeartIcon,
   DocumentTextIcon,
-  PlusIcon
+  PlusIcon,
+  ShareIcon
 } from '@heroicons/vue/24/outline'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
@@ -331,5 +350,69 @@ function openAddToPlaylistModal() {
   if (currentSong.value) {
     emit('add-to-playlist', currentSong.value)
   }
+}
+
+async function shareSong() {
+  if (!currentSong.value) return
+  
+  const shareUrl = `${window.location.origin}/music/?song=${currentSong.value.id}`
+  const shareText = `Check out this song: ${currentSong.value.title}`
+  
+  // Try to use Web Share API if available (mobile)
+  if (navigator.share) {
+    try {
+      await navigator.share({
+        title: currentSong.value.title,
+        text: shareText,
+        url: shareUrl
+      })
+      console.log('Song shared successfully')
+    } catch (error) {
+      // User cancelled or error occurred, fallback to clipboard
+      if ((error as Error).name !== 'AbortError') {
+        copyToClipboard(shareUrl)
+      }
+    }
+  } else {
+    // Fallback to clipboard
+    copyToClipboard(shareUrl)
+  }
+}
+
+function copyToClipboard(text: string) {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).then(() => {
+      // Show a brief success message (you could add a toast notification here)
+      console.log('Song URL copied to clipboard')
+      alert('Song link copied to clipboard!')
+    }).catch(() => {
+      // Fallback for older browsers
+      fallbackCopyToClipboard(text)
+    })
+  } else {
+    fallbackCopyToClipboard(text)
+  }
+}
+
+function fallbackCopyToClipboard(text: string) {
+  const textArea = document.createElement('textarea')
+  textArea.value = text
+  textArea.style.position = 'fixed'
+  textArea.style.left = '-999999px'
+  textArea.style.top = '-999999px'
+  document.body.appendChild(textArea)
+  textArea.focus()
+  textArea.select()
+  
+  try {
+    document.execCommand('copy')
+    console.log('Song URL copied to clipboard (fallback)')
+    alert('Song link copied to clipboard!')
+  } catch (err) {
+    console.error('Failed to copy to clipboard:', err)
+    alert(`Copy this link: ${text}`)
+  }
+  
+  document.body.removeChild(textArea)
 }
 </script>
