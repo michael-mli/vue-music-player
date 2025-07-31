@@ -74,5 +74,20 @@
     "update": "更新",
     "updateDescription": "新版本已发布，包含改进和错误修复。",
     "offline": "您当前处于离线状态"
+  },
+  "music": {
+    "loadingSong": "正在加载歌曲...",
+    "nowPlaying": "正在播放",
+    "songId": "歌曲 ID",
+    "goToLibrary": "前往音乐库",
+    "goToHome": "前往首页",
+    "browseLibrary": "浏览音乐库",
+    "songNotFound": "未找到歌曲",
+    "musicPlayer": "音乐播放器",
+    "useSongId": "使用 ?song=ID 播放指定歌曲",
+    "example": "示例：/music/?song=124",
+    "invalidSongId": "无效的歌曲 ID。请提供有效的数字。",
+    "songNotFoundWithId": "未找到 ID 为 {id} 的歌曲。请检查歌曲 ID 后重试。",
+    "failedToLoad": "加载歌曲失败。请重试。"
   }
 }

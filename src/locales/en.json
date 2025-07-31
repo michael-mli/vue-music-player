@@ -74,5 +74,20 @@
     "update": "Update",
     "updateDescription": "A new version is available with improvements and bug fixes.",
     "offline": "You are offline"
+  },
+  "music": {
+    "loadingSong": "Loading song...",
+    "nowPlaying": "Now Playing",
+    "songId": "Song ID",
+    "goToLibrary": "Go to Library",
+    "goToHome": "Go to Home",
+    "browseLibrary": "Browse Library",
+    "songNotFound": "Song Not Found",
+    "musicPlayer": "Music Player",
+    "useSongId": "Use ?song=ID to play a specific song",
+    "example": "Example: /music/?song=124",
+    "invalidSongId": "Invalid song ID. Please provide a valid number.",
+    "songNotFoundWithId": "Song with ID {id} not found. Please check the song ID and try again.",
+    "failedToLoad": "Failed to load the song. Please try again."
   }
 }
