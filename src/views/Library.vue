@@ -31,7 +31,7 @@
             <p class="text-white dark:text-white text-light-text-primary font-medium truncate">{{ song.title }}</p>
             <p class="text-gray-400 dark:text-gray-400 text-light-text-secondary text-sm">{{ formatDuration(song.duration) }}</p>
           </div>
-          <div class="flex items-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+          <div class="flex items-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-200">
             <button 
               @click.stop="toggleFavorite(song)"
               class="p-2"

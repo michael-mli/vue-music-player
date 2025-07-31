@@ -40,7 +40,10 @@
     </div>
     
     <!-- Bottom Player -->
-    <PlayerControls @toggle-lyrics="showLyrics = !showLyrics" />
+    <PlayerControls 
+      @toggle-lyrics="showLyrics = !showLyrics" 
+      @add-to-playlist="openAddToPlaylistFromPlayer"
+    />
     
     <!-- PWA Install Prompt -->
     <InstallPrompt 
@@ -54,6 +57,21 @@
       v-if="updateAvailable" 
       @update="handleUpdate" 
       @dismiss="updateAvailable = false"
+    />
+    
+    <!-- Add to Playlist Modal from Player -->
+    <AddToPlaylistModal 
+      v-if="showPlayerAddToPlaylistModal"
+      :song="selectedSongFromPlayer"
+      @close="closePlayerAddToPlaylistModal"
+      @create-playlist="openCreatePlaylistFromPlayer"
+    />
+    
+    <!-- Create Playlist Modal from Player -->
+    <CreatePlaylistModal 
+      v-if="showPlayerCreatePlaylistModal"
+      @close="closePlayerCreatePlaylistModal"
+      @created="onPlayerPlaylistCreated"
     />
   </div>
 </template>
@@ -72,6 +90,8 @@ import PlayerControls from '@/components/Player/PlayerControls.vue'
 import LyricsPanel from '@/components/Lyrics/LyricsPanel.vue'
 import InstallPrompt from '@/components/UI/InstallPrompt.vue'
 import UpdateNotification from '@/components/UI/UpdateNotification.vue'
+import AddToPlaylistModal from '@/components/UI/AddToPlaylistModal.vue'
+import CreatePlaylistModal from '@/components/UI/CreatePlaylistModal.vue'
 
 // Stores
 const playerStore = usePlayerStore()
@@ -84,6 +104,11 @@ const showInstallPrompt = ref(false)
 const updateAvailable = ref(false)
 const showMobileSidebar = ref(false)
 const deferredPrompt = ref<any>(null)
+
+// Player modals state
+const showPlayerAddToPlaylistModal = ref(false)
+const showPlayerCreatePlaylistModal = ref(false)
+const selectedSongFromPlayer = ref<any>(null)
 
 onMounted(async () => {
   // Initialize audio
@@ -180,6 +205,32 @@ function checkForUpdates() {
 
 function handleUpdate() {
   window.location.reload()
+}
+
+// Player modal handlers
+function openAddToPlaylistFromPlayer(song: any) {
+  selectedSongFromPlayer.value = song
+  showPlayerAddToPlaylistModal.value = true
+}
+
+function closePlayerAddToPlaylistModal() {
+  showPlayerAddToPlaylistModal.value = false
+  selectedSongFromPlayer.value = null
+}
+
+function openCreatePlaylistFromPlayer() {
+  showPlayerAddToPlaylistModal.value = false
+  showPlayerCreatePlaylistModal.value = true
+}
+
+function closePlayerCreatePlaylistModal() {
+  showPlayerCreatePlaylistModal.value = false
+}
+
+function onPlayerPlaylistCreated() {
+  // Playlist was created, reopen the add to playlist modal
+  showPlayerCreatePlaylistModal.value = false
+  showPlayerAddToPlaylistModal.value = true
 }
 
 // Global keyboard shortcuts

@@ -83,6 +83,14 @@
         </button>
         
         <button 
+          @click="openAddToPlaylistModal"
+          class="p-1 rounded-full text-gray-400 hover:text-white transition-colors duration-200"
+          :disabled="!currentSong"
+        >
+          <PlusIcon class="w-4 h-4" />
+        </button>
+        
+        <button 
           @click="toggleMute"
           class="p-1 rounded-full text-gray-400 hover:text-white transition-colors duration-200"
         >
@@ -203,6 +211,16 @@
         <DocumentTextIcon class="w-5 h-5" />
       </button>
       
+      <!-- Add to playlist button -->
+      <button 
+        @click="openAddToPlaylistModal"
+        class="p-2 rounded-full text-gray-400 hover:text-white transition-colors duration-200 mr-2"
+        :title="$t('playlist.addToPlaylist')"
+        :disabled="!currentSong"
+      >
+        <PlusIcon class="w-5 h-5" />
+      </button>
+      
       <button 
         @click="toggleMute"
         class="p-2 rounded-full text-gray-400 hover:text-white transition-colors duration-200 mr-2"
@@ -238,20 +256,24 @@ import {
   Bars2Icon,
   MusicalNoteIcon,
   HeartIcon,
-  DocumentTextIcon
+  DocumentTextIcon,
+  PlusIcon
 } from '@heroicons/vue/24/outline'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
+import { usePlaylistsStore } from '@/stores/playlists'
 import ProgressBar from './ProgressBar.vue'
 import VolumeControl from './VolumeControl.vue'
 
 // Define emits
-defineEmits<{
+const emit = defineEmits<{
   'toggle-lyrics': []
+  'add-to-playlist': [song: any]
 }>()
 
 const playerStore = usePlayerStore()
 const songsStore = useSongsStore()
+const playlistsStore = usePlaylistsStore()
 
 // Computed properties
 const currentSong = computed(() => playerStore.currentSong)
@@ -302,6 +324,12 @@ function handleSeek(time: number) {
 function toggleFavorite() {
   if (currentSong.value) {
     songsStore.toggleFavorite(currentSong.value.id)
+  }
+}
+
+function openAddToPlaylistModal() {
+  if (currentSong.value) {
+    emit('add-to-playlist', currentSong.value)
   }
 }
 </script>

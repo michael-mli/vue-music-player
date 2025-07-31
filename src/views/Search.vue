@@ -58,7 +58,7 @@
                 Title match
               </p>
             </div>
-            <div class="flex items-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+            <div class="flex items-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-200">
               <button 
                 @click.stop="toggleFavorite(song)"
                 class="p-2"
