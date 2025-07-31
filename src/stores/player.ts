@@ -19,9 +19,15 @@ export const usePlayerStore = defineStore('player', () => {
   const audioElement = ref<HTMLAudioElement | null>(null)
   
   // Sleep timer state
-  const sleepTimer = ref(60) // Default 60 minutes, 0 = off
+  const sleepTimer = ref(0) // Default off, user needs to set it explicitly
   const sleepTimerRemaining = ref(0) // Remaining time in seconds
   const sleepTimerInterval = ref<number | null>(null)
+  
+  // Total playtime tracking
+  const totalPlaytime = ref(0) // Total seconds played since start
+  const sessionStartTime = ref(0) // When current play session started
+  const lastPlayState = ref(false) // Previous playing state
+  const playtimeInterval = ref<number | null>(null) // Interval for updating playtime
 
   // Getters
   const progress = computed(() => {
@@ -55,10 +61,27 @@ export const usePlayerStore = defineStore('player', () => {
     return `${minutes}:${seconds.toString().padStart(2, '0')}`
   })
 
+  const formattedTotalPlaytime = computed(() => {
+    const totalSeconds = totalPlaytime.value
+    const hours = Math.floor(totalSeconds / 3600)
+    const minutes = Math.floor((totalSeconds % 3600) / 60)
+    const seconds = totalSeconds % 60
+    
+    if (hours > 0) {
+      return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+    } else {
+      return `${minutes}:${seconds.toString().padStart(2, '0')}`
+    }
+  })
+
   // Actions
   function initializeAudio() {
     audioElement.value = new Audio()
     audioElement.value.volume = volume.value
+    
+    // Load saved settings
+    loadTotalPlaytime()
+    loadSleepTimer()
 
     audioElement.value.addEventListener('loadedmetadata', () => {
       duration.value = audioElement.value?.duration || 0
@@ -74,11 +97,23 @@ export const usePlayerStore = defineStore('player', () => {
 
     audioElement.value.addEventListener('play', () => {
       isPlaying.value = true
+      sessionStartTime.value = Date.now()
+      lastPlayState.value = true
+      startPlaytimeTracking()
+      
+      // Start sleep timer countdown if timer is set but not running
+      if (sleepTimer.value > 0 && sleepTimerRemaining.value > 0 && !sleepTimerInterval.value) {
+        startSleepTimerCountdown()
+      }
+      
       updateMediaSession()
     })
 
     audioElement.value.addEventListener('pause', () => {
       isPlaying.value = false
+      stopPlaytimeTracking()
+      stopSleepTimerCountdown()
+      lastPlayState.value = false
     })
   }
 
@@ -255,12 +290,32 @@ export const usePlayerStore = defineStore('player', () => {
     }
     
     if (minutes > 0) {
-      // Set remaining time in seconds
+      // Always set remaining time in seconds when user selects a timer
       sleepTimerRemaining.value = minutes * 60
       
-      // Start countdown
+      // Only start countdown if music is currently playing
+      if (isPlaying.value) {
+        startSleepTimerCountdown()
+      }
+      
+      console.log(`Sleep timer set for ${minutes} minutes`)
+    } else {
+      sleepTimerRemaining.value = 0
+    }
+    
+    // Save the setting and remaining time
+    saveSleepTimer()
+  }
+
+  function startSleepTimerCountdown() {
+    if (sleepTimer.value > 0 && sleepTimerRemaining.value > 0) {
       sleepTimerInterval.value = setInterval(() => {
         sleepTimerRemaining.value--
+        
+        // Save every 10 seconds to persist remaining time
+        if (sleepTimerRemaining.value % 10 === 0) {
+          saveSleepTimer()
+        }
         
         if (sleepTimerRemaining.value <= 0) {
           // Time's up, pause playback
@@ -269,10 +324,15 @@ export const usePlayerStore = defineStore('player', () => {
           console.log('Sleep timer expired, playback paused')
         }
       }, 1000)
-      
-      console.log(`Sleep timer set for ${minutes} minutes`)
-    } else {
-      sleepTimerRemaining.value = 0
+    }
+  }
+
+  function stopSleepTimerCountdown() {
+    if (sleepTimerInterval.value) {
+      clearInterval(sleepTimerInterval.value)
+      sleepTimerInterval.value = null
+      // Save the current state when stopping
+      saveSleepTimer()
     }
   }
 
@@ -281,7 +341,9 @@ export const usePlayerStore = defineStore('player', () => {
       clearInterval(sleepTimerInterval.value)
       sleepTimerInterval.value = null
     }
+    sleepTimer.value = 0
     sleepTimerRemaining.value = 0
+    saveSleepTimer()
     console.log('Sleep timer cleared')
   }
 
@@ -291,6 +353,109 @@ export const usePlayerStore = defineStore('player', () => {
     const currentIndex = options.indexOf(sleepTimer.value)
     const nextIndex = (currentIndex + 1) % options.length
     setSleepTimer(options[nextIndex])
+  }
+
+  function startPlaytimeTracking() {
+    // Clear any existing interval
+    if (playtimeInterval.value) {
+      clearInterval(playtimeInterval.value)
+    }
+    
+    // Start new interval to increment total playtime every second
+    playtimeInterval.value = setInterval(() => {
+      totalPlaytime.value += 1
+      
+      // Save to localStorage every 10 seconds to avoid too many writes
+      if (totalPlaytime.value % 10 === 0) {
+        saveTotalPlaytime()
+      }
+    }, 1000)
+  }
+
+  function stopPlaytimeTracking() {
+    if (playtimeInterval.value) {
+      clearInterval(playtimeInterval.value)
+      playtimeInterval.value = null
+      // Save current state when stopping
+      saveTotalPlaytime()
+    }
+  }
+
+  function updateTotalPlaytime() {
+    // This function is kept for compatibility but now just saves
+    saveTotalPlaytime()
+  }
+
+  function loadTotalPlaytime() {
+    const saved = localStorage.getItem('music-player-total-playtime')
+    if (saved) {
+      totalPlaytime.value = parseInt(saved, 10) || 0
+    }
+  }
+
+  function saveTotalPlaytime() {
+    localStorage.setItem('music-player-total-playtime', totalPlaytime.value.toString())
+  }
+
+  function resetTotalPlaytime() {
+    totalPlaytime.value = 0
+    saveTotalPlaytime()
+  }
+
+  function loadSleepTimer() {
+    const savedTimer = localStorage.getItem('music-player-sleep-timer')
+    const savedRemaining = localStorage.getItem('music-player-sleep-timer-remaining')
+    const savedTimestamp = localStorage.getItem('music-player-sleep-timer-timestamp')
+    
+    if (savedTimer) {
+      const minutes = parseInt(savedTimer, 10) || 0
+      if (minutes > 0) {
+        sleepTimer.value = minutes
+        
+        // If there was remaining time saved, calculate how much time has passed
+        if (savedRemaining && savedTimestamp) {
+          const remaining = parseInt(savedRemaining, 10) || 0
+          const timestamp = parseInt(savedTimestamp, 10) || 0
+          const now = Date.now()
+          const timePassed = Math.floor((now - timestamp) / 1000)
+          
+          // Calculate current remaining time
+          const currentRemaining = Math.max(0, remaining - timePassed)
+          
+          if (currentRemaining > 0) {
+            sleepTimerRemaining.value = currentRemaining
+            console.log(`Sleep timer restored: ${Math.floor(currentRemaining / 60)}:${(currentRemaining % 60).toString().padStart(2, '0')} remaining`)
+          } else {
+            // Timer would have expired, clear it
+            clearSleepTimer()
+          }
+        } else {
+          // No active timer, but user had this setting - restore with full time
+          sleepTimerRemaining.value = minutes * 60
+          console.log(`Sleep timer setting restored: ${minutes} minutes (${sleepTimerRemaining.value} seconds)`)
+        }
+      }
+    } else {
+      // First time user - set default 60 minutes sleep timer
+      sleepTimer.value = 60
+      sleepTimerRemaining.value = 60 * 60 // 60 minutes in seconds
+      saveSleepTimer()
+      console.log('Default sleep timer set: 60 minutes')
+    }
+  }
+
+  function saveSleepTimer() {
+    localStorage.setItem('music-player-sleep-timer', sleepTimer.value.toString())
+    
+    if (sleepTimer.value > 0 && sleepTimerRemaining.value > 0) {
+      // Save the remaining time and current timestamp
+      localStorage.setItem('music-player-sleep-timer-remaining', sleepTimerRemaining.value.toString())
+      localStorage.setItem('music-player-sleep-timer-timestamp', Date.now().toString())
+    } else {
+      // Clear the remaining time data
+      localStorage.removeItem('music-player-sleep-timer-remaining')
+      localStorage.removeItem('music-player-sleep-timer-timestamp')
+    }
   }
 
   return {
@@ -307,6 +472,7 @@ export const usePlayerStore = defineStore('player', () => {
     currentIndex,
     sleepTimer,
     sleepTimerRemaining,
+    totalPlaytime,
     
     // Getters
     progress,
@@ -316,6 +482,7 @@ export const usePlayerStore = defineStore('player', () => {
     canPlayPrevious,
     isSleepTimerActive,
     formattedSleepTimer,
+    formattedTotalPlaytime,
     
     // Actions
     initializeAudio,
@@ -332,6 +499,8 @@ export const usePlayerStore = defineStore('player', () => {
     toggleRepeat,
     setSleepTimer,
     clearSleepTimer,
-    toggleSleepTimer
+    toggleSleepTimer,
+    resetTotalPlaytime,
+    stopPlaytimeTracking
   }
 })
