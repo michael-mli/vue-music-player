@@ -43,10 +43,18 @@
     <PlayerControls @toggle-lyrics="showLyrics = !showLyrics" />
     
     <!-- PWA Install Prompt -->
-    <InstallPrompt v-if="showInstallPrompt" @close="hideInstallPrompt" />
+    <InstallPrompt 
+      v-if="showInstallPrompt" 
+      @close="hideInstallPrompt" 
+      @install="handleInstall"
+    />
     
     <!-- Update Available Notification -->
-    <UpdateNotification v-if="updateAvailable" @update="handleUpdate" />
+    <UpdateNotification 
+      v-if="updateAvailable" 
+      @update="handleUpdate" 
+      @dismiss="updateAvailable = false"
+    />
   </div>
 </template>
 
@@ -75,6 +83,7 @@ const showLyrics = ref(true)
 const showInstallPrompt = ref(false)
 const updateAvailable = ref(false)
 const showMobileSidebar = ref(false)
+const deferredPrompt = ref<any>(null)
 
 onMounted(async () => {
   // Initialize audio
@@ -120,12 +129,44 @@ function checkInstallPrompt() {
   // Check if app can be installed
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault()
+    deferredPrompt.value = e
     showInstallPrompt.value = true
+  })
+  
+  // Check if app is already installed
+  window.addEventListener('appinstalled', () => {
+    showInstallPrompt.value = false
+    deferredPrompt.value = null
+    console.log('PWA was installed')
   })
 }
 
 function hideInstallPrompt() {
   showInstallPrompt.value = false
+}
+
+async function handleInstall() {
+  if (!deferredPrompt.value) return
+  
+  try {
+    // Show the install prompt
+    deferredPrompt.value.prompt()
+    
+    // Wait for the user to respond to the prompt
+    const { outcome } = await deferredPrompt.value.userChoice
+    
+    if (outcome === 'accepted') {
+      console.log('User accepted the install prompt')
+    } else {
+      console.log('User dismissed the install prompt')
+    }
+    
+    // Hide the install prompt
+    hideInstallPrompt()
+    deferredPrompt.value = null
+  } catch (error) {
+    console.error('Error during PWA installation:', error)
+  }
 }
 
 function checkForUpdates() {

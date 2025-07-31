@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Generate PWA Icons</title>
+</head>
+<body>
+    <h1>PWA Icon Generator</h1>
+    <canvas id="canvas192" width="192" height="192" style="border: 1px solid #ccc; margin: 10px;"></canvas>
+    <canvas id="canvas512" width="512" height="512" style="border: 1px solid #ccc; margin: 10px;"></canvas>
+    <br>
+    <button onclick="downloadIcons()">Download Icons</button>
+
+    <script>
+        function drawIcon(canvas, size) {
+            const ctx = canvas.getContext('2d');
+            
+            // Background
+            ctx.fillStyle = '#1DB954';
+            ctx.roundRect(0, 0, size, size, size * 0.125);
+            ctx.fill();
+            
+            // Musical note
+            ctx.fillStyle = 'white';
+            const scale = size / 192;
+            
+            // Note circles
+            const circle1 = {x: 64 * scale, y: 144 * scale, r: 16 * scale};
+            const circle2 = {x: 144 * scale, y: 120 * scale, r: 16 * scale};
+            
+            ctx.beginPath();
+            ctx.arc(circle1.x, circle1.y, circle1.r, 0, 2 * Math.PI);
+            ctx.fill();
+            
+            ctx.beginPath();
+            ctx.arc(circle2.x, circle2.y, circle2.r, 0, 2 * Math.PI);
+            ctx.fill();
+            
+            // Note stems and beam
+            ctx.fillRect(80 * scale, 48 * scale, 4 * scale, 96 * scale);
+            ctx.fillRect(160 * scale, 48 * scale, 4 * scale, 72 * scale);
+            ctx.fillRect(80 * scale, 48 * scale, 84 * scale, 8 * scale);
+        }
+        
+        // Add roundRect method if not available
+        if (!CanvasRenderingContext2D.prototype.roundRect) {
+            CanvasRenderingContext2D.prototype.roundRect = function(x, y, width, height, radius) {
+                this.beginPath();
+                this.moveTo(x + radius, y);
+                this.lineTo(x + width - radius, y);
+                this.quadraticCurveTo(x + width, y, x + width, y + radius);
+                this.lineTo(x + width, y + height - radius);
+                this.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+                this.lineTo(x + radius, y + height);
+                this.quadraticCurveTo(x, y + height, x, y + height - radius);
+                this.lineTo(x, y + radius);
+                this.quadraticCurveTo(x, y, x + radius, y);
+                this.closePath();
+            };
+        }
+        
+        drawIcon(document.getElementById('canvas192'), 192);
+        drawIcon(document.getElementById('canvas512'), 512);
+        
+        function downloadIcons() {
+            // Download 192x192
+            const canvas192 = document.getElementById('canvas192');
+            const link192 = document.createElement('a');
+            link192.download = 'icon-192.png';
+            link192.href = canvas192.toDataURL();
+            link192.click();
+            
+            // Download 512x512
+            setTimeout(() => {
+                const canvas512 = document.getElementById('canvas512');
+                const link512 = document.createElement('a');
+                link512.download = 'icon-512.png';
+                link512.href = canvas512.toDataURL();
+                link512.click();
+            }, 100);
+        }
+    </script>
+</body>
+</html>

@@ -64,12 +64,15 @@
     "delete": "Delete",
     "edit": "Edit",
     "close": "Close",
-    "user": "User"
+    "user": "User",
+    "later": "Later"
   },
   "pwa": {
     "install": "Install App",
+    "installDescription": "Get the full app experience with offline music, faster loading, and home screen access.",
     "updateAvailable": "Update Available",
     "update": "Update",
+    "updateDescription": "A new version is available with improvements and bug fixes.",
     "offline": "You are offline"
   }
 }

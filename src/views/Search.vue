@@ -50,13 +50,32 @@
               <MusicalNoteIcon class="w-5 h-5 text-gray-400" />
             </div>
             <div class="flex-1 min-w-0">
-              <p class="text-white font-medium truncate">{{ song.title }} (#{{ song.id }})</p>
-              <p class="text-gray-400 text-sm" v-if="song.matchType === 'lyrics'">
+              <p class="text-white dark:text-white text-light-text-primary font-medium truncate">{{ song.title }} (#{{ song.id }})</p>
+              <p class="text-gray-400 dark:text-gray-400 text-light-text-secondary text-sm" v-if="song.matchType === 'lyrics'">
                 {{ getMatchingLyricPreview(song, searchQuery) }}
               </p>
-              <p class="text-gray-400 text-sm" v-else>
+              <p class="text-gray-400 dark:text-gray-400 text-light-text-secondary text-sm" v-else>
                 Title match
               </p>
+            </div>
+            <div class="flex items-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+              <button 
+                @click.stop="toggleFavorite(song)"
+                class="p-2"
+              >
+                <HeartIcon 
+                  :class="[
+                    'w-4 h-4',
+                    song.isFavorite ? 'text-spotify-green fill-current' : 'text-gray-400'
+                  ]" 
+                />
+              </button>
+              <button 
+                @click.stop="openAddToPlaylistModal(song)"
+                class="p-2"
+              >
+                <EllipsisHorizontalIcon class="w-4 h-4 text-gray-400 hover:text-white" />
+              </button>
             </div>
           </div>
         </div>
@@ -80,25 +99,54 @@
         <p class="text-sm">Need at least 2 characters to search</p>
       </div>
     </div>
+    
+    <!-- Add to Playlist Modal -->
+    <AddToPlaylistModal 
+      v-if="showAddToPlaylistModal"
+      :song="selectedSong"
+      @close="closeAddToPlaylistModal"
+      @create-playlist="openCreatePlaylistModal"
+    />
+    
+    <!-- Create Playlist Modal -->
+    <CreatePlaylistModal 
+      v-if="showCreatePlaylistModal"
+      @close="closeCreatePlaylistModal"
+      @created="onPlaylistCreated"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { MusicalNoteIcon } from '@heroicons/vue/24/outline'
+import { ref, computed, onMounted } from 'vue'
+import { MusicalNoteIcon, HeartIcon, EllipsisHorizontalIcon } from '@heroicons/vue/24/outline'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
+import { usePlaylistsStore } from '@/stores/playlists'
+import AddToPlaylistModal from '@/components/UI/AddToPlaylistModal.vue'
+import CreatePlaylistModal from '@/components/UI/CreatePlaylistModal.vue'
 import type { Song } from '@/types'
 
 const playerStore = usePlayerStore()
 const songsStore = useSongsStore()
+const playlistsStore = usePlaylistsStore()
 
 const searchQuery = ref('')
+
+// Modal state
+const showAddToPlaylistModal = ref(false)
+const showCreatePlaylistModal = ref(false)
+const selectedSong = ref<Song | null>(null)
 
 const filteredSongs = computed(() => songsStore.filteredSongs)
 const isSearching = computed(() => songsStore.isSearching)
 
 let searchTimeout: ReturnType<typeof setTimeout> | null = null
+
+// Load playlists when component mounts
+onMounted(() => {
+  playlistsStore.fetchPlaylists()
+})
 
 function handleSearch() {
   // Clear previous timeout
@@ -154,5 +202,35 @@ function getMatchingLyricPreview(song: Song, query: string): string {
   const cleanPreview = originalPreview.replace(/\s+/g, ' ').trim()
   
   return start > 0 ? `...${cleanPreview}...` : `${cleanPreview}...`
+}
+
+function toggleFavorite(song: Song) {
+  songsStore.toggleFavorite(song.id)
+}
+
+// Modal handlers
+function openAddToPlaylistModal(song: Song) {
+  selectedSong.value = song
+  showAddToPlaylistModal.value = true
+}
+
+function closeAddToPlaylistModal() {
+  showAddToPlaylistModal.value = false
+  selectedSong.value = null
+}
+
+function openCreatePlaylistModal() {
+  showAddToPlaylistModal.value = false
+  showCreatePlaylistModal.value = true
+}
+
+function closeCreatePlaylistModal() {
+  showCreatePlaylistModal.value = false
+}
+
+function onPlaylistCreated() {
+  // Playlist was created, reopen the add to playlist modal
+  showCreatePlaylistModal.value = false
+  showAddToPlaylistModal.value = true
 }
 </script>

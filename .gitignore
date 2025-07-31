@@ -28,6 +28,7 @@ Thumbs.db
 # Music files and folders
 music/
 public/music/
+public/data/
 *.mp3
 *.mp4
 *.wav
@@ -50,6 +51,6 @@ coverage/
 # Temporary folders
 tmp/
 temp/
-
+data
 music
 public/

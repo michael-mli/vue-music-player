@@ -64,12 +64,15 @@
     "delete": "删除",
     "edit": "编辑",
     "close": "关闭",
-    "user": "用户"
+    "user": "用户",
+    "later": "稍后"
   },
   "pwa": {
     "install": "安装应用",
+    "installDescription": "获得完整的应用体验，支持离线音乐、快速加载和主屏幕访问。",
     "updateAvailable": "有可用更新",
     "update": "更新",
+    "updateDescription": "新版本已发布，包含改进和错误修复。",
     "offline": "您当前处于离线状态"
   }
 }

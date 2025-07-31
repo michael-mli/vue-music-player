@@ -17,8 +17,7 @@ export const usePlaylistsStore = defineStore('playlists', () => {
     try {
       loading.value = true
       error.value = null
-      // Use mock data for development
-      const response = await playlistService.getMockPlaylists()
+      const response = await playlistService.getPlaylists()
       playlists.value = response.data
     } catch (err) {
       error.value = 'Failed to load playlists'

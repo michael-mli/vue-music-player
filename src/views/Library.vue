@@ -31,17 +31,25 @@
             <p class="text-white dark:text-white text-light-text-primary font-medium truncate">{{ song.title }}</p>
             <p class="text-gray-400 dark:text-gray-400 text-light-text-secondary text-sm">{{ formatDuration(song.duration) }}</p>
           </div>
-          <button 
-            @click.stop="toggleFavorite(song)"
-            class="p-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-          >
-            <HeartIcon 
-              :class="[
-                'w-4 h-4',
-                song.isFavorite ? 'text-spotify-green fill-current' : 'text-gray-400'
-              ]" 
-            />
-          </button>
+          <div class="flex items-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+            <button 
+              @click.stop="toggleFavorite(song)"
+              class="p-2"
+            >
+              <HeartIcon 
+                :class="[
+                  'w-4 h-4',
+                  song.isFavorite ? 'text-spotify-green fill-current' : 'text-gray-400'
+                ]" 
+              />
+            </button>
+            <button 
+              @click.stop="openAddToPlaylistModal(song)"
+              class="p-2"
+            >
+              <EllipsisHorizontalIcon class="w-4 h-4 text-gray-400 hover:text-white" />
+            </button>
+          </div>
         </div>
       </div>
       
@@ -133,22 +141,48 @@
         </div>
       </div>
     </div>
+    
+    <!-- Add to Playlist Modal -->
+    <AddToPlaylistModal 
+      v-if="showAddToPlaylistModal"
+      :song="selectedSong"
+      @close="closeAddToPlaylistModal"
+      @create-playlist="openCreatePlaylistModal"
+    />
+    
+    <!-- Create Playlist Modal -->
+    <CreatePlaylistModal 
+      v-if="showCreatePlaylistModal"
+      @close="closeCreatePlaylistModal"
+      @created="onPlaylistCreated"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
-import { MusicalNoteIcon, HeartIcon } from '@heroicons/vue/24/outline'
+import { MusicalNoteIcon, HeartIcon, EllipsisHorizontalIcon } from '@heroicons/vue/24/outline'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
+import { usePlaylistsStore } from '@/stores/playlists'
+import AddToPlaylistModal from '@/components/UI/AddToPlaylistModal.vue'
+import CreatePlaylistModal from '@/components/UI/CreatePlaylistModal.vue'
 import type { Song } from '@/types'
 
 const playerStore = usePlayerStore()
 const songsStore = useSongsStore()
+const playlistsStore = usePlaylistsStore()
+
+// Modal state
+const showAddToPlaylistModal = ref(false)
+const showCreatePlaylistModal = ref(false)
+const selectedSong = ref<Song | null>(null)
 
 // Clear any search state when entering library mode
 onMounted(() => {
   songsStore.resetToLibraryMode()
+  // Load playlists when component mounts
+  playlistsStore.fetchPlaylists()
 })
 
 const songs = computed(() => songsStore.songs)
@@ -230,5 +264,31 @@ function formatDuration(duration?: number): string {
   const minutes = Math.floor(duration / 60)
   const seconds = Math.floor(duration % 60)
   return `${minutes}:${seconds.toString().padStart(2, '0')}`
+}
+
+// Modal handlers
+function openAddToPlaylistModal(song: Song) {
+  selectedSong.value = song
+  showAddToPlaylistModal.value = true
+}
+
+function closeAddToPlaylistModal() {
+  showAddToPlaylistModal.value = false
+  selectedSong.value = null
+}
+
+function openCreatePlaylistModal() {
+  showAddToPlaylistModal.value = false
+  showCreatePlaylistModal.value = true
+}
+
+function closeCreatePlaylistModal() {
+  showCreatePlaylistModal.value = false
+}
+
+function onPlaylistCreated() {
+  // Playlist was created, reopen the add to playlist modal
+  showCreatePlaylistModal.value = false
+  showAddToPlaylistModal.value = true
 }
 </script>

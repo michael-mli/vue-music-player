@@ -45,17 +45,17 @@ export const songService = {
   async getMockSongs(): Promise<APIResponse<Song[]>> {
     const mockSongs: Song[] = []
     
-    // Load first 50 songs with titles from lyrics for better UX
+    // Load last 50 songs (highest numbers) with titles from lyrics for better UX
     const promises = []
-    for (let i = 1; i <= 50; i++) {
+    for (let i = 1233; i <= 1282; i++) { // Last 50 songs (1233-1282)
       promises.push(this.getTitleFromLyrics(i))
     }
     
-    const first50Titles = await Promise.all(promises)
+    const last50Titles = await Promise.all(promises)
     
-    // Create all songs with titles for first 50, generic titles for rest
+    // Create all songs first, then sort in descending order
     for (let i = 1; i <= 1282; i++) {
-      const title = i <= 50 ? first50Titles[i - 1] : `Song ${i}`
+      const title = i >= 1233 ? last50Titles[i - 1233] : `Song ${i}`
       
       mockSongs.push({
         id: i,
@@ -66,6 +66,9 @@ export const songService = {
         lyrics: undefined // Will be loaded separately when needed
       })
     }
+    
+    // Sort songs in descending order by ID (highest first)
+    mockSongs.sort((a, b) => b.id - a.id)
     
     return {
       success: true,

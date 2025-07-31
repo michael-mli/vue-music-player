@@ -1,30 +1,48 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { VitePWA } from 'vite-plugin-pwa'
+import { viteStaticCopy } from 'vite-plugin-static-copy'
 import { resolve } from 'path'
 
 export default defineConfig({
   plugins: [
     vue(),
+    viteStaticCopy({
+      targets: [
+        {
+          src: 'public/icons/*',
+          dest: 'icons'
+        },
+        {
+          src: 'public/favicon.ico',
+          dest: ''
+        },
+        {
+          src: 'public/apple-touch-icon.png',
+          dest: ''
+        }
+      ]
+    }),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
+      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'icons/*.png', 'icons/*.svg'],
       manifest: {
-        name: "Mic's Music Player",
-        short_name: 'MicsMusic',
-        description: 'Modern music player with offline support',
+        name: "Mic的音乐播放器",
+        short_name: 'Mic音乐',
+        description: '现代音乐播放器，支持离线播放',
         theme_color: '#1DB954',
         background_color: '#121212',
         display: 'standalone',
         start_url: '/',
+        lang: 'zh',
         icons: [
           {
-            src: 'icons/icon-192.png',
+            src: '/icons/icon-192.png',
             sizes: '192x192',
             type: 'image/png'
           },
           {
-            src: 'icons/icon-512.png',
+            src: '/icons/icon-512.png',
             sizes: '512x512',
             type: 'image/png'
           }
@@ -68,13 +86,13 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 5173
   },
+  publicDir: false,
   build: {
     rollupOptions: {
-      external: (id) => {
-        // Prevent copying the music directory during build
-        return id.includes('public/music')
+      input: {
+        // Manually include icon files
+        main: 'index.html'
       }
     }
-  },
-  publicDir: false
+  }
 })
