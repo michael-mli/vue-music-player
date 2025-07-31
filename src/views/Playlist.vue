@@ -1,26 +1,26 @@
 <template>
   <div class="playlist-view h-full overflow-y-auto spotify-scrollbar">
-    <div class="p-6">
+    <div class="p-4 sm:p-6">
       <div v-if="playlist">
-        <h1 class="text-3xl font-bold text-white mb-2">{{ playlist.name }}</h1>
-        <p class="text-gray-400 mb-6">{{ playlist.songs.length }} songs</p>
+        <h1 class="text-3xl font-bold text-light-text-primary dark:text-white mb-2">{{ playlist.name }}</h1>
+        <p class="text-light-text-secondary dark:text-gray-400 mb-6">{{ playlist.songs.length }} songs</p>
         
         <div v-if="playlistSongs.length > 0" class="space-y-2">
           <div 
             v-for="(song, index) in playlistSongs" 
             :key="song.id"
             @click="playSong(song, index)"
-            class="flex items-center p-3 rounded-lg hover:bg-spotify-light cursor-pointer group transition-colors duration-200"
+            class="flex items-center p-3 rounded-lg hover:bg-light-border dark:hover:bg-spotify-light cursor-pointer group transition-colors duration-200"
           >
             <div class="w-8 text-center mr-4">
-              <span class="text-gray-400 text-sm">{{ index + 1 }}</span>
+              <span class="text-light-text-secondary dark:text-gray-400 text-sm">{{ index + 1 }}</span>
             </div>
-            <div class="w-10 h-10 bg-spotify-dark rounded mr-3 flex items-center justify-center">
+            <div class="w-10 h-10 bg-light-border dark:bg-spotify-dark rounded mr-3 flex items-center justify-center">
               <MusicalNoteIcon class="w-5 h-5 text-gray-400" />
             </div>
             <div class="flex-1 min-w-0">
-              <p class="text-white font-medium truncate">{{ song.title }}</p>
-              <p class="text-gray-400 text-sm">Song {{ song.id }}</p>
+              <p class="text-light-text-primary dark:text-white font-medium break-words">{{ song.title }}</p>
+              <p class="text-light-text-secondary dark:text-gray-400 text-sm">{{ formatDuration(song.duration) }}</p>
             </div>
             <button 
               @click.stop="removeSong(song)"
@@ -31,12 +31,12 @@
           </div>
         </div>
         
-        <div v-else class="text-center text-gray-400 mt-12">
+        <div v-else class="text-center text-light-text-secondary dark:text-gray-400 mt-12">
           {{ $t('playlist.emptyPlaylist') }}
         </div>
       </div>
       
-      <div v-else class="text-center text-gray-400 mt-12">
+      <div v-else class="text-center text-light-text-secondary dark:text-gray-400 mt-12">
         Playlist not found
       </div>
     </div>
@@ -78,5 +78,12 @@ function removeSong(song: Song) {
   if (playlist.value) {
     playlistsStore.removeSongFromPlaylist(playlist.value.id, song.id)
   }
+}
+
+function formatDuration(duration?: number): string {
+  if (!duration) return '0:00'
+  const minutes = Math.floor(duration / 60)
+  const seconds = Math.floor(duration % 60)
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`
 }
 </script>
