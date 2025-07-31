@@ -53,14 +53,40 @@
   }
   
   .btn-primary {
-    @apply bg-spotify-green hover:bg-green-500 text-white font-medium py-2 px-4 rounded-full transition-colors duration-200;
+    @apply bg-spotify-green hover:bg-green-500 focus:bg-green-500 active:bg-green-600 text-white font-medium py-2 px-4 rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-spotify-green/50;
   }
   
   .btn-secondary {
-    @apply bg-light-border text-light-text-primary dark:bg-spotify-light dark:text-white hover:bg-light-border/80 dark:hover:bg-spotify-dark font-medium py-2 px-4 rounded-full transition-colors duration-200;
+    @apply bg-light-border text-light-text-primary dark:bg-spotify-light dark:text-white hover:bg-light-border/80 dark:hover:bg-spotify-dark focus:bg-light-text-secondary/20 dark:focus:bg-spotify-dark active:bg-light-text-secondary/30 dark:active:bg-gray-600 font-medium py-2 px-4 rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-light-text-secondary/30 dark:focus:ring-spotify-light/50;
   }
   
   .card {
     @apply bg-light-card text-light-text-primary dark:bg-spotify-dark dark:text-white rounded-lg p-4 hover:bg-light-border dark:hover:bg-spotify-light transition-colors duration-200;
+  }
+
+  /* Fix button focus/active states in light mode */
+  button:focus {
+    @apply outline-none;
+  }
+
+  button:focus-visible {
+    @apply ring-2 ring-spotify-green/50 dark:ring-spotify-green/50;
+  }
+
+  button:active {
+    @apply transform scale-95;
+  }
+
+  /* Prevent buttons from becoming invisible in light mode */
+  .bg-light-bg button:focus,
+  .bg-light-surface button:focus,
+  .bg-light-card button:focus {
+    @apply bg-light-text-secondary/10 dark:bg-spotify-light;
+  }
+
+  .bg-light-bg button:active,
+  .bg-light-surface button:active,
+  .bg-light-card button:active {
+    @apply bg-light-text-secondary/20 dark:bg-spotify-dark;
   }
 }

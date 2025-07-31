@@ -26,6 +26,15 @@ app.use(createPinia())
 app.use(router)
 app.use(i18n)
 
+// Initialize dark theme as default
+const savedTheme = localStorage.getItem('theme')
+if (!savedTheme) {
+  localStorage.setItem('theme', 'dark')
+  document.documentElement.classList.add('dark')
+} else {
+  document.documentElement.classList.toggle('dark', savedTheme === 'dark')
+}
+
 app.mount('#app')
 
 // Register service worker

@@ -11,6 +11,7 @@
         <li>
           <RouterLink 
             to="/" 
+            @click="emit('close-mobile')"
             class="flex items-center px-4 py-3 rounded-md text-sm font-medium transition-colors duration-200 hover:bg-light-border dark:hover:bg-spotify-light"
             :class="{ 'bg-light-border text-light-text-primary dark:bg-spotify-light dark:text-white': $route.name === 'Home', 'text-light-text-secondary dark:text-gray-300': $route.name !== 'Home' }"
           >
@@ -21,6 +22,7 @@
         <li>
           <RouterLink 
             to="/search" 
+            @click="emit('close-mobile')"
             class="flex items-center px-4 py-3 rounded-md text-sm font-medium transition-colors duration-200 hover:bg-light-border dark:hover:bg-spotify-light"
             :class="{ 'bg-light-border text-light-text-primary dark:bg-spotify-light dark:text-white': $route.name === 'Search', 'text-light-text-secondary dark:text-gray-300': $route.name !== 'Search' }"
           >
@@ -31,6 +33,7 @@
         <li>
           <RouterLink 
             to="/library" 
+            @click="emit('close-mobile')"
             class="flex items-center px-4 py-3 rounded-md text-sm font-medium transition-colors duration-200 hover:bg-light-border dark:hover:bg-spotify-light"
             :class="{ 'bg-light-border text-light-text-primary dark:bg-spotify-light dark:text-white': $route.name === 'Library', 'text-light-text-secondary dark:text-gray-300': $route.name !== 'Library' }"
           >
@@ -58,6 +61,7 @@
           <li v-for="playlist in playlists" :key="playlist.id">
             <RouterLink 
               :to="`/playlist/${playlist.id}`"
+              @click="emit('close-mobile')"
               class="block px-4 py-2 text-sm text-light-text-secondary dark:text-gray-300 hover:text-light-text-primary dark:hover:text-white hover:bg-light-border dark:hover:bg-spotify-light rounded-md transition-colors duration-200"
             >
               {{ playlist.name }}
@@ -102,6 +106,11 @@ import {
 import { usePlaylistsStore } from '@/stores/playlists'
 import LanguageSwitcher from './LanguageSwitcher.vue'
 import CreatePlaylistModal from './CreatePlaylistModal.vue'
+
+// Define emits
+const emit = defineEmits<{
+  'close-mobile': []
+}>()
 
 const $route = useRoute()
 const playlistsStore = usePlaylistsStore()

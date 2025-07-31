@@ -1,13 +1,13 @@
 <template>
   <div class="search-view h-full overflow-y-auto spotify-scrollbar">
-    <div class="p-6">
-      <div class="mb-6">
+    <div class="p-4 sm:p-6">
+      <div class="mb-6 w-full">
         <input 
           v-model="searchQuery"
           @input="handleSearch"
           type="text" 
-          class="w-full px-4 py-3 bg-light-surface text-light-text-primary dark:bg-spotify-light dark:text-white rounded-full border border-light-border dark:border-gray-600 focus:border-spotify-green focus:outline-none"
-          :placeholder="$t('library.search') + ' (min 2 characters - searches titles and lyrics)'"
+          class="w-full min-w-0 max-w-full px-3 sm:px-4 py-3 bg-light-surface text-light-text-primary dark:bg-spotify-light dark:text-white rounded-full border border-light-border dark:border-gray-600 focus:border-spotify-green focus:outline-none box-border"
+          :placeholder="$t('library.search')"
           autofocus
         />
       </div>
@@ -50,7 +50,7 @@
               <MusicalNoteIcon class="w-5 h-5 text-gray-400" />
             </div>
             <div class="flex-1 min-w-0">
-              <p class="text-light-text-primary dark:text-white font-medium truncate">{{ song.title }} (#{{ song.id }})</p>
+              <p class="text-light-text-primary dark:text-white font-medium break-words">{{ song.title }} (#{{ song.id }})</p>
               <p class="text-light-text-secondary dark:text-gray-400 text-sm" v-if="song.matchType === 'lyrics'">
                 {{ getMatchingLyricPreview(song, searchQuery) }}
               </p>

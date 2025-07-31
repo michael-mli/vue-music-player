@@ -7,8 +7,8 @@
         <MusicalNoteIcon class="w-4 h-4 text-gray-400" />
       </div>
       <div class="flex-1 min-w-0">
-        <p class="text-xs font-medium text-light-text-primary dark:text-white truncate">{{ currentSong.title }} (#{{ currentSong.id }})</p>
-        <p class="text-xs text-light-text-secondary dark:text-gray-400 truncate">{{ $t('player.currentlyPlaying') }}</p>
+        <p class="text-xs font-medium text-light-text-primary dark:text-white break-words">{{ currentSong.title }} (#{{ currentSong.id }})</p>
+        <p class="text-xs text-light-text-secondary dark:text-gray-400 break-words">{{ $t('player.currentlyPlaying') }}</p>
       </div>
       <button 
         @click="toggleFavorite"
@@ -111,8 +111,8 @@
           <MusicalNoteIcon class="w-6 h-6 text-gray-400" />
         </div>
         <div class="flex-1 min-w-0">
-          <p class="text-sm font-medium text-light-text-primary dark:text-white truncate">{{ currentSong.title }} (#{{ currentSong.id }})</p>
-          <p class="text-xs text-light-text-secondary dark:text-gray-400 truncate">{{ $t('player.currentlyPlaying') }}</p>
+          <p class="text-sm font-medium text-light-text-primary dark:text-white break-words">{{ currentSong.title }} (#{{ currentSong.id }})</p>
+          <p class="text-xs text-light-text-secondary dark:text-gray-400 break-words">{{ $t('player.currentlyPlaying') }}</p>
         </div>
         <button 
           @click="toggleFavorite"

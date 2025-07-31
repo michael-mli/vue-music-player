@@ -1,6 +1,6 @@
 <template>
   <div class="library-view h-full overflow-y-auto spotify-scrollbar">
-    <div class="p-6">
+    <div class="p-4 sm:p-6">
       <h1 class="text-3xl font-bold text-light-text-primary dark:text-white mb-6">{{ $t('navigation.library') }}</h1>
       
       <div class="mb-6 flex items-center justify-between">
@@ -28,7 +28,7 @@
             <MusicalNoteIcon class="w-5 h-5 text-gray-400" />
           </div>
           <div class="flex-1 min-w-0">
-            <p class="text-light-text-primary dark:text-white font-medium truncate">{{ song.title }}</p>
+            <p class="text-light-text-primary dark:text-white font-medium break-words">{{ song.title }}</p>
             <p class="text-light-text-secondary dark:text-gray-400 text-sm">{{ formatDuration(song.duration) }}</p>
           </div>
           <div class="flex items-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-200">

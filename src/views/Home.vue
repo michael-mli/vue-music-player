@@ -1,6 +1,6 @@
 <template>
   <div class="home-view h-full overflow-y-auto spotify-scrollbar">
-    <div class="p-6">
+    <div class="p-4 sm:p-6">
       <!-- Welcome Section -->
       <div class="mb-8">
         <h1 class="text-3xl font-bold text-light-text-primary dark:text-white mb-2">
@@ -54,7 +54,7 @@
                 <PlayIcon class="w-6 h-6 text-white" />
               </div>
             </div>
-            <h3 class="font-medium text-light-text-primary dark:text-white text-sm truncate">{{ song.title }}</h3>
+            <h3 class="font-medium text-light-text-primary dark:text-white text-sm break-words">{{ song.title }}</h3>
             <p class="text-light-text-secondary dark:text-gray-400 text-xs">Song {{ song.id }}</p>
           </div>
         </div>
@@ -77,7 +77,7 @@
               <MusicalNoteIcon class="w-5 h-5 text-gray-400" />
             </div>
             <div class="flex-1 min-w-0">
-              <p class="text-light-text-primary dark:text-white font-medium truncate">{{ song.title }}</p>
+              <p class="text-light-text-primary dark:text-white font-medium break-words">{{ song.title }}</p>
               <p class="text-light-text-secondary dark:text-gray-400 text-sm">{{ formatDuration(song.duration) }}</p>
             </div>
             <button 

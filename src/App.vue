@@ -14,7 +14,7 @@
           @click="showMobileSidebar = false"
           class="fixed inset-0 bg-black/50"
         ></div>
-        <Sidebar class="relative z-50" />
+        <Sidebar class="relative z-50" @close-mobile="showMobileSidebar = false" />
       </div>
       
       <!-- Main View -->
