@@ -3,6 +3,7 @@ import Home from '@/views/Home.vue'
 import Search from '@/views/Search.vue'
 import Library from '@/views/Library.vue'
 import Playlist from '@/views/Playlist.vue'
+import Music from '@/views/Music.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -27,6 +28,11 @@ const router = createRouter({
       name: 'Playlist',
       component: Playlist,
       props: true
+    },
+    {
+      path: '/music',
+      name: 'Music',
+      component: Music
     }
   ]
 })
