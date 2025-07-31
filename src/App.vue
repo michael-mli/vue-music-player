@@ -132,16 +132,15 @@ onMounted(async () => {
 
 async function startRandomSong() {
   try {
-    // Get a random song from the loaded songs
-    const randomSongs = songsStore.getRandomSongs(1)
-    if (randomSongs.length > 0) {
-      const randomSong = randomSongs[0]
+    // Get all songs in order
+    const allSongs = songsStore.songs
+    if (allSongs.length > 0) {
+      // Pick a random starting song
+      const randomIndex = Math.floor(Math.random() * allSongs.length)
+      const randomSong = allSongs[randomIndex]
       
-      // Create a queue with more random songs for continuous playback
-      const queue = songsStore.getRandomSongs(20)
-      
-      // Play the random song
-      await playerStore.playSong(randomSong, queue, 0)
+      // Use the ordered songs list as queue, starting from the random song
+      await playerStore.playSong(randomSong, allSongs, randomIndex)
       
       console.log(`Auto-started playing: ${randomSong.title}`)
     }

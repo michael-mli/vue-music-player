@@ -12,7 +12,7 @@ export const usePlayerStore = defineStore('player', () => {
   const isMuted = ref(false)
   const currentTime = ref(0)
   const duration = ref(0)
-  const shuffle = ref(false)
+  const shuffle = ref(true)
   const repeat = ref<'none' | 'one' | 'all'>('none')
   const queue = ref<Song[]>([])
   const currentIndex = ref(0)
