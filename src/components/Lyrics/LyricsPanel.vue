@@ -11,7 +11,7 @@
       </button>
     </div>
     
-    <div class="flex-1 overflow-y-auto spotify-scrollbar p-4">
+    <div class="flex-1 overflow-y-auto spotify-scrollbar p-4 pb-8 lg:pb-4">
       <div v-if="loading" class="text-center text-light-text-secondary dark:text-gray-400">
         {{ $t('lyrics.loading') }}
       </div>
