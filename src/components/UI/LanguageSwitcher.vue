@@ -2,21 +2,21 @@
   <div class="relative">
     <button 
       @click="showDropdown = !showDropdown"
-      class="p-2 rounded hover:bg-spotify-light transition-colors duration-200"
+      class="p-2 rounded hover:bg-light-border dark:hover:bg-spotify-light transition-colors duration-200"
     >
-      <GlobeAltIcon class="w-4 h-4 text-gray-400" />
+      <GlobeAltIcon class="w-4 h-4 text-light-text-secondary dark:text-gray-400" />
     </button>
     
     <div 
       v-if="showDropdown"
-      class="absolute bottom-full right-0 mb-2 w-32 bg-spotify-dark rounded-lg shadow-lg border border-spotify-light overflow-hidden"
+      class="absolute bottom-full right-0 mb-2 w-32 bg-light-surface dark:bg-spotify-dark rounded-lg shadow-lg border border-light-border dark:border-spotify-light overflow-hidden"
     >
       <button 
         v-for="lang in languages" 
         :key="lang.code"
         @click="changeLanguage(lang.code)"
-        class="w-full px-3 py-2 text-left text-sm hover:bg-spotify-light transition-colors duration-200"
-        :class="{ 'text-spotify-green': currentLocale === lang.code, 'text-white': currentLocale !== lang.code }"
+        class="w-full px-3 py-2 text-left text-sm hover:bg-light-border dark:hover:bg-spotify-light transition-colors duration-200"
+        :class="{ 'text-spotify-green': currentLocale === lang.code, 'text-light-text-primary dark:text-white': currentLocale !== lang.code }"
       >
         {{ lang.name }}
       </button>

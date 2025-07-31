@@ -16,13 +16,13 @@ export default {
         },
         // Light theme colors
         light: {
-          bg: '#ffffff',
-          surface: '#f8f9fa',
+          bg: '#f5f5f5',
+          surface: '#ffffff',
           card: '#ffffff',
-          border: '#e9ecef',
+          border: '#d1d5db',
           text: {
-            primary: '#212529',
-            secondary: '#6c757d',
+            primary: '#111827',
+            secondary: '#6b7280',
           }
         }
       },

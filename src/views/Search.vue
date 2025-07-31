@@ -6,7 +6,7 @@
           v-model="searchQuery"
           @input="handleSearch"
           type="text" 
-          class="w-full px-4 py-3 bg-spotify-light text-white rounded-full border border-gray-600 focus:border-spotify-green focus:outline-none"
+          class="w-full px-4 py-3 bg-light-surface text-light-text-primary dark:bg-spotify-light dark:text-white rounded-full border border-light-border dark:border-gray-600 focus:border-spotify-green focus:outline-none"
           :placeholder="$t('library.search') + ' (min 2 characters - searches titles and lyrics)'"
           autofocus
         />
@@ -22,12 +22,12 @@
             </svg>
             Searching lyrics...
           </div>
-          <p class="text-sm text-gray-400 mb-2">
+          <p class="text-sm text-light-text-secondary dark:text-gray-400 mb-2">
             Title matches appear first, lyrics matches will appear as they're found
           </p>
           <button 
             @click="cancelSearch"
-            class="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-500 transition-colors text-sm"
+            class="px-4 py-2 bg-light-border text-light-text-primary dark:bg-gray-600 dark:text-white rounded hover:bg-light-border/80 dark:hover:bg-gray-500 transition-colors text-sm"
           >
             Cancel Search
           </button>
@@ -36,7 +36,7 @@
       
       <!-- Search results (shown even during loading for progressive results) -->
       <div v-if="filteredSongs.length > 0">
-        <h2 class="text-xl font-bold text-white mb-4">
+        <h2 class="text-xl font-bold text-light-text-primary dark:text-white mb-4">
           {{ $t('library.songs') }} ({{ filteredSongs.length }} {{ filteredSongs.length === 1 ? 'result' : 'results' }}{{ isSearching ? ' - searching...' : '' }})
         </h2>
         <div class="space-y-2">
@@ -44,17 +44,17 @@
             v-for="song in filteredSongs" 
             :key="song.id"
             @click="playSong(song)"
-            class="flex items-center p-3 rounded-lg hover:bg-spotify-light cursor-pointer group transition-colors duration-200"
+            class="flex items-center p-3 rounded-lg hover:bg-light-border dark:hover:bg-spotify-light cursor-pointer group transition-colors duration-200"
           >
-            <div class="w-10 h-10 bg-spotify-dark rounded mr-3 flex items-center justify-center">
+            <div class="w-10 h-10 bg-light-border dark:bg-spotify-dark rounded mr-3 flex items-center justify-center">
               <MusicalNoteIcon class="w-5 h-5 text-gray-400" />
             </div>
             <div class="flex-1 min-w-0">
-              <p class="text-white dark:text-white text-light-text-primary font-medium truncate">{{ song.title }} (#{{ song.id }})</p>
-              <p class="text-gray-400 dark:text-gray-400 text-light-text-secondary text-sm" v-if="song.matchType === 'lyrics'">
+              <p class="text-light-text-primary dark:text-white font-medium truncate">{{ song.title }} (#{{ song.id }})</p>
+              <p class="text-light-text-secondary dark:text-gray-400 text-sm" v-if="song.matchType === 'lyrics'">
                 {{ getMatchingLyricPreview(song, searchQuery) }}
               </p>
-              <p class="text-gray-400 dark:text-gray-400 text-light-text-secondary text-sm" v-else>
+              <p class="text-light-text-secondary dark:text-gray-400 text-sm" v-else>
                 Title match
               </p>
             </div>
@@ -82,19 +82,19 @@
       </div>
       
       <!-- No results -->
-      <div v-else-if="searchQuery && !isSearching" class="text-center text-gray-400 mt-12">
+      <div v-else-if="searchQuery && !isSearching" class="text-center text-light-text-secondary dark:text-gray-400 mt-12">
         {{ $t('library.noResults') }}
       </div>
       
       <!-- Initial state -->
-      <div v-else-if="!searchQuery" class="text-center text-gray-400 mt-12">
+      <div v-else-if="!searchQuery" class="text-center text-light-text-secondary dark:text-gray-400 mt-12">
         <p class="text-lg mb-2">🎵 Search for songs</p>
         <p class="text-sm">Search by song title or lyrics content</p>
-        <p class="text-xs mt-2 text-gray-500">Type at least 2 characters to start searching</p>
+        <p class="text-xs mt-2 text-light-text-secondary/70 dark:text-gray-500">Type at least 2 characters to start searching</p>
       </div>
       
       <!-- Too short query -->
-      <div v-else-if="searchQuery && searchQuery.trim().length < 2" class="text-center text-gray-400 mt-12">
+      <div v-else-if="searchQuery && searchQuery.trim().length < 2" class="text-center text-light-text-secondary dark:text-gray-400 mt-12">
         <p class="text-lg mb-2">⌨️ Keep typing...</p>
         <p class="text-sm">Need at least 2 characters to search</p>
       </div>

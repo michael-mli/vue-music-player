@@ -1,5 +1,5 @@
 <template>
-  <div class="app flex flex-col h-screen bg-spotify-black dark:bg-spotify-black bg-light-bg text-white dark:text-white text-light-text-primary">
+  <div class="app flex flex-col h-screen bg-light-bg dark:bg-spotify-black text-light-text-primary dark:text-white">
     <!-- Main Content -->
     <div class="flex flex-1 overflow-hidden relative">
       <!-- Desktop Sidebar -->
@@ -18,7 +18,7 @@
       </div>
       
       <!-- Main View -->
-      <main class="flex-1 flex flex-col bg-gradient-to-b from-spotify-dark dark:from-spotify-dark from-light-surface to-spotify-black dark:to-spotify-black to-light-bg pb-28 sm:pb-0">
+      <main class="flex-1 flex flex-col bg-gradient-to-b from-light-surface to-light-bg dark:from-spotify-dark dark:to-spotify-black pb-28 sm:pb-0">
         <!-- Header -->
         <Header @toggle-sidebar="showMobileSidebar = !showMobileSidebar" />
         

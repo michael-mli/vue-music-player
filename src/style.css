@@ -57,10 +57,10 @@
   }
   
   .btn-secondary {
-    @apply bg-spotify-light hover:bg-spotify-dark text-white font-medium py-2 px-4 rounded-full transition-colors duration-200;
+    @apply bg-light-border text-light-text-primary dark:bg-spotify-light dark:text-white hover:bg-light-border/80 dark:hover:bg-spotify-dark font-medium py-2 px-4 rounded-full transition-colors duration-200;
   }
   
   .card {
-    @apply bg-spotify-dark rounded-lg p-4 hover:bg-spotify-light transition-colors duration-200;
+    @apply bg-light-card text-light-text-primary dark:bg-spotify-dark dark:text-white rounded-lg p-4 hover:bg-light-border dark:hover:bg-spotify-light transition-colors duration-200;
   }
 }

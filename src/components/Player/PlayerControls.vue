@@ -1,14 +1,14 @@
 <template>
   <!-- Mobile Layout -->
-  <div class="fixed bottom-0 left-0 right-0 h-28 bg-spotify-dark dark:bg-spotify-dark bg-light-card border-t border-spotify-light dark:border-spotify-light border-light-border sm:hidden z-40">
+  <div class="fixed bottom-0 left-0 right-0 h-28 bg-light-card dark:bg-spotify-dark border-t border-light-border dark:border-spotify-light sm:hidden z-40">
     <!-- Current Song Info - Mobile -->
-    <div v-if="currentSong" class="flex items-center px-2 py-1.5 border-b border-spotify-light h-12">
-      <div class="w-8 h-8 bg-spotify-light rounded mr-2 flex items-center justify-center">
+    <div v-if="currentSong" class="flex items-center px-2 py-1.5 border-b border-light-border dark:border-spotify-light h-12">
+      <div class="w-8 h-8 bg-light-border dark:bg-spotify-light rounded mr-2 flex items-center justify-center">
         <MusicalNoteIcon class="w-4 h-4 text-gray-400" />
       </div>
       <div class="flex-1 min-w-0">
-        <p class="text-xs font-medium text-white dark:text-white text-light-text-primary truncate">{{ currentSong.title }} (#{{ currentSong.id }})</p>
-        <p class="text-xs text-gray-400 dark:text-gray-400 text-light-text-secondary truncate">{{ $t('player.currentlyPlaying') }}</p>
+        <p class="text-xs font-medium text-light-text-primary dark:text-white truncate">{{ currentSong.title }} (#{{ currentSong.id }})</p>
+        <p class="text-xs text-light-text-secondary dark:text-gray-400 truncate">{{ $t('player.currentlyPlaying') }}</p>
       </div>
       <button 
         @click="toggleFavorite"
@@ -103,16 +103,16 @@
   </div>
 
   <!-- Desktop Layout -->
-  <div class="h-24 bg-spotify-dark dark:bg-spotify-dark bg-light-card border-t border-spotify-light dark:border-spotify-light border-light-border hidden sm:flex items-center px-4">
+  <div class="h-24 bg-light-card dark:bg-spotify-dark border-t border-light-border dark:border-spotify-light hidden sm:flex items-center px-4">
     <!-- Current Song Info -->
     <div class="flex items-center w-80 min-w-0">
       <div v-if="currentSong" class="flex items-center min-w-0 flex-1">
-        <div class="w-14 h-14 bg-spotify-light rounded-md mr-3 flex items-center justify-center">
+        <div class="w-14 h-14 bg-light-border dark:bg-spotify-light rounded-md mr-3 flex items-center justify-center">
           <MusicalNoteIcon class="w-6 h-6 text-gray-400" />
         </div>
         <div class="flex-1 min-w-0">
-          <p class="text-sm font-medium text-white dark:text-white text-light-text-primary truncate">{{ currentSong.title }} (#{{ currentSong.id }})</p>
-          <p class="text-xs text-gray-400 dark:text-gray-400 text-light-text-secondary truncate">{{ $t('player.currentlyPlaying') }}</p>
+          <p class="text-sm font-medium text-light-text-primary dark:text-white truncate">{{ currentSong.title }} (#{{ currentSong.id }})</p>
+          <p class="text-xs text-light-text-secondary dark:text-gray-400 truncate">{{ $t('player.currentlyPlaying') }}</p>
         </div>
         <button 
           @click="toggleFavorite"

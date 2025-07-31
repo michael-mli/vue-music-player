@@ -1,5 +1,5 @@
 <template>
-  <header class="h-16 flex items-center justify-between px-6 bg-gradient-to-b from-black/50 dark:from-black/50 from-light-bg/50 to-transparent">
+  <header class="h-16 flex items-center justify-between px-6 bg-gradient-to-b from-light-bg/50 dark:from-black/50 to-transparent">
     <!-- Navigation Buttons -->
     <div class="flex items-center space-x-2">
       <!-- Mobile menu button -->
@@ -26,7 +26,7 @@
     
     <!-- Page Title -->
     <div class="flex-1 text-center">
-      <h1 class="text-2xl font-bold text-white dark:text-white text-light-text-primary">{{ pageTitle }}</h1>
+      <h1 class="text-2xl font-bold text-light-text-primary dark:text-white">{{ pageTitle }}</h1>
     </div>
     
     <!-- User Actions -->

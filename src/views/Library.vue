@@ -1,10 +1,10 @@
 <template>
   <div class="library-view h-full overflow-y-auto spotify-scrollbar">
     <div class="p-6">
-      <h1 class="text-3xl font-bold text-white dark:text-white text-light-text-primary mb-6">{{ $t('navigation.library') }}</h1>
+      <h1 class="text-3xl font-bold text-light-text-primary dark:text-white mb-6">{{ $t('navigation.library') }}</h1>
       
       <div class="mb-6 flex items-center justify-between">
-        <p class="text-gray-400 dark:text-gray-400 text-light-text-secondary">{{ $t('library.totalSongs', { count: songs.length }) }}</p>
+        <p class="text-light-text-secondary dark:text-gray-400">{{ $t('library.totalSongs', { count: songs.length }) }}</p>
         <div v-if="isLoadingTitles" class="text-spotify-green text-sm flex items-center">
           <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-spotify-green" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -19,17 +19,17 @@
           v-for="(song, index) in paginatedSongs" 
           :key="song.id"
           @click="playSong(song, index)"
-          class="flex items-center p-3 rounded-lg hover:bg-spotify-light dark:hover:bg-spotify-light hover:bg-light-border cursor-pointer group transition-colors duration-200"
+          class="flex items-center p-3 rounded-lg hover:bg-light-border dark:hover:bg-spotify-light cursor-pointer group transition-colors duration-200"
         >
           <div class="w-8 text-center mr-4">
-            <span class="text-gray-400 dark:text-gray-400 text-light-text-secondary text-sm">{{ song.id }}</span>
+            <span class="text-light-text-secondary dark:text-gray-400 text-sm">{{ song.id }}</span>
           </div>
-          <div class="w-10 h-10 bg-spotify-dark dark:bg-spotify-dark bg-light-border rounded mr-3 flex items-center justify-center">
+          <div class="w-10 h-10 bg-light-border dark:bg-spotify-dark rounded mr-3 flex items-center justify-center">
             <MusicalNoteIcon class="w-5 h-5 text-gray-400" />
           </div>
           <div class="flex-1 min-w-0">
-            <p class="text-white dark:text-white text-light-text-primary font-medium truncate">{{ song.title }}</p>
-            <p class="text-gray-400 dark:text-gray-400 text-light-text-secondary text-sm">{{ formatDuration(song.duration) }}</p>
+            <p class="text-light-text-primary dark:text-white font-medium truncate">{{ song.title }}</p>
+            <p class="text-light-text-secondary dark:text-gray-400 text-sm">{{ formatDuration(song.duration) }}</p>
           </div>
           <div class="flex items-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-200">
             <button 
@@ -61,7 +61,7 @@
           <button 
             v-if="currentPage > 3"
             @click="setPage(1)"
-            class="w-8 h-8 sm:w-10 sm:h-10 bg-spotify-light text-white rounded hover:bg-spotify-green transition-colors duration-200 text-sm"
+            class="w-8 h-8 sm:w-10 sm:h-10 bg-light-border text-light-text-primary dark:bg-spotify-light dark:text-white rounded hover:bg-spotify-green dark:hover:bg-spotify-green transition-colors duration-200 text-sm"
           >
             1
           </button>
@@ -78,7 +78,7 @@
               'w-8 h-8 sm:w-10 sm:h-10 rounded transition-colors duration-200 text-sm',
               page === currentPage 
                 ? 'bg-spotify-green text-white' 
-                : 'bg-spotify-light text-white hover:bg-spotify-green'
+                : 'bg-light-border text-light-text-primary dark:bg-spotify-light dark:text-white hover:bg-spotify-green dark:hover:bg-spotify-green'
             ]"
           >
             {{ page }}
@@ -91,7 +91,7 @@
           <button 
             v-if="currentPage < totalPages - 2"
             @click="setPage(totalPages)"
-            class="w-8 h-8 sm:w-10 sm:h-10 bg-spotify-light text-white rounded hover:bg-spotify-green transition-colors duration-200 text-sm"
+            class="w-8 h-8 sm:w-10 sm:h-10 bg-light-border text-light-text-primary dark:bg-spotify-light dark:text-white rounded hover:bg-spotify-green dark:hover:bg-spotify-green transition-colors duration-200 text-sm"
           >
             {{ totalPages }}
           </button>
@@ -102,19 +102,19 @@
           <button 
             @click="previousPage"
             :disabled="currentPage === 1"
-            class="px-4 py-2 bg-spotify-light text-white rounded disabled:opacity-50 hover:bg-spotify-green transition-colors duration-200"
+            class="px-4 py-2 bg-light-border text-light-text-primary dark:bg-spotify-light dark:text-white rounded disabled:opacity-50 hover:bg-spotify-green dark:hover:bg-spotify-green transition-colors duration-200"
           >
             Previous
           </button>
           
-          <span class="text-gray-400 text-sm">
+          <span class="text-light-text-secondary dark:text-gray-400 text-sm">
             Page {{ currentPage }} of {{ totalPages }}
           </span>
           
           <button 
             @click="nextPage"
             :disabled="currentPage === totalPages"
-            class="px-4 py-2 bg-spotify-light text-white rounded disabled:opacity-50 hover:bg-spotify-green transition-colors duration-200"
+            class="px-4 py-2 bg-light-border text-light-text-primary dark:bg-spotify-light dark:text-white rounded disabled:opacity-50 hover:bg-spotify-green dark:hover:bg-spotify-green transition-colors duration-200"
           >
             Next
           </button>
@@ -122,14 +122,14 @@
         
         <!-- Jump to Page Input -->
         <div class="flex items-center space-x-2">
-          <span class="text-gray-400 text-sm">Go to page:</span>
+          <span class="text-light-text-secondary dark:text-gray-400 text-sm">Go to page:</span>
           <input 
             v-model.number="jumpToPageInput"
             @keyup.enter="jumpToPage"
             type="number" 
             :min="1" 
             :max="totalPages"
-            class="w-16 px-2 py-1 bg-spotify-dark text-white border border-spotify-light rounded text-sm text-center"
+            class="w-16 px-2 py-1 bg-light-surface text-light-text-primary dark:bg-spotify-dark dark:text-white border border-light-border dark:border-spotify-light rounded text-sm text-center"
             placeholder="1"
           >
           <button 

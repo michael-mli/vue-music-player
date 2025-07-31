@@ -3,10 +3,10 @@
     <div class="p-6">
       <!-- Welcome Section -->
       <div class="mb-8">
-        <h1 class="text-3xl font-bold text-white dark:text-white text-light-text-primary mb-2">
+        <h1 class="text-3xl font-bold text-light-text-primary dark:text-white mb-2">
           {{ getGreeting() }}
         </h1>
-        <p class="text-gray-400 dark:text-gray-400 text-light-text-secondary">{{ $t('app.subtitle') }}</p>
+        <p class="text-light-text-secondary dark:text-gray-400">{{ $t('app.subtitle') }}</p>
       </div>
       
       <!-- Quick Actions -->
@@ -38,7 +38,7 @@
       
       <!-- Recently Played -->
       <section class="mb-8">
-        <h2 class="text-xl font-bold text-white dark:text-white text-light-text-primary mb-4">
+        <h2 class="text-xl font-bold text-light-text-primary dark:text-white mb-4">
           {{ $t('library.recentlyPlayed') }}
         </h2>
         <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
@@ -48,37 +48,37 @@
             @click="playSong(song)"
             class="card cursor-pointer group"
           >
-            <div class="aspect-square bg-spotify-light rounded-md mb-3 flex items-center justify-center relative">
+            <div class="aspect-square bg-light-border dark:bg-spotify-light rounded-md mb-3 flex items-center justify-center relative">
               <MusicalNoteIcon class="w-8 h-8 text-gray-400" />
               <div class="absolute inset-0 bg-black/60 rounded-md opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center">
                 <PlayIcon class="w-6 h-6 text-white" />
               </div>
             </div>
-            <h3 class="font-medium text-white text-sm truncate">{{ song.title }}</h3>
-            <p class="text-gray-400 text-xs">Song {{ song.id }}</p>
+            <h3 class="font-medium text-light-text-primary dark:text-white text-sm truncate">{{ song.title }}</h3>
+            <p class="text-light-text-secondary dark:text-gray-400 text-xs">Song {{ song.id }}</p>
           </div>
         </div>
       </section>
       
       <!-- Popular Songs -->
       <section class="mb-8">
-        <h2 class="text-xl font-bold text-white mb-4">Popular Songs</h2>
+        <h2 class="text-xl font-bold text-light-text-primary dark:text-white mb-4">Popular Songs</h2>
         <div class="space-y-2">
           <div 
             v-for="(song, index) in popularSongs" 
             :key="song.id"
             @click="playSong(song)"
-            class="flex items-center p-3 rounded-lg hover:bg-spotify-light cursor-pointer group transition-colors duration-200"
+            class="flex items-center p-3 rounded-lg hover:bg-light-border dark:hover:bg-spotify-light cursor-pointer group transition-colors duration-200"
           >
             <div class="w-8 h-8 flex items-center justify-center mr-4">
-              <span class="text-gray-400 font-medium">{{ index + 1 }}</span>
+              <span class="text-light-text-secondary dark:text-gray-400 font-medium">{{ index + 1 }}</span>
             </div>
-            <div class="w-10 h-10 bg-spotify-light rounded mr-3 flex items-center justify-center">
+            <div class="w-10 h-10 bg-light-border dark:bg-spotify-light rounded mr-3 flex items-center justify-center">
               <MusicalNoteIcon class="w-5 h-5 text-gray-400" />
             </div>
             <div class="flex-1 min-w-0">
-              <p class="text-white font-medium truncate">{{ song.title }}</p>
-              <p class="text-gray-400 text-sm">{{ formatDuration(song.duration) }}</p>
+              <p class="text-light-text-primary dark:text-white font-medium truncate">{{ song.title }}</p>
+              <p class="text-light-text-secondary dark:text-gray-400 text-sm">{{ formatDuration(song.duration) }}</p>
             </div>
             <button 
               @click.stop="toggleFavorite(song)"
