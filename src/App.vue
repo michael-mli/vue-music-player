@@ -78,7 +78,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { RouterView } from 'vue-router'
+import { RouterView, useRoute } from 'vue-router'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
 import { usePlaylistsStore } from '@/stores/playlists'
@@ -97,6 +97,7 @@ import CreatePlaylistModal from '@/components/UI/CreatePlaylistModal.vue'
 const playerStore = usePlayerStore()
 const songsStore = useSongsStore()
 const playlistsStore = usePlaylistsStore()
+const route = useRoute()
 
 // Reactive state
 const showLyrics = ref(true)
@@ -120,8 +121,10 @@ onMounted(async () => {
     playlistsStore.fetchPlaylists()
   ])
   
-  // Auto-play a random song after data is loaded
-  await startRandomSong()
+  // Auto-play a random song after data is loaded (skip if accessing direct song URL)
+  if (!isDirectSongAccess()) {
+    await startRandomSong()
+  }
   
   // Check for PWA install prompt
   checkInstallPrompt()
@@ -129,6 +132,11 @@ onMounted(async () => {
   // Check for app updates
   checkForUpdates()
 })
+
+function isDirectSongAccess(): boolean {
+  // Check if we're on the music route with a song parameter
+  return route.name === 'Music' && !!route.query.song
+}
 
 async function startRandomSong() {
   try {

@@ -22,7 +22,15 @@
     "unmute": "取消静音",
     "currentlyPlaying": "正在播放",
     "queue": "播放队列",
-    "toggleLyrics": "切换歌词"
+    "toggleLyrics": "切换歌词",
+    "sleepTimer": "睡眠定时器",
+    "sleepTimerOff": "关闭",
+    "sleepTimer30": "30 分钟",
+    "sleepTimer60": "60 分钟",
+    "sleepTimer90": "90 分钟",
+    "sleepTimer120": "120 分钟",
+    "sleepTimerActive": "睡眠定时器：剩余 {time}",
+    "sleepTimerSet": "睡眠定时器已设置为 {minutes} 分钟"
   },
   "library": {
     "songs": "歌曲",
@@ -77,6 +85,8 @@
   },
   "music": {
     "loadingSong": "正在加载歌曲...",
+    "loadingLibrary": "正在加载音乐库...",
+    "searchingSong": "正在搜索歌曲...",
     "nowPlaying": "正在播放",
     "songId": "歌曲 ID",
     "goToLibrary": "前往音乐库",

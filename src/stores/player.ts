@@ -17,6 +17,11 @@ export const usePlayerStore = defineStore('player', () => {
   const queue = ref<Song[]>([])
   const currentIndex = ref(0)
   const audioElement = ref<HTMLAudioElement | null>(null)
+  
+  // Sleep timer state
+  const sleepTimer = ref(60) // Default 60 minutes, 0 = off
+  const sleepTimerRemaining = ref(0) // Remaining time in seconds
+  const sleepTimerInterval = ref<number | null>(null)
 
   // Getters
   const progress = computed(() => {
@@ -37,6 +42,17 @@ export const usePlayerStore = defineStore('player', () => {
 
   const canPlayPrevious = computed(() => {
     return currentIndex.value > 0 || repeat.value === 'all'
+  })
+
+  const isSleepTimerActive = computed(() => {
+    return sleepTimer.value > 0 && sleepTimerRemaining.value > 0
+  })
+
+  const formattedSleepTimer = computed(() => {
+    if (!isSleepTimerActive.value) return ''
+    const minutes = Math.floor(sleepTimerRemaining.value / 60)
+    const seconds = sleepTimerRemaining.value % 60
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`
   })
 
   // Actions
@@ -229,6 +245,54 @@ export const usePlayerStore = defineStore('player', () => {
     return `${mins}:${secs.toString().padStart(2, '0')}`
   }
 
+  function setSleepTimer(minutes: number) {
+    sleepTimer.value = minutes
+    
+    // Clear existing timer
+    if (sleepTimerInterval.value) {
+      clearInterval(sleepTimerInterval.value)
+      sleepTimerInterval.value = null
+    }
+    
+    if (minutes > 0) {
+      // Set remaining time in seconds
+      sleepTimerRemaining.value = minutes * 60
+      
+      // Start countdown
+      sleepTimerInterval.value = setInterval(() => {
+        sleepTimerRemaining.value--
+        
+        if (sleepTimerRemaining.value <= 0) {
+          // Time's up, pause playback
+          pause()
+          clearSleepTimer()
+          console.log('Sleep timer expired, playback paused')
+        }
+      }, 1000)
+      
+      console.log(`Sleep timer set for ${minutes} minutes`)
+    } else {
+      sleepTimerRemaining.value = 0
+    }
+  }
+
+  function clearSleepTimer() {
+    if (sleepTimerInterval.value) {
+      clearInterval(sleepTimerInterval.value)
+      sleepTimerInterval.value = null
+    }
+    sleepTimerRemaining.value = 0
+    console.log('Sleep timer cleared')
+  }
+
+  function toggleSleepTimer() {
+    // Cycle through timer options: 0 -> 30 -> 60 -> 90 -> 120 -> 0
+    const options = [0, 30, 60, 90, 120]
+    const currentIndex = options.indexOf(sleepTimer.value)
+    const nextIndex = (currentIndex + 1) % options.length
+    setSleepTimer(options[nextIndex])
+  }
+
   return {
     // State
     currentSong,
@@ -241,6 +305,8 @@ export const usePlayerStore = defineStore('player', () => {
     repeat,
     queue,
     currentIndex,
+    sleepTimer,
+    sleepTimerRemaining,
     
     // Getters
     progress,
@@ -248,6 +314,8 @@ export const usePlayerStore = defineStore('player', () => {
     formattedDuration,
     canPlayNext,
     canPlayPrevious,
+    isSleepTimerActive,
+    formattedSleepTimer,
     
     // Actions
     initializeAudio,
@@ -261,6 +329,9 @@ export const usePlayerStore = defineStore('player', () => {
     setVolume,
     toggleMute,
     toggleShuffle,
-    toggleRepeat
+    toggleRepeat,
+    setSleepTimer,
+    clearSleepTimer,
+    toggleSleepTimer
   }
 })

@@ -22,7 +22,15 @@
     "unmute": "Unmute",
     "currentlyPlaying": "Currently Playing",
     "queue": "Queue",
-    "toggleLyrics": "Toggle Lyrics"
+    "toggleLyrics": "Toggle Lyrics",
+    "sleepTimer": "Sleep Timer",
+    "sleepTimerOff": "Off",
+    "sleepTimer30": "30 minutes",
+    "sleepTimer60": "60 minutes",
+    "sleepTimer90": "90 minutes",
+    "sleepTimer120": "120 minutes",
+    "sleepTimerActive": "Sleep timer: {time} remaining",
+    "sleepTimerSet": "Sleep timer set for {minutes} minutes"
   },
   "library": {
     "songs": "Songs",
@@ -77,6 +85,8 @@
   },
   "music": {
     "loadingSong": "Loading song...",
+    "loadingLibrary": "Loading music library...",
+    "searchingSong": "Searching for song...",
     "nowPlaying": "Now Playing",
     "songId": "Song ID",
     "goToLibrary": "Go to Library",

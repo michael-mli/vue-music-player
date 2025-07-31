@@ -9,7 +9,7 @@
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
-            {{ t('music.loadingSong') }}
+            {{ loadingMessage }}
           </div>
         </div>
       </div>
@@ -102,6 +102,7 @@ const songsStore = useSongsStore()
 const { t } = useI18n()
 
 const loading = ref(false)
+const loadingMessage = ref('')
 const error = ref('')
 
 const currentSong = computed(() => playerStore.currentSong)
@@ -112,29 +113,45 @@ onMounted(async () => {
   if (songIdParam) {
     loading.value = true
     error.value = ''
+    loadingMessage.value = t('music.loadingSong')
     
     try {
       const songId = parseInt(songIdParam)
       
       if (isNaN(songId)) {
         error.value = t('music.invalidSongId')
+        loading.value = false
         return
       }
 
-      // Wait for songs to be loaded
+      // Wait for songs to be loaded if they haven't been loaded yet
       if (songsStore.songs.length === 0) {
+        loadingMessage.value = t('music.loadingLibrary')
+        console.log('Loading songs library...')
         await songsStore.fetchSongs()
       }
 
-      // Find the song
-      const song = songsStore.songs.find(s => s.id === songId)
+      loadingMessage.value = t('music.searchingSong')
+      console.log(`Searching for song with ID: ${songId}`)
+      
+      // First try to find the song in the already loaded songs
+      let song = songsStore.songs.find(s => s.id === songId)
+      
+      // If not found in the loaded songs, try to fetch it individually
+      if (!song) {
+        console.log(`Song ${songId} not found in library, attempting individual fetch...`)
+        song = await songsStore.getSongById(songId)
+      }
       
       if (song) {
+        loadingMessage.value = t('music.loadingSong')
+        console.log(`Found song: ${song.title} (ID: ${songId}), starting playback...`)
         // Play the song with the full songs list as queue
         const songIndex = songsStore.songs.findIndex(s => s.id === songId)
-        await playerStore.playSong(song, songsStore.songs, songIndex)
-        console.log(`Playing song from URL: ${song.title} (ID: ${songId})`)
+        await playerStore.playSong(song, songsStore.songs, songIndex >= 0 ? songIndex : 0)
+        console.log(`Successfully playing song from URL: ${song.title} (ID: ${songId})`)
       } else {
+        console.log(`Song with ID ${songId} not found`)
         error.value = t('music.songNotFoundWithId', { id: songId })
       }
     } catch (err) {
@@ -142,6 +159,7 @@ onMounted(async () => {
       error.value = t('music.failedToLoad')
     } finally {
       loading.value = false
+      loadingMessage.value = ''
     }
   }
 })

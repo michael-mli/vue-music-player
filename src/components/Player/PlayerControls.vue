@@ -98,6 +98,77 @@
           <ShareIcon class="w-4 h-4" />
         </button>
         
+        <div class="relative sleep-timer-container">
+          <button 
+            @click="showSleepTimerMenu = !showSleepTimerMenu"
+            :class="[
+              'p-1 rounded-full transition-colors duration-200 relative',
+              isSleepTimerActive ? 'text-spotify-green' : 'text-gray-400 hover:text-white'
+            ]"
+            :title="$t('player.sleepTimer')"
+          >
+            <ClockIcon class="w-4 h-4" />
+            <span v-if="isSleepTimerActive" class="absolute -top-1 -right-1 w-2 h-2 bg-spotify-green rounded-full"></span>
+          </button>
+          
+          <!-- Sleep Timer Menu -->
+          <div 
+            v-if="showSleepTimerMenu"
+            class="absolute bottom-full right-0 mb-2 bg-light-card dark:bg-spotify-dark border border-light-border dark:border-spotify-light rounded-lg shadow-lg py-1 min-w-[120px] z-50"
+          >
+            <button 
+              @click="setSleepTimer(0)"
+              :class="[
+                'w-full px-3 py-2 text-left text-sm hover:bg-light-surface dark:hover:bg-spotify-light transition-colors',
+                sleepTimer === 0 ? 'text-spotify-green' : 'text-light-text-primary dark:text-white'
+              ]"
+            >
+              {{ $t('player.sleepTimerOff') }}
+            </button>
+            <button 
+              @click="setSleepTimer(30)"
+              :class="[
+                'w-full px-3 py-2 text-left text-sm hover:bg-light-surface dark:hover:bg-spotify-light transition-colors',
+                sleepTimer === 30 ? 'text-spotify-green' : 'text-light-text-primary dark:text-white'
+              ]"
+            >
+              {{ $t('player.sleepTimer30') }}
+            </button>
+            <button 
+              @click="setSleepTimer(60)"
+              :class="[
+                'w-full px-3 py-2 text-left text-sm hover:bg-light-surface dark:hover:bg-spotify-light transition-colors',
+                sleepTimer === 60 ? 'text-spotify-green' : 'text-light-text-primary dark:text-white'
+              ]"
+            >
+              {{ $t('player.sleepTimer60') }}
+            </button>
+            <button 
+              @click="setSleepTimer(90)"
+              :class="[
+                'w-full px-3 py-2 text-left text-sm hover:bg-light-surface dark:hover:bg-spotify-light transition-colors',
+                sleepTimer === 90 ? 'text-spotify-green' : 'text-light-text-primary dark:text-white'
+              ]"
+            >
+              {{ $t('player.sleepTimer90') }}
+            </button>
+            <button 
+              @click="setSleepTimer(120)"
+              :class="[
+                'w-full px-3 py-2 text-left text-sm hover:bg-light-surface dark:hover:bg-spotify-light transition-colors',
+                sleepTimer === 120 ? 'text-spotify-green' : 'text-light-text-primary dark:text-white'
+              ]"
+            >
+              {{ $t('player.sleepTimer120') }}
+            </button>
+            <div v-if="isSleepTimerActive" class="border-t border-light-border dark:border-spotify-light mt-1 pt-1">
+              <div class="px-3 py-2 text-xs text-spotify-green">
+                {{ $t('player.sleepTimerActive', { time: formattedSleepTimer }) }}
+              </div>
+            </div>
+          </div>
+        </div>
+        
         <button 
           @click="toggleMute"
           class="p-1 rounded-full text-gray-400 hover:text-white transition-colors duration-200"
@@ -239,6 +310,78 @@
         <ShareIcon class="w-5 h-5" />
       </button>
       
+      <!-- Sleep Timer (Desktop) -->
+      <div class="relative mr-2 sleep-timer-container">
+        <button 
+          @click="showSleepTimerMenu = !showSleepTimerMenu"
+          :class="[
+            'p-2 rounded-full transition-colors duration-200 relative',
+            isSleepTimerActive ? 'text-spotify-green' : 'text-gray-400 hover:text-white'
+          ]"
+          :title="$t('player.sleepTimer')"
+        >
+          <ClockIcon class="w-5 h-5" />
+          <span v-if="isSleepTimerActive" class="absolute -top-1 -right-1 w-2 h-2 bg-spotify-green rounded-full"></span>
+        </button>
+        
+        <!-- Sleep Timer Menu (Desktop) -->
+        <div 
+          v-if="showSleepTimerMenu"
+          class="absolute bottom-full right-0 mb-2 bg-light-card dark:bg-spotify-dark border border-light-border dark:border-spotify-light rounded-lg shadow-lg py-1 min-w-[140px] z-50"
+        >
+          <button 
+            @click="setSleepTimer(0)"
+            :class="[
+              'w-full px-4 py-2 text-left text-sm hover:bg-light-surface dark:hover:bg-spotify-light transition-colors',
+              sleepTimer === 0 ? 'text-spotify-green' : 'text-light-text-primary dark:text-white'
+            ]"
+          >
+            {{ $t('player.sleepTimerOff') }}
+          </button>
+          <button 
+            @click="setSleepTimer(30)"
+            :class="[
+              'w-full px-4 py-2 text-left text-sm hover:bg-light-surface dark:hover:bg-spotify-light transition-colors',
+              sleepTimer === 30 ? 'text-spotify-green' : 'text-light-text-primary dark:text-white'
+            ]"
+          >
+            {{ $t('player.sleepTimer30') }}
+          </button>
+          <button 
+            @click="setSleepTimer(60)"
+            :class="[
+              'w-full px-4 py-2 text-left text-sm hover:bg-light-surface dark:hover:bg-spotify-light transition-colors',
+              sleepTimer === 60 ? 'text-spotify-green' : 'text-light-text-primary dark:text-white'
+            ]"
+          >
+            {{ $t('player.sleepTimer60') }}
+          </button>
+          <button 
+            @click="setSleepTimer(90)"
+            :class="[
+              'w-full px-4 py-2 text-left text-sm hover:bg-light-surface dark:hover:bg-spotify-light transition-colors',
+              sleepTimer === 90 ? 'text-spotify-green' : 'text-light-text-primary dark:text-white'
+            ]"
+          >
+            {{ $t('player.sleepTimer90') }}
+          </button>
+          <button 
+            @click="setSleepTimer(120)"
+            :class="[
+              'w-full px-4 py-2 text-left text-sm hover:bg-light-surface dark:hover:bg-spotify-light transition-colors',
+              sleepTimer === 120 ? 'text-spotify-green' : 'text-light-text-primary dark:text-white'
+            ]"
+          >
+            {{ $t('player.sleepTimer120') }}
+          </button>
+          <div v-if="isSleepTimerActive" class="border-t border-light-border dark:border-spotify-light mt-1 pt-1">
+            <div class="px-4 py-2 text-xs text-spotify-green">
+              {{ $t('player.sleepTimerActive', { time: formattedSleepTimer }) }}
+            </div>
+          </div>
+        </div>
+      </div>
+      
       <button 
         @click="toggleMute"
         class="p-2 rounded-full text-gray-400 hover:text-white transition-colors duration-200 mr-2"
@@ -261,7 +404,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { 
   PlayIcon, 
   PauseIcon, 
@@ -276,7 +419,8 @@ import {
   HeartIcon,
   DocumentTextIcon,
   PlusIcon,
-  ShareIcon
+  ShareIcon,
+  ClockIcon
 } from '@heroicons/vue/24/outline'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
@@ -306,6 +450,12 @@ const shuffle = computed(() => playerStore.shuffle)
 const repeat = computed(() => playerStore.repeat)
 const canPlayNext = computed(() => playerStore.canPlayNext)
 const canPlayPrevious = computed(() => playerStore.canPlayPrevious)
+const sleepTimer = computed(() => playerStore.sleepTimer)
+const isSleepTimerActive = computed(() => playerStore.isSleepTimerActive)
+const formattedSleepTimer = computed(() => playerStore.formattedSleepTimer)
+
+// Sleep timer menu state
+const showSleepTimerMenu = ref(false)
 
 // Methods
 function togglePlay() {
@@ -344,6 +494,11 @@ function toggleFavorite() {
   if (currentSong.value) {
     songsStore.toggleFavorite(currentSong.value.id)
   }
+}
+
+function setSleepTimer(minutes: number) {
+  playerStore.setSleepTimer(minutes)
+  showSleepTimerMenu.value = false
 }
 
 function openAddToPlaylistModal() {
@@ -415,4 +570,20 @@ function fallbackCopyToClipboard(text: string) {
   
   document.body.removeChild(textArea)
 }
+
+// Click outside handler to close sleep timer menu  
+function handleClickOutside(event: Event) {
+  const target = event.target as HTMLElement
+  if (!target.closest('.sleep-timer-container')) {
+    showSleepTimerMenu.value = false
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('click', handleClickOutside)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleClickOutside)
+})
 </script>
