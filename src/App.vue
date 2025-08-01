@@ -43,6 +43,13 @@
     <PlayerControls 
       @toggle-lyrics="showLyrics = !showLyrics" 
       @add-to-playlist="openAddToPlaylistFromPlayer"
+      @toggle-visualizer="showVisualizer = !showVisualizer"
+    />
+    
+    <!-- Music Visualizer -->
+    <MusicVisualizer 
+      :is-visible="showVisualizer"
+      @close="showVisualizer = false"
     />
     
     <!-- PWA Install Prompt -->
@@ -92,6 +99,7 @@ import InstallPrompt from '@/components/UI/InstallPrompt.vue'
 import UpdateNotification from '@/components/UI/UpdateNotification.vue'
 import AddToPlaylistModal from '@/components/UI/AddToPlaylistModal.vue'
 import CreatePlaylistModal from '@/components/UI/CreatePlaylistModal.vue'
+import MusicVisualizer from '@/components/Player/MusicVisualizer.vue'
 
 // Stores
 const playerStore = usePlayerStore()
@@ -110,6 +118,7 @@ const deferredPrompt = ref<any>(null)
 const showPlayerAddToPlaylistModal = ref(false)
 const showPlayerCreatePlaylistModal = ref(false)
 const selectedSongFromPlayer = ref<any>(null)
+const showVisualizer = ref(false)
 
 onMounted(async () => {
   // Initialize audio

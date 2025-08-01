@@ -473,6 +473,7 @@ export const usePlayerStore = defineStore('player', () => {
     sleepTimer,
     sleepTimerRemaining,
     totalPlaytime,
+    audioElement,
     
     // Getters
     progress,

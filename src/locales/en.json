@@ -83,6 +83,16 @@
     "updateDescription": "A new version is available with improvements and bug fixes.",
     "offline": "You are offline"
   },
+  "visualizer": {
+    "settings": "Visualizer Settings",
+    "type": "Type",
+    "bars": "Bars",
+    "circle": "Circle",
+    "wave": "Wave",
+    "backgroundOpacity": "Background Opacity",
+    "colorScheme": "Color Scheme",
+    "toggle": "Toggle Visualizer"
+  },
   "music": {
     "loadingSong": "Loading song...",
     "loadingLibrary": "Loading music library...",

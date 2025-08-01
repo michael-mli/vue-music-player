@@ -83,6 +83,16 @@
     "updateDescription": "新版本已发布，包含改进和错误修复。",
     "offline": "您当前处于离线状态"
   },
+  "visualizer": {
+    "settings": "可视化设置",
+    "type": "类型",
+    "bars": "频谱条",
+    "circle": "圆形",
+    "wave": "波形",
+    "backgroundOpacity": "背景透明度",
+    "colorScheme": "配色方案",
+    "toggle": "切换可视化"
+  },
   "music": {
     "loadingSong": "正在加载歌曲...",
     "loadingLibrary": "正在加载音乐库...",

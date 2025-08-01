@@ -170,6 +170,14 @@
         </div>
         
         <button 
+          @click="$emit('toggle-visualizer')"
+          class="p-1 rounded-full text-gray-400 hover:text-white transition-colors duration-200"
+          :title="$t('visualizer.toggle')"
+        >
+          <SparklesIcon class="w-4 h-4" />
+        </button>
+        
+        <button 
           @click="toggleMute"
           class="p-1 rounded-full text-gray-400 hover:text-white transition-colors duration-200"
         >
@@ -382,6 +390,15 @@
         </div>
       </div>
       
+      <!-- Visualizer Toggle (Desktop) -->
+      <button 
+        @click="$emit('toggle-visualizer')"
+        class="p-2 rounded-full text-gray-400 hover:text-white transition-colors duration-200 mr-2"
+        :title="$t('visualizer.toggle')"
+      >
+        <SparklesIcon class="w-5 h-5" />
+      </button>
+      
       <button 
         @click="toggleMute"
         class="p-2 rounded-full text-gray-400 hover:text-white transition-colors duration-200 mr-2"
@@ -420,7 +437,8 @@ import {
   DocumentTextIcon,
   PlusIcon,
   ShareIcon,
-  ClockIcon
+  ClockIcon,
+  SparklesIcon
 } from '@heroicons/vue/24/outline'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
@@ -432,6 +450,7 @@ import VolumeControl from './VolumeControl.vue'
 const emit = defineEmits<{
   'toggle-lyrics': []
   'add-to-playlist': [song: any]
+  'toggle-visualizer': []
 }>()
 
 const playerStore = usePlayerStore()
