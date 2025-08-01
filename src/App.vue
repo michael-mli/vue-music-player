@@ -122,7 +122,7 @@ const showVisualizer = ref(false)
 
 // Auto-visualizer activation state
 const inactivityTimer = ref<number | null>(null)
-const INACTIVITY_TIMEOUT = 30 * 1000 // 30 seconds
+const INACTIVITY_TIMEOUT = 15 * 1000 // 15 seconds
 
 onMounted(async () => {
   // Initialize audio
@@ -272,7 +272,7 @@ function resetInactivityTimer() {
   if (playerStore.isPlaying && !showVisualizer.value) {
     inactivityTimer.value = window.setTimeout(() => {
       showVisualizer.value = true
-      console.log('Auto-activated visualizer after 30 seconds of inactivity')
+      console.log('Auto-activated visualizer after 15 seconds of inactivity')
     }, INACTIVITY_TIMEOUT)
   }
 }
