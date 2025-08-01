@@ -125,7 +125,7 @@ const canvasHeight = ref(window.innerHeight)
 
 // Settings
 const visualizerType = ref<'bars' | 'circle' | 'wave'>('bars')
-const backgroundOpacity = ref(0.3)
+const backgroundOpacity = ref(0.0)
 const colorScheme = ref<'spotify' | 'rainbow' | 'blue' | 'fire'>('spotify')
 const showSettings = ref(false)
 
@@ -438,7 +438,7 @@ onMounted(() => {
     try {
       const settings = JSON.parse(saved)
       visualizerType.value = settings.type || 'bars'
-      backgroundOpacity.value = settings.backgroundOpacity || 0.3
+      backgroundOpacity.value = settings.backgroundOpacity ?? 0.0
       colorScheme.value = settings.colorScheme || 'spotify'
     } catch (error) {
       console.error('Error loading visualizer settings:', error)

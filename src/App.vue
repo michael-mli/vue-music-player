@@ -84,7 +84,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
@@ -120,6 +120,10 @@ const showPlayerCreatePlaylistModal = ref(false)
 const selectedSongFromPlayer = ref<any>(null)
 const showVisualizer = ref(false)
 
+// Auto-visualizer activation state
+const inactivityTimer = ref<number | null>(null)
+const INACTIVITY_TIMEOUT = 30 * 1000 // 30 seconds
+
 onMounted(async () => {
   // Initialize audio
   playerStore.initializeAudio()
@@ -140,6 +144,14 @@ onMounted(async () => {
   
   // Check for app updates
   checkForUpdates()
+  
+  // Setup user activity listeners for auto-visualizer
+  setupActivityListeners()
+})
+
+onUnmounted(() => {
+  clearInactivityTimer()
+  cleanupActivityListeners()
 })
 
 function isDirectSongAccess(): boolean {
@@ -248,6 +260,70 @@ function onPlayerPlaylistCreated() {
   showPlayerCreatePlaylistModal.value = false
   showPlayerAddToPlaylistModal.value = true
 }
+
+// Auto-visualizer functions
+function resetInactivityTimer() {
+  if (inactivityTimer.value) {
+    clearTimeout(inactivityTimer.value)
+    inactivityTimer.value = null
+  }
+  
+  // Only start timer if music is playing and visualizer is not already active
+  if (playerStore.isPlaying && !showVisualizer.value) {
+    inactivityTimer.value = window.setTimeout(() => {
+      showVisualizer.value = true
+      console.log('Auto-activated visualizer after 30 seconds of inactivity')
+    }, INACTIVITY_TIMEOUT)
+  }
+}
+
+function clearInactivityTimer() {
+  if (inactivityTimer.value) {
+    clearTimeout(inactivityTimer.value)
+    inactivityTimer.value = null
+  }
+}
+
+function handleUserActivity() {
+  // Reset timer on any user activity
+  resetInactivityTimer()
+}
+
+function setupActivityListeners() {
+  // Listen for various user activities
+  const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click']
+  events.forEach(event => {
+    document.addEventListener(event, handleUserActivity, true)
+  })
+}
+
+function cleanupActivityListeners() {
+  // Remove activity listeners
+  const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click']
+  events.forEach(event => {
+    document.removeEventListener(event, handleUserActivity, true)
+  })
+}
+
+// Watch for player state changes
+watch(() => playerStore.isPlaying, (isPlaying) => {
+  if (isPlaying) {
+    resetInactivityTimer()
+  } else {
+    clearInactivityTimer()
+  }
+})
+
+// Watch for visualizer state changes
+watch(showVisualizer, (isVisible) => {
+  if (isVisible) {
+    // Clear timer when visualizer is manually activated
+    clearInactivityTimer()
+  } else if (playerStore.isPlaying) {
+    // Restart timer when visualizer is closed and music is still playing
+    resetInactivityTimer()
+  }
+})
 
 // Global keyboard shortcuts
 window.addEventListener('keydown', async (e) => {
