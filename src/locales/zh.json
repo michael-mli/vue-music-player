@@ -96,6 +96,9 @@
     "wave": "波形",
     "backgroundOpacity": "背景透明度",
     "colorScheme": "配色方案",
+    "barHeight": "频谱条高度",
+    "low": "低",
+    "high": "高",
     "toggle": "切换可视化"
   },
   "music": {

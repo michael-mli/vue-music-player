@@ -96,6 +96,9 @@
     "wave": "Wave",
     "backgroundOpacity": "Background Opacity",
     "colorScheme": "Color Scheme",
+    "barHeight": "Bar Height",
+    "low": "Low",
+    "high": "High",
     "toggle": "Toggle Visualizer"
   },
   "music": {

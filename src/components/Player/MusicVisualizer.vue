@@ -84,6 +84,23 @@
           <option value="fire" class="bg-gray-800 text-white">Fire</option>
         </select>
       </div>
+      
+      <!-- Bar Height -->
+      <div class="mb-3">
+        <label class="text-xs text-white/80 block mb-1">{{ $t('visualizer.barHeight') }}</label>
+        <input 
+          v-model="barHeight"
+          type="range"
+          min="0.2"
+          max="1.0"
+          step="0.1"
+          class="w-full"
+        />
+        <div class="flex justify-between text-xs text-white/60 mt-1">
+          <span>{{ $t('visualizer.low') }}</span>
+          <span>{{ $t('visualizer.high') }}</span>
+        </div>
+      </div>
     </div>
     
     <!-- Settings toggle -->
@@ -127,6 +144,7 @@ const canvasHeight = ref(window.innerHeight)
 const visualizerType = ref<'bars' | 'circle' | 'wave'>('bars')
 const backgroundOpacity = ref(0.0)
 const colorScheme = ref<'spotify' | 'rainbow' | 'blue' | 'fire'>('spotify')
+const barHeight = ref(0.8)
 const showSettings = ref(false)
 
 // Audio context and analyzer
@@ -300,10 +318,10 @@ function drawBars(ctx: CanvasRenderingContext2D, dataArray: Uint8Array) {
   let x = 0
   
   for (let i = 0; i < dataArray.length; i++) {
-    const barHeight = (dataArray[i] / 255) * canvasHeight.value * 0.8
+    const barHeightValue = (dataArray[i] / 255) * canvasHeight.value * barHeight.value
     
     ctx.fillStyle = getColor(i, dataArray.length, dataArray[i])
-    ctx.fillRect(x, canvasHeight.value - barHeight, barWidth, barHeight)
+    ctx.fillRect(x, canvasHeight.value - barHeightValue, barWidth, barHeightValue)
     
     x += barWidth + 1
   }
@@ -423,11 +441,12 @@ watch(() => props.isVisible, async (newValue) => {
 })
 
 // Save settings to localStorage
-watch([visualizerType, backgroundOpacity, colorScheme], () => {
+watch([visualizerType, backgroundOpacity, colorScheme, barHeight], () => {
   localStorage.setItem('music-visualizer-settings', JSON.stringify({
     type: visualizerType.value,
     backgroundOpacity: backgroundOpacity.value,
-    colorScheme: colorScheme.value
+    colorScheme: colorScheme.value,
+    barHeight: barHeight.value
   }))
 })
 
@@ -440,6 +459,7 @@ onMounted(() => {
       visualizerType.value = settings.type || 'bars'
       backgroundOpacity.value = settings.backgroundOpacity ?? 0.0
       colorScheme.value = settings.colorScheme || 'spotify'
+      barHeight.value = settings.barHeight ?? 0.8
     } catch (error) {
       console.error('Error loading visualizer settings:', error)
     }

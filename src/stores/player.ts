@@ -28,6 +28,12 @@ export const usePlayerStore = defineStore('player', () => {
   const sessionStartTime = ref(0) // When current play session started
   const lastPlayState = ref(false) // Previous playing state
   const playtimeInterval = ref<number | null>(null) // Interval for updating playtime
+  
+  // Network connectivity tracking
+  const isOnline = ref(navigator.onLine)
+  const networkRetryAttempts = ref(0)
+  const maxRetryAttempts = 3
+  const retryDelay = 2000 // 2 seconds
 
   // Getters
   const progress = computed(() => {
@@ -82,9 +88,13 @@ export const usePlayerStore = defineStore('player', () => {
     // Load saved settings
     loadTotalPlaytime()
     loadSleepTimer()
+    
+    // Setup network connectivity listeners
+    setupNetworkListeners()
 
     audioElement.value.addEventListener('loadedmetadata', () => {
       duration.value = audioElement.value?.duration || 0
+      networkRetryAttempts.value = 0 // Reset retry count on successful load
     })
 
     audioElement.value.addEventListener('timeupdate', () => {
@@ -93,6 +103,24 @@ export const usePlayerStore = defineStore('player', () => {
 
     audioElement.value.addEventListener('ended', () => {
       handleSongEnd()
+    })
+    
+    // Add network error handling
+    audioElement.value.addEventListener('error', (e) => {
+      const error = e.target as HTMLAudioElement
+      if (error.error) {
+        console.error('Audio error:', error.error.code, error.error.message)
+        handleAudioError(error.error)
+      }
+    })
+    
+    audioElement.value.addEventListener('stalled', () => {
+      console.warn('Audio stalled - possible network issue')
+      if (!isOnline.value) {
+        console.log('Device is offline, waiting for connection...')
+      } else {
+        handleNetworkRetry()
+      }
     })
 
     audioElement.value.addEventListener('play', () => {
@@ -187,7 +215,24 @@ export const usePlayerStore = defineStore('player', () => {
     }
 
     currentIndex.value = nextIndex
-    await playSong(queue.value[nextIndex])
+    
+    // Reset network retry attempts for new song
+    networkRetryAttempts.value = 0
+    
+    try {
+      await playSong(queue.value[nextIndex])
+    } catch (error) {
+      console.error('Failed to play next song:', error)
+      
+      // If we're offline, don't keep trying
+      if (!isOnline.value) {
+        console.log('Device offline, waiting for network connection to resume playback')
+        return
+      }
+      
+      // If online but failed, try to retry or skip
+      handleNetworkRetry()
+    }
   }
 
   async function previousSong() {
@@ -254,6 +299,100 @@ export const usePlayerStore = defineStore('player', () => {
       await play()
     } else {
       await nextSong()
+    }
+  }
+  
+  function setupNetworkListeners() {
+    // Listen for online/offline events
+    window.addEventListener('online', () => {
+      isOnline.value = true
+      networkRetryAttempts.value = 0
+      console.log('Network connection restored')
+      
+      // If we were playing and got disconnected, try to resume
+      if (lastPlayState.value && !isPlaying.value && currentSong.value) {
+        console.log('Attempting to resume playback after network restore')
+        handleNetworkReconnect()
+      }
+    })
+    
+    window.addEventListener('offline', () => {
+      isOnline.value = false
+      console.log('Network connection lost')
+    })
+  }
+  
+  function handleAudioError(error: MediaError) {
+    // MediaError codes:
+    // 1 = MEDIA_ERR_ABORTED - fetching aborted by user
+    // 2 = MEDIA_ERR_NETWORK - network error
+    // 3 = MEDIA_ERR_DECODE - decode error
+    // 4 = MEDIA_ERR_SRC_NOT_SUPPORTED - source not supported
+    
+    if (error.code === MediaError.MEDIA_ERR_NETWORK) {
+      console.log('Network error detected, attempting retry...')
+      handleNetworkRetry()
+    } else if (error.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
+      console.error('Audio source not supported, skipping to next song')
+      setTimeout(() => nextSong(), 1000)
+    }
+  }
+  
+  async function handleNetworkRetry() {
+    if (networkRetryAttempts.value >= maxRetryAttempts) {
+      console.log('Max retry attempts reached, giving up')
+      return
+    }
+    
+    networkRetryAttempts.value++
+    console.log(`Network retry attempt ${networkRetryAttempts.value}/${maxRetryAttempts}`)
+    
+    // Wait before retrying
+    await new Promise(resolve => setTimeout(resolve, retryDelay))
+    
+    if (currentSong.value && audioElement.value) {
+      const currentTimeBeforeRetry = currentTime.value
+      
+      try {
+        // Reload the audio source
+        audioElement.value.load()
+        
+        // Try to seek back to where we were
+        if (currentTimeBeforeRetry > 0) {
+          audioElement.value.currentTime = currentTimeBeforeRetry
+        }
+        
+        // If we were playing, try to resume
+        if (lastPlayState.value) {
+          await audioElement.value.play()
+        }
+      } catch (error) {
+        console.error('Retry failed:', error)
+        
+        // If this was the last attempt and we're in auto-play mode, try next song
+        if (networkRetryAttempts.value >= maxRetryAttempts) {
+          console.log('All retries failed, attempting to play next song')
+          setTimeout(() => nextSong(), 1000)
+        }
+      }
+    }
+  }
+  
+  async function handleNetworkReconnect() {
+    if (currentSong.value && audioElement.value) {
+      try {
+        // Reload the current song
+        audioElement.value.src = getMusicUrl(`link.${currentSong.value.id}.mp3`)
+        audioElement.value.load()
+        
+        // Wait a bit for the connection to stabilize
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        
+        // Try to resume playback
+        await audioElement.value.play()
+      } catch (error) {
+        console.error('Failed to resume after network reconnect:', error)
+      }
     }
   }
 
@@ -474,6 +613,8 @@ export const usePlayerStore = defineStore('player', () => {
     sleepTimerRemaining,
     totalPlaytime,
     audioElement,
+    isOnline,
+    networkRetryAttempts,
     
     // Getters
     progress,
