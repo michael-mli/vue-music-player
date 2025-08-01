@@ -106,10 +106,12 @@ import {
   MusicalNoteIcon,
   PlayIcon
 } from '@heroicons/vue/24/outline'
+import { useI18n } from 'vue-i18n'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
 import type { Song } from '@/types'
 
+const { t } = useI18n()
 const playerStore = usePlayerStore()
 const songsStore = useSongsStore()
 
@@ -130,9 +132,9 @@ onMounted(() => {
 
 function getGreeting(): string {
   const hour = new Date().getHours()
-  if (hour < 12) return 'Good morning'
-  if (hour < 18) return 'Good afternoon'
-  return 'Good evening'
+  if (hour < 12) return t('greeting.morning')
+  if (hour < 18) return t('greeting.afternoon')
+  return t('greeting.evening')
 }
 
 function playSong(song: Song) {

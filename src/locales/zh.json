@@ -75,6 +75,11 @@
     "user": "用户",
     "later": "稍后"
   },
+  "greeting": {
+    "morning": "早上好",
+    "afternoon": "下午好",
+    "evening": "晚上好"
+  },
   "pwa": {
     "install": "安装应用",
     "installDescription": "获得完整的应用体验，支持离线音乐、快速加载和主屏幕访问。",

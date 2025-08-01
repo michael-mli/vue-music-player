@@ -50,11 +50,11 @@
         <label class="text-xs text-white/80 block mb-1">{{ $t('visualizer.type') }}</label>
         <select 
           v-model="visualizerType"
-          class="w-full px-2 py-1 bg-white/10 rounded text-xs border border-white/20 focus:border-spotify-green focus:outline-none"
+          class="w-full px-2 py-1 bg-white/10 rounded text-xs border border-white/20 focus:border-spotify-green focus:outline-none text-white"
         >
-          <option value="bars">{{ $t('visualizer.bars') }}</option>
-          <option value="circle">{{ $t('visualizer.circle') }}</option>
-          <option value="wave">{{ $t('visualizer.wave') }}</option>
+          <option value="bars" class="bg-gray-800 text-white">{{ $t('visualizer.bars') }}</option>
+          <option value="circle" class="bg-gray-800 text-white">{{ $t('visualizer.circle') }}</option>
+          <option value="wave" class="bg-gray-800 text-white">{{ $t('visualizer.wave') }}</option>
         </select>
       </div>
       
@@ -76,12 +76,12 @@
         <label class="text-xs text-white/80 block mb-1">{{ $t('visualizer.colorScheme') }}</label>
         <select 
           v-model="colorScheme"
-          class="w-full px-2 py-1 bg-white/10 rounded text-xs border border-white/20 focus:border-spotify-green focus:outline-none"
+          class="w-full px-2 py-1 bg-white/10 rounded text-xs border border-white/20 focus:border-spotify-green focus:outline-none text-white"
         >
-          <option value="spotify">Spotify Green</option>
-          <option value="rainbow">Rainbow</option>
-          <option value="blue">Blue Waves</option>
-          <option value="fire">Fire</option>
+          <option value="spotify" class="bg-gray-800 text-white">Spotify Green</option>
+          <option value="rainbow" class="bg-gray-800 text-white">Rainbow</option>
+          <option value="blue" class="bg-gray-800 text-white">Blue Waves</option>
+          <option value="fire" class="bg-gray-800 text-white">Fire</option>
         </select>
       </div>
     </div>

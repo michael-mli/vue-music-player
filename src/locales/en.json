@@ -75,6 +75,11 @@
     "user": "User",
     "later": "Later"
   },
+  "greeting": {
+    "morning": "Good morning",
+    "afternoon": "Good afternoon",
+    "evening": "Good evening"
+  },
   "pwa": {
     "install": "Install App",
     "installDescription": "Get the full app experience with offline music, faster loading, and home screen access.",
