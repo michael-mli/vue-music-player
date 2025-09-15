@@ -81,7 +81,7 @@ npm run preview
 
 The app is designed to work with the existing file structure:
 
-- **Music files**: `/link.{1-1282}.mp3`
+- **Music files**: `/link.{1-N}.mp3` (where N is read from `/public/song_number.txt`)
 - **Lyrics**: `/lyrics/link.{number}.mp3.l`
 - **Playlists**: `/data/{user}.{playlist}.pl`
 

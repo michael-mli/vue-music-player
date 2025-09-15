@@ -34,9 +34,13 @@ The application uses **Pinia** for state management with three main stores:
 
 ### File Compatibility
 The app maintains compatibility with existing file structure:
-- Music files: `/link.{1-1282}.mp3`
+- Music files: `/link.{1-N}.mp3` (where N is read from song count files)
 - Lyrics files: `/lyrics/link.{number}.mp3.l`
 - Playlists: `/data/{user}.{playlist}.pl`
+- Song count fallback chain:
+  1. `/data/song_number.txt` (primary)
+  2. `/song_number.txt` (fallback)
+  3. `1282` (hardcoded fallback)
 
 ### Configuration System
 Environment-based configuration in `src/config/index.ts`:

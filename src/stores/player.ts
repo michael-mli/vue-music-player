@@ -102,34 +102,44 @@ export const usePlayerStore = defineStore('player', () => {
   async function playSongFromHistory(song: Song) {
     // This function plays a song from history without adding it to history again
     currentSong.value = song
-    
+
     if (audioElement.value) {
+      // Reset time and duration when switching songs
+      currentTime.value = 0
+      duration.value = 0
+
       // Check if we have a cached version of this song
       const cachedAudio = audioCacheService.getCachedAudio(song.id)
-      
+
       if (cachedAudio) {
         // Transfer state from current audio to cached audio
         audioCacheService.transferAudioState(audioElement.value, cachedAudio)
-        
+
         // Replace the current audio element with the cached one
         const oldAudio = audioElement.value
         audioElement.value = cachedAudio
-        
+
+        // Reset the audio time to 0:00
+        audioElement.value.currentTime = 0
+
         // Transfer all event listeners to the new audio element
         transferAudioEventListeners(oldAudio, audioElement.value)
-        
+
         // Remove the old audio from cache to free memory
         audioCacheService.removeSongFromCache(song.id)
-        
+
         console.log(`🚀 Using cached audio for: ${song.title}`)
       } else {
         // Normal loading for non-cached songs
         audioElement.value.src = getMusicUrl(`link.${song.id}.mp3`)
         audioElement.value.load()
+
+        // Reset the audio time to 0:00
+        audioElement.value.currentTime = 0
       }
-      
+
       await play()
-      
+
       // Trigger read-ahead caching for upcoming songs
       await triggerReadAheadCache()
     }
@@ -140,11 +150,11 @@ export const usePlayerStore = defineStore('player', () => {
       queue.value = songQueue
       currentIndex.value = index || 0
     }
-    
+
     // Add current song to history before switching to new song
     if (currentSong.value && currentSong.value.id !== song.id) {
       playHistory.value.push(currentSong.value)
-      
+
       // Keep history to a reasonable size (last 50 songs)
       // In shuffle mode, we only keep the last song for previous functionality
       const maxHistorySize = shuffle.value ? 1 : 50
@@ -152,7 +162,7 @@ export const usePlayerStore = defineStore('player', () => {
         playHistory.value = playHistory.value.slice(-maxHistorySize)
       }
     }
-    
+
     // Load proper title if it's still generic
     if (song.title.startsWith('Song ')) {
       try {
@@ -162,36 +172,46 @@ export const usePlayerStore = defineStore('player', () => {
         console.error('Error loading song title:', error)
       }
     }
-    
+
     currentSong.value = song
-    
+
     if (audioElement.value) {
+      // Reset time and duration when switching songs
+      currentTime.value = 0
+      duration.value = 0
+
       // Check if we have a cached version of this song
       const cachedAudio = audioCacheService.getCachedAudio(song.id)
-      
+
       if (cachedAudio) {
         // Transfer state from current audio to cached audio
         audioCacheService.transferAudioState(audioElement.value, cachedAudio)
-        
+
         // Replace the current audio element with the cached one
         const oldAudio = audioElement.value
         audioElement.value = cachedAudio
-        
+
+        // Reset the audio time to 0:00
+        audioElement.value.currentTime = 0
+
         // Transfer all event listeners to the new audio element
         transferAudioEventListeners(oldAudio, audioElement.value)
-        
+
         // Remove the old audio from cache to free memory
         audioCacheService.removeSongFromCache(song.id)
-        
+
         console.log(`🚀 Using cached audio for: ${song.title}`)
       } else {
         // Normal loading for non-cached songs
         audioElement.value.src = getMusicUrl(`link.${song.id}.mp3`)
         audioElement.value.load()
+
+        // Reset the audio time to 0:00
+        audioElement.value.currentTime = 0
       }
-      
+
       await play()
-      
+
       // Trigger read-ahead caching for upcoming songs
       await triggerReadAheadCache()
     }

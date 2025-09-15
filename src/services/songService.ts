@@ -3,6 +3,43 @@ import type { Song, APIResponse } from '@/types'
 import config, { getLyricsUrl } from '@/config'
 
 export const songService = {
+  // Get the maximum song number from song_number.txt with fallback chain
+  async getMaxSongNumber(): Promise<number> {
+    const cacheBuster = '?' + Date.now()
+
+    // First try /data/song_number.txt
+    try {
+      const response = await fetch('/data/song_number.txt' + cacheBuster)
+      if (response.ok) {
+        const text = await response.text()
+        const num = parseInt(text.trim(), 10)
+        if (!isNaN(num) && num > 0) {
+          return num
+        }
+      }
+    } catch (error) {
+      console.warn('Could not fetch /data/song_number.txt:', error)
+    }
+
+    // Fallback to /song_number.txt
+    try {
+      const response = await fetch('/song_number.txt' + cacheBuster)
+      if (response.ok) {
+        const text = await response.text()
+        const num = parseInt(text.trim(), 10)
+        if (!isNaN(num) && num > 0) {
+          return num
+        }
+      }
+    } catch (error) {
+      console.warn('Could not fetch /song_number.txt:', error)
+    }
+
+    // Final fallback to 1282 if both files don't exist or are invalid
+    console.warn('Using fallback song number 1282')
+    return 1282
+  },
+
   async getAllSongs(): Promise<APIResponse<Song[]>> {
     return api.get('/songs')
   },
@@ -44,18 +81,20 @@ export const songService = {
   // Mock data for development - remove when backend is ready
   async getMockSongs(): Promise<APIResponse<Song[]>> {
     const mockSongs: Song[] = []
-    
+    const maxSongNumber = await this.getMaxSongNumber()
+
     // Load last 50 songs (highest numbers) with titles from lyrics for better UX
     const promises = []
-    for (let i = 1233; i <= 1282; i++) { // Last 50 songs (1233-1282)
+    const startIndex = Math.max(1, maxSongNumber - 49) // Last 50 songs
+    for (let i = startIndex; i <= maxSongNumber; i++) {
       promises.push(this.getTitleFromLyrics(i))
     }
-    
+
     const last50Titles = await Promise.all(promises)
-    
+
     // Create all songs first, then sort in descending order
-    for (let i = 1; i <= 1282; i++) {
-      const title = i >= 1233 ? last50Titles[i - 1233] : `Song ${i}`
+    for (let i = 1; i <= maxSongNumber; i++) {
+      const title = i >= startIndex ? last50Titles[i - startIndex] : `Song ${i}`
       
       mockSongs.push({
         id: i,

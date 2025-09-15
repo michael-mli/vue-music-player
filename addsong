@@ -1,0 +1,10 @@
+#!/bin/bash
+sn=$($HOME/music/get_link_name)
+echo link.$sn.mp3.l
+if [ -f "$1" ];then
+rm geci.txt >/dev/null 2>&1
+vi geci.txt
+cp geci.txt $HOME/music/lyrics/link.$sn.mp3.l
+cp $1 $HOME/music/link.$sn.mp3
+echo $sn >$HOME/music/song_number.txt
+fi
