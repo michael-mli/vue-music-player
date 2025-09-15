@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import type { Song } from '@/types'
 import { songService } from '@/services/songService'
 import config from '@/config'
+import { stripHtmlTags } from '@/utils/htmlSanitizer'
 
 export const useSongsStore = defineStore('songs', () => {
   // State
@@ -145,8 +146,9 @@ export const useSongsStore = defineStore('songs', () => {
       
       // Helper function to check if text matches all query words
       const matchesAllWords = (text: string) => {
-        const textLower = text.toLowerCase()
-        return queryWords.every(word => textLower.includes(word))
+        // Strip HTML tags for search purposes but keep the content
+        const strippedText = stripHtmlTags(text).toLowerCase()
+        return queryWords.every(word => strippedText.includes(word))
       }
       
       // First pass: Get all title matches (fast)

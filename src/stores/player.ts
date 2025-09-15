@@ -3,6 +3,8 @@ import { ref, computed } from 'vue'
 import type { Song, PlayerState, PlayMode } from '@/types'
 import { getMusicUrl } from '@/config'
 import { songService } from '@/services/songService'
+import { audioCacheService } from '@/services/audioCacheService'
+import { songPredictionService } from '@/services/songPredictionService'
 
 export const usePlayerStore = defineStore('player', () => {
   // State
@@ -17,6 +19,7 @@ export const usePlayerStore = defineStore('player', () => {
   const queue = ref<Song[]>([])
   const currentIndex = ref(0)
   const audioElement = ref<HTMLAudioElement | null>(null)
+  const playHistory = ref<Song[]>([]) // Track actually played songs for previous functionality
   
   // Sleep timer state
   const sleepTimer = ref(0) // Default off, user needs to set it explicitly
@@ -53,7 +56,7 @@ export const usePlayerStore = defineStore('player', () => {
   })
 
   const canPlayPrevious = computed(() => {
-    return currentIndex.value > 0 || repeat.value === 'all'
+    return playHistory.value.length > 0
   })
 
   const isSleepTimerActive = computed(() => {
@@ -91,64 +94,63 @@ export const usePlayerStore = defineStore('player', () => {
     
     // Setup network connectivity listeners
     setupNetworkListeners()
-
-    audioElement.value.addEventListener('loadedmetadata', () => {
-      duration.value = audioElement.value?.duration || 0
-      networkRetryAttempts.value = 0 // Reset retry count on successful load
-    })
-
-    audioElement.value.addEventListener('timeupdate', () => {
-      currentTime.value = audioElement.value?.currentTime || 0
-    })
-
-    audioElement.value.addEventListener('ended', () => {
-      handleSongEnd()
-    })
     
-    // Add network error handling
-    audioElement.value.addEventListener('error', (e) => {
-      const error = e.target as HTMLAudioElement
-      if (error.error) {
-        console.error('Audio error:', error.error.code, error.error.message)
-        handleAudioError(error.error)
-      }
-    })
+    // Setup audio event listeners
+    setupAudioEventListeners(audioElement.value)
+  }
+
+  async function playSongFromHistory(song: Song) {
+    // This function plays a song from history without adding it to history again
+    currentSong.value = song
     
-    audioElement.value.addEventListener('stalled', () => {
-      console.warn('Audio stalled - possible network issue')
-      if (!isOnline.value) {
-        console.log('Device is offline, waiting for connection...')
+    if (audioElement.value) {
+      // Check if we have a cached version of this song
+      const cachedAudio = audioCacheService.getCachedAudio(song.id)
+      
+      if (cachedAudio) {
+        // Transfer state from current audio to cached audio
+        audioCacheService.transferAudioState(audioElement.value, cachedAudio)
+        
+        // Replace the current audio element with the cached one
+        const oldAudio = audioElement.value
+        audioElement.value = cachedAudio
+        
+        // Transfer all event listeners to the new audio element
+        transferAudioEventListeners(oldAudio, audioElement.value)
+        
+        // Remove the old audio from cache to free memory
+        audioCacheService.removeSongFromCache(song.id)
+        
+        console.log(`🚀 Using cached audio for: ${song.title}`)
       } else {
-        handleNetworkRetry()
-      }
-    })
-
-    audioElement.value.addEventListener('play', () => {
-      isPlaying.value = true
-      sessionStartTime.value = Date.now()
-      lastPlayState.value = true
-      startPlaytimeTracking()
-      
-      // Start sleep timer countdown if timer is set but not running
-      if (sleepTimer.value > 0 && sleepTimerRemaining.value > 0 && !sleepTimerInterval.value) {
-        startSleepTimerCountdown()
+        // Normal loading for non-cached songs
+        audioElement.value.src = getMusicUrl(`link.${song.id}.mp3`)
+        audioElement.value.load()
       }
       
-      updateMediaSession()
-    })
-
-    audioElement.value.addEventListener('pause', () => {
-      isPlaying.value = false
-      stopPlaytimeTracking()
-      stopSleepTimerCountdown()
-      lastPlayState.value = false
-    })
+      await play()
+      
+      // Trigger read-ahead caching for upcoming songs
+      await triggerReadAheadCache()
+    }
   }
 
   async function playSong(song: Song, songQueue?: Song[], index?: number) {
     if (songQueue) {
       queue.value = songQueue
       currentIndex.value = index || 0
+    }
+    
+    // Add current song to history before switching to new song
+    if (currentSong.value && currentSong.value.id !== song.id) {
+      playHistory.value.push(currentSong.value)
+      
+      // Keep history to a reasonable size (last 50 songs)
+      // In shuffle mode, we only keep the last song for previous functionality
+      const maxHistorySize = shuffle.value ? 1 : 50
+      if (playHistory.value.length > maxHistorySize) {
+        playHistory.value = playHistory.value.slice(-maxHistorySize)
+      }
     }
     
     // Load proper title if it's still generic
@@ -164,9 +166,34 @@ export const usePlayerStore = defineStore('player', () => {
     currentSong.value = song
     
     if (audioElement.value) {
-      audioElement.value.src = getMusicUrl(`link.${song.id}.mp3`)
-      audioElement.value.load()
+      // Check if we have a cached version of this song
+      const cachedAudio = audioCacheService.getCachedAudio(song.id)
+      
+      if (cachedAudio) {
+        // Transfer state from current audio to cached audio
+        audioCacheService.transferAudioState(audioElement.value, cachedAudio)
+        
+        // Replace the current audio element with the cached one
+        const oldAudio = audioElement.value
+        audioElement.value = cachedAudio
+        
+        // Transfer all event listeners to the new audio element
+        transferAudioEventListeners(oldAudio, audioElement.value)
+        
+        // Remove the old audio from cache to free memory
+        audioCacheService.removeSongFromCache(song.id)
+        
+        console.log(`🚀 Using cached audio for: ${song.title}`)
+      } else {
+        // Normal loading for non-cached songs
+        audioElement.value.src = getMusicUrl(`link.${song.id}.mp3`)
+        audioElement.value.load()
+      }
+      
       await play()
+      
+      // Trigger read-ahead caching for upcoming songs
+      await triggerReadAheadCache()
     }
   }
 
@@ -236,20 +263,21 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   async function previousSong() {
-    if (!canPlayPrevious.value) return
+    if (!canPlayPrevious.value || playHistory.value.length === 0) return
 
-    let prevIndex = currentIndex.value - 1
+    // Get the last played song from history
+    const previousSong = playHistory.value.pop()
+    if (!previousSong) return
 
-    if (prevIndex < 0) {
-      if (repeat.value === 'all') {
-        prevIndex = queue.value.length - 1
-      } else {
-        return
-      }
+    // Find the song in the current queue to set the correct index
+    const songIndex = queue.value.findIndex(song => song.id === previousSong.id)
+    if (songIndex !== -1) {
+      currentIndex.value = songIndex
     }
 
-    currentIndex.value = prevIndex
-    await playSong(queue.value[prevIndex])
+    // Play the previous song without adding it back to history
+    // (since it was already played before)
+    await playSongFromHistory(previousSong)
   }
 
   function seek(time: number) {
@@ -278,6 +306,11 @@ export const usePlayerStore = defineStore('player', () => {
 
   function toggleShuffle() {
     shuffle.value = !shuffle.value
+    
+    // When shuffle mode changes, trigger new cache predictions
+    if (currentSong.value) {
+      triggerReadAheadCache()
+    }
   }
 
   function toggleRepeat() {
@@ -291,6 +324,11 @@ export const usePlayerStore = defineStore('player', () => {
       case 'one':
         repeat.value = 'none'
         break
+    }
+    
+    // When repeat mode changes, trigger new cache predictions
+    if (currentSong.value) {
+      triggerReadAheadCache()
     }
   }
 
@@ -393,6 +431,102 @@ export const usePlayerStore = defineStore('player', () => {
       } catch (error) {
         console.error('Failed to resume after network reconnect:', error)
       }
+    }
+  }
+
+  /**
+   * Transfers event listeners from old audio element to new audio element
+   */
+  function transferAudioEventListeners(oldAudio: HTMLAudioElement, newAudio: HTMLAudioElement) {
+    // Copy volume and mute state
+    newAudio.volume = oldAudio.volume
+    newAudio.muted = oldAudio.muted
+    
+    // The event listeners are already set up in initializeAudio()
+    // We just need to make sure the new element has them
+    setupAudioEventListeners(newAudio)
+  }
+  
+  /**
+   * Sets up event listeners for an audio element
+   */
+  function setupAudioEventListeners(audio: HTMLAudioElement) {
+    audio.addEventListener('loadedmetadata', () => {
+      duration.value = audio.duration || 0
+      networkRetryAttempts.value = 0
+    })
+
+    audio.addEventListener('timeupdate', () => {
+      currentTime.value = audio.currentTime || 0
+    })
+
+    audio.addEventListener('ended', () => {
+      handleSongEnd()
+    })
+    
+    audio.addEventListener('error', (e) => {
+      const error = e.target as HTMLAudioElement
+      if (error.error) {
+        console.error('Audio error:', error.error.code, error.error.message)
+        handleAudioError(error.error)
+      }
+    })
+    
+    audio.addEventListener('stalled', () => {
+      console.warn('Audio stalled - possible network issue')
+      if (!isOnline.value) {
+        console.log('Device is offline, waiting for connection...')
+      } else {
+        handleNetworkRetry()
+      }
+    })
+
+    audio.addEventListener('play', () => {
+      isPlaying.value = true
+      sessionStartTime.value = Date.now()
+      lastPlayState.value = true
+      startPlaytimeTracking()
+      
+      if (sleepTimer.value > 0 && sleepTimerRemaining.value > 0 && !sleepTimerInterval.value) {
+        startSleepTimerCountdown()
+      }
+      
+      updateMediaSession()
+    })
+
+    audio.addEventListener('pause', () => {
+      isPlaying.value = false
+      stopPlaytimeTracking()
+      stopSleepTimerCountdown()
+      lastPlayState.value = false
+    })
+  }
+  
+  /**
+   * Triggers read-ahead caching for upcoming songs
+   */
+  async function triggerReadAheadCache() {
+    if (queue.value.length === 0 || currentIndex.value < 0) {
+      return
+    }
+    
+    const playerState = {
+      queue: queue.value,
+      currentIndex: currentIndex.value,
+      shuffle: shuffle.value,
+      repeat: repeat.value
+    }
+    
+    // Predict upcoming songs
+    const upcomingSongs = songPredictionService.predictUpcomingSongs(playerState, 2)
+    
+    if (upcomingSongs.length > 0) {
+      console.log(`🎵 Pre-loading ${upcomingSongs.length} upcoming songs:`, upcomingSongs.map(s => s.title))
+      
+      // Start preloading in background (non-blocking)
+      audioCacheService.preloadSongs(upcomingSongs).catch(error => {
+        console.warn('Error during song preloading:', error)
+      })
     }
   }
 
@@ -609,6 +743,7 @@ export const usePlayerStore = defineStore('player', () => {
     repeat,
     queue,
     currentIndex,
+    playHistory,
     sleepTimer,
     sleepTimerRemaining,
     totalPlaytime,
@@ -643,6 +778,7 @@ export const usePlayerStore = defineStore('player', () => {
     clearSleepTimer,
     toggleSleepTimer,
     resetTotalPlaytime,
-    stopPlaytimeTracking
+    stopPlaytimeTracking,
+    triggerReadAheadCache
   }
 })
