@@ -112,6 +112,10 @@ export const usePlayerStore = defineStore('player', () => {
       const cachedAudio = audioCacheService.getCachedAudio(song.id)
 
       if (cachedAudio) {
+        // Stop and pause current audio before switching to cached audio
+        audioElement.value.pause()
+        audioElement.value.currentTime = 0
+
         // Transfer state from current audio to cached audio
         audioCacheService.transferAudioState(audioElement.value, cachedAudio)
 
@@ -130,6 +134,10 @@ export const usePlayerStore = defineStore('player', () => {
 
         console.log(`🚀 Using cached audio for: ${song.title}`)
       } else {
+        // Stop and pause current audio before switching to new song
+        audioElement.value.pause()
+        audioElement.value.currentTime = 0
+
         // Normal loading for non-cached songs
         audioElement.value.src = getMusicUrl(`link.${song.id}.mp3`)
         audioElement.value.load()
@@ -184,6 +192,10 @@ export const usePlayerStore = defineStore('player', () => {
       const cachedAudio = audioCacheService.getCachedAudio(song.id)
 
       if (cachedAudio) {
+        // Stop and pause current audio before switching to cached audio
+        audioElement.value.pause()
+        audioElement.value.currentTime = 0
+
         // Transfer state from current audio to cached audio
         audioCacheService.transferAudioState(audioElement.value, cachedAudio)
 
@@ -202,6 +214,10 @@ export const usePlayerStore = defineStore('player', () => {
 
         console.log(`🚀 Using cached audio for: ${song.title}`)
       } else {
+        // Stop and pause current audio before switching to new song
+        audioElement.value.pause()
+        audioElement.value.currentTime = 0
+
         // Normal loading for non-cached songs
         audioElement.value.src = getMusicUrl(`link.${song.id}.mp3`)
         audioElement.value.load()
