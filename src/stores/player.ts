@@ -32,6 +32,10 @@ export const usePlayerStore = defineStore('player', () => {
   const lastPlayState = ref(false) // Previous playing state
   const playtimeInterval = ref<number | null>(null) // Interval for updating playtime
   
+  // Song range filter
+  const songRangeMin = ref(0)
+  const songRangeMax = ref(0)
+
   // Network connectivity tracking
   const isOnline = ref(navigator.onLine)
   const networkRetryAttempts = ref(0)
@@ -70,6 +74,10 @@ export const usePlayerStore = defineStore('player', () => {
     return `${minutes}:${seconds.toString().padStart(2, '0')}`
   })
 
+  const isSongRangeActive = computed(() => {
+    return songRangeMin.value > 0 && songRangeMax.value > 0 && songRangeMax.value >= songRangeMin.value
+  })
+
   const formattedTotalPlaytime = computed(() => {
     const totalSeconds = totalPlaytime.value
     const hours = Math.floor(totalSeconds / 3600)
@@ -91,6 +99,7 @@ export const usePlayerStore = defineStore('player', () => {
     // Load saved settings
     loadTotalPlaytime()
     loadSleepTimer()
+    loadSongRange()
     
     // Setup network connectivity listeners
     setupNetworkListeners()
@@ -262,19 +271,43 @@ export const usePlayerStore = defineStore('player', () => {
     }
   }
 
+  function isSongInRange(song: Song): boolean {
+    if (!isSongRangeActive.value) return true
+    return song.id >= songRangeMin.value && song.id <= songRangeMax.value
+  }
+
   async function nextSong() {
     if (!canPlayNext.value) return
 
     let nextIndex = currentIndex.value + 1
 
     if (shuffle.value) {
-      nextIndex = Math.floor(Math.random() * queue.value.length)
+      // Filter queue to songs within range, then pick random
+      const eligibleIndices = queue.value
+        .map((song, idx) => ({ song, idx }))
+        .filter(({ song }) => isSongInRange(song))
+        .map(({ idx }) => idx)
+
+      if (eligibleIndices.length === 0) return
+      nextIndex = eligibleIndices[Math.floor(Math.random() * eligibleIndices.length)]
     } else if (nextIndex >= queue.value.length) {
       if (repeat.value === 'all') {
         nextIndex = 0
       } else {
         return
       }
+    }
+
+    // In sequential mode with range active, skip songs outside range
+    if (!shuffle.value && isSongRangeActive.value) {
+      const startIndex = nextIndex
+      let checked = 0
+      while (!isSongInRange(queue.value[nextIndex]) && checked < queue.value.length) {
+        nextIndex = (nextIndex + 1) % queue.value.length
+        checked++
+        if (nextIndex === startIndex) return // no songs in range
+      }
+      if (!isSongInRange(queue.value[nextIndex])) return
     }
 
     currentIndex.value = nextIndex
@@ -753,6 +786,45 @@ export const usePlayerStore = defineStore('player', () => {
     }
   }
 
+  function setSongRange(min: number, max: number) {
+    songRangeMin.value = min
+    songRangeMax.value = max
+    saveSongRange()
+    console.log(`Song range set: ${min} - ${max}`)
+  }
+
+  function clearSongRange() {
+    songRangeMin.value = 0
+    songRangeMax.value = 0
+    saveSongRange()
+    console.log('Song range cleared')
+  }
+
+  function loadSongRange() {
+    const saved = localStorage.getItem('music-player-song-range')
+    if (saved) {
+      try {
+        const { min, max } = JSON.parse(saved)
+        songRangeMin.value = min || 0
+        songRangeMax.value = max || 0
+      } catch {
+        songRangeMin.value = 0
+        songRangeMax.value = 0
+      }
+    }
+  }
+
+  function saveSongRange() {
+    if (songRangeMin.value > 0 && songRangeMax.value > 0) {
+      localStorage.setItem('music-player-song-range', JSON.stringify({
+        min: songRangeMin.value,
+        max: songRangeMax.value
+      }))
+    } else {
+      localStorage.removeItem('music-player-song-range')
+    }
+  }
+
   function saveSleepTimer() {
     localStorage.setItem('music-player-sleep-timer', sleepTimer.value.toString())
     
@@ -784,6 +856,8 @@ export const usePlayerStore = defineStore('player', () => {
     sleepTimerRemaining,
     totalPlaytime,
     audioElement,
+    songRangeMin,
+    songRangeMax,
     isOnline,
     networkRetryAttempts,
     
@@ -796,6 +870,7 @@ export const usePlayerStore = defineStore('player', () => {
     isSleepTimerActive,
     formattedSleepTimer,
     formattedTotalPlaytime,
+    isSongRangeActive,
     
     // Actions
     initializeAudio,
@@ -815,6 +890,8 @@ export const usePlayerStore = defineStore('player', () => {
     toggleSleepTimer,
     resetTotalPlaytime,
     stopPlaytimeTracking,
-    triggerReadAheadCache
+    triggerReadAheadCache,
+    setSongRange,
+    clearSongRange
   }
 })

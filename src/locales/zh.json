@@ -30,7 +30,13 @@
     "sleepTimer90": "90 分钟",
     "sleepTimer120": "120 分钟",
     "sleepTimerActive": "睡眠定时器：剩余 {time}",
-    "sleepTimerSet": "睡眠定时器已设置为 {minutes} 分钟"
+    "sleepTimerSet": "睡眠定时器已设置为 {minutes} 分钟",
+    "songRange": "歌曲范围",
+    "songRangeFrom": "从",
+    "songRangeTo": "到",
+    "songRangeActive": "播放歌曲 {min} - {max}",
+    "songRangeClear": "清除",
+    "songRangeSave": "保存"
   },
   "library": {
     "songs": "歌曲",

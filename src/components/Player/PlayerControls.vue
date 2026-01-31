@@ -169,15 +169,70 @@
           </div>
         </div>
         
-        <button 
+        <div class="relative song-range-container">
+          <button
+            @click="showSongRangeMenu = !showSongRangeMenu"
+            :class="[
+              'p-1 rounded-full transition-colors duration-200 relative',
+              isSongRangeActive ? 'text-spotify-green' : 'text-gray-400 hover:text-white'
+            ]"
+            :title="$t('player.songRange')"
+          >
+            <AdjustmentsHorizontalIcon class="w-4 h-4" />
+            <span v-if="isSongRangeActive" class="absolute -top-1 -right-1 w-2 h-2 bg-spotify-green rounded-full"></span>
+          </button>
+
+          <div
+            v-if="showSongRangeMenu"
+            class="absolute bottom-full right-0 mb-2 bg-light-card dark:bg-spotify-dark border border-light-border dark:border-spotify-light rounded-lg shadow-lg p-3 min-w-[180px] z-50"
+          >
+            <h4 class="text-sm font-medium text-light-text-primary dark:text-white mb-2">{{ $t('player.songRange') }}</h4>
+            <div class="flex items-center space-x-2 mb-2">
+              <input
+                v-model.number="rangeFromInput"
+                type="number"
+                min="1"
+                :placeholder="$t('player.songRangeFrom')"
+                class="w-20 px-2 py-1 bg-white/10 rounded text-xs border border-white/20 focus:border-spotify-green text-light-text-primary dark:text-white"
+              />
+              <span class="text-xs text-gray-400">-</span>
+              <input
+                v-model.number="rangeToInput"
+                type="number"
+                min="1"
+                :placeholder="$t('player.songRangeTo')"
+                class="w-20 px-2 py-1 bg-white/10 rounded text-xs border border-white/20 focus:border-spotify-green text-light-text-primary dark:text-white"
+              />
+            </div>
+            <div class="flex items-center space-x-2">
+              <button
+                @click="saveSongRange"
+                class="flex-1 px-2 py-1 bg-spotify-green text-black text-xs font-medium rounded hover:bg-spotify-green/80 transition-colors"
+              >
+                {{ $t('player.songRangeSave') }}
+              </button>
+              <button
+                @click="clearSongRange"
+                class="flex-1 px-2 py-1 bg-white/10 text-light-text-primary dark:text-white text-xs rounded hover:bg-white/20 transition-colors"
+              >
+                {{ $t('player.songRangeClear') }}
+              </button>
+            </div>
+            <div v-if="isSongRangeActive" class="mt-2 text-xs text-spotify-green">
+              {{ $t('player.songRangeActive', { min: songRangeMin, max: songRangeMax }) }}
+            </div>
+          </div>
+        </div>
+
+        <button
           @click="$emit('toggle-visualizer')"
           class="p-1 rounded-full text-gray-400 hover:text-white transition-colors duration-200"
           :title="$t('visualizer.toggle')"
         >
           <SparklesIcon class="w-4 h-4" />
         </button>
-        
-        <button 
+
+        <button
           @click="toggleMute"
           class="p-1 rounded-full text-gray-400 hover:text-white transition-colors duration-200"
         >
@@ -390,8 +445,64 @@
         </div>
       </div>
       
+      <!-- Song Range Filter (Desktop) -->
+      <div class="relative mr-2 song-range-container">
+        <button
+          @click="showSongRangeMenu = !showSongRangeMenu"
+          :class="[
+            'p-2 rounded-full transition-colors duration-200 relative',
+            isSongRangeActive ? 'text-spotify-green' : 'text-gray-400 hover:text-white'
+          ]"
+          :title="$t('player.songRange')"
+        >
+          <AdjustmentsHorizontalIcon class="w-5 h-5" />
+          <span v-if="isSongRangeActive" class="absolute -top-1 -right-1 w-2 h-2 bg-spotify-green rounded-full"></span>
+        </button>
+
+        <div
+          v-if="showSongRangeMenu"
+          class="absolute bottom-full right-0 mb-2 bg-light-card dark:bg-spotify-dark border border-light-border dark:border-spotify-light rounded-lg shadow-lg p-3 min-w-[200px] z-50"
+        >
+          <h4 class="text-sm font-medium text-light-text-primary dark:text-white mb-2">{{ $t('player.songRange') }}</h4>
+          <div class="flex items-center space-x-2 mb-2">
+            <input
+              v-model.number="rangeFromInput"
+              type="number"
+              min="1"
+              :placeholder="$t('player.songRangeFrom')"
+              class="w-20 px-2 py-1 bg-white/10 rounded text-sm border border-white/20 focus:border-spotify-green text-light-text-primary dark:text-white"
+            />
+            <span class="text-sm text-gray-400">-</span>
+            <input
+              v-model.number="rangeToInput"
+              type="number"
+              min="1"
+              :placeholder="$t('player.songRangeTo')"
+              class="w-20 px-2 py-1 bg-white/10 rounded text-sm border border-white/20 focus:border-spotify-green text-light-text-primary dark:text-white"
+            />
+          </div>
+          <div class="flex items-center space-x-2">
+            <button
+              @click="saveSongRange"
+              class="flex-1 px-3 py-1.5 bg-spotify-green text-black text-sm font-medium rounded hover:bg-spotify-green/80 transition-colors"
+            >
+              {{ $t('player.songRangeSave') }}
+            </button>
+            <button
+              @click="clearSongRange"
+              class="flex-1 px-3 py-1.5 bg-white/10 text-light-text-primary dark:text-white text-sm rounded hover:bg-white/20 transition-colors"
+            >
+              {{ $t('player.songRangeClear') }}
+            </button>
+          </div>
+          <div v-if="isSongRangeActive" class="mt-2 text-xs text-spotify-green">
+            {{ $t('player.songRangeActive', { min: songRangeMin, max: songRangeMax }) }}
+          </div>
+        </div>
+      </div>
+
       <!-- Visualizer Toggle (Desktop) -->
-      <button 
+      <button
         @click="$emit('toggle-visualizer')"
         class="p-2 rounded-full text-gray-400 hover:text-white transition-colors duration-200 mr-2"
         :title="$t('visualizer.toggle')"
@@ -438,7 +549,8 @@ import {
   PlusIcon,
   ShareIcon,
   ClockIcon,
-  SparklesIcon
+  SparklesIcon,
+  AdjustmentsHorizontalIcon
 } from '@heroicons/vue/24/outline'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
@@ -476,6 +588,14 @@ const formattedTotalPlaytime = computed(() => playerStore.formattedTotalPlaytime
 
 // Sleep timer menu state
 const showSleepTimerMenu = ref(false)
+
+// Song range state
+const showSongRangeMenu = ref(false)
+const rangeFromInput = ref<number | undefined>(playerStore.songRangeMin || undefined)
+const rangeToInput = ref<number | undefined>(playerStore.songRangeMax || undefined)
+const isSongRangeActive = computed(() => playerStore.isSongRangeActive)
+const songRangeMin = computed(() => playerStore.songRangeMin)
+const songRangeMax = computed(() => playerStore.songRangeMax)
 
 // Methods
 function togglePlay() {
@@ -519,6 +639,22 @@ function toggleFavorite() {
 function setSleepTimer(minutes: number) {
   playerStore.setSleepTimer(minutes)
   showSleepTimerMenu.value = false
+}
+
+function saveSongRange() {
+  const min = rangeFromInput.value
+  const max = rangeToInput.value
+  if (min && max && max >= min) {
+    playerStore.setSongRange(min, max)
+    showSongRangeMenu.value = false
+  }
+}
+
+function clearSongRange() {
+  playerStore.clearSongRange()
+  rangeFromInput.value = undefined
+  rangeToInput.value = undefined
+  showSongRangeMenu.value = false
 }
 
 function openAddToPlaylistModal() {
@@ -596,6 +732,9 @@ function handleClickOutside(event: Event) {
   const target = event.target as HTMLElement
   if (!target.closest('.sleep-timer-container')) {
     showSleepTimerMenu.value = false
+  }
+  if (!target.closest('.song-range-container')) {
+    showSongRangeMenu.value = false
   }
 }
 

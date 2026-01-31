@@ -30,7 +30,13 @@
     "sleepTimer90": "90 minutes",
     "sleepTimer120": "120 minutes",
     "sleepTimerActive": "Sleep timer: {time} remaining",
-    "sleepTimerSet": "Sleep timer set for {minutes} minutes"
+    "sleepTimerSet": "Sleep timer set for {minutes} minutes",
+    "songRange": "Song Range",
+    "songRangeFrom": "From",
+    "songRangeTo": "To",
+    "songRangeActive": "Playing songs {min} - {max}",
+    "songRangeClear": "Clear",
+    "songRangeSave": "Save"
   },
   "library": {
     "songs": "Songs",
