@@ -1,6 +1,6 @@
 <template>
   <!-- Mobile Layout -->
-  <div class="fixed bottom-0 left-0 right-0 h-28 bg-light-card dark:bg-spotify-dark border-t border-light-border dark:border-spotify-light sm:hidden z-40">
+  <div class="fixed bottom-0 left-0 right-0 bg-light-card dark:bg-spotify-dark border-t border-light-border dark:border-spotify-light sm:hidden z-40">
     <!-- Current Song Info - Mobile -->
     <div v-if="currentSong" class="flex items-center px-2 py-1.5 border-b border-light-border dark:border-spotify-light h-12">
       <div class="w-8 h-8 bg-light-border dark:bg-spotify-light rounded mr-2 flex items-center justify-center">
@@ -23,6 +23,22 @@
       </button>
     </div>
     
+    <!-- Progress Bar - Mobile -->
+    <div class="flex items-center px-3 py-1 space-x-2">
+      <span class="text-xs text-light-text-secondary dark:text-gray-400 w-8 text-right tabular-nums">
+        {{ formattedCurrentTime }}
+      </span>
+      <div class="flex-1">
+        <ProgressBar
+          :progress="progress"
+          @seek="handleSeek"
+        />
+      </div>
+      <span class="text-xs text-light-text-secondary dark:text-gray-400 w-8 tabular-nums">
+        {{ formattedDuration }}
+      </span>
+    </div>
+
     <!-- Player Controls - Mobile -->
     <div class="flex items-center justify-between px-2 py-2 h-16">
       <div class="flex items-center space-x-1">
@@ -626,8 +642,8 @@ function setVolume(newVolume: number) {
   playerStore.setVolume(newVolume)
 }
 
-function handleSeek(time: number) {
-  playerStore.seek(time)
+function handleSeek(percentage: number) {
+  playerStore.seek((percentage / 100) * playerStore.duration)
 }
 
 function toggleFavorite() {
