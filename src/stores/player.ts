@@ -42,6 +42,13 @@ export const usePlayerStore = defineStore('player', () => {
   const maxRetryAttempts = 3
   const retryDelay = 2000 // 2 seconds
 
+  // Mobile stall handling - debounce to avoid aggressive reloads
+  const stallTimeout = ref<number | null>(null)
+  const stallDebounceMs = 10000 // Only retry after 10s of sustained stall
+  
+  // Fallback end-detection for mobile browsers that don't fire 'ended'
+  const endedHandled = ref(false)
+
   // Getters
   const progress = computed(() => {
     return duration.value > 0 ? (currentTime.value / duration.value) * 100 : 0
@@ -111,6 +118,7 @@ export const usePlayerStore = defineStore('player', () => {
   async function playSongFromHistory(song: Song) {
     // This function plays a song from history without adding it to history again
     currentSong.value = song
+    endedHandled.value = false
 
     if (audioElement.value) {
       // Reset time and duration when switching songs
@@ -191,6 +199,7 @@ export const usePlayerStore = defineStore('player', () => {
     }
 
     currentSong.value = song
+    endedHandled.value = false
 
     if (audioElement.value) {
       // Reset time and duration when switching songs
@@ -249,9 +258,16 @@ export const usePlayerStore = defineStore('player', () => {
         updateMediaSession()
       } catch (error) {
         console.error('Failed to play audio:', error)
-        // Handle autoplay policy restrictions
+        // Handle autoplay policy restrictions - retry once after short delay (helps on mobile)
         if (error instanceof Error && error.name === 'NotAllowedError') {
-          console.warn('Autoplay blocked by browser. User interaction required.')
+          console.warn('Autoplay blocked by browser, retrying in 500ms...')
+          await new Promise(resolve => setTimeout(resolve, 500))
+          try {
+            await audioElement.value!.play()
+            updateMediaSession()
+          } catch (retryError) {
+            console.warn('Retry also blocked. User interaction required.')
+          }
         }
       }
     }
@@ -402,6 +418,10 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   async function handleSongEnd() {
+    // Prevent duplicate handling (from both 'ended' event and timeupdate fallback)
+    if (endedHandled.value) return
+    endedHandled.value = true
+    
     if (repeat.value === 'one') {
       await play()
     } else {
@@ -527,10 +547,22 @@ export const usePlayerStore = defineStore('player', () => {
 
     audio.addEventListener('timeupdate', () => {
       currentTime.value = audio.currentTime || 0
+      
+      // Fallback end-detection for mobile browsers that may not fire 'ended'
+      const dur = audio.duration
+      if (dur && isFinite(dur) && dur > 0 && audio.currentTime >= dur - 0.5 && !endedHandled.value) {
+        // Song is within 0.5s of end — if ended event doesn't fire within 1s, force advance
+        setTimeout(() => {
+          if (!endedHandled.value && audio.currentTime >= dur - 0.5) {
+            console.warn('Fallback: ended event did not fire, forcing song advance')
+            handleSongEnd().catch(e => console.error('handleSongEnd error:', e))
+          }
+        }, 1500)
+      }
     })
 
     audio.addEventListener('ended', () => {
-      handleSongEnd()
+      handleSongEnd().catch(e => console.error('handleSongEnd error:', e))
     })
     
     audio.addEventListener('error', (e) => {
@@ -545,8 +577,33 @@ export const usePlayerStore = defineStore('player', () => {
       console.warn('Audio stalled - possible network issue')
       if (!isOnline.value) {
         console.log('Device is offline, waiting for connection...')
-      } else {
-        handleNetworkRetry()
+        return
+      }
+      // Debounce: only retry if stalled for a sustained period (avoids disrupting
+      // normal mobile buffering which fires stalled events frequently)
+      if (stallTimeout.value) return // already waiting
+      stallTimeout.value = window.setTimeout(() => {
+        stallTimeout.value = null
+        // Only retry if audio is still stalled (networkState 2 = NETWORK_LOADING but no data)
+        if (audio.readyState < 3 && !audio.paused && isOnline.value) {
+          console.warn('Sustained stall detected, attempting retry')
+          handleNetworkRetry()
+        }
+      }, stallDebounceMs)
+    })
+    
+    // Clear stall timeout when data arrives (stall resolved naturally)
+    audio.addEventListener('progress', () => {
+      if (stallTimeout.value) {
+        clearTimeout(stallTimeout.value)
+        stallTimeout.value = null
+      }
+    })
+    
+    audio.addEventListener('playing', () => {
+      if (stallTimeout.value) {
+        clearTimeout(stallTimeout.value)
+        stallTimeout.value = null
       }
     })
 
