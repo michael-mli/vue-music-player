@@ -5,6 +5,7 @@ import { getMusicUrl } from '@/config'
 import { songService } from '@/services/songService'
 import { audioCacheService } from '@/services/audioCacheService'
 import { songPredictionService } from '@/services/songPredictionService'
+import { debugLogger, isDebugMode } from '@/services/debugLogger'
 
 export const usePlayerStore = defineStore('player', () => {
   // State
@@ -45,9 +46,31 @@ export const usePlayerStore = defineStore('player', () => {
   // Mobile stall handling - debounce to avoid aggressive reloads
   const stallTimeout = ref<number | null>(null)
   const stallDebounceMs = 10000 // Only retry after 10s of sustained stall
-  
+
   // Fallback end-detection for mobile browsers that don't fire 'ended'
   const endedHandled = ref(false)
+  // Tracks the pending timeupdate-fallback timeout — ensures only one is scheduled per song
+  const endFallbackTimeout = ref<number | null>(null)
+
+  // Consecutive song-skip failure guard (e.g. many missing MP3 files in a row)
+  const consecutiveFailures = ref(0)
+  const maxConsecutiveFailures = 15
+
+  // Clear legacy blacklist — it was poisoned by false positives from background mode failures
+  localStorage.removeItem('music-player-broken-songs')
+
+  // Prevents pause-event side effects during song transitions (load → play)
+  const isTransitioning = ref(false)
+
+  // AbortController for current audio element's event listeners — replaced on each swap
+  let currentAudioAbortController: AbortController | null = null
+
+  /** Compact snapshot of HTMLAudioElement state for debug logs */
+  function snapAudio(): string {
+    const a = audioElement.value
+    if (!a) return 'noAudio'
+    return `rs=${a.readyState} ns=${a.networkState} paused=${a.paused} ended=${a.ended} t=${a.currentTime.toFixed(2)}/${(a.duration || 0).toFixed(2)}`
+  }
 
   // Getters
   const progress = computed(() => {
@@ -116,61 +139,60 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   async function playSongFromHistory(song: Song) {
+    debugLogger.info('PLAYER', `playSongFromHistory #${song.id} "${song.title}"`)
     // This function plays a song from history without adding it to history again
+    isTransitioning.value = true
+    lastPlayState.value = true
     currentSong.value = song
     endedHandled.value = false
+    if (endFallbackTimeout.value) { clearTimeout(endFallbackTimeout.value); endFallbackTimeout.value = null }
 
     if (audioElement.value) {
       // Reset time and duration when switching songs
       currentTime.value = 0
       duration.value = 0
 
-      // Check if we have a cached version of this song
-      const cachedAudio = audioCacheService.getCachedAudio(song.id)
+      debugLogger.info('PLAYER', `isTransitioning=true — loading #${song.id}`)
+      try {
+        // Check if we have a cached version of this song
+        const cachedAudio = audioCacheService.getCachedAudio(song.id)
 
-      if (cachedAudio) {
-        // Stop and pause current audio before switching to cached audio
-        audioElement.value.pause()
-        audioElement.value.currentTime = 0
+        if (cachedAudio) {
+          debugLogger.info('PLAYER', `Using CACHED audio for #${song.id}`)
+          audioElement.value.pause()
+          audioElement.value.currentTime = 0
+          audioCacheService.transferAudioState(audioElement.value, cachedAudio)
+          const oldAudio = audioElement.value
+          audioElement.value = cachedAudio
+          audioElement.value.currentTime = 0
+          transferAudioEventListeners(oldAudio, audioElement.value)
+          audioCacheService.removeSongFromCache(song.id)
+        } else {
+          debugLogger.info('PLAYER', `Loading FRESH audio for #${song.id}`)
+          audioElement.value.pause()
+          audioElement.value.currentTime = 0
+          audioElement.value.src = getMusicUrl(`link.${song.id}.mp3`)
+          audioElement.value.load()
+          audioElement.value.currentTime = 0
+        }
 
-        // Transfer state from current audio to cached audio
-        audioCacheService.transferAudioState(audioElement.value, cachedAudio)
-
-        // Replace the current audio element with the cached one
-        const oldAudio = audioElement.value
-        audioElement.value = cachedAudio
-
-        // Reset the audio time to 0:00
-        audioElement.value.currentTime = 0
-
-        // Transfer all event listeners to the new audio element
-        transferAudioEventListeners(oldAudio, audioElement.value)
-
-        // Remove the old audio from cache to free memory
-        audioCacheService.removeSongFromCache(song.id)
-
-        console.log(`🚀 Using cached audio for: ${song.title}`)
-      } else {
-        // Stop and pause current audio before switching to new song
-        audioElement.value.pause()
-        audioElement.value.currentTime = 0
-
-        // Normal loading for non-cached songs
-        audioElement.value.src = getMusicUrl(`link.${song.id}.mp3`)
-        audioElement.value.load()
-
-        // Reset the audio time to 0:00
-        audioElement.value.currentTime = 0
+        debugLogger.info('PLAYER', `Calling play() for #${song.id}`)
+        await play()
+      } finally {
+        isTransitioning.value = false
+        debugLogger.info('PLAYER', 'isTransitioning=false')
       }
-
-      await play()
 
       // Trigger read-ahead caching for upcoming songs
       await triggerReadAheadCache()
+    } else {
+      isTransitioning.value = false
+      debugLogger.error('PLAYER', 'playSongFromHistory: audioElement is null!')
     }
   }
 
   async function playSong(song: Song, songQueue?: Song[], index?: number) {
+    debugLogger.info('PLAYER', `playSong #${song.id} "${song.title}"`)
     if (songQueue) {
       queue.value = songQueue
       currentIndex.value = index || 0
@@ -188,86 +210,107 @@ export const usePlayerStore = defineStore('player', () => {
       }
     }
 
-    // Load proper title if it's still generic
+    // Mark transition early — before any async work — so the pause event from the
+    // previous song's 'ended' doesn't reset lastPlayState to false
+    isTransitioning.value = true
+    lastPlayState.value = true
+
+    // Use cached title if available (titles are loaded at startup and cached in localStorage)
     if (song.title.startsWith('Song ')) {
-      try {
-        const updatedTitle = await songService.getTitleFromLyrics(song.id)
-        song = { ...song, title: updatedTitle }
-      } catch (error) {
-        console.error('Error loading song title:', error)
+      const cached = songService.getCachedTitle(song.id)
+      if (cached) {
+        song = { ...song, title: cached }
       }
     }
 
     currentSong.value = song
     endedHandled.value = false
+    if (endFallbackTimeout.value) { clearTimeout(endFallbackTimeout.value); endFallbackTimeout.value = null }
 
     if (audioElement.value) {
       // Reset time and duration when switching songs
       currentTime.value = 0
       duration.value = 0
 
-      // Check if we have a cached version of this song
-      const cachedAudio = audioCacheService.getCachedAudio(song.id)
+      debugLogger.info('PLAYER', `isTransitioning=true — loading #${song.id}`)
+      try {
+        const cachedAudio = audioCacheService.getCachedAudio(song.id)
 
-      if (cachedAudio) {
-        // Stop and pause current audio before switching to cached audio
-        audioElement.value.pause()
-        audioElement.value.currentTime = 0
+        if (cachedAudio) {
+          debugLogger.info('PLAYER', `Using CACHED audio for #${song.id}`)
+          audioElement.value.pause()
+          audioElement.value.currentTime = 0
+          audioCacheService.transferAudioState(audioElement.value, cachedAudio)
+          const oldAudio = audioElement.value
+          audioElement.value = cachedAudio
+          audioElement.value.currentTime = 0
+          transferAudioEventListeners(oldAudio, audioElement.value)
+          audioCacheService.removeSongFromCache(song.id)
+        } else {
+          debugLogger.info('PLAYER', `Loading FRESH audio for #${song.id}`)
+          audioElement.value.pause()
+          audioElement.value.currentTime = 0
+          audioElement.value.src = getMusicUrl(`link.${song.id}.mp3`)
+          audioElement.value.load()
+          audioElement.value.currentTime = 0
+        }
 
-        // Transfer state from current audio to cached audio
-        audioCacheService.transferAudioState(audioElement.value, cachedAudio)
-
-        // Replace the current audio element with the cached one
-        const oldAudio = audioElement.value
-        audioElement.value = cachedAudio
-
-        // Reset the audio time to 0:00
-        audioElement.value.currentTime = 0
-
-        // Transfer all event listeners to the new audio element
-        transferAudioEventListeners(oldAudio, audioElement.value)
-
-        // Remove the old audio from cache to free memory
-        audioCacheService.removeSongFromCache(song.id)
-
-        console.log(`🚀 Using cached audio for: ${song.title}`)
-      } else {
-        // Stop and pause current audio before switching to new song
-        audioElement.value.pause()
-        audioElement.value.currentTime = 0
-
-        // Normal loading for non-cached songs
-        audioElement.value.src = getMusicUrl(`link.${song.id}.mp3`)
-        audioElement.value.load()
-
-        // Reset the audio time to 0:00
-        audioElement.value.currentTime = 0
+        debugLogger.info('PLAYER', `Calling play() for #${song.id}`)
+        await play()
+      } finally {
+        isTransitioning.value = false
+        debugLogger.info('PLAYER', 'isTransitioning=false')
       }
-
-      await play()
 
       // Trigger read-ahead caching for upcoming songs
       await triggerReadAheadCache()
+    } else {
+      isTransitioning.value = false
+      debugLogger.error('PLAYER', 'playSong: audioElement is null!')
     }
   }
 
   async function play() {
-    if (audioElement.value && currentSong.value) {
-      try {
-        await audioElement.value.play()
-        updateMediaSession()
-      } catch (error) {
-        console.error('Failed to play audio:', error)
-        // Handle autoplay policy restrictions - retry once after short delay (helps on mobile)
-        if (error instanceof Error && error.name === 'NotAllowedError') {
-          console.warn('Autoplay blocked by browser, retrying in 500ms...')
-          await new Promise(resolve => setTimeout(resolve, 500))
-          try {
-            await audioElement.value!.play()
-            updateMediaSession()
-          } catch (retryError) {
-            console.warn('Retry also blocked. User interaction required.')
+    if (!audioElement.value || !currentSong.value) {
+      debugLogger.error('PLAYER', 'play(): audioElement or currentSong is null')
+      return
+    }
+    debugLogger.info('PLAYER', `play() called — ${snapAudio()}`)
+    try {
+      await audioElement.value.play()
+      debugLogger.info('PLAYER', 'play() succeeded ✓')
+      updateMediaSession()
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        debugLogger.warn('PLAYER', 'play(): AbortError — src changed while play was pending, waiting for canplay')
+        await new Promise<void>((resolve) => {
+          const onReady = () => {
+            audioElement.value?.removeEventListener('canplay', onReady)
+            resolve()
           }
+          audioElement.value?.addEventListener('canplay', onReady, { once: true })
+          setTimeout(resolve, 3000)
+        })
+        try {
+          await audioElement.value!.play()
+          debugLogger.info('PLAYER', 'play() retry after AbortError succeeded ✓')
+          updateMediaSession()
+        } catch (e2) {
+          debugLogger.error('PLAYER', `play() retry after AbortError FAILED: ${String(e2)}`)
+        }
+        return
+      }
+      debugLogger.error('PLAYER', `play() error: ${String(error)}`)
+      console.error('Failed to play audio:', error)
+      if (error instanceof Error && error.name === 'NotAllowedError') {
+        debugLogger.warn('PLAYER', 'play(): NotAllowedError — retrying in 500ms')
+        await new Promise(resolve => setTimeout(resolve, 500))
+        try {
+          await audioElement.value!.play()
+          debugLogger.info('PLAYER', 'play() retry after NotAllowedError succeeded ✓')
+          updateMediaSession()
+        } catch (retryError) {
+          debugLogger.error('PLAYER', `play() retry after NotAllowedError FAILED: ${String(retryError)}`)
         }
       }
     }
@@ -293,7 +336,12 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   async function nextSong() {
-    if (!canPlayNext.value) return
+    debugLogger.info('PLAYER', `nextSong called — currentIndex=${currentIndex.value} shuffle=${shuffle.value} canNext=${canPlayNext.value}`, snapAudio())
+
+    if (!canPlayNext.value) {
+      debugLogger.warn('PLAYER', 'nextSong: canPlayNext=false, aborting')
+      return
+    }
 
     let nextIndex = currentIndex.value + 1
 
@@ -304,12 +352,16 @@ export const usePlayerStore = defineStore('player', () => {
         .filter(({ song }) => isSongInRange(song))
         .map(({ idx }) => idx)
 
-      if (eligibleIndices.length === 0) return
+      if (eligibleIndices.length === 0) {
+        debugLogger.warn('PLAYER', 'nextSong: no eligible songs in range')
+        return
+      }
       nextIndex = eligibleIndices[Math.floor(Math.random() * eligibleIndices.length)]
     } else if (nextIndex >= queue.value.length) {
       if (repeat.value === 'all') {
         nextIndex = 0
       } else {
+        debugLogger.warn('PLAYER', 'nextSong: end of queue, repeat=none — stopping')
         return
       }
     }
@@ -327,21 +379,24 @@ export const usePlayerStore = defineStore('player', () => {
     }
 
     currentIndex.value = nextIndex
-    
+    const targetSong = queue.value[nextIndex]
+    debugLogger.info('PLAYER', `nextSong: advancing to index=${nextIndex} song=#${targetSong?.id} "${targetSong?.title}"`)
+
     // Reset network retry attempts for new song
     networkRetryAttempts.value = 0
-    
+
     try {
-      await playSong(queue.value[nextIndex])
+      await playSong(targetSong)
     } catch (error) {
+      debugLogger.error('PLAYER', 'nextSong: playSong threw', String(error))
       console.error('Failed to play next song:', error)
-      
+
       // If we're offline, don't keep trying
       if (!isOnline.value) {
-        console.log('Device offline, waiting for network connection to resume playback')
+        debugLogger.warn('NET', 'Device offline — waiting for connection')
         return
       }
-      
+
       // If online but failed, try to retry or skip
       handleNetworkRetry()
     }
@@ -419,10 +474,15 @@ export const usePlayerStore = defineStore('player', () => {
 
   async function handleSongEnd() {
     // Prevent duplicate handling (from both 'ended' event and timeupdate fallback)
-    if (endedHandled.value) return
+    if (endedHandled.value) {
+      debugLogger.warn('PLAYER', 'handleSongEnd SKIPPED — already handled', snapAudio())
+      return
+    }
     endedHandled.value = true
-    
+    debugLogger.info('PLAYER', `handleSongEnd called — repeat=${repeat.value}`, snapAudio())
+
     if (repeat.value === 'one') {
+      debugLogger.info('PLAYER', 'Repeat=one: restarting current song')
       await play()
     } else {
       await nextSong()
@@ -435,17 +495,66 @@ export const usePlayerStore = defineStore('player', () => {
       isOnline.value = true
       networkRetryAttempts.value = 0
       console.log('Network connection restored')
-      
+
       // If we were playing and got disconnected, try to resume
       if (lastPlayState.value && !isPlaying.value && currentSong.value) {
         console.log('Attempting to resume playback after network restore')
         handleNetworkReconnect()
       }
     })
-    
+
     window.addEventListener('offline', () => {
       isOnline.value = false
       console.log('Network connection lost')
+    })
+
+    // Handle app returning to foreground — mobile browsers can suspend audio in background
+    document.addEventListener('visibilitychange', () => {
+      const hidden = document.hidden
+      debugLogger.info('VIS', `visibilitychange — hidden=${hidden} lastPlayState=${lastPlayState.value} ${snapAudio()}`)
+
+      if (hidden || !audioElement.value || !currentSong.value || isTransitioning.value) return
+
+      const audio = audioElement.value
+
+      // If we were playing but audio is in error state (background mode on Android Chrome
+      // fails all audio loads), reload and play the current song now that we're visible.
+      if (lastPlayState.value && audio.error) {
+        debugLogger.warn('VIS', `Foreground: audio has error code=${audio.error.code} — reloading current song`)
+        playSong(currentSong.value).catch(err => {
+          debugLogger.error('VIS', `Failed to reload song on foreground: ${String(err)}`)
+        })
+        return
+      }
+
+      // If we were playing but audio source never loaded (network throttled in background:
+      // readyState 0=HAVE_NOTHING, paused=false — stuck), reload the current song.
+      if (lastPlayState.value && !audio.paused && audio.readyState < 3) {
+        debugLogger.warn('VIS', `Foreground: audio stalled at rs=${audio.readyState} — reloading current song`)
+        playSong(currentSong.value).catch(err => {
+          debugLogger.error('VIS', `Failed to reload stalled song on foreground: ${String(err)}`)
+        })
+        return
+      }
+
+      // If we were playing but browser paused audio (e.g. device locked), resume
+      if (lastPlayState.value && audio.paused) {
+        debugLogger.warn('VIS', 'Foreground: audio was paused by browser — resuming')
+        audio.play().catch(err => {
+          debugLogger.error('VIS', `Failed to resume on foreground: ${String(err)}`)
+        })
+        return
+      }
+
+      // Fallback: song ended in background but 'ended' event never fired (rare browser quirk)
+      const dur = audio.duration
+      if (dur && isFinite(dur) && dur > 0 && audio.currentTime >= dur - 1 && !endedHandled.value) {
+        debugLogger.warn('VIS', `Foreground: song ended while in background but 'ended' never fired — advancing`)
+        handleSongEnd().catch(e => console.error('handleSongEnd error:', e))
+        return
+      }
+
+      debugLogger.info('VIS', `Foreground: no action needed — paused=${audio.paused} lastPlay=${lastPlayState.value} endedHandled=${endedHandled.value}`)
     })
   }
   
@@ -457,11 +566,20 @@ export const usePlayerStore = defineStore('player', () => {
     // 4 = MEDIA_ERR_SRC_NOT_SUPPORTED - source not supported
     
     if (error.code === MediaError.MEDIA_ERR_NETWORK) {
-      console.log('Network error detected, attempting retry...')
+      debugLogger.warn('PLAYER', 'MEDIA_ERR_NETWORK — attempting retry')
       handleNetworkRetry()
     } else if (error.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
-      console.error('Audio source not supported, skipping to next song')
-      setTimeout(() => nextSong(), 1000)
+      consecutiveFailures.value++
+      debugLogger.warn('PLAYER', `MEDIA_ERR_SRC_NOT_SUPPORTED — consecutiveFailures=${consecutiveFailures.value}/${maxConsecutiveFailures}`)
+      if (consecutiveFailures.value >= maxConsecutiveFailures) {
+        // Don't give up — wait and retry so background playback can recover
+        debugLogger.error('PLAYER', `Too many consecutive failures (${consecutiveFailures.value}), cooldown 10s then retry`)
+        consecutiveFailures.value = 0
+        setTimeout(() => nextSong().catch(e => console.error(e)), 10_000)
+        return
+      }
+      // Skip to next song quickly
+      setTimeout(() => nextSong().catch(e => console.error(e)), 50)
     }
   }
   
@@ -537,46 +655,80 @@ export const usePlayerStore = defineStore('player', () => {
   }
   
   /**
-   * Sets up event listeners for an audio element
+   * Sets up event listeners for an audio element.
+   * Uses AbortController so old listeners are cleanly removed when the audio element is swapped.
    */
   function setupAudioEventListeners(audio: HTMLAudioElement) {
+    // Abort and replace the previous controller — this removes all listeners from the old element
+    if (currentAudioAbortController) {
+      currentAudioAbortController.abort()
+    }
+    currentAudioAbortController = new AbortController()
+    const { signal } = currentAudioAbortController
+
     audio.addEventListener('loadedmetadata', () => {
       duration.value = audio.duration || 0
       networkRetryAttempts.value = 0
-    })
+      debugLogger.info('AUDIO', `loadedmetadata — duration=${audio.duration?.toFixed(2)}s`)
+    }, { signal })
 
+    let lastLoggedSecond = -1
     audio.addEventListener('timeupdate', () => {
       currentTime.value = audio.currentTime || 0
-      
+
+      // Log progress periodically and near the end (debug only)
+      if (isDebugMode) {
+        const t = Math.floor(audio.currentTime)
+        const dur = audio.duration || 0
+        const remaining = dur - audio.currentTime
+        if (t !== lastLoggedSecond && (t % 15 === 0 || remaining < 10)) {
+          lastLoggedSecond = t
+          debugLogger.info('AUDIO', `timeupdate t=${audio.currentTime.toFixed(1)}s remaining=${remaining.toFixed(1)}s endedHandled=${endedHandled.value}`)
+        }
+      }
+
       // Fallback end-detection for mobile browsers that may not fire 'ended'
+      // Guard: only schedule one timeout per song (timeupdate fires many times near end)
       const dur = audio.duration
-      if (dur && isFinite(dur) && dur > 0 && audio.currentTime >= dur - 0.5 && !endedHandled.value) {
-        // Song is within 0.5s of end — if ended event doesn't fire within 1s, force advance
-        setTimeout(() => {
-          if (!endedHandled.value && audio.currentTime >= dur - 0.5) {
-            console.warn('Fallback: ended event did not fire, forcing song advance')
-            handleSongEnd().catch(e => console.error('handleSongEnd error:', e))
+      if (dur && isFinite(dur) && dur > 0 && audio.currentTime >= dur - 0.5 && !endedHandled.value && !endFallbackTimeout.value) {
+        debugLogger.warn('AUDIO', `timeupdate fallback scheduled — within 0.5s of end`)
+        endFallbackTimeout.value = window.setTimeout(() => {
+          endFallbackTimeout.value = null
+          if (endedHandled.value) return // 'ended' already handled it
+          if (!audio.duration || audio.currentTime < audio.duration - 0.5) return // song moved on
+          if (document.hidden) {
+            // Still in background — do NOT advance here. The visibilitychange handler
+            // will call handleSongEnd() when the user returns to the foreground.
+            debugLogger.warn('AUDIO', 'timeupdate fallback: still in background — deferring to foreground')
+            return
           }
+          debugLogger.warn('AUDIO', 'timeupdate fallback: ended event never fired — forcing handleSongEnd')
+          handleSongEnd().catch(e => console.error('handleSongEnd error:', e))
         }, 1500)
       }
-    })
+    }, { signal })
 
     audio.addEventListener('ended', () => {
+      // Cancel the timeupdate fallback — ended fired, no need for the backup timer
+      if (endFallbackTimeout.value) { clearTimeout(endFallbackTimeout.value); endFallbackTimeout.value = null }
+      debugLogger.info('AUDIO', `ended event fired — hidden=${document.hidden} ${snapAudio()}`)
+      // Always advance immediately — iOS allows background audio and will play the next song
+      // in background. The 50ms skip delay + 15-failure limit prevents runaway cascades.
       handleSongEnd().catch(e => console.error('handleSongEnd error:', e))
-    })
-    
+    }, { signal })
+
     audio.addEventListener('error', (e) => {
-      const error = e.target as HTMLAudioElement
-      if (error.error) {
-        console.error('Audio error:', error.error.code, error.error.message)
-        handleAudioError(error.error)
+      const err = (e.target as HTMLAudioElement).error
+      if (err) {
+        debugLogger.error('AUDIO', `error event code=${err.code} msg=${err.message}`, snapAudio())
+        handleAudioError(err)
       }
-    })
-    
+    }, { signal })
+
     audio.addEventListener('stalled', () => {
-      console.warn('Audio stalled - possible network issue')
+      debugLogger.warn('AUDIO', `stalled — ${snapAudio()}`)
       if (!isOnline.value) {
-        console.log('Device is offline, waiting for connection...')
+        debugLogger.warn('NET', 'stalled but device is offline')
         return
       }
       // Debounce: only retry if stalled for a sustained period (avoids disrupting
@@ -590,42 +742,56 @@ export const usePlayerStore = defineStore('player', () => {
           handleNetworkRetry()
         }
       }, stallDebounceMs)
-    })
-    
+    }, { signal })
+
     // Clear stall timeout when data arrives (stall resolved naturally)
     audio.addEventListener('progress', () => {
       if (stallTimeout.value) {
         clearTimeout(stallTimeout.value)
         stallTimeout.value = null
       }
-    })
-    
+    }, { signal })
+
     audio.addEventListener('playing', () => {
       if (stallTimeout.value) {
         clearTimeout(stallTimeout.value)
         stallTimeout.value = null
       }
-    })
-
-    audio.addEventListener('play', () => {
-      isPlaying.value = true
-      sessionStartTime.value = Date.now()
-      lastPlayState.value = true
+      // Reset failure streak — audio is actually decoding, so the file exists and is valid
+      consecutiveFailures.value = 0
+      // Start playtime tracking here (not on 'play') so we only count real audio output
       startPlaytimeTracking()
-      
+      // Start sleep timer countdown here so it only ticks against real playback,
+      // not against the cascade of instant-fail 'play' events for missing files
       if (sleepTimer.value > 0 && sleepTimerRemaining.value > 0 && !sleepTimerInterval.value) {
         startSleepTimerCountdown()
       }
-      
+      debugLogger.info('AUDIO', `playing event (audio decoding) — consecutiveFailures reset — ${snapAudio()}`)
+    }, { signal })
+
+    audio.addEventListener('play', () => {
+      debugLogger.info('AUDIO', `play event fired — ${snapAudio()}`)
+      isPlaying.value = true
+      sessionStartTime.value = Date.now()
+      lastPlayState.value = true
+      // NOTE: startPlaytimeTracking() and startSleepTimerCountdown() are intentionally
+      // called from the 'playing' event, not here. The 'play' event fires even for URLs
+      // that fail immediately (missing MP3s), so we defer those to 'playing' which only
+      // fires when the browser actually starts decoding audio.
       updateMediaSession()
-    })
+    }, { signal })
 
     audio.addEventListener('pause', () => {
+      // Skip state updates during song transitions — playSong calls pause() before loading the
+      // next track, so this pause is intentional and play() will be called right after
+      debugLogger.info('AUDIO', `pause event fired — transitioning=${isTransitioning.value} ${snapAudio()}`)
+      if (isTransitioning.value) return
       isPlaying.value = false
       stopPlaytimeTracking()
       stopSleepTimerCountdown()
       lastPlayState.value = false
-    })
+    }, { signal })
+
   }
   
   /**
@@ -929,6 +1095,11 @@ export const usePlayerStore = defineStore('player', () => {
     formattedTotalPlaytime,
     isSongRangeActive,
     
+    // Debug-exposed internals
+    endedHandled,
+    isTransitioning,
+    lastPlayState,
+
     // Actions
     initializeAudio,
     playSong,

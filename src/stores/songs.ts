@@ -58,20 +58,24 @@ export const useSongsStore = defineStore('songs', () => {
     return songs.value.filter(song => song.isFavorite)
   })
 
+
   // Actions
   async function fetchSongs() {
     try {
       loading.value = true
       error.value = null
-      
+
+      let raw: Song[]
       // Use mock data in development or when explicitly enabled
       if (config.enableMockData) {
         const response = await songService.getMockSongs()
-        songs.value = response.data
+        raw = response.data
       } else {
         const response = await songService.getAllSongs()
-        songs.value = response.data
+        raw = response.data
       }
+
+      songs.value = raw
     } catch (err) {
       error.value = 'Failed to load songs'
       console.error('Error fetching songs:', err)

@@ -30,7 +30,7 @@
     </div>
     
     <!-- User Actions -->
-    <div class="flex items-center space-x-4">
+    <div class="flex items-center space-x-3">
       <!-- Install App Button -->
       <button 
         v-if="canInstall"
@@ -40,8 +40,15 @@
         {{ $t('pwa.install') }}
       </button>
       
+      <!-- Build version — click to copy full timestamp -->
+      <span
+        :title="buildTime"
+        @click="copyBuildTime"
+        class="hidden sm:block text-[10px] tabular-nums text-gray-500 hover:text-gray-300 cursor-pointer select-none leading-tight text-right"
+      >{{ buildLabel }}</span>
+
       <!-- Theme Toggle -->
-      <button 
+      <button
         @click="toggleTheme"
         class="p-2 rounded-full text-gray-400 hover:text-white transition-colors duration-200"
       >
@@ -54,6 +61,21 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
+
+// Build timestamp injected by Vite at build time — changes with every build
+const buildTime = __APP_BUILD_TIME__
+const buildDate = new Date(buildTime)
+// e.g. "Feb 21 14:32" in local time
+const buildLabel = buildDate.toLocaleDateString('en', { month: 'short', day: 'numeric' })
+  + ' ' + buildDate.toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit', hour12: false })
+
+async function copyBuildTime() {
+  try {
+    await navigator.clipboard.writeText(buildTime)
+  } catch {
+    // silently ignore — tooltip already shows full time
+  }
+}
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { 

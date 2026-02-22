@@ -3,6 +3,29 @@ import type { Song, APIResponse } from '@/types'
 import config, { getLyricsUrl } from '@/config'
 
 export const songService = {
+  // Title cache backed by localStorage — avoids per-song network fetches during playback
+  _titleCache: null as Map<number, string> | null,
+  _TITLE_CACHE_KEY: 'music-player-title-cache',
+
+  _loadTitleCache(): Map<number, string> {
+    if (this._titleCache) return this._titleCache
+    try {
+      const raw = localStorage.getItem(this._TITLE_CACHE_KEY)
+      this._titleCache = raw ? new Map(JSON.parse(raw) as [number, string][]) : new Map()
+    } catch {
+      this._titleCache = new Map()
+    }
+    return this._titleCache
+  },
+
+  _saveTitleCache() {
+    if (!this._titleCache) return
+    localStorage.setItem(this._TITLE_CACHE_KEY, JSON.stringify([...this._titleCache]))
+  },
+
+  getCachedTitle(id: number): string | undefined {
+    return this._loadTitleCache().get(id)
+  },
   // Get the maximum song number from song_number.txt with fallback chain
   async getMaxSongNumber(): Promise<number> {
     const cacheBuster = '?' + Date.now()
@@ -62,6 +85,10 @@ export const songService = {
 
   // Helper function to get song title from lyrics
   async getTitleFromLyrics(id: number): Promise<string> {
+    // Return cached title if available
+    const cached = this.getCachedTitle(id)
+    if (cached) return cached
+
     try {
       const lyricsUrl = getLyricsUrl(`link.${id}.mp3.l`)
       const response = await fetch(lyricsUrl)
@@ -69,6 +96,9 @@ export const songService = {
         const lyricsText = await response.text()
         const firstLine = lyricsText.split('\n')[0].trim()
         if (firstLine && firstLine.length > 0 && !firstLine.includes('link.') && !firstLine.includes('mp3')) {
+          // Cache the title
+          this._loadTitleCache().set(id, firstLine)
+          this._saveTitleCache()
           return firstLine
         }
       }
@@ -82,33 +112,41 @@ export const songService = {
   async getMockSongs(): Promise<APIResponse<Song[]>> {
     const mockSongs: Song[] = []
     const maxSongNumber = await this.getMaxSongNumber()
+    const cache = this._loadTitleCache()
 
-    // Load last 50 songs (highest numbers) with titles from lyrics for better UX
-    const promises = []
-    const startIndex = Math.max(1, maxSongNumber - 49) // Last 50 songs
-    for (let i = startIndex; i <= maxSongNumber; i++) {
-      promises.push(this.getTitleFromLyrics(i))
+    // Find songs that need title fetching (not in cache)
+    // Prioritize newest songs (highest IDs) since they're most likely new
+    const uncachedIds: number[] = []
+    for (let i = maxSongNumber; i >= 1; i--) {
+      if (!cache.has(i)) uncachedIds.push(i)
     }
 
-    const last50Titles = await Promise.all(promises)
+    // Fetch uncached titles in batches (newest first)
+    if (uncachedIds.length > 0) {
+      console.log(`Fetching titles for ${uncachedIds.length} new songs...`)
+      const BATCH = 50
+      for (let b = 0; b < uncachedIds.length; b += BATCH) {
+        const batch = uncachedIds.slice(b, b + BATCH)
+        const titles = await Promise.all(batch.map(id => this.getTitleFromLyrics(id)))
+        // getTitleFromLyrics already caches each result, just need the await
+        void titles
+      }
+    }
 
-    // Create all songs first, then sort in descending order
+    // Build song list using cache (now populated)
     for (let i = 1; i <= maxSongNumber; i++) {
-      const title = i >= startIndex ? last50Titles[i - startIndex] : `Song ${i}`
-      
       mockSongs.push({
         id: i,
-        title: title,
+        title: cache.get(i) || `Song ${i}`,
         filename: `link.${i}.mp3`,
-        duration: Math.floor(Math.random() * 300) + 60, // 1-5 minutes
+        duration: Math.floor(Math.random() * 300) + 60,
         isFavorite: Math.random() > 0.8,
-        lyrics: undefined // Will be loaded separately when needed
+        lyrics: undefined
       })
     }
-    
-    // Sort songs in descending order by ID (highest first)
+
     mockSongs.sort((a, b) => b.id - a.id)
-    
+
     return {
       success: true,
       data: mockSongs
