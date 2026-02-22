@@ -61,7 +61,9 @@
   "lyrics": {
     "title": "歌词",
     "noLyrics": "该歌曲暂无歌词",
-    "loading": "正在加载歌词..."
+    "loading": "正在加载歌词...",
+    "scrollOn": "自动滚动已开启",
+    "scrollOff": "自动滚动已关闭"
   },
   "settings": {
     "language": "语言",

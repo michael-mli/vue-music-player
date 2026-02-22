@@ -61,7 +61,9 @@
   "lyrics": {
     "title": "Lyrics",
     "noLyrics": "No lyrics available for this song",
-    "loading": "Loading lyrics..."
+    "loading": "Loading lyrics...",
+    "scrollOn": "Auto-scroll on",
+    "scrollOff": "Auto-scroll off"
   },
   "settings": {
     "language": "Language",

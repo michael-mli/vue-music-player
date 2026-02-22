@@ -2,16 +2,35 @@
   <aside class="w-full lg:w-80 bg-light-card dark:bg-spotify-dark border-l border-light-border dark:border-spotify-light flex flex-col">
     <div class="p-4 border-b border-light-border dark:border-spotify-light flex items-center justify-between">
       <h2 class="text-lg font-bold text-light-text-primary dark:text-white">{{ $t('lyrics.title') }}</h2>
-      <button 
-        @click="$emit('close')"
-        class="lg:hidden p-1 rounded-full text-light-text-secondary dark:text-gray-400 hover:text-light-text-primary dark:hover:text-white transition-colors duration-200"
-        aria-label="Close lyrics"
-      >
-        <XMarkIcon class="w-5 h-5" />
-      </button>
+      <div class="flex items-center gap-2">
+        <!-- Auto-scroll toggle -->
+        <button 
+          @click="toggleAutoScroll"
+          class="p-1 rounded-full transition-colors duration-200"
+          :class="autoScroll 
+            ? 'text-spotify-green hover:text-green-400' 
+            : 'text-light-text-secondary dark:text-gray-400 hover:text-light-text-primary dark:hover:text-white'"
+          :title="autoScroll ? $t('lyrics.scrollOn') : $t('lyrics.scrollOff')"
+        >
+          <ArrowsUpDownIcon class="w-5 h-5" />
+        </button>
+        <button 
+          @click="$emit('close')"
+          class="lg:hidden p-1 rounded-full text-light-text-secondary dark:text-gray-400 hover:text-light-text-primary dark:hover:text-white transition-colors duration-200"
+          aria-label="Close lyrics"
+        >
+          <XMarkIcon class="w-5 h-5" />
+        </button>
+      </div>
     </div>
     
-    <div class="flex-1 overflow-y-auto spotify-scrollbar p-4 pb-8 lg:pb-4">
+    <div 
+      ref="scrollContainer"
+      class="flex-1 overflow-y-auto spotify-scrollbar p-4 pb-8 lg:pb-4"
+      @scroll="onUserScroll"
+      @touchstart="onUserInteract"
+      @mousedown="onUserInteract"
+    >
       <div v-if="loading" class="text-center text-light-text-secondary dark:text-gray-400">
         {{ $t('lyrics.loading') }}
       </div>
@@ -40,8 +59,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, reactive } from 'vue'
-import { XMarkIcon } from '@heroicons/vue/24/outline'
+import { ref, computed, watch, reactive, onUnmounted } from 'vue'
+import { XMarkIcon, ArrowsUpDownIcon } from '@heroicons/vue/24/outline'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
 import ImageModal from '@/components/UI/ImageModal.vue'
@@ -57,6 +76,12 @@ const songsStore = useSongsStore()
 
 const lyrics = ref('')
 const loading = ref(false)
+const scrollContainer = ref<HTMLElement>()
+
+// Auto-scroll state
+const autoScroll = ref(localStorage.getItem('lyrics-auto-scroll') !== 'false')
+let userScrolling = false
+let userScrollTimeout: number | null = null
 
 const currentSong = computed(() => playerStore.currentSong)
 
@@ -71,9 +96,48 @@ const imageModal = reactive({
 // Process lyrics to handle HTML tags safely
 const processedLyrics = computed(() => {
   if (!lyrics.value) return ''
-  
-  // Use the utility function to process lyrics content
   return processLyricsContent(lyrics.value)
+})
+
+function toggleAutoScroll() {
+  autoScroll.value = !autoScroll.value
+  localStorage.setItem('lyrics-auto-scroll', String(autoScroll.value))
+  userScrolling = false
+}
+
+// Pause auto-scroll briefly when user manually scrolls
+function onUserInteract() {
+  if (!autoScroll.value) return
+  userScrolling = true
+  if (userScrollTimeout) clearTimeout(userScrollTimeout)
+  userScrollTimeout = window.setTimeout(() => { userScrolling = false }, 5000)
+}
+
+function onUserScroll() {
+  // Only mark as user-scrolling if triggered by user interaction (not programmatic)
+  // We use the userScrolling flag set by touch/mousedown
+}
+
+// Auto-scroll: move proportionally through lyrics based on playback progress
+watch(() => playerStore.currentTime, () => {
+  if (!autoScroll.value || userScrolling || !scrollContainer.value || !lyrics.value) return
+  if (!playerStore.isPlaying || playerStore.duration <= 0) return
+
+  const progress = playerStore.currentTime / playerStore.duration
+  const el = scrollContainer.value
+  const maxScroll = el.scrollHeight - el.clientHeight
+  if (maxScroll <= 0) return
+
+  const targetScroll = progress * maxScroll
+  el.scrollTo({ top: targetScroll, behavior: 'smooth' })
+})
+
+// Reset scroll position when song changes
+watch(currentSong, () => {
+  userScrolling = false
+  if (scrollContainer.value) {
+    scrollContainer.value.scrollTop = 0
+  }
 })
 
 // Handle clicks on lyrics content (specifically for images)
@@ -109,6 +173,10 @@ watch(currentSong, async (newSong) => {
     lyrics.value = ''
   }
 }, { immediate: true })
+
+onUnmounted(() => {
+  if (userScrollTimeout) clearTimeout(userScrollTimeout)
+})
 </script>
 
 <style scoped>
