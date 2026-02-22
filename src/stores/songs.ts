@@ -14,6 +14,9 @@ export const useSongsStore = defineStore('songs', () => {
   const currentPage = ref(1)
   const pageSize = ref(config.songsPerPage)
 
+  // Title loading progress (0–100, -1 = not loading)
+  const titleLoadingProgress = ref(-1)
+
   // State for search with lyrics
   const searchResults = ref<Song[]>([])
   const isSearching = ref(false)
@@ -81,6 +84,28 @@ export const useSongsStore = defineStore('songs', () => {
       console.error('Error fetching songs:', err)
     } finally {
       loading.value = false
+    }
+  }
+
+  // Fetch uncached song titles in the background, updating songs in-place as they arrive.
+  async function fetchUncachedTitles() {
+    if (!config.enableMockData) return
+    const maxId = songs.value.length > 0 ? Math.max(...songs.value.map(s => s.id)) : 0
+    if (maxId === 0) return
+
+    titleLoadingProgress.value = 0
+    const fetchedIds = await songService.fetchUncachedTitles(maxId, (fetched, total) => {
+      titleLoadingProgress.value = Math.round((fetched / total) * 100)
+    })
+    titleLoadingProgress.value = -1
+
+    // Update song titles in-place from the freshly populated cache
+    if (fetchedIds.length > 0) {
+      const cache = songService._loadTitleCache()
+      songs.value = songs.value.map(s => {
+        const cached = cache.get(s.id)
+        return cached && s.title !== cached ? { ...s, title: cached } : s
+      })
     }
   }
 
@@ -329,6 +354,7 @@ export const useSongsStore = defineStore('songs', () => {
     pageSize,
     searchResults,
     isSearching,
+    titleLoadingProgress,
     
     // Getters
     filteredSongs,
@@ -340,6 +366,7 @@ export const useSongsStore = defineStore('songs', () => {
     
     // Actions
     fetchSongs,
+    fetchUncachedTitles,
     getSongById,
     getSongLyrics,
     searchSongs,

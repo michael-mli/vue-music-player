@@ -1,7 +1,9 @@
 {
   "app": {
     "title": "Mic's 音乐播放器",
-    "subtitle": "现代音乐体验"
+    "subtitle": "现代音乐体验",
+    "loading": "正在加载音乐库...",
+    "loadingTitles": "正在加载歌曲标题... {progress}%"
   },
   "navigation": {
     "home": "首页",

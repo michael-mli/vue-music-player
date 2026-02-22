@@ -1,7 +1,9 @@
 {
   "app": {
     "title": "Mic's Music Player",
-    "subtitle": "Modern music experience"
+    "subtitle": "Modern music experience",
+    "loading": "Loading music library...",
+    "loadingTitles": "Loading song titles... {progress}%"
   },
   "navigation": {
     "home": "Home",

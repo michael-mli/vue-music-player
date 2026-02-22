@@ -1,5 +1,26 @@
 <template>
   <div class="app flex flex-col h-screen bg-light-bg dark:bg-spotify-black text-light-text-primary dark:text-white">
+    <!-- Loading overlay for initial data load -->
+    <div 
+      v-if="songsStore.loading || songsStore.titleLoadingProgress >= 0"
+      class="fixed inset-0 z-[100] bg-light-bg dark:bg-spotify-black flex flex-col items-center justify-center"
+    >
+      <div class="flex flex-col items-center gap-4">
+        <MusicalNoteIcon class="w-16 h-16 text-spotify-green animate-pulse" />
+        <p class="text-lg font-medium text-light-text-primary dark:text-white">
+          {{ songsStore.titleLoadingProgress >= 0 
+            ? $t('app.loadingTitles', { progress: songsStore.titleLoadingProgress })
+            : $t('app.loading') }}
+        </p>
+        <div v-if="songsStore.titleLoadingProgress >= 0" class="w-64 h-2 bg-light-border dark:bg-spotify-light rounded-full overflow-hidden">
+          <div 
+            class="h-full bg-spotify-green rounded-full transition-all duration-300"
+            :style="{ width: songsStore.titleLoadingProgress + '%' }"
+          ></div>
+        </div>
+      </div>
+    </div>
+
     <!-- Main Content -->
     <div class="flex flex-1 overflow-hidden relative">
       <!-- Desktop Sidebar -->
@@ -89,6 +110,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
+import { MusicalNoteIcon } from '@heroicons/vue/24/outline'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
 import { usePlaylistsStore } from '@/stores/playlists'
@@ -132,11 +154,14 @@ onMounted(async () => {
   // Initialize audio
   playerStore.initializeAudio()
   
-  // Load initial data
+  // Load initial data (songs list returns instantly with cached titles)
   await Promise.all([
     songsStore.fetchSongs(),
     playlistsStore.fetchPlaylists()
   ])
+
+  // Fetch any uncached titles in the background (shows progress overlay on first use)
+  await songsStore.fetchUncachedTitles()
   
   // Auto-play a random song after data is loaded (skip if accessing direct song URL)
   if (!isDirectSongAccess()) {

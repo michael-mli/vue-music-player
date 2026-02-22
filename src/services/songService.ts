@@ -114,26 +114,7 @@ export const songService = {
     const maxSongNumber = await this.getMaxSongNumber()
     const cache = this._loadTitleCache()
 
-    // Find songs that need title fetching (not in cache)
-    // Prioritize newest songs (highest IDs) since they're most likely new
-    const uncachedIds: number[] = []
-    for (let i = maxSongNumber; i >= 1; i--) {
-      if (!cache.has(i)) uncachedIds.push(i)
-    }
-
-    // Fetch uncached titles in batches (newest first)
-    if (uncachedIds.length > 0) {
-      console.log(`Fetching titles for ${uncachedIds.length} new songs...`)
-      const BATCH = 50
-      for (let b = 0; b < uncachedIds.length; b += BATCH) {
-        const batch = uncachedIds.slice(b, b + BATCH)
-        const titles = await Promise.all(batch.map(id => this.getTitleFromLyrics(id)))
-        // getTitleFromLyrics already caches each result, just need the await
-        void titles
-      }
-    }
-
-    // Build song list using cache (now populated)
+    // Build song list immediately using cached titles (no blocking network calls)
     for (let i = 1; i <= maxSongNumber; i++) {
       mockSongs.push({
         id: i,
@@ -151,6 +132,31 @@ export const songService = {
       success: true,
       data: mockSongs
     }
+  },
+
+  // Fetch titles for songs not yet in cache. Calls onProgress(fetched, total) after each batch.
+  // Returns the IDs that were fetched.
+  async fetchUncachedTitles(
+    maxSongNumber: number,
+    onProgress?: (fetched: number, total: number) => void
+  ): Promise<number[]> {
+    const cache = this._loadTitleCache()
+    const uncachedIds: number[] = []
+    for (let i = maxSongNumber; i >= 1; i--) {
+      if (!cache.has(i)) uncachedIds.push(i)
+    }
+    if (uncachedIds.length === 0) return []
+
+    console.log(`Fetching titles for ${uncachedIds.length} new songs...`)
+    const BATCH = 50
+    let fetched = 0
+    for (let b = 0; b < uncachedIds.length; b += BATCH) {
+      const batch = uncachedIds.slice(b, b + BATCH)
+      await Promise.all(batch.map(id => this.getTitleFromLyrics(id)))
+      fetched += batch.length
+      onProgress?.(fetched, uncachedIds.length)
+    }
+    return uncachedIds
   },
 
   // Method to update song title on demand
