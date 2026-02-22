@@ -7,6 +7,10 @@ export const songService = {
   _titleCache: null as Map<number, string> | null,
   _TITLE_CACHE_KEY: 'music-player-title-cache',
 
+  // Duration cache backed by localStorage — stores real durations from loadedmetadata
+  _durationCache: null as Map<number, number> | null,
+  _DURATION_CACHE_KEY: 'music-player-duration-cache',
+
   _loadTitleCache(): Map<number, string> {
     if (this._titleCache) return this._titleCache
     try {
@@ -25,6 +29,31 @@ export const songService = {
 
   getCachedTitle(id: number): string | undefined {
     return this._loadTitleCache().get(id)
+  },
+
+  _loadDurationCache(): Map<number, number> {
+    if (this._durationCache) return this._durationCache
+    try {
+      const raw = localStorage.getItem(this._DURATION_CACHE_KEY)
+      this._durationCache = raw ? new Map(JSON.parse(raw) as [number, number][]) : new Map()
+    } catch {
+      this._durationCache = new Map()
+    }
+    return this._durationCache
+  },
+
+  _saveDurationCache() {
+    if (!this._durationCache) return
+    localStorage.setItem(this._DURATION_CACHE_KEY, JSON.stringify([...this._durationCache]))
+  },
+
+  cacheDuration(id: number, duration: number) {
+    this._loadDurationCache().set(id, Math.round(duration))
+    this._saveDurationCache()
+  },
+
+  getCachedDuration(id: number): number | undefined {
+    return this._loadDurationCache().get(id)
   },
   // Get the maximum song number from song_number.txt with fallback chain
   async getMaxSongNumber(): Promise<number> {
@@ -114,13 +143,15 @@ export const songService = {
     const maxSongNumber = await this.getMaxSongNumber()
     const cache = this._loadTitleCache()
 
+    const durationCache = this._loadDurationCache()
+
     // Build song list immediately using cached titles (no blocking network calls)
     for (let i = 1; i <= maxSongNumber; i++) {
       mockSongs.push({
         id: i,
         title: cache.get(i) || `Song ${i}`,
         filename: `link.${i}.mp3`,
-        duration: Math.floor(Math.random() * 300) + 60,
+        duration: durationCache.get(i) || 0,
         isFavorite: Math.random() > 0.8,
         lyrics: undefined
       })

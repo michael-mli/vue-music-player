@@ -260,13 +260,11 @@ async function jumpToPage() {
 }
 
 function formatDuration(duration?: number): string {
-  if (!duration) return '0:00'
+  if (!duration) return '—'
   const minutes = Math.floor(duration / 60)
   const seconds = Math.floor(duration % 60)
   return `${minutes}:${seconds.toString().padStart(2, '0')}`
 }
-
-// Modal handlers
 function openAddToPlaylistModal(song: Song) {
   selectedSong.value = song
   showAddToPlaylistModal.value = true

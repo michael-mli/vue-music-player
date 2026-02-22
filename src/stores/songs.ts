@@ -344,6 +344,13 @@ export const useSongsStore = defineStore('songs', () => {
     return shuffled.slice(0, count)
   }
 
+  function updateSongDuration(songId: number, duration: number) {
+    const song = songs.value.find(s => s.id === songId)
+    if (song && song.duration !== duration) {
+      song.duration = duration
+    }
+  }
+
   return {
     // State
     songs,
@@ -377,6 +384,7 @@ export const useSongsStore = defineStore('songs', () => {
     previousPage,
     toggleFavorite,
     getRandomSongs,
+    updateSongDuration,
     loadTitlesForCurrentPage
   }
 })

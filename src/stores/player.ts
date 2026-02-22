@@ -670,6 +670,19 @@ export const usePlayerStore = defineStore('player', () => {
       duration.value = audio.duration || 0
       networkRetryAttempts.value = 0
       debugLogger.info('AUDIO', `loadedmetadata — duration=${audio.duration?.toFixed(2)}s`)
+
+      // Cache real duration and update songs store
+      if (currentSong.value && audio.duration && isFinite(audio.duration)) {
+        const roundedDuration = Math.round(audio.duration)
+        songService.cacheDuration(currentSong.value.id, audio.duration)
+        if (currentSong.value.duration !== roundedDuration) {
+          currentSong.value = { ...currentSong.value, duration: roundedDuration }
+        }
+        // Update the song in the library so duration shows correctly
+        import('@/stores/songs').then(({ useSongsStore }) => {
+          useSongsStore().updateSongDuration(currentSong.value!.id, roundedDuration)
+        })
+      }
     }, { signal })
 
     let lastLoggedSecond = -1
