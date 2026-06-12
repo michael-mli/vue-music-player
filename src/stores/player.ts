@@ -91,6 +91,25 @@ export const usePlayerStore = defineStore('player', () => {
     return `rs=${a.readyState} ns=${a.networkState} paused=${a.paused} ended=${a.ended} t=${a.currentTime.toFixed(2)}/${(a.duration || 0).toFixed(2)}`
   }
 
+  // Wall-clock time when the current transition started. With the screen off, mobile
+  // browsers freeze JS timers — so the play() timeout never fires and isTransitioning
+  // can stay stuck true for the whole background period. Date.now() survives freezing,
+  // letting recovery paths detect and clear a stale transition.
+  const transitionStartedAt = ref(0)
+
+  function beginTransition() {
+    isTransitioning.value = true
+    transitionStartedAt.value = Date.now()
+  }
+
+  /** Force-clears the transition flag if it has been set longer than any play() could run. */
+  function clearStaleTransition() {
+    if (isTransitioning.value && Date.now() - transitionStartedAt.value > playTimeoutMs + 5000) {
+      debugLogger.warn('PLAYER', `transition stuck for ${Math.round((Date.now() - transitionStartedAt.value) / 1000)}s — force-clearing stale flag`)
+      isTransitioning.value = false
+    }
+  }
+
   // Getters
   const progress = computed(() => {
     return duration.value > 0 ? (currentTime.value / duration.value) * 100 : 0
@@ -176,7 +195,7 @@ export const usePlayerStore = defineStore('player', () => {
   async function playSongFromHistory(song: Song) {
     debugLogger.info('PLAYER', `playSongFromHistory #${song.id} "${song.title}"`)
     // This function plays a song from history without adding it to history again
-    isTransitioning.value = true
+    beginTransition()
     lastPlayState.value = true
     playbackIntent.value = true
     currentSong.value = song
@@ -248,7 +267,7 @@ export const usePlayerStore = defineStore('player', () => {
 
     // Mark transition early — before any async work — so the pause event from the
     // previous song's 'ended' doesn't reset lastPlayState to false
-    isTransitioning.value = true
+    beginTransition()
     lastPlayState.value = true
     playbackIntent.value = true
 
@@ -584,36 +603,56 @@ export const usePlayerStore = defineStore('player', () => {
       const hidden = document.hidden
       debugLogger.info('VIS', `visibilitychange — hidden=${hidden} lastPlayState=${lastPlayState.value} ${snapAudio()}`)
 
-      if (hidden || !audioElement.value || !currentSong.value || isTransitioning.value) return
+      if (hidden || !audioElement.value || !currentSong.value) return
+
+      // With the screen off, frozen timers mean the play() timeout never fired — a song
+      // change that hung in the background can still be flagged in-flight. Clear it by
+      // wall-clock age, otherwise every recovery below is blocked and the player sits
+      // paused until the user presses play manually.
+      clearStaleTransition()
+      if (isTransitioning.value) return
 
       const audio = audioElement.value
+      // playbackIntent survives background pause events that clear lastPlayState
+      const wantsPlayback = lastPlayState.value || playbackIntent.value
 
       // If we were playing but audio is in error state (background mode on Android Chrome
-      // fails all audio loads), reload and play the current song now that we're visible.
-      if (lastPlayState.value && audio.error) {
-        debugLogger.warn('VIS', `Foreground: audio has error code=${audio.error.code} — reloading current song`)
-        playSong(currentSong.value).catch(err => {
-          debugLogger.error('VIS', `Failed to reload song on foreground: ${String(err)}`)
+      // fails all audio loads), reload the current song at position now that we're visible.
+      if (wantsPlayback && audio.error) {
+        debugLogger.warn('VIS', `Foreground: audio has error code=${audio.error.code} — recovering`)
+        recoverPlayback('foreground: audio error').catch(err => {
+          debugLogger.error('VIS', `Failed to recover errored song on foreground: ${String(err)}`)
         })
         return
       }
 
       // If we were playing but audio source never loaded (network throttled in background:
       // readyState 0=HAVE_NOTHING, paused=false — stuck), reload the current song.
-      if (lastPlayState.value && !audio.paused && audio.readyState < 3) {
-        debugLogger.warn('VIS', `Foreground: audio stalled at rs=${audio.readyState} — reloading current song`)
-        playSong(currentSong.value).catch(err => {
-          debugLogger.error('VIS', `Failed to reload stalled song on foreground: ${String(err)}`)
+      if (wantsPlayback && !audio.paused && audio.readyState < 3) {
+        debugLogger.warn('VIS', `Foreground: audio stalled at rs=${audio.readyState} — recovering`)
+        recoverPlayback('foreground: stalled load').catch(err => {
+          debugLogger.error('VIS', `Failed to recover stalled song on foreground: ${String(err)}`)
         })
         return
       }
 
-      // If we were playing but browser paused audio (e.g. device locked), resume
-      if (lastPlayState.value && audio.paused) {
-        debugLogger.warn('VIS', 'Foreground: audio was paused by browser — resuming')
-        audio.play().catch(err => {
-          debugLogger.error('VIS', `Failed to resume on foreground: ${String(err)}`)
-        })
+      // If we were playing but the element is paused (browser paused it, or a background
+      // song change died after load), resume — or reload if there's no data to resume from
+      if (wantsPlayback && audio.paused && !audio.ended) {
+        if (audio.readyState < 3) {
+          debugLogger.warn('VIS', `Foreground: paused with no data (rs=${audio.readyState}) — recovering`)
+          recoverPlayback('foreground: paused without data').catch(err => {
+            debugLogger.error('VIS', `Failed to recover paused song on foreground: ${String(err)}`)
+          })
+        } else {
+          debugLogger.warn('VIS', 'Foreground: audio was paused by browser — resuming')
+          audio.play().catch(err => {
+            debugLogger.error('VIS', `Failed to resume on foreground: ${String(err)} — recovering`)
+            recoverPlayback('foreground: resume failed').catch(e => {
+              debugLogger.error('VIS', `Recovery after failed resume also failed: ${String(e)}`)
+            })
+          })
+        }
         return
       }
 
@@ -625,7 +664,17 @@ export const usePlayerStore = defineStore('player', () => {
         return
       }
 
-      debugLogger.info('VIS', `Foreground: no action needed — paused=${audio.paused} lastPlay=${lastPlayState.value} endedHandled=${endedHandled.value}`)
+      // 'ended' was handled but the song change died before the new src was set —
+      // currentSong already points at the next song, so reload it
+      if (wantsPlayback && audio.ended && endedHandled.value) {
+        debugLogger.warn('VIS', 'Foreground: advance after song end died in background — recovering')
+        recoverPlayback('foreground: advance after end died').catch(err => {
+          debugLogger.error('VIS', `Failed to recover after dead advance: ${String(err)}`)
+        })
+        return
+      }
+
+      debugLogger.info('VIS', `Foreground: no action needed — paused=${audio.paused} lastPlay=${lastPlayState.value} intent=${playbackIntent.value} endedHandled=${endedHandled.value}`)
     })
   }
   
@@ -717,6 +766,8 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   function checkPlaybackHealth() {
+    // A transition that hung while timers were frozen would block the watchdog forever
+    clearStaleTransition()
     const audio = audioElement.value
     if (!audio || !currentSong.value || !playbackIntent.value || isTransitioning.value) {
       watchdogUnhealthyTicks.value = 0
@@ -772,13 +823,16 @@ export const usePlayerStore = defineStore('player', () => {
     const resumeAt = currentTime.value
     debugLogger.warn('PLAYER', `recoverPlayback: reloading #${song.id} at t=${resumeAt.toFixed(1)} (${reason})`)
 
-    isTransitioning.value = true
+    beginTransition()
     try {
       audio.pause()
       audio.src = getMusicUrl(`link.${song.id}.mp3`)
       audio.load()
       if (resumeAt > 1) {
         audio.addEventListener('loadedmetadata', () => {
+          // Skip the seek if the position would land at/past the end (a stale timestamp
+          // from the previous song) — restarting from 0 beats instantly re-ending
+          if (audio.duration && isFinite(audio.duration) && resumeAt >= audio.duration - 2) return
           try {
             audio.currentTime = resumeAt
           } catch {
