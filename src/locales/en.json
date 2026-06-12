@@ -23,6 +23,7 @@
     "mute": "Mute",
     "unmute": "Unmute",
     "currentlyPlaying": "Currently Playing",
+    "sessionTime": "Session",
     "queue": "Queue",
     "toggleLyrics": "Toggle Lyrics",
     "sleepTimer": "Sleep Timer",

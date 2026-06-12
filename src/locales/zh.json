@@ -23,6 +23,7 @@
     "mute": "静音",
     "unmute": "取消静音",
     "currentlyPlaying": "正在播放",
+    "sessionTime": "本次",
     "queue": "播放队列",
     "toggleLyrics": "切换歌词",
     "sleepTimer": "睡眠定时器",
