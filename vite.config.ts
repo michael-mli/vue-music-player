@@ -20,6 +20,10 @@ export default defineConfig({
         {
           src: 'public/apple-touch-icon.png',
           dest: ''
+        },
+        {
+          src: 'public/poster-default.svg',
+          dest: ''
         }
       ]
     }),

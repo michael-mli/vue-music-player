@@ -20,8 +20,8 @@
           {{ t('music.nowPlaying') }}
         </h1>
         <div class="max-w-md mx-auto bg-light-card dark:bg-spotify-dark rounded-lg p-6 mb-6">
-          <div class="w-32 h-32 bg-light-border dark:bg-spotify-light rounded-lg mx-auto mb-4 flex items-center justify-center">
-            <MusicalNoteIcon class="w-16 h-16 text-gray-400" />
+          <div class="w-32 h-32 bg-light-border dark:bg-spotify-light rounded-lg mx-auto mb-4 overflow-hidden">
+            <SongCover :song-id="currentSong.id" :alt="currentSong.title" />
           </div>
           <h2 class="text-xl font-bold text-light-text-primary dark:text-white mb-2">{{ currentSong.title }}</h2>
           <p class="text-light-text-secondary dark:text-gray-400">{{ t('music.songId') }}: {{ currentSong.id }}</p>
@@ -91,7 +91,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { MusicalNoteIcon } from '@heroicons/vue/24/outline'
+import SongCover from '@/components/UI/SongCover.vue'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
 import type { Song } from '@/types'

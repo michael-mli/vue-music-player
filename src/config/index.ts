@@ -8,6 +8,7 @@ export interface AppConfig {
   apiBaseUrl: string
   musicBaseUrl: string
   lyricsBaseUrl: string
+  posterBaseUrl: string
   
   // App Settings
   appTitle: string
@@ -33,7 +34,8 @@ const defaultConfig: AppConfig = {
   apiBaseUrl: '/api',
   musicBaseUrl: '',
   lyricsBaseUrl: '/lyrics',
-  
+  posterBaseUrl: '/poster',
+
   // App Settings
   appTitle: "Mic's Music Player",
   enableMockData: false,
@@ -60,6 +62,7 @@ const config: AppConfig = {
   apiBaseUrl: import.meta.env.VITE_API_BASE_URL || defaultConfig.apiBaseUrl,
   musicBaseUrl: import.meta.env.VITE_MUSIC_BASE_URL || defaultConfig.musicBaseUrl,
   lyricsBaseUrl: import.meta.env.VITE_LYRICS_BASE_URL || defaultConfig.lyricsBaseUrl,
+  posterBaseUrl: import.meta.env.VITE_POSTER_BASE_URL || defaultConfig.posterBaseUrl,
   appTitle: import.meta.env.VITE_APP_TITLE || defaultConfig.appTitle,
   enableMockData: import.meta.env.VITE_ENABLE_MOCK_DATA === 'true',
 }
@@ -80,6 +83,20 @@ export function getLyricsUrl(filename: string): string {
   const baseUrl = config.lyricsBaseUrl
   const separator = baseUrl && !baseUrl.endsWith('/') ? '/' : ''
   return `${baseUrl}${separator}${filename}`
+}
+
+/** Bundled fallback poster, used when a song has no downloaded cover art. */
+export const DEFAULT_POSTER_URL = '/poster-default.svg'
+
+/**
+ * Get the cover poster URL for a song id. Posters are downloaded into the music
+ * store as poster/link.{id}.jpg; missing ones 404 and the <img> @error handler
+ * swaps in DEFAULT_POSTER_URL.
+ */
+export function getPosterUrl(songId: number): string {
+  const baseUrl = config.posterBaseUrl
+  const separator = baseUrl && !baseUrl.endsWith('/') ? '/' : ''
+  return `${baseUrl}${separator}link.${songId}.jpg`
 }
 
 /**

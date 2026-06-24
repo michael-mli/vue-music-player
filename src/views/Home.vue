@@ -48,8 +48,8 @@
             @click="playSong(song)"
             class="card cursor-pointer group"
           >
-            <div class="aspect-square bg-light-border dark:bg-spotify-light rounded-md mb-3 flex items-center justify-center relative">
-              <MusicalNoteIcon class="w-8 h-8 text-gray-400" />
+            <div class="aspect-square bg-light-border dark:bg-spotify-light rounded-md mb-3 overflow-hidden relative">
+              <SongCover :song-id="song.id" :alt="song.title" />
               <div class="absolute inset-0 bg-black/60 rounded-md opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center">
                 <PlayIcon class="w-6 h-6 text-white" />
               </div>
@@ -73,8 +73,8 @@
             <div class="w-8 h-8 flex items-center justify-center mr-4">
               <span class="text-light-text-secondary dark:text-gray-400 font-medium">{{ index + 1 }}</span>
             </div>
-            <div class="w-10 h-10 bg-light-border dark:bg-spotify-light rounded mr-3 flex items-center justify-center">
-              <MusicalNoteIcon class="w-5 h-5 text-gray-400" />
+            <div class="w-10 h-10 bg-light-border dark:bg-spotify-light rounded mr-3 overflow-hidden flex-shrink-0">
+              <SongCover :song-id="song.id" :alt="song.title" />
             </div>
             <div class="flex-1 min-w-0">
               <p class="text-light-text-primary dark:text-white font-medium break-words">{{ song.title }}</p>
@@ -109,6 +109,7 @@ import {
 import { useI18n } from 'vue-i18n'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
+import SongCover from '@/components/UI/SongCover.vue'
 import type { Song } from '@/types'
 
 const { t } = useI18n()

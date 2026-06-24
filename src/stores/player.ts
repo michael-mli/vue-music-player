@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Song, PlayerState, PlayMode } from '@/types'
-import { getMusicUrl } from '@/config'
+import { getMusicUrl, getPosterUrl } from '@/config'
 import { songService } from '@/services/songService'
 import { audioCacheService } from '@/services/audioCacheService'
 import { songPredictionService } from '@/services/songPredictionService'
@@ -1004,6 +1004,7 @@ export const usePlayerStore = defineStore('player', () => {
         title: currentSong.value.title,
         artist: 'Unknown Artist',
         artwork: [
+          { src: getPosterUrl(currentSong.value.id), sizes: '600x600', type: 'image/jpeg' },
           { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' }
         ]
       })

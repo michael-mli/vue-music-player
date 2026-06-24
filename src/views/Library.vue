@@ -24,8 +24,8 @@
           <div class="w-8 text-center mr-4">
             <span class="text-light-text-secondary dark:text-gray-400 text-sm">{{ song.id }}</span>
           </div>
-          <div class="w-10 h-10 bg-light-border dark:bg-spotify-dark rounded mr-3 flex items-center justify-center">
-            <MusicalNoteIcon class="w-5 h-5 text-gray-400" />
+          <div class="w-10 h-10 bg-light-border dark:bg-spotify-dark rounded mr-3 overflow-hidden flex-shrink-0">
+            <SongCover :song-id="song.id" :alt="song.title" />
           </div>
           <div class="flex-1 min-w-0">
             <p class="text-light-text-primary dark:text-white font-medium break-words">{{ song.title }}</p>
@@ -161,7 +161,8 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
-import { MusicalNoteIcon, HeartIcon, EllipsisHorizontalIcon } from '@heroicons/vue/24/outline'
+import { HeartIcon, EllipsisHorizontalIcon } from '@heroicons/vue/24/outline'
+import SongCover from '@/components/UI/SongCover.vue'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
 import { usePlaylistsStore } from '@/stores/playlists'

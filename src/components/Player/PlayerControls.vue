@@ -3,8 +3,8 @@
   <div class="fixed bottom-0 left-0 right-0 bg-light-card dark:bg-spotify-dark border-t border-light-border dark:border-spotify-light sm:hidden z-40">
     <!-- Current Song Info - Mobile -->
     <div v-if="currentSong" class="flex items-center px-2 py-1.5 border-b border-light-border dark:border-spotify-light h-12">
-      <div class="w-8 h-8 bg-light-border dark:bg-spotify-light rounded mr-2 flex items-center justify-center">
-        <MusicalNoteIcon class="w-4 h-4 text-gray-400" />
+      <div class="w-8 h-8 bg-light-border dark:bg-spotify-light rounded mr-2 overflow-hidden flex-shrink-0">
+        <SongCover :song-id="currentSong.id" :alt="currentSong.title" />
       </div>
       <div class="flex-1 min-w-0">
         <p class="text-xs font-medium text-light-text-primary dark:text-white break-words">{{ currentSong.title }} (#{{ currentSong.id }})</p>
@@ -265,8 +265,8 @@
     <!-- Current Song Info -->
     <div class="flex items-center w-80 min-w-0">
       <div v-if="currentSong" class="flex items-center min-w-0 flex-1">
-        <div class="w-14 h-14 bg-light-border dark:bg-spotify-light rounded-md mr-3 flex items-center justify-center">
-          <MusicalNoteIcon class="w-6 h-6 text-gray-400" />
+        <div class="w-14 h-14 bg-light-border dark:bg-spotify-light rounded-md mr-3 overflow-hidden flex-shrink-0">
+          <SongCover :song-id="currentSong.id" :alt="currentSong.title" />
         </div>
         <div class="flex-1 min-w-0">
           <p class="text-sm font-medium text-light-text-primary dark:text-white break-words">{{ currentSong.title }} (#{{ currentSong.id }})</p>
@@ -559,7 +559,6 @@ import {
   SpeakerWaveIcon,
   SpeakerXMarkIcon,
   Bars2Icon,
-  MusicalNoteIcon,
   HeartIcon,
   DocumentTextIcon,
   PlusIcon,
@@ -573,6 +572,7 @@ import { useSongsStore } from '@/stores/songs'
 import { usePlaylistsStore } from '@/stores/playlists'
 import ProgressBar from './ProgressBar.vue'
 import VolumeControl from './VolumeControl.vue'
+import SongCover from '@/components/UI/SongCover.vue'
 
 // Define emits
 const emit = defineEmits<{
