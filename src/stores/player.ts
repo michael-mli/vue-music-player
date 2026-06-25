@@ -28,7 +28,8 @@ export const usePlayerStore = defineStore('player', () => {
   const sleepTimerInterval = ref<number | null>(null)
   
   // Total playtime tracking
-  const totalPlaytime = ref(0) // Total seconds played since start
+  const totalPlaytime = ref(0) // Total seconds played across all app usage (persisted)
+  const sessionPlaytime = ref(0) // Seconds played in the current session — resets to 0 on stop
   const sessionStartTime = ref(0) // When current play session started
   const lastPlayState = ref(false) // Previous playing state
   const playtimeInterval = ref<number | null>(null) // Interval for updating playtime
@@ -130,6 +131,19 @@ export const usePlayerStore = defineStore('player', () => {
     const minutes = Math.floor((totalSeconds % 3600) / 60)
     const seconds = totalSeconds % 60
     
+    if (hours > 0) {
+      return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+    } else {
+      return `${minutes}:${seconds.toString().padStart(2, '0')}`
+    }
+  })
+
+  const formattedSessionPlaytime = computed(() => {
+    const totalSeconds = sessionPlaytime.value
+    const hours = Math.floor(totalSeconds / 3600)
+    const minutes = Math.floor((totalSeconds % 3600) / 60)
+    const seconds = totalSeconds % 60
+
     if (hours > 0) {
       return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
     } else {
@@ -333,6 +347,9 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   function pause() {
+    // Explicit stop ends the current session — the session counter restarts at 0
+    // next time playback begins.
+    sessionPlaytime.value = 0
     if (audioElement.value) {
       audioElement.value.pause()
     }
@@ -356,6 +373,7 @@ export const usePlayerStore = defineStore('player', () => {
 
     if (!canPlayNext.value) {
       debugLogger.warn('PLAYER', 'nextSong: canPlayNext=false, aborting')
+      sessionPlaytime.value = 0
       return
     }
 
@@ -378,6 +396,7 @@ export const usePlayerStore = defineStore('player', () => {
         nextIndex = 0
       } else {
         debugLogger.warn('PLAYER', 'nextSong: end of queue, repeat=none — stopping')
+        sessionPlaytime.value = 0
         return
       }
     }
@@ -1086,10 +1105,11 @@ export const usePlayerStore = defineStore('player', () => {
       clearInterval(playtimeInterval.value)
     }
     
-    // Start new interval to increment total playtime every second
+    // Start new interval to increment playtime every second
     playtimeInterval.value = setInterval(() => {
       totalPlaytime.value += 1
-      
+      sessionPlaytime.value += 1
+
       // Save to localStorage every 10 seconds to avoid too many writes
       if (totalPlaytime.value % 10 === 0) {
         saveTotalPlaytime()
@@ -1253,6 +1273,8 @@ export const usePlayerStore = defineStore('player', () => {
     isSleepTimerActive,
     formattedSleepTimer,
     formattedTotalPlaytime,
+    sessionPlaytime,
+    formattedSessionPlaytime,
     isSongRangeActive,
     
     // Debug-exposed internals
