@@ -169,26 +169,17 @@ export const usePlayerStore = defineStore('player', () => {
       debugLogger.info('PLAYER', `isTransitioning=true — loading #${song.id}`)
       try {
         // Check if we have a cached version of this song
-        const cachedAudio = audioCacheService.getCachedAudio(song.id)
-
-        if (cachedAudio) {
-          debugLogger.info('PLAYER', `Using CACHED audio for #${song.id}`)
-          audioElement.value.pause()
-          audioElement.value.currentTime = 0
-          audioCacheService.transferAudioState(audioElement.value, cachedAudio)
-          const oldAudio = audioElement.value
-          audioElement.value = cachedAudio
-          audioElement.value.currentTime = 0
-          transferAudioEventListeners(oldAudio, audioElement.value)
-          audioCacheService.removeSongFromCache(song.id)
-        } else {
-          debugLogger.info('PLAYER', `Loading FRESH audio for #${song.id}`)
-          audioElement.value.pause()
-          audioElement.value.currentTime = 0
-          audioElement.value.src = getMusicUrl(`link.${song.id}.mp3`)
-          audioElement.value.load()
-          audioElement.value.currentTime = 0
-        }
+        // Always reuse the SAME audio element and just swap its src. Mobile autoplay
+        // policy only "unlocks" the element the user actually tapped play on; swapping
+        // in a freshly-created element from the read-ahead cache (new Audio()) loses that
+        // unlock, so play() gets blocked and playback stops after every song on mobile.
+        // The preload still warms the HTTP/service-worker cache, so this loads fast.
+        debugLogger.info('PLAYER', `Loading #${song.id} into the active audio element`)
+        audioElement.value.pause()
+        audioElement.value.src = getMusicUrl(`link.${song.id}.mp3`)
+        audioElement.value.load()
+        audioElement.value.currentTime = 0
+        audioCacheService.removeSongFromCache(song.id) // release any preloaded element
 
         debugLogger.info('PLAYER', `Calling play() for #${song.id}`)
         await play()
@@ -248,26 +239,17 @@ export const usePlayerStore = defineStore('player', () => {
 
       debugLogger.info('PLAYER', `isTransitioning=true — loading #${song.id}`)
       try {
-        const cachedAudio = audioCacheService.getCachedAudio(song.id)
-
-        if (cachedAudio) {
-          debugLogger.info('PLAYER', `Using CACHED audio for #${song.id}`)
-          audioElement.value.pause()
-          audioElement.value.currentTime = 0
-          audioCacheService.transferAudioState(audioElement.value, cachedAudio)
-          const oldAudio = audioElement.value
-          audioElement.value = cachedAudio
-          audioElement.value.currentTime = 0
-          transferAudioEventListeners(oldAudio, audioElement.value)
-          audioCacheService.removeSongFromCache(song.id)
-        } else {
-          debugLogger.info('PLAYER', `Loading FRESH audio for #${song.id}`)
-          audioElement.value.pause()
-          audioElement.value.currentTime = 0
-          audioElement.value.src = getMusicUrl(`link.${song.id}.mp3`)
-          audioElement.value.load()
-          audioElement.value.currentTime = 0
-        }
+        // Always reuse the SAME audio element and just swap its src. Mobile autoplay
+        // policy only "unlocks" the element the user actually tapped play on; swapping
+        // in a freshly-created element from the read-ahead cache (new Audio()) loses that
+        // unlock, so play() gets blocked and playback stops after every song on mobile.
+        // The preload still warms the HTTP/service-worker cache, so this loads fast.
+        debugLogger.info('PLAYER', `Loading #${song.id} into the active audio element`)
+        audioElement.value.pause()
+        audioElement.value.src = getMusicUrl(`link.${song.id}.mp3`)
+        audioElement.value.load()
+        audioElement.value.currentTime = 0
+        audioCacheService.removeSongFromCache(song.id) // release any preloaded element
 
         debugLogger.info('PLAYER', `Calling play() for #${song.id}`)
         await play()
