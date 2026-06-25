@@ -670,6 +670,7 @@ export const usePlayerStore = defineStore('player', () => {
     audio.addEventListener('loadedmetadata', () => {
       duration.value = audio.duration || 0
       networkRetryAttempts.value = 0
+      updateMediaPositionState()
       debugLogger.info('AUDIO', `loadedmetadata — duration=${audio.duration?.toFixed(2)}s`)
 
       // Cache real duration and update songs store
@@ -687,8 +688,17 @@ export const usePlayerStore = defineStore('player', () => {
     }, { signal })
 
     let lastLoggedSecond = -1
+    let lastPositionSecond = -1
     audio.addEventListener('timeupdate', () => {
       currentTime.value = audio.currentTime || 0
+
+      // Keep the OS media-session position fresh (throttled to ~1/s) so background
+      // playback is recognized as live media on stricter Android battery managers.
+      const sec = Math.floor(audio.currentTime)
+      if (sec !== lastPositionSecond) {
+        lastPositionSecond = sec
+        updateMediaPositionState()
+      }
 
       // Log progress periodically and near the end (debug only)
       if (isDebugMode) {
@@ -804,6 +814,7 @@ export const usePlayerStore = defineStore('player', () => {
       stopPlaytimeTracking()
       stopSleepTimerCountdown()
       lastPlayState.value = false
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
     }, { signal })
 
   }
@@ -851,6 +862,33 @@ export const usePlayerStore = defineStore('player', () => {
       navigator.mediaSession.setActionHandler('pause', pause)
       navigator.mediaSession.setActionHandler('nexttrack', () => nextSong())
       navigator.mediaSession.setActionHandler('previoustrack', () => previousSong())
+
+      // Tell the OS whether we're actively playing. Stricter Android battery managers
+      // use this to decide whether to keep a backgrounded media app alive.
+      navigator.mediaSession.playbackState = isPlaying.value ? 'playing' : 'paused'
+      updateMediaPositionState()
+    }
+  }
+
+  /**
+   * Reports the current playback position to the OS media session. A continuously
+   * updated position is part of what marks the app as a live media player, which helps
+   * background playback survive aggressive battery optimization (e.g. newer OneUI).
+   */
+  function updateMediaPositionState() {
+    if (!('mediaSession' in navigator) || !('setPositionState' in navigator.mediaSession)) return
+    const audio = audioElement.value
+    if (!audio) return
+    const dur = audio.duration
+    if (!dur || !isFinite(dur) || dur <= 0) return
+    try {
+      navigator.mediaSession.setPositionState({
+        duration: dur,
+        playbackRate: audio.playbackRate || 1,
+        position: Math.min(Math.max(audio.currentTime, 0), dur)
+      })
+    } catch {
+      // setPositionState throws on inconsistent values mid-transition — safe to ignore
     }
   }
 
