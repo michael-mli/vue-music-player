@@ -15,7 +15,7 @@
     >
       <!-- ── Header ── -->
       <div class="flex items-center justify-between px-3 py-2 bg-gray-900 border-b border-gray-700 flex-shrink-0">
-        <span class="text-white font-bold">🐛 Player Debug <span class="text-gray-400 font-normal text-[10px]">{{ buildLabel }}</span></span>
+        <span class="text-white font-bold">🐛 Player Debug <span class="text-gray-400 font-normal text-[10px]">{{ buildSha }} · {{ buildLabel }}</span></span>
         <div class="flex items-center gap-1.5">
           <button @click="copyLog" class="px-2 py-1 bg-blue-800 text-white rounded">Copy</button>
           <button @click="debugLogger.clear()" class="px-2 py-1 bg-yellow-800 text-white rounded">Clear</button>
@@ -80,6 +80,7 @@ import { ref, computed, watch, onUnmounted } from 'vue'
 import { usePlayerStore } from '@/stores/player'
 import { isDebugMode, debugLogs, debugLogger } from '@/services/debugLogger'
 
+const buildSha = __APP_BUILD_SHA__
 const buildDate = new Date(__APP_BUILD_TIME__)
 const buildLabel = buildDate.toLocaleDateString('en', { month: 'short', day: 'numeric' })
   + ' ' + buildDate.toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit', hour12: false })

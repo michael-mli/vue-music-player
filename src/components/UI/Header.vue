@@ -40,12 +40,12 @@
         {{ $t('pwa.install') }}
       </button>
       
-      <!-- Build version — click to copy full timestamp -->
+      <!-- Build version — click to copy full sha + timestamp -->
       <span
-        :title="buildTime"
+        :title="`${buildSha} · ${buildTime}`"
         @click="copyBuildTime"
         class="hidden sm:block text-[10px] tabular-nums text-gray-500 hover:text-gray-300 cursor-pointer select-none leading-tight text-right"
-      >{{ buildLabel }}</span>
+      >{{ buildSha }} · {{ buildLabel }}</span>
 
       <!-- Theme Toggle -->
       <button
@@ -62,8 +62,9 @@
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
 
-// Build timestamp injected by Vite at build time — changes with every build
+// Build metadata injected by Vite at build time — changes with every build
 const buildTime = __APP_BUILD_TIME__
+const buildSha = __APP_BUILD_SHA__
 const buildDate = new Date(buildTime)
 // e.g. "Feb 21 14:32" in local time
 const buildLabel = buildDate.toLocaleDateString('en', { month: 'short', day: 'numeric' })
@@ -71,7 +72,7 @@ const buildLabel = buildDate.toLocaleDateString('en', { month: 'short', day: 'nu
 
 async function copyBuildTime() {
   try {
-    await navigator.clipboard.writeText(buildTime)
+    await navigator.clipboard.writeText(`${buildSha} · ${buildTime}`)
   } catch {
     // silently ignore — tooltip already shows full time
   }

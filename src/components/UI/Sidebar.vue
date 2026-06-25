@@ -84,7 +84,7 @@
       </div>
       <!-- Build version -->
       <p class="mt-2 text-[10px] tabular-nums text-gray-500 text-right" :title="buildTime">
-        Build {{ buildLabel }}
+        Build {{ buildSha }} · {{ buildLabel }}
       </p>
     </div>
     
@@ -101,6 +101,7 @@
 import { ref, computed } from 'vue'
 
 const buildTime = __APP_BUILD_TIME__
+const buildSha = __APP_BUILD_SHA__
 const buildDate = new Date(buildTime)
 const buildLabel = buildDate.toLocaleDateString('en', { month: 'short', day: 'numeric' })
   + ' ' + buildDate.toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit', hour12: false })

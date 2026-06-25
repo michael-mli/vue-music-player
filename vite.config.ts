@@ -3,6 +3,17 @@ import vue from '@vitejs/plugin-vue'
 import { VitePWA } from 'vite-plugin-pwa'
 import { viteStaticCopy } from 'vite-plugin-static-copy'
 import { resolve } from 'path'
+import { execSync } from 'child_process'
+
+// Short git SHA of the commit being built — ties the running build to a commit.
+// Falls back to 'unknown' when git isn't available (e.g. building from a tarball).
+function gitShortSha(): string {
+  try {
+    return execSync('git rev-parse --short HEAD').toString().trim()
+  } catch {
+    return 'unknown'
+  }
+}
 
 export default defineConfig({
   plugins: [
@@ -82,7 +93,8 @@ export default defineConfig({
     })
   ],
   define: {
-    __APP_BUILD_TIME__: JSON.stringify(new Date().toISOString())
+    __APP_BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+    __APP_BUILD_SHA__: JSON.stringify(gitShortSha())
   },
   resolve: {
     alias: {
