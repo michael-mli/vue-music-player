@@ -35,6 +35,11 @@ export default defineConfig({
         {
           src: 'public/poster-default.svg',
           dest: ''
+        },
+        {
+          // Temporary debug-log upload sink (remove with savelog.php after diagnosis)
+          src: 'public/savelog.php',
+          dest: ''
         }
       ]
     }),
