@@ -136,10 +136,10 @@ const playlistsStore = usePlaylistsStore()
 const route = useRoute()
 
 // Reactive state
-// Default closed so the lyrics panel never auto-opens on launch — the app
-// auto-loads a random song (setting currentSong) but doesn't autoplay on mobile,
-// and an unprompted lyrics overlay is confusing. The user opens it via the toggle.
-const showLyrics = ref(false)
+// Default open on desktop (lyrics is a side panel there), closed on mobile where it's
+// a full overlay — the app auto-loads a random song at launch without autoplaying on
+// mobile, so an unprompted lyrics overlay there is confusing. Matches Tailwind's `lg`.
+const showLyrics = ref(window.matchMedia('(min-width: 1024px)').matches)
 const showInstallPrompt = ref(false)
 const updateAvailable = ref(false)
 const showMobileSidebar = ref(false)
