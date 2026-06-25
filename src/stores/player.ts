@@ -32,12 +32,6 @@ export const usePlayerStore = defineStore('player', () => {
   const sessionStartTime = ref(0) // When current play session started
   const lastPlayState = ref(false) // Previous playing state
   const playtimeInterval = ref<number | null>(null) // Interval for updating playtime
-  const sessionPlaytime = ref(0) // Seconds played in the current session — resets to 0 when the user stops
-
-  // True while the user wants music playing. Unlike lastPlayState (which browser-initiated
-  // pause events clear), this only flips false on an explicit user stop or when the queue
-  // genuinely ends — it's what the watchdog uses to decide whether to recover playback.
-  const playbackIntent = ref(false)
   
   // Song range filter
   const songRangeMin = ref(0)
@@ -52,19 +46,6 @@ export const usePlayerStore = defineStore('player', () => {
   // Mobile stall handling - debounce to avoid aggressive reloads
   const stallTimeout = ref<number | null>(null)
   const stallDebounceMs = 10000 // Only retry after 10s of sustained stall
-
-  // Playback watchdog — catches the cases no event covers: a wifi↔mobile switch usually
-  // keeps navigator.onLine true and fires no 'error', and a hung load leaves the element
-  // paused so the 'stalled' retry path never triggers either.
-  const watchdogInterval = ref<number | null>(null)
-  const watchdogCheckMs = 5000
-  const watchdogUnhealthyTicks = ref(0) // consecutive checks where playback looked dead
-  const watchdogCooldownTicks = ref(0) // checks to skip after a recovery attempt
-  const watchdogLastTime = ref(-1) // audio.currentTime at the previous check
-
-  // play() promises can stay pending forever when the network drops mid-load; without a
-  // timeout, isTransitioning would stay true and block every recovery path
-  const playTimeoutMs = 20000
 
   // Fallback end-detection for mobile browsers that don't fire 'ended'
   const endedHandled = ref(false)
@@ -140,19 +121,6 @@ export const usePlayerStore = defineStore('player', () => {
     }
   })
 
-  const formattedSessionPlaytime = computed(() => {
-    const totalSeconds = sessionPlaytime.value
-    const hours = Math.floor(totalSeconds / 3600)
-    const minutes = Math.floor((totalSeconds % 3600) / 60)
-    const seconds = totalSeconds % 60
-
-    if (hours > 0) {
-      return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
-    } else {
-      return `${minutes}:${seconds.toString().padStart(2, '0')}`
-    }
-  })
-
   // Actions
   function initializeAudio() {
     audioElement.value = new Audio()
@@ -165,12 +133,9 @@ export const usePlayerStore = defineStore('player', () => {
     
     // Setup network connectivity listeners
     setupNetworkListeners()
-
+    
     // Setup audio event listeners
     setupAudioEventListeners(audioElement.value)
-
-    // Start the playback watchdog
-    startPlaybackWatchdog()
   }
 
   async function playSongFromHistory(song: Song) {
@@ -178,7 +143,6 @@ export const usePlayerStore = defineStore('player', () => {
     // This function plays a song from history without adding it to history again
     isTransitioning.value = true
     lastPlayState.value = true
-    playbackIntent.value = true
     currentSong.value = song
     endedHandled.value = false
     if (endFallbackTimeout.value) { clearTimeout(endFallbackTimeout.value); endFallbackTimeout.value = null }
@@ -250,7 +214,6 @@ export const usePlayerStore = defineStore('player', () => {
     // previous song's 'ended' doesn't reset lastPlayState to false
     isTransitioning.value = true
     lastPlayState.value = true
-    playbackIntent.value = true
 
     // Use cached title if available (titles are loaded at startup and cached in localStorage)
     if (song.title.startsWith('Song ')) {
@@ -307,43 +270,17 @@ export const usePlayerStore = defineStore('player', () => {
     }
   }
 
-  /**
-   * Awaits audio.play() but gives up after playTimeoutMs — when the network drops mid-load
-   * the play() promise can stay pending forever, which would leave isTransitioning stuck
-   * true and block every recovery path. On timeout the watchdog takes over.
-   */
-  function playWithTimeout(audio: HTMLAudioElement): Promise<void> {
-    const playPromise = audio.play()
-    // Keep a handler attached so a late rejection (after we time out) isn't unhandled
-    playPromise.catch(() => {})
-    return Promise.race([
-      playPromise,
-      new Promise<never>((_, reject) => {
-        setTimeout(() => {
-          const err = new Error(`play() still pending after ${playTimeoutMs}ms`)
-          err.name = 'PlayTimeoutError'
-          reject(err)
-        }, playTimeoutMs)
-      })
-    ])
-  }
-
   async function play() {
     if (!audioElement.value || !currentSong.value) {
       debugLogger.error('PLAYER', 'play(): audioElement or currentSong is null')
       return
     }
-    playbackIntent.value = true
     debugLogger.info('PLAYER', `play() called — ${snapAudio()}`)
     try {
-      await playWithTimeout(audioElement.value)
+      await audioElement.value.play()
       debugLogger.info('PLAYER', 'play() succeeded ✓')
       updateMediaSession()
     } catch (error) {
-      if (error instanceof Error && error.name === 'PlayTimeoutError') {
-        debugLogger.warn('PLAYER', 'play(): timed out waiting for playback — watchdog will recover')
-        return
-      }
       if (error instanceof Error && error.name === 'AbortError') {
         debugLogger.warn('PLAYER', 'play(): AbortError — src changed while play was pending, waiting for canplay')
         await new Promise<void>((resolve) => {
@@ -355,7 +292,7 @@ export const usePlayerStore = defineStore('player', () => {
           setTimeout(resolve, 3000)
         })
         try {
-          await playWithTimeout(audioElement.value!)
+          await audioElement.value!.play()
           debugLogger.info('PLAYER', 'play() retry after AbortError succeeded ✓')
           updateMediaSession()
         } catch (e2) {
@@ -369,7 +306,7 @@ export const usePlayerStore = defineStore('player', () => {
         debugLogger.warn('PLAYER', 'play(): NotAllowedError — retrying in 500ms')
         await new Promise(resolve => setTimeout(resolve, 500))
         try {
-          await playWithTimeout(audioElement.value!)
+          await audioElement.value!.play()
           debugLogger.info('PLAYER', 'play() retry after NotAllowedError succeeded ✓')
           updateMediaSession()
         } catch (retryError) {
@@ -380,10 +317,6 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   function pause() {
-    // Explicit stop: clear playback intent so the watchdog doesn't auto-resume,
-    // and reset the session play counter
-    playbackIntent.value = false
-    sessionPlaytime.value = 0
     if (audioElement.value) {
       audioElement.value.pause()
     }
@@ -407,8 +340,6 @@ export const usePlayerStore = defineStore('player', () => {
 
     if (!canPlayNext.value) {
       debugLogger.warn('PLAYER', 'nextSong: canPlayNext=false, aborting')
-      playbackIntent.value = false
-      sessionPlaytime.value = 0
       return
     }
 
@@ -431,8 +362,6 @@ export const usePlayerStore = defineStore('player', () => {
         nextIndex = 0
       } else {
         debugLogger.warn('PLAYER', 'nextSong: end of queue, repeat=none — stopping')
-        playbackIntent.value = false
-        sessionPlaytime.value = 0
         return
       }
     }
@@ -568,7 +497,7 @@ export const usePlayerStore = defineStore('player', () => {
       console.log('Network connection restored')
 
       // If we were playing and got disconnected, try to resume
-      if ((lastPlayState.value || playbackIntent.value) && !isPlaying.value && currentSong.value) {
+      if (lastPlayState.value && !isPlaying.value && currentSong.value) {
         console.log('Attempting to resume playback after network restore')
         handleNetworkReconnect()
       }
@@ -695,100 +624,20 @@ export const usePlayerStore = defineStore('player', () => {
   }
   
   async function handleNetworkReconnect() {
-    // Wait a bit for the connection to stabilize
-    await new Promise(resolve => setTimeout(resolve, 1000))
-    try {
-      await recoverPlayback('network reconnected')
-    } catch (error) {
-      console.error('Failed to resume after network reconnect:', error)
-    }
-  }
-
-  /**
-   * Starts the playback watchdog. It catches the failure modes no event covers:
-   * a wifi↔mobile switch usually keeps navigator.onLine true and fires neither
-   * 'offline'/'online' nor 'error', and a hung load leaves nothing to react to.
-   * In background tabs the interval is throttled by the browser — recovery just
-   * happens more slowly there.
-   */
-  function startPlaybackWatchdog() {
-    if (watchdogInterval.value) return
-    watchdogInterval.value = window.setInterval(checkPlaybackHealth, watchdogCheckMs)
-  }
-
-  function checkPlaybackHealth() {
-    const audio = audioElement.value
-    if (!audio || !currentSong.value || !playbackIntent.value || isTransitioning.value) {
-      watchdogUnhealthyTicks.value = 0
-      watchdogLastTime.value = -1
-      return
-    }
-
-    // Give a recovery attempt time to take effect before judging it
-    if (watchdogCooldownTicks.value > 0) {
-      watchdogCooldownTicks.value--
-      return
-    }
-
-    const prevTime = watchdogLastTime.value
-    watchdogLastTime.value = audio.currentTime
-
-    let reason: string | null = null
-    if (audio.error) {
-      reason = `audio error code=${audio.error.code}`
-    } else if (audio.paused && !audio.ended) {
-      // Intent says playing but the element is paused with no transition in flight —
-      // a failed song change or abandoned retry left playback dead
-      reason = 'paused while playback intended'
-    } else if (!audio.paused && audio.readyState < 3 && prevTime >= 0 && audio.currentTime === prevTime) {
-      // play() was called but no data is arriving and time isn't advancing — hung load
-      reason = `stuck at t=${audio.currentTime.toFixed(1)} rs=${audio.readyState}`
-    }
-
-    if (!reason) {
-      watchdogUnhealthyTicks.value = 0
-      return
-    }
-
-    watchdogUnhealthyTicks.value++
-    debugLogger.warn('WATCHDOG', `unhealthy (${watchdogUnhealthyTicks.value}/2): ${reason} — ${snapAudio()}`)
-    if (watchdogUnhealthyTicks.value < 2) return // require ~10s of sustained failure
-
-    watchdogUnhealthyTicks.value = 0
-    watchdogCooldownTicks.value = 3 // ~15s before the next health verdict
-    recoverPlayback(reason).catch(err =>
-      debugLogger.error('WATCHDOG', `recovery attempt failed: ${String(err)}`)
-    )
-  }
-
-  /**
-   * Reloads the current song from scratch and resumes at the last known position.
-   * Used by the watchdog and the network-reconnect handler.
-   */
-  async function recoverPlayback(reason: string) {
-    const audio = audioElement.value
-    const song = currentSong.value
-    if (!audio || !song) return
-    const resumeAt = currentTime.value
-    debugLogger.warn('PLAYER', `recoverPlayback: reloading #${song.id} at t=${resumeAt.toFixed(1)} (${reason})`)
-
-    isTransitioning.value = true
-    try {
-      audio.pause()
-      audio.src = getMusicUrl(`link.${song.id}.mp3`)
-      audio.load()
-      if (resumeAt > 1) {
-        audio.addEventListener('loadedmetadata', () => {
-          try {
-            audio.currentTime = resumeAt
-          } catch {
-            // not seekable yet — song restarts from 0, still better than silence
-          }
-        }, { once: true })
+    if (currentSong.value && audioElement.value) {
+      try {
+        // Reload the current song
+        audioElement.value.src = getMusicUrl(`link.${currentSong.value.id}.mp3`)
+        audioElement.value.load()
+        
+        // Wait a bit for the connection to stabilize
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        
+        // Try to resume playback
+        await audioElement.value.play()
+      } catch (error) {
+        console.error('Failed to resume after network reconnect:', error)
       }
-      await play()
-    } finally {
-      isTransitioning.value = false
     }
   }
 
@@ -923,10 +772,6 @@ export const usePlayerStore = defineStore('player', () => {
       }
       // Reset failure streak — audio is actually decoding, so the file exists and is valid
       consecutiveFailures.value = 0
-      // Playback is healthy again — reset watchdog state
-      watchdogUnhealthyTicks.value = 0
-      watchdogCooldownTicks.value = 0
-      watchdogLastTime.value = -1
       // Start playtime tracking here (not on 'play') so we only count real audio output
       startPlaytimeTracking()
       // Start sleep timer countdown here so it only ticks against real playback,
@@ -958,14 +803,6 @@ export const usePlayerStore = defineStore('player', () => {
       stopPlaytimeTracking()
       stopSleepTimerCountdown()
       lastPlayState.value = false
-      // Only a pause on a HEALTHY element clears playback intent (e.g. audio focus loss
-      // during a phone call — auto-resuming there would be wrong). A pause amid network
-      // distress (error / no data / offline) keeps intent so the watchdog recovers.
-      // The pause that precedes a natural 'ended' also lands here; playSong re-sets
-      // intent immediately when the next song starts loading.
-      if (!audio.error && audio.readyState >= 3 && isOnline.value) {
-        playbackIntent.value = false
-      }
     }, { signal })
 
   }
@@ -1106,8 +943,7 @@ export const usePlayerStore = defineStore('player', () => {
     // Start new interval to increment total playtime every second
     playtimeInterval.value = setInterval(() => {
       totalPlaytime.value += 1
-      sessionPlaytime.value += 1
-
+      
       // Save to localStorage every 10 seconds to avoid too many writes
       if (totalPlaytime.value % 10 === 0) {
         saveTotalPlaytime()
@@ -1256,7 +1092,6 @@ export const usePlayerStore = defineStore('player', () => {
     sleepTimer,
     sleepTimerRemaining,
     totalPlaytime,
-    sessionPlaytime,
     audioElement,
     songRangeMin,
     songRangeMax,
@@ -1272,14 +1107,12 @@ export const usePlayerStore = defineStore('player', () => {
     isSleepTimerActive,
     formattedSleepTimer,
     formattedTotalPlaytime,
-    formattedSessionPlaytime,
     isSongRangeActive,
-
+    
     // Debug-exposed internals
     endedHandled,
     isTransitioning,
     lastPlayState,
-    playbackIntent,
 
     // Actions
     initializeAudio,

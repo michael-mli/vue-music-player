@@ -8,7 +8,7 @@
       </div>
       <div class="flex-1 min-w-0">
         <p class="text-xs font-medium text-light-text-primary dark:text-white break-words">{{ currentSong.title }} (#{{ currentSong.id }})</p>
-        <p class="text-xs text-light-text-secondary dark:text-gray-400 break-words">{{ $t('player.currentlyPlaying') }} • {{ formattedTotalPlaytime }} • {{ $t('player.sessionTime') }} {{ formattedSessionPlaytime }}</p>
+        <p class="text-xs text-light-text-secondary dark:text-gray-400 break-words">{{ $t('player.currentlyPlaying') }} • {{ formattedTotalPlaytime }}</p>
       </div>
       <button
         @click="toggleFavorite"
@@ -270,7 +270,7 @@
         </div>
         <div class="flex-1 min-w-0">
           <p class="text-sm font-medium text-light-text-primary dark:text-white break-words">{{ currentSong.title }} (#{{ currentSong.id }})</p>
-          <p class="text-xs text-light-text-secondary dark:text-gray-400 break-words">{{ $t('player.currentlyPlaying') }} • {{ formattedTotalPlaytime }} • {{ $t('player.sessionTime') }} {{ formattedSessionPlaytime }}</p>
+          <p class="text-xs text-light-text-secondary dark:text-gray-400 break-words">{{ $t('player.currentlyPlaying') }} • {{ formattedTotalPlaytime }}</p>
         </div>
         <button 
           @click="toggleFavorite"
@@ -601,7 +601,6 @@ const sleepTimer = computed(() => playerStore.sleepTimer)
 const isSleepTimerActive = computed(() => playerStore.isSleepTimerActive)
 const formattedSleepTimer = computed(() => playerStore.formattedSleepTimer)
 const formattedTotalPlaytime = computed(() => playerStore.formattedTotalPlaytime)
-const formattedSessionPlaytime = computed(() => playerStore.formattedSessionPlaytime)
 
 // Sleep timer menu state
 const showSleepTimerMenu = ref(false)
