@@ -47,6 +47,20 @@ export const usePlayerStore = defineStore('player', () => {
   const stallTimeout = ref<number | null>(null)
   const stallDebounceMs = 10000 // Only retry after 10s of sustained stall
 
+  // Active playback watchdog — catches silent wifi↔mobile switches that fire no
+  // offline/online/error/stalled events: the element keeps paused=false but no bytes
+  // arrive and currentTime freezes. Deliberately blind to seeking and post-seek
+  // buffering so it NEVER fights a user dragging the progress bar (the bug that the
+  // previous watchdog caused).
+  const watchdogInterval = ref<number | null>(null)
+  const watchdogCheckMs = 4000 // how often to sample playback progress
+  const stallStrikesNeeded = 2 // ~8s of frozen currentTime before recovering
+  const seekGraceMs = 5000 // ignore stall detection for this long after any seek
+  const isRecovering = ref(false)
+  let watchdogStrikes = 0
+  let watchdogLastTime = -1
+  let lastSeekAt = 0
+
   // Fallback end-detection for mobile browsers that don't fire 'ended'
   const endedHandled = ref(false)
   // Tracks the pending timeupdate-fallback timeout — ensures only one is scheduled per song
@@ -422,6 +436,10 @@ export const usePlayerStore = defineStore('player', () => {
 
   function seek(time: number) {
     if (audioElement.value) {
+      // Mark the seek so the watchdog ignores the buffering that follows — seeking
+      // into an un-cached region freezes currentTime exactly like a network stall.
+      lastSeekAt = Date.now()
+      watchdogStrikes = 0
       audioElement.value.currentTime = time
       currentTime.value = time
     }
@@ -490,6 +508,9 @@ export const usePlayerStore = defineStore('player', () => {
   }
   
   function setupNetworkListeners() {
+    // Backstop for network switches that fire no events at all
+    startPlaybackWatchdog()
+
     // Listen for online/offline events
     window.addEventListener('online', () => {
       isOnline.value = true
@@ -624,20 +645,99 @@ export const usePlayerStore = defineStore('player', () => {
   }
   
   async function handleNetworkReconnect() {
-    if (currentSong.value && audioElement.value) {
-      try {
-        // Reload the current song
-        audioElement.value.src = getMusicUrl(`link.${currentSong.value.id}.mp3`)
-        audioElement.value.load()
-        
-        // Wait a bit for the connection to stabilize
-        await new Promise(resolve => setTimeout(resolve, 1000))
-        
-        // Try to resume playback
-        await audioElement.value.play()
-      } catch (error) {
-        console.error('Failed to resume after network reconnect:', error)
-      }
+    // Let the connection settle, then reload at the saved position (not from 0)
+    await new Promise(resolve => setTimeout(resolve, 1000))
+    await recoverPlaybackAtPosition('network reconnected')
+  }
+
+  /**
+   * Starts the playback watchdog. It samples currentTime every few seconds and, if
+   * playback is frozen while we intend to play — and we're NOT seeking — reloads the
+   * song at the saved position. This is the only thing that catches a wifi↔mobile
+   * switch, which typically fires no offline/online/error/stalled events. In a
+   * backgrounded tab the browser throttles the interval, so recovery there just
+   * happens more slowly (the visibilitychange handler covers the foreground return).
+   */
+  function startPlaybackWatchdog() {
+    if (watchdogInterval.value) return
+    watchdogInterval.value = window.setInterval(checkPlaybackHealth, watchdogCheckMs)
+  }
+
+  function resetWatchdog() {
+    watchdogStrikes = 0
+    watchdogLastTime = audioElement.value?.currentTime ?? -1
+  }
+
+  function checkPlaybackHealth() {
+    const audio = audioElement.value
+    if (!audio || !currentSong.value) { resetWatchdog(); return }
+
+    // Only judge health while we actively intend to play. An explicit user pause
+    // clears lastPlayState via the 'pause' event, so this never fights a deliberate
+    // pause or a browser-imposed background pause (handled on foreground instead).
+    if (!lastPlayState.value || audio.paused || audio.ended) { resetWatchdog(); return }
+
+    // A seek — or the buffering right after one — freezes currentTime exactly like a
+    // stall. Skipping it is what keeps the watchdog from fighting the progress bar.
+    if (audio.seeking || Date.now() - lastSeekAt < seekGraceMs) { resetWatchdog(); return }
+
+    // Offline is handled by the offline/online events; don't pile on a recovery.
+    if (!navigator.onLine || isTransitioning.value || isRecovering.value) { resetWatchdog(); return }
+
+    const t = audio.currentTime
+    if (watchdogLastTime < 0 || t > watchdogLastTime + 0.25) {
+      // Progressing normally
+      watchdogLastTime = t
+      watchdogStrikes = 0
+      return
+    }
+
+    // currentTime frozen while we intend to play and aren't seeking — likely a silent
+    // network switch. Require it sustained before touching the element.
+    watchdogStrikes++
+    watchdogLastTime = t
+    debugLogger.warn('WATCHDOG', `frozen at t=${t.toFixed(1)} (${watchdogStrikes}/${stallStrikesNeeded}) — ${snapAudio()}`)
+    if (watchdogStrikes < stallStrikesNeeded) return
+
+    watchdogStrikes = 0
+    recoverPlaybackAtPosition('watchdog: playback frozen with no progress').catch(err =>
+      debugLogger.error('WATCHDOG', `recovery failed: ${String(err)}`)
+    )
+  }
+
+  /**
+   * Reloads the current song and resumes at the saved position. Re-establishes a dead
+   * connection (network switch / reconnect) without sending the listener back to 0.
+   */
+  async function recoverPlaybackAtPosition(reason: string) {
+    const audio = audioElement.value
+    const song = currentSong.value
+    if (!audio || !song || isRecovering.value) return
+    isRecovering.value = true
+    const resumeAt = audio.currentTime
+    const wasPlaying = lastPlayState.value
+    debugLogger.warn('PLAYER', `recoverPlaybackAtPosition: reloading #${song.id} at t=${resumeAt.toFixed(1)} (${reason})`)
+    // Shield the swap: changing src fires a 'pause' event, and the pause handler would
+    // otherwise clear lastPlayState and cancel our resume.
+    isTransitioning.value = true
+    try {
+      audio.src = getMusicUrl(`link.${song.id}.mp3`)
+      audio.load()
+      audio.addEventListener('loadedmetadata', () => {
+        try {
+          if (resumeAt > 1 && (!audio.duration || resumeAt < audio.duration - 0.5)) {
+            audio.currentTime = resumeAt
+          }
+        } catch {
+          // not seekable yet — better to play from the start than stay silent
+        }
+      }, { once: true })
+      if (wasPlaying) await audio.play()
+    } catch (error) {
+      debugLogger.error('PLAYER', `recoverPlaybackAtPosition failed: ${String(error)}`)
+    } finally {
+      isTransitioning.value = false
+      isRecovering.value = false
     }
   }
 
@@ -765,11 +865,26 @@ export const usePlayerStore = defineStore('player', () => {
       }
     }, { signal })
 
+    // Any seek (progress bar, keyboard, media-session) freezes currentTime while the
+    // new position buffers — tell the watchdog to stand down so it doesn't misread it.
+    audio.addEventListener('seeking', () => {
+      lastSeekAt = Date.now()
+      watchdogStrikes = 0
+    }, { signal })
+    audio.addEventListener('seeked', () => {
+      lastSeekAt = Date.now()
+      watchdogStrikes = 0
+      watchdogLastTime = audio.currentTime
+    }, { signal })
+
     audio.addEventListener('playing', () => {
       if (stallTimeout.value) {
         clearTimeout(stallTimeout.value)
         stallTimeout.value = null
       }
+      // Audio is decoding again — playback is healthy, reset watchdog tracking
+      watchdogStrikes = 0
+      watchdogLastTime = audio.currentTime
       // Reset failure streak — audio is actually decoding, so the file exists and is valid
       consecutiveFailures.value = 0
       // Start playtime tracking here (not on 'play') so we only count real audio output
