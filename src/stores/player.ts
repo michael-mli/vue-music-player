@@ -4,7 +4,6 @@ import type { Song, PlayerState, PlayMode } from '@/types'
 import { getMusicUrl, getPosterUrl } from '@/config'
 import { songService } from '@/services/songService'
 import { audioCacheService } from '@/services/audioCacheService'
-import { songPredictionService } from '@/services/songPredictionService'
 import { debugLogger, isDebugMode } from '@/services/debugLogger'
 
 export const usePlayerStore = defineStore('player', () => {
@@ -19,6 +18,11 @@ export const usePlayerStore = defineStore('player', () => {
   const repeat = ref<'none' | 'one' | 'all'>('none')
   const queue = ref<Song[]>([])
   const currentIndex = ref(0)
+  // The exact next song, decided when the current song starts and preloaded ahead so it's
+  // already buffered when the current one ends. -1 = not decided yet. This is what makes
+  // background auto-advance work in an installed PWA (which blocks background network
+  // fetches): the next track must already be in cache, not fetched at end-of-song.
+  const nextUpIndex = ref(-1)
   const audioElement = ref<HTMLAudioElement | null>(null)
   const playHistory = ref<Song[]>([]) // Track actually played songs for previous functionality
   
@@ -334,49 +338,59 @@ export const usePlayerStore = defineStore('player', () => {
     return song.id >= songRangeMin.value && song.id <= songRangeMax.value
   }
 
-  async function nextSong() {
-    debugLogger.info('PLAYER', `nextSong called — currentIndex=${currentIndex.value} shuffle=${shuffle.value} canNext=${canPlayNext.value}`, snapAudio())
-
-    if (!canPlayNext.value) {
-      debugLogger.warn('PLAYER', 'nextSong: canPlayNext=false, aborting')
-      sessionPlaytime.value = 0
-      return
-    }
-
-    let nextIndex = currentIndex.value + 1
+  /**
+   * Decides which queue index plays next, honouring shuffle / repeat / song-range.
+   * Returns -1 when there is no next song (end of queue with repeat off, nothing
+   * eligible). Called both to advance and — ahead of time — to preload the next track.
+   */
+  function pickNextIndex(): number {
+    if (queue.value.length === 0) return -1
 
     if (shuffle.value) {
-      // Filter queue to songs within range, then pick random
       const eligibleIndices = queue.value
         .map((song, idx) => ({ song, idx }))
         .filter(({ song }) => isSongInRange(song))
         .map(({ idx }) => idx)
-
-      if (eligibleIndices.length === 0) {
-        debugLogger.warn('PLAYER', 'nextSong: no eligible songs in range')
-        return
-      }
-      nextIndex = eligibleIndices[Math.floor(Math.random() * eligibleIndices.length)]
-    } else if (nextIndex >= queue.value.length) {
-      if (repeat.value === 'all') {
-        nextIndex = 0
-      } else {
-        debugLogger.warn('PLAYER', 'nextSong: end of queue, repeat=none — stopping')
-        sessionPlaytime.value = 0
-        return
-      }
+      if (eligibleIndices.length === 0) return -1
+      return eligibleIndices[Math.floor(Math.random() * eligibleIndices.length)]
     }
 
-    // In sequential mode with range active, skip songs outside range
-    if (!shuffle.value && isSongRangeActive.value) {
+    let nextIndex = currentIndex.value + 1
+    if (nextIndex >= queue.value.length) {
+      if (repeat.value === 'all') nextIndex = 0
+      else return -1
+    }
+
+    // In sequential mode with range active, skip songs outside the range
+    if (isSongRangeActive.value) {
       const startIndex = nextIndex
       let checked = 0
       while (!isSongInRange(queue.value[nextIndex]) && checked < queue.value.length) {
         nextIndex = (nextIndex + 1) % queue.value.length
         checked++
-        if (nextIndex === startIndex) return // no songs in range
+        if (nextIndex === startIndex) return -1
       }
-      if (!isSongInRange(queue.value[nextIndex])) return
+      if (!isSongInRange(queue.value[nextIndex])) return -1
+    }
+
+    return nextIndex
+  }
+
+  async function nextSong() {
+    debugLogger.info('PLAYER', `nextSong called — currentIndex=${currentIndex.value} shuffle=${shuffle.value} canNext=${canPlayNext.value}`, snapAudio())
+
+    // Prefer the song we already decided on and preloaded when the current track started;
+    // only re-pick if that's stale/unset (queue changed, etc.).
+    let nextIndex = nextUpIndex.value
+    nextUpIndex.value = -1
+    if (nextIndex < 0 || nextIndex >= queue.value.length) {
+      nextIndex = pickNextIndex()
+    }
+
+    if (nextIndex < 0) {
+      debugLogger.warn('PLAYER', 'nextSong: no next song — stopping')
+      sessionPlaytime.value = 0
+      return
     }
 
     currentIndex.value = nextIndex
@@ -820,31 +834,27 @@ export const usePlayerStore = defineStore('player', () => {
   }
   
   /**
-   * Triggers read-ahead caching for upcoming songs
+   * Decides the exact next song now and preloads it, so it's already buffered when the
+   * current track ends. This is what lets background auto-advance work in an installed
+   * PWA: the next track is served from cache instead of a background network fetch (which
+   * the PWA blocks). Previously the preloader guessed via a separate random pick that
+   * rarely matched the song nextSong() actually chose in shuffle mode.
    */
   async function triggerReadAheadCache() {
     if (queue.value.length === 0 || currentIndex.value < 0) {
+      nextUpIndex.value = -1
       return
     }
-    
-    const playerState = {
-      queue: queue.value,
-      currentIndex: currentIndex.value,
-      shuffle: shuffle.value,
-      repeat: repeat.value
-    }
-    
-    // Predict upcoming songs
-    const upcomingSongs = songPredictionService.predictUpcomingSongs(playerState, 2)
-    
-    if (upcomingSongs.length > 0) {
-      console.log(`🎵 Pre-loading ${upcomingSongs.length} upcoming songs:`, upcomingSongs.map(s => s.title))
-      
-      // Start preloading in background (non-blocking)
-      audioCacheService.preloadSongs(upcomingSongs).catch(error => {
-        console.warn('Error during song preloading:', error)
-      })
-    }
+
+    const idx = pickNextIndex()
+    nextUpIndex.value = idx
+    if (idx < 0 || !queue.value[idx]) return
+
+    const nextUp = queue.value[idx]
+    debugLogger.info('PLAYER', `read-ahead: preloading next #${nextUp.id} "${nextUp.title}"`)
+    audioCacheService.preloadSongs([nextUp]).catch(error => {
+      console.warn('Error during song preloading:', error)
+    })
   }
 
   function updateMediaSession() {
