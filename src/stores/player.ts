@@ -54,12 +54,14 @@ export const usePlayerStore = defineStore('player', () => {
   // previous watchdog caused).
   const watchdogInterval = ref<number | null>(null)
   const watchdogCheckMs = 4000 // how often to sample playback progress
-  const stallStrikesNeeded = 2 // ~8s of frozen currentTime before recovering
+  const stallStrikesNeeded = 2 // ~8s of frozen+starved currentTime before acting
   const seekGraceMs = 5000 // ignore stall detection for this long after any seek
   const isRecovering = ref(false)
   let watchdogStrikes = 0
   let watchdogLastTime = -1
   let lastSeekAt = 0
+  let watchdogCooldownTicks = 0 // skip judging for a few ticks after acting (avoids reload loops)
+  let nudgeTried = false // a gap-free play() nudge is tried before any destructive reload
 
   // Fallback end-detection for mobile browsers that don't fire 'ended'
   const endedHandled = ref(false)
@@ -666,6 +668,7 @@ export const usePlayerStore = defineStore('player', () => {
   function resetWatchdog() {
     watchdogStrikes = 0
     watchdogLastTime = audioElement.value?.currentTime ?? -1
+    nudgeTried = false
   }
 
   function checkPlaybackHealth() {
@@ -684,23 +687,49 @@ export const usePlayerStore = defineStore('player', () => {
     // Offline is handled by the offline/online events; don't pile on a recovery.
     if (!navigator.onLine || isTransitioning.value || isRecovering.value) { resetWatchdog(); return }
 
+    // Give a recovery action time to take effect before judging again — without this a
+    // slow reload would be mistaken for a fresh stall and the watchdog would loop.
+    if (watchdogCooldownTicks > 0) { watchdogCooldownTicks--; return }
+
     const t = audio.currentTime
     if (watchdogLastTime < 0 || t > watchdogLastTime + 0.25) {
       // Progressing normally
       watchdogLastTime = t
       watchdogStrikes = 0
+      nudgeTried = false
       return
     }
 
-    // currentTime frozen while we intend to play and aren't seeking — likely a silent
-    // network switch. Require it sustained before touching the element.
+    // currentTime is frozen. Only treat this as a real failure when the element is
+    // actually starved of data (readyState < HAVE_FUTURE_DATA). If it has buffered data
+    // ahead, a non-advancing time is NOT a network stall, and reloading would only
+    // interrupt healthy playback — which was causing the "suddenly stops" reports.
+    if (audio.readyState >= 3) {
+      watchdogLastTime = t
+      watchdogStrikes = 0
+      return
+    }
+
     watchdogStrikes++
     watchdogLastTime = t
-    debugLogger.warn('WATCHDOG', `frozen at t=${t.toFixed(1)} (${watchdogStrikes}/${stallStrikesNeeded}) — ${snapAudio()}`)
+    debugLogger.warn('WATCHDOG', `starved at t=${t.toFixed(1)} rs=${audio.readyState} (${watchdogStrikes}/${stallStrikesNeeded}) — ${snapAudio()}`)
     if (watchdogStrikes < stallStrikesNeeded) return
 
     watchdogStrikes = 0
-    recoverPlaybackAtPosition('watchdog: playback frozen with no progress').catch(err =>
+    watchdogCooldownTicks = 3 // ~12s before the next verdict
+
+    if (!nudgeTried) {
+      // Gap-free first attempt: just ask the element to keep playing. Most transient
+      // starvation resumes from this without a disruptive reload.
+      nudgeTried = true
+      debugLogger.warn('WATCHDOG', 'nudging playback before any reload')
+      audio.play().catch(err => debugLogger.error('WATCHDOG', `nudge failed: ${String(err)}`))
+      return
+    }
+
+    // The nudge didn't restore progress — escalate to a position-preserving reload.
+    nudgeTried = false
+    recoverPlaybackAtPosition('watchdog: sustained data starvation').catch(err =>
       debugLogger.error('WATCHDOG', `recovery failed: ${String(err)}`)
     )
   }
@@ -885,6 +914,8 @@ export const usePlayerStore = defineStore('player', () => {
       // Audio is decoding again — playback is healthy, reset watchdog tracking
       watchdogStrikes = 0
       watchdogLastTime = audio.currentTime
+      nudgeTried = false
+      watchdogCooldownTicks = 0
       // Reset failure streak — audio is actually decoding, so the file exists and is valid
       consecutiveFailures.value = 0
       // Start playtime tracking here (not on 'play') so we only count real audio output
