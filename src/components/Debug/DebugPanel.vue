@@ -18,6 +18,7 @@
         <span class="text-white font-bold">🐛 Player Debug <span class="text-gray-400 font-normal text-[10px]">{{ buildSha }} · {{ buildLabel }}</span></span>
         <div class="flex items-center gap-1.5">
           <button @click="copyLog" class="px-2 py-1 bg-blue-800 text-white rounded">Copy</button>
+          <button @click="uploadLog" :disabled="uploading" class="px-2 py-1 bg-green-800 text-white rounded disabled:opacity-50">{{ uploading ? '…' : 'Upload' }}</button>
           <button @click="debugLogger.clear()" class="px-2 py-1 bg-yellow-800 text-white rounded">Clear</button>
           <button @click="isOpen = false" class="px-2 py-1 bg-gray-700 text-white rounded">✕</button>
         </div>
@@ -131,15 +132,38 @@ function forceEnd() {
   }
 }
 
-async function copyLog() {
-  const text = debugLogs.value
+function logText() {
+  return debugLogs.value
     .map(e => `${e.time} [${e.category}] ${e.level.toUpperCase()}: ${e.message}${e.detail ? ' | ' + e.detail : ''}`)
     .join('\n')
+}
+
+async function copyLog() {
   try {
-    await navigator.clipboard.writeText(text)
+    await navigator.clipboard.writeText(logText())
     alert(`Copied ${debugLogs.value.length} log entries`)
   } catch {
     alert('Copy failed — check browser permissions')
+  }
+}
+
+const uploading = ref(false)
+async function uploadLog() {
+  uploading.value = true
+  try {
+    // Resolve relative to the app base so it works regardless of the served path
+    const url = `${import.meta.env.BASE_URL}savelog.php`
+    const header = `build=${buildSha} ${buildLabel} | ua=${navigator.userAgent}\n` +
+      `standalone=${window.matchMedia('(display-mode: standalone)').matches}\n` +
+      '─'.repeat(40) + '\n'
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: header + logText() })
+    if (!res.ok) { alert(`Upload failed: HTTP ${res.status}`); return }
+    const data = await res.json()
+    alert(`Uploaded ${data.bytes} bytes ✓ — Claude can now fetch it.`)
+  } catch (e) {
+    alert(`Upload failed: ${e}`)
+  } finally {
+    uploading.value = false
   }
 }
 </script>
