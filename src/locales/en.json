@@ -49,7 +49,8 @@
     "search": "Search songs, artists, or lyrics...",
     "noResults": "No songs found",
     "totalSongs": "{count} songs",
-    "loadingTitles": "Loading song titles..."
+    "loadingTitles": "Loading song titles...",
+    "showMore": "Show more"
   },
   "playlist": {
     "create": "Create Playlist",

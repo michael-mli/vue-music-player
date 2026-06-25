@@ -49,7 +49,8 @@
     "search": "搜索歌曲、艺术家或歌词...",
     "noResults": "未找到歌曲",
     "totalSongs": "{count} 首歌曲",
-    "loadingTitles": "正在加载歌曲标题..."
+    "loadingTitles": "正在加载歌曲标题...",
+    "showMore": "显示更多"
   },
   "playlist": {
     "create": "创建播放列表",
