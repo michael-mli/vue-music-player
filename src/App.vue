@@ -51,8 +51,10 @@
           </div>
           
           <!-- Lyrics Panel - Desktop: sidebar, Mobile: overlay -->
-          <LyricsPanel 
-            v-if="showLyrics" 
+          <!-- Only render when a song is loaded, so it never pops up on a fresh
+               launch with no song selected (confusing on mobile). -->
+          <LyricsPanel
+            v-if="showLyrics && playerStore.currentSong"
             class="lg:relative lg:w-80 absolute inset-x-0 bottom-28 top-0 lg:top-auto lg:bottom-auto z-30 lg:z-auto"
             @close="showLyrics = false"
           />
