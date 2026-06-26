@@ -952,14 +952,15 @@ export const usePlayerStore = defineStore('player', () => {
       } catch (error) {
         console.warn('Error during song preloading:', error)
       }
-      if (audioCacheService.isCached(song.id)) {
+      if (audioCacheService.isPlayable(song.id)) {
         nextUpIndex.value = idx
-        debugLogger.info('PLAYER', `read-ahead: next #${song.id} "${song.title}" downloaded & ready`)
+        const cached = audioCacheService.isCached(song.id)
+        debugLogger.info('PLAYER', `read-ahead: next #${song.id} "${song.title}" ${cached ? 'cached in memory' : 'too large — will stream'}`)
         return
       }
-      debugLogger.warn('PLAYER', `read-ahead: #${song.id} "${song.title}" failed to download — skipping`)
+      debugLogger.warn('PLAYER', `read-ahead: #${song.id} "${song.title}" unreachable/broken — skipping`)
     }
-    debugLogger.warn('PLAYER', 'read-ahead: no candidate downloaded cleanly')
+    debugLogger.warn('PLAYER', 'read-ahead: no playable candidate found')
   }
 
   function updateMediaSession() {

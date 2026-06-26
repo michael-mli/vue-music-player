@@ -16,9 +16,15 @@ interface CachedBlob {
   url: string | null            // object URL once fully downloaded
   loading: Promise<void> | null // in-flight download
   error?: string
+  oversize?: boolean            // reachable but too large to hold in memory → will stream
   bytes: number
   lastAccessed: number
 }
+
+// Songs bigger than this are streamed instead of buffered fully in memory. Keeps the
+// device from holding hundreds of MB (the library has DJ-mix files up to ~290MB) while
+// still covering normal tracks (avg ~8MB) comfortably.
+const MAX_BLOB_BYTES = 50 * 1024 * 1024 // 50MB
 
 class AudioCacheService {
   private cache = new Map<number, CachedBlob>()
@@ -49,13 +55,23 @@ class AudioCacheService {
       try {
         const res = await fetch(getMusicUrl(`link.${song.id}.mp3`))
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        // Don't pull a huge file (DJ mixes can be hundreds of MB) into memory — mark it
+        // reachable-but-oversize so it still plays, just streamed rather than buffered.
+        const len = Number(res.headers.get('content-length') || 0)
+        if (len > MAX_BLOB_BYTES) {
+          entry.oversize = true
+          entry.bytes = len
+          res.body?.cancel().catch(() => {}) // abort the body so we don't download it
+          console.log(`↪️ Song ${song.id} is ${(len / 1048576).toFixed(0)}MB — too large to cache, will stream`)
+          return
+        }
         const blob = await res.blob()
         // Reject empty / truncated / obviously-not-audio bodies so broken files are skipped
         if (blob.size < 2048) throw new Error(`too small (${blob.size}b)`)
         entry.url = URL.createObjectURL(blob)
         entry.bytes = blob.size
         entry.lastAccessed = Date.now()
-        console.log(`🎵 Pre-loaded song ${song.id} (${(blob.size / 1024 / 1024).toFixed(1)}MB): ${song.title}`)
+        console.log(`🎵 Pre-loaded song ${song.id} (${(blob.size / 1048576).toFixed(1)}MB): ${song.title}`)
       } catch (e) {
         entry.error = String(e)
         console.warn(`⚠️ Failed to pre-load song ${song.id}:`, e)
@@ -77,6 +93,16 @@ class AudioCacheService {
   isCached(songId: number): boolean {
     const c = this.cache.get(songId)
     return !!(c && c.url && !c.error)
+  }
+
+  /**
+   * True if the song is confirmed playable — either fully cached in memory, or reachable
+   * but too large to cache (it'll stream). Either way it's a valid next-up pick; only
+   * broken/unreachable files are excluded.
+   */
+  isPlayable(songId: number): boolean {
+    const c = this.cache.get(songId)
+    return !!(c && !c.error && (c.url || c.oversize))
   }
 
   /**
