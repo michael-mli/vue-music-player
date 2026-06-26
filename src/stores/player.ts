@@ -24,6 +24,9 @@ export const usePlayerStore = defineStore('player', () => {
   // fetches): the next track must already be in cache, not fetched at end-of-song.
   const nextUpIndex = ref(-1)
   const audioElement = ref<HTMLAudioElement | null>(null)
+  // Object URL of the in-memory blob currently driving playback (if the track was played
+  // from cache). Revoked when the next track loads so blobs don't leak.
+  let currentObjectUrl: string | null = null
   const playHistory = ref<Song[]>([]) // Track actually played songs for previous functionality
   
   // Sleep timer state
@@ -173,17 +176,22 @@ export const usePlayerStore = defineStore('player', () => {
       debugLogger.info('PLAYER', `isTransitioning=true — loading #${song.id}`)
       try {
         // Check if we have a cached version of this song
-        // Always reuse the SAME audio element and just swap its src. Mobile autoplay
-        // policy only "unlocks" the element the user actually tapped play on; swapping
-        // in a freshly-created element from the read-ahead cache (new Audio()) loses that
-        // unlock, so play() gets blocked and playback stops after every song on mobile.
-        // The preload still warms the HTTP/service-worker cache, so this loads fast.
+        // Reuse the same audio element and prefer the fully-downloaded in-memory copy
+        // (object URL) of this song, so it plays start-to-finish with NO network. That's
+        // what makes background auto-advance reliable in an installed PWA, where the OS
+        // throttles network once backgrounded (an un-cached track stalls on load or
+        // mid-song). Falls back to the normal URL if it wasn't preloaded in time.
         debugLogger.info('PLAYER', `Loading #${song.id} into the active audio element`)
         audioElement.value.pause()
-        audioElement.value.src = getMusicUrl(`link.${song.id}.mp3`)
+        const cachedUrl = audioCacheService.takeCachedUrl(song.id)
+        audioElement.value.src = cachedUrl || getMusicUrl(`link.${song.id}.mp3`)
         audioElement.value.load()
         audioElement.value.currentTime = 0
-        audioCacheService.removeSongFromCache(song.id) // release any preloaded element
+        // Release the previous track's in-memory blob now that we've switched off it
+        if (currentObjectUrl && currentObjectUrl !== audioElement.value.src) {
+          try { URL.revokeObjectURL(currentObjectUrl) } catch { /* already revoked */ }
+        }
+        currentObjectUrl = cachedUrl
 
         debugLogger.info('PLAYER', `Calling play() for #${song.id}`)
         await play()
@@ -243,17 +251,22 @@ export const usePlayerStore = defineStore('player', () => {
 
       debugLogger.info('PLAYER', `isTransitioning=true — loading #${song.id}`)
       try {
-        // Always reuse the SAME audio element and just swap its src. Mobile autoplay
-        // policy only "unlocks" the element the user actually tapped play on; swapping
-        // in a freshly-created element from the read-ahead cache (new Audio()) loses that
-        // unlock, so play() gets blocked and playback stops after every song on mobile.
-        // The preload still warms the HTTP/service-worker cache, so this loads fast.
+        // Reuse the same audio element and prefer the fully-downloaded in-memory copy
+        // (object URL) of this song, so it plays start-to-finish with NO network. That's
+        // what makes background auto-advance reliable in an installed PWA, where the OS
+        // throttles network once backgrounded (an un-cached track stalls on load or
+        // mid-song). Falls back to the normal URL if it wasn't preloaded in time.
         debugLogger.info('PLAYER', `Loading #${song.id} into the active audio element`)
         audioElement.value.pause()
-        audioElement.value.src = getMusicUrl(`link.${song.id}.mp3`)
+        const cachedUrl = audioCacheService.takeCachedUrl(song.id)
+        audioElement.value.src = cachedUrl || getMusicUrl(`link.${song.id}.mp3`)
         audioElement.value.load()
         audioElement.value.currentTime = 0
-        audioCacheService.removeSongFromCache(song.id) // release any preloaded element
+        // Release the previous track's in-memory blob now that we've switched off it
+        if (currentObjectUrl && currentObjectUrl !== audioElement.value.src) {
+          try { URL.revokeObjectURL(currentObjectUrl) } catch { /* already revoked */ }
+        }
+        currentObjectUrl = cachedUrl
 
         debugLogger.info('PLAYER', `Calling play() for #${song.id}`)
         await play()
@@ -894,18 +907,18 @@ export const usePlayerStore = defineStore('player', () => {
       const song = queue.value[idx]
       if (!song) continue
       try {
-        await audioCacheService.preloadSongs([song])
+        await audioCacheService.preloadSong(song)
       } catch (error) {
         console.warn('Error during song preloading:', error)
       }
-      if (audioCacheService.getCachedAudio(song.id)) {
+      if (audioCacheService.isCached(song.id)) {
         nextUpIndex.value = idx
-        debugLogger.info('PLAYER', `read-ahead: next #${song.id} "${song.title}" ready`)
+        debugLogger.info('PLAYER', `read-ahead: next #${song.id} "${song.title}" downloaded & ready`)
         return
       }
-      debugLogger.warn('PLAYER', `read-ahead: #${song.id} "${song.title}" failed to preload — skipping`)
+      debugLogger.warn('PLAYER', `read-ahead: #${song.id} "${song.title}" failed to download — skipping`)
     }
-    debugLogger.warn('PLAYER', 'read-ahead: no candidate preloaded cleanly')
+    debugLogger.warn('PLAYER', 'read-ahead: no candidate downloaded cleanly')
   }
 
   function updateMediaSession() {

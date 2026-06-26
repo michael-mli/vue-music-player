@@ -1,187 +1,124 @@
 /**
  * Audio Cache Service
- * Pre-loads audio files to improve playback experience by eliminating network delays
+ *
+ * Fully downloads upcoming songs into memory (as Blobs exposed via object URLs) so the
+ * next track can be played start-to-finish with NO network access. This is what makes
+ * background auto-advance reliable in an installed PWA: once backgrounded, the OS throttles
+ * the PWA's network, so anything that still needs to fetch (initial load OR mid-song
+ * buffering) stalls. A blob URL is entirely in-memory, so it never touches the network.
  */
 
 import type { Song } from '@/types'
 import { getMusicUrl } from '@/config'
-import config from '@/config'
 
-interface CachedAudio {
+interface CachedBlob {
   songId: number
-  audio: HTMLAudioElement
-  isLoaded: boolean
-  isLoading: boolean
-  lastAccessed: number
+  url: string | null            // object URL once fully downloaded
+  loading: Promise<void> | null // in-flight download
   error?: string
+  bytes: number
+  lastAccessed: number
 }
 
 class AudioCacheService {
-  private cache = new Map<number, CachedAudio>()
-  private readonly maxCacheSize: number
-  private readonly preloadCount = 2 // Number of songs to pre-load ahead
+  private cache = new Map<number, CachedBlob>()
+  // Full songs live in memory, so keep this small regardless of the element-cache config.
+  private readonly maxCacheSize = 4
 
-  constructor() {
-    this.maxCacheSize = config.maxCachedSongs
-  }
-
-  /**
-   * Pre-loads audio for upcoming songs
-   */
-  async preloadSongs(upcomingSongs: Song[]): Promise<void> {
-    const songsToPreload = upcomingSongs.slice(0, this.preloadCount)
-    
-    // Start preloading in parallel
-    const preloadPromises = songsToPreload.map(song => this.preloadSong(song))
-    await Promise.allSettled(preloadPromises)
-  }
-
-  /**
-   * Pre-loads a single song
-   */
-  private async preloadSong(song: Song): Promise<void> {
-    // Skip if already cached or currently loading
+  /** Fully downloads a song into memory and exposes it as an object URL. */
+  async preloadSong(song: Song): Promise<void> {
     const existing = this.cache.get(song.id)
-    if (existing && (existing.isLoaded || existing.isLoading)) {
+    if (existing) {
       existing.lastAccessed = Date.now()
-      return
+      if (existing.url || existing.error) return // already resolved
+      if (existing.loading) return existing.loading // download in flight
     }
 
-    // Clean up cache if needed
     this.cleanupCache()
 
-    // Create new audio element for preloading
-    const audio = new Audio()
-    const cachedEntry: CachedAudio = {
+    const entry: CachedBlob = {
       songId: song.id,
-      audio,
-      isLoaded: false,
-      isLoading: true,
+      url: null,
+      loading: null,
+      bytes: 0,
       lastAccessed: Date.now()
     }
+    this.cache.set(song.id, entry)
 
-    this.cache.set(song.id, cachedEntry)
-
-    return new Promise((resolve) => {
-      const handleLoad = () => {
-        cachedEntry.isLoaded = true
-        cachedEntry.isLoading = false
-        cachedEntry.lastAccessed = Date.now()
-        console.log(`🎵 Pre-loaded song ${song.id}: ${song.title}`)
-        cleanup()
-        resolve()
+    const download = (async () => {
+      try {
+        const res = await fetch(getMusicUrl(`link.${song.id}.mp3`))
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const blob = await res.blob()
+        // Reject empty / truncated / obviously-not-audio bodies so broken files are skipped
+        if (blob.size < 2048) throw new Error(`too small (${blob.size}b)`)
+        entry.url = URL.createObjectURL(blob)
+        entry.bytes = blob.size
+        entry.lastAccessed = Date.now()
+        console.log(`🎵 Pre-loaded song ${song.id} (${(blob.size / 1024 / 1024).toFixed(1)}MB): ${song.title}`)
+      } catch (e) {
+        entry.error = String(e)
+        console.warn(`⚠️ Failed to pre-load song ${song.id}:`, e)
+      } finally {
+        entry.loading = null
       }
+    })()
 
-      const handleError = (error: Event) => {
-        cachedEntry.isLoading = false
-        cachedEntry.error = `Failed to preload song ${song.id}`
-        console.warn(`⚠️ Failed to pre-load song ${song.id}:`, error)
-        cleanup()
-        resolve() // Resolve anyway, don't block other preloads
-      }
+    entry.loading = download
+    return download
+  }
 
-      const cleanup = () => {
-        audio.removeEventListener('canplaythrough', handleLoad)
-        audio.removeEventListener('error', handleError)
-        audio.removeEventListener('abort', handleError)
-      }
+  /** Downloads several songs (used for legacy call sites). */
+  async preloadSongs(songs: Song[]): Promise<void> {
+    await Promise.allSettled(songs.map(s => this.preloadSong(s)))
+  }
 
-      // Set up event listeners
-      audio.addEventListener('canplaythrough', handleLoad)
-      audio.addEventListener('error', handleError)
-      audio.addEventListener('abort', handleError)
-
-      // Start loading
-      audio.preload = 'auto'
-      audio.src = getMusicUrl(`link.${song.id}.mp3`)
-      audio.load()
-    })
+  /** True if the song is fully downloaded and ready to play from memory. */
+  isCached(songId: number): boolean {
+    const c = this.cache.get(songId)
+    return !!(c && c.url && !c.error)
   }
 
   /**
-   * Gets a cached audio element if available
+   * Hands the in-memory object URL to the caller and DETACHES it from the cache, so the
+   * cache will never revoke a URL that's now driving the audio element. The caller owns
+   * revoking it (the player does so when it loads the following track). Returns null if
+   * the song isn't fully downloaded.
    */
-  getCachedAudio(songId: number): HTMLAudioElement | null {
-    const cached = this.cache.get(songId)
-    if (cached && cached.isLoaded && !cached.error) {
-      cached.lastAccessed = Date.now()
-      console.log(`🚀 Using cached audio for song ${songId}`)
-      return cached.audio
+  takeCachedUrl(songId: number): string | null {
+    const c = this.cache.get(songId)
+    if (c && c.url && !c.error) {
+      this.cache.delete(songId)
+      console.log(`🚀 Playing song ${songId} from in-memory cache`)
+      return c.url
     }
     return null
   }
 
-  /**
-   * Transfers properties from one audio element to another
-   */
-  transferAudioState(fromAudio: HTMLAudioElement, toAudio: HTMLAudioElement): void {
-    toAudio.volume = fromAudio.volume
-    toAudio.muted = fromAudio.muted
-    toAudio.currentTime = fromAudio.currentTime
-  }
-
-  /**
-   * Removes a song from cache (called when song starts playing to free memory)
-   */
-  removeSongFromCache(songId: number): void {
-    const cached = this.cache.get(songId)
-    if (cached) {
-      // Don't actually remove immediately, let it stay for potential replay
-      // Just mark it as less priority for cleanup
-      cached.lastAccessed = Date.now() - (24 * 60 * 60 * 1000) // Make it old
-    }
-  }
-
-  /**
-   * Cleans up old entries when cache is full
-   */
+  /** Evicts the oldest fully/failed downloads once over the size cap. */
   private cleanupCache(): void {
-    if (this.cache.size < this.maxCacheSize) {
-      return
-    }
-
-    // Remove oldest entries that aren't currently loading
+    if (this.cache.size < this.maxCacheSize) return
     const entries = Array.from(this.cache.entries())
-      .filter(([_, cached]) => !cached.isLoading)
-      .sort(([_, a], [__, b]) => a.lastAccessed - b.lastAccessed)
-
-    const entriesToRemove = entries.slice(0, Math.max(1, entries.length - this.maxCacheSize + 5))
-    
-    entriesToRemove.forEach(([songId, cached]) => {
-      cached.audio.src = '' // Free memory
-      this.cache.delete(songId)
-      console.log(`🗑️ Removed cached audio for song ${songId}`)
-    })
-  }
-
-  /**
-   * Gets cache statistics for debugging
-   */
-  getCacheStats() {
-    const loaded = Array.from(this.cache.values()).filter(c => c.isLoaded).length
-    const loading = Array.from(this.cache.values()).filter(c => c.isLoading).length
-    const errored = Array.from(this.cache.values()).filter(c => c.error).length
-    
-    return {
-      total: this.cache.size,
-      loaded,
-      loading,
-      errored,
-      maxSize: this.maxCacheSize
+      .filter(([, c]) => !c.loading)
+      .sort(([, a], [, b]) => a.lastAccessed - b.lastAccessed)
+    const remove = entries.slice(0, Math.max(1, entries.length - this.maxCacheSize + 1))
+    for (const [id, c] of remove) {
+      if (c.url) URL.revokeObjectURL(c.url)
+      this.cache.delete(id)
     }
   }
 
-  /**
-   * Clears all cached audio
-   */
+  getCacheStats() {
+    const ready = Array.from(this.cache.values()).filter(c => c.url).length
+    const loading = Array.from(this.cache.values()).filter(c => c.loading).length
+    const errored = Array.from(this.cache.values()).filter(c => c.error).length
+    return { total: this.cache.size, ready, loading, errored, maxSize: this.maxCacheSize }
+  }
+
   clearCache(): void {
-    this.cache.forEach(cached => {
-      cached.audio.src = ''
-    })
+    this.cache.forEach(c => { if (c.url) URL.revokeObjectURL(c.url) })
     this.cache.clear()
-    console.log('🗑️ Cleared all cached audio')
   }
 }
 
-// Export singleton instance
 export const audioCacheService = new AudioCacheService()
