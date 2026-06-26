@@ -5,6 +5,12 @@
     "loading": "Loading music library...",
     "loadingTitles": "Loading song titles... {progress}%"
   },
+  "backgroundHint": {
+    "title": "Music keeps stopping when the screen is off?",
+    "body": "Android Chrome pauses background audio after a few minutes to save battery. To keep playing with the screen off, allow Chrome to run unrestricted:",
+    "steps": "Settings → Apps → Chrome → Battery → Unrestricted",
+    "dismiss": "Got it"
+  },
   "navigation": {
     "home": "Home",
     "search": "Search",

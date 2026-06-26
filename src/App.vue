@@ -104,6 +104,9 @@
       @created="onPlayerPlaylistCreated"
     />
 
+    <!-- One-time hint shown after a background-playback freeze is detected -->
+    <BackgroundPlaybackHint />
+
     <!-- Debug Panel (only visible when VITE_DEBUG_PLAYER=true) -->
     <DebugPanel />
   </div>
@@ -127,6 +130,7 @@ import UpdateNotification from '@/components/UI/UpdateNotification.vue'
 import AddToPlaylistModal from '@/components/UI/AddToPlaylistModal.vue'
 import CreatePlaylistModal from '@/components/UI/CreatePlaylistModal.vue'
 import MusicVisualizer from '@/components/Player/MusicVisualizer.vue'
+import BackgroundPlaybackHint from '@/components/UI/BackgroundPlaybackHint.vue'
 import DebugPanel from '@/components/Debug/DebugPanel.vue'
 
 // Stores

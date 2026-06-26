@@ -5,6 +5,12 @@
     "loading": "正在加载音乐库...",
     "loadingTitles": "正在加载歌曲标题... {progress}%"
   },
+  "backgroundHint": {
+    "title": "关屏后音乐总是停止？",
+    "body": "安卓 Chrome 为省电会在几分钟后暂停后台音频。若要关屏持续播放，请允许 Chrome 不受限制运行：",
+    "steps": "设置 → 应用 → Chrome → 电池 → 不受限制",
+    "dismiss": "知道了"
+  },
   "navigation": {
     "home": "首页",
     "search": "搜索",

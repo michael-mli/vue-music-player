@@ -52,6 +52,15 @@ export const usePlayerStore = defineStore('player', () => {
   const maxRetryAttempts = 3
   const retryDelay = 2000 // 2 seconds
 
+  // Background-freeze detection: Android Chrome stops backgrounded audio after ~5 min
+  // (battery optimization). We can't read that OS setting, but we can infer it happened
+  // by comparing wall-clock time vs playback progress across a background period, and then
+  // show a one-time hint pointing the user at Chrome → Battery → Unrestricted.
+  const backgroundFreezeDetected = ref(false)
+  const FREEZE_HINT_DISMISSED_KEY = 'music-bg-freeze-hint-dismissed'
+  let bgHiddenAt = 0        // Date.now() when we were last backgrounded while playing
+  let bgPlaytimeAtHide = 0  // totalPlaytime at that moment (counts real playback across songs)
+
   // Mobile stall handling - debounce to avoid aggressive reloads
   const stallTimeout = ref<number | null>(null)
   const stallDebounceMs = 10000 // Only retry after 10s of sustained stall
@@ -544,7 +553,35 @@ export const usePlayerStore = defineStore('player', () => {
       const hidden = document.hidden
       debugLogger.info('VIS', `visibilitychange — hidden=${hidden} lastPlayState=${lastPlayState.value} ${snapAudio()}`)
 
-      if (hidden || !audioElement.value || !currentSong.value || isTransitioning.value) return
+      if (hidden) {
+        // Record where we were so we can tell, on return, whether the page got frozen
+        if (lastPlayState.value && audioElement.value) {
+          bgHiddenAt = Date.now()
+          bgPlaytimeAtHide = totalPlaytime.value
+        } else {
+          bgHiddenAt = 0
+        }
+        return
+      }
+
+      // Returning to foreground: did playback freeze while we were away? Compare real
+      // elapsed time against actual playback time (totalPlaytime advances ~1/s only while
+      // audio is really playing, and keeps counting across song changes; it stops if the
+      // page was frozen). A big shortfall after a long background period means the OS
+      // throttled us — surface the Chrome "Unrestricted" hint once.
+      if (bgHiddenAt > 0 && lastPlayState.value) {
+        const wall = (Date.now() - bgHiddenAt) / 1000
+        const played = totalPlaytime.value - bgPlaytimeAtHide
+        bgHiddenAt = 0
+        const isAndroid = /Android/i.test(navigator.userAgent)
+        if (isAndroid && wall > 240 && wall - played > 45 &&
+            !localStorage.getItem(FREEZE_HINT_DISMISSED_KEY)) {
+          debugLogger.warn('VIS', `background freeze detected: ${wall.toFixed(0)}s elapsed, only ${played.toFixed(0)}s played`)
+          backgroundFreezeDetected.value = true
+        }
+      }
+
+      if (!audioElement.value || !currentSong.value || isTransitioning.value) return
 
       const audio = audioElement.value
 
@@ -1194,6 +1231,12 @@ export const usePlayerStore = defineStore('player', () => {
     }
   }
 
+  /** Dismiss the background-freeze hint and remember not to show it again. */
+  function dismissBackgroundFreezeHint() {
+    backgroundFreezeDetected.value = false
+    localStorage.setItem(FREEZE_HINT_DISMISSED_KEY, '1')
+  }
+
   return {
     // State
     currentSong,
@@ -1216,7 +1259,9 @@ export const usePlayerStore = defineStore('player', () => {
     songRangeMax,
     isOnline,
     networkRetryAttempts,
-    
+    backgroundFreezeDetected,
+    dismissBackgroundFreezeHint,
+
     // Getters
     progress,
     formattedCurrentTime,
