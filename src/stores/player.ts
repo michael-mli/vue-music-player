@@ -27,6 +27,11 @@ export const usePlayerStore = defineStore('player', () => {
   // Object URL of the in-memory blob currently driving playback (if the track was played
   // from cache). Revoked when the next track loads so blobs don't leak.
   let currentObjectUrl: string | null = null
+
+  // Silent Web-Audio keep-alive. Keeps the page continuously producing audio so the OS is
+  // less likely to freeze the backgrounded PWA between/within songs. Best-effort against
+  // aggressive battery managers (e.g. Samsung) — the main pure-web lever, not a guarantee.
+  let keepAliveCtx: AudioContext | null = null
   const playHistory = ref<Song[]>([]) // Track actually played songs for previous functionality
   
   // Sleep timer state
@@ -282,6 +287,28 @@ export const usePlayerStore = defineStore('player', () => {
     } else {
       isTransitioning.value = false
       debugLogger.error('PLAYER', 'playSong: audioElement is null!')
+    }
+  }
+
+  function startKeepAlive() {
+    try {
+      if (!keepAliveCtx) {
+        const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+        if (!Ctx) return
+        keepAliveCtx = new Ctx()
+        const osc = keepAliveCtx.createOscillator()
+        const gain = keepAliveCtx.createGain()
+        gain.gain.value = 0.0001 // inaudible but non-zero, so the audio graph stays "active"
+        osc.frequency.value = 30
+        osc.connect(gain)
+        gain.connect(keepAliveCtx.destination)
+        osc.start()
+        debugLogger.info('PLAYER', 'keep-alive audio context started')
+      } else if (keepAliveCtx.state === 'suspended') {
+        keepAliveCtx.resume().catch(() => {})
+      }
+    } catch (e) {
+      debugLogger.warn('PLAYER', `keep-alive failed: ${String(e)}`)
     }
   }
 
@@ -812,6 +839,8 @@ export const usePlayerStore = defineStore('player', () => {
       }
       // Reset failure streak — audio is actually decoding, so the file exists and is valid
       consecutiveFailures.value = 0
+      // Keep the page producing audio so the OS is less likely to suspend the backgrounded PWA
+      startKeepAlive()
       // Start playtime tracking here (not on 'play') so we only count real audio output
       startPlaytimeTracking()
       // Start sleep timer countdown here so it only ticks against real playback,
