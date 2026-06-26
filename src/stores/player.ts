@@ -840,21 +840,72 @@ export const usePlayerStore = defineStore('player', () => {
    * the PWA blocks). Previously the preloader guessed via a separate random pick that
    * rarely matched the song nextSong() actually chose in shuffle mode.
    */
+  /**
+   * Ordered list of candidate next-song indices to try, honouring shuffle / sequential /
+   * range / repeat. Used to find a next song that actually preloads.
+   */
+  function nextIndexCandidates(max: number): number[] {
+    if (queue.value.length === 0) return []
+
+    if (shuffle.value) {
+      const eligible = queue.value
+        .map((song, idx) => ({ song, idx }))
+        .filter(({ song }) => isSongInRange(song))
+        .map(({ idx }) => idx)
+      // Fisher–Yates shuffle, then take up to `max`
+      for (let i = eligible.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1))
+        const t = eligible[i]; eligible[i] = eligible[j]; eligible[j] = t
+      }
+      return eligible.slice(0, max)
+    }
+
+    const out: number[] = []
+    let idx = currentIndex.value + 1
+    for (let c = 0; c < queue.value.length && out.length < max; c++, idx++) {
+      if (idx >= queue.value.length) {
+        if (repeat.value === 'all') idx = 0
+        else break
+      }
+      if (!isSongRangeActive.value || isSongInRange(queue.value[idx])) out.push(idx)
+    }
+    return out
+  }
+
+  /**
+   * Decides the next song now and preloads it so it's already buffered when the current
+   * track ends — required for background auto-advance in an installed PWA, which blocks
+   * background network fetches. Crucially it VALIDATES each candidate by preloading and
+   * skips any that fail (corrupt/unsupported files): a bad next song would error at
+   * end-of-song and, in the background, the fallback isn't cached, so playback dies until
+   * the app is refocused. We pick the first candidate that actually buffers.
+   */
   async function triggerReadAheadCache() {
     if (queue.value.length === 0 || currentIndex.value < 0) {
       nextUpIndex.value = -1
       return
     }
 
-    const idx = pickNextIndex()
-    nextUpIndex.value = idx
-    if (idx < 0 || !queue.value[idx]) return
+    const candidates = nextIndexCandidates(8)
+    if (candidates.length === 0) { nextUpIndex.value = -1; return }
+    nextUpIndex.value = candidates[0] // tentative until one validates
 
-    const nextUp = queue.value[idx]
-    debugLogger.info('PLAYER', `read-ahead: preloading next #${nextUp.id} "${nextUp.title}"`)
-    audioCacheService.preloadSongs([nextUp]).catch(error => {
-      console.warn('Error during song preloading:', error)
-    })
+    for (const idx of candidates) {
+      const song = queue.value[idx]
+      if (!song) continue
+      try {
+        await audioCacheService.preloadSongs([song])
+      } catch (error) {
+        console.warn('Error during song preloading:', error)
+      }
+      if (audioCacheService.getCachedAudio(song.id)) {
+        nextUpIndex.value = idx
+        debugLogger.info('PLAYER', `read-ahead: next #${song.id} "${song.title}" ready`)
+        return
+      }
+      debugLogger.warn('PLAYER', `read-ahead: #${song.id} "${song.title}" failed to preload — skipping`)
+    }
+    debugLogger.warn('PLAYER', 'read-ahead: no candidate preloaded cleanly')
   }
 
   function updateMediaSession() {
