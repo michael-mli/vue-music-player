@@ -184,6 +184,7 @@ export const usePlayerStore = defineStore('player', () => {
         debugLogger.info('PLAYER', `Loading #${song.id} into the active audio element`)
         audioElement.value.pause()
         const cachedUrl = audioCacheService.takeCachedUrl(song.id)
+        debugLogger.info('PLAYER', `#${song.id} source: ${cachedUrl ? 'IN-MEMORY BLOB ✓' : 'NETWORK (not preloaded in time)'}`)
         audioElement.value.src = cachedUrl || getMusicUrl(`link.${song.id}.mp3`)
         audioElement.value.load()
         audioElement.value.currentTime = 0
@@ -259,6 +260,7 @@ export const usePlayerStore = defineStore('player', () => {
         debugLogger.info('PLAYER', `Loading #${song.id} into the active audio element`)
         audioElement.value.pause()
         const cachedUrl = audioCacheService.takeCachedUrl(song.id)
+        debugLogger.info('PLAYER', `#${song.id} source: ${cachedUrl ? 'IN-MEMORY BLOB ✓' : 'NETWORK (not preloaded in time)'}`)
         audioElement.value.src = cachedUrl || getMusicUrl(`link.${song.id}.mp3`)
         audioElement.value.load()
         audioElement.value.currentTime = 0
@@ -906,6 +908,7 @@ export const usePlayerStore = defineStore('player', () => {
     for (const idx of candidates) {
       const song = queue.value[idx]
       if (!song) continue
+      debugLogger.info('PLAYER', `read-ahead: downloading candidate #${song.id} "${song.title}"…`)
       try {
         await audioCacheService.preloadSong(song)
       } catch (error) {
