@@ -84,16 +84,29 @@ Offline batch that turns `link.{id}.mp3` → `link.{id}.instrumental.mp3` + mani
 
 ---
 
+## Phase 7 — Deploy ✅
+
+- ✅ Branch `feat/karaoke` pushed; PR #1 opened.
+- ✅ Karaoke assets served from a writable `/karaoke/` path (the `/data` music dir is a
+  read-only S3 mount) via `VITE_KARAOKE_BASE_URL`.
+- ✅ Deployed frontend + seeded 3 validated instrumentals (songs 1, 250, 1000) to:
+  - **music.micstec.com** (primary) — verified manifest + instrumental serve 200.
+  - **mc3.micsapp.com** — verified manifest + instrumental serve 200, bundle baked.
+- 🔁 Bounded local batch (songs 2–25) running niced on the primary host to widen coverage;
+  rebuilds the primary manifest on completion. **mc3 is not auto-synced** — re-copy
+  `/karaoke/` to mc3 after the batch to extend its coverage.
+
 ## Done / not-done summary
 
-**Done now:** all app code (config, services, store, UI, i18n), the offline pipeline, docs.
-Type-checks and builds clean. With `VITE_KARAOKE_ENABLED` on but no manifest present, the
-app behaves exactly as before (toggle stays disabled) — safe to ship ahead of the batch.
+**Live now on both hosts:** karaoke toggle enabled for songs 1, 250, 1000; disabled
+(safely) for the rest. All app code + offline pipeline + docs shipped; type-checks/builds clean.
 
-**Remaining (server-side, can't be done from this environment):**
-1. Run `scripts/karaoke/run-batch.sh <music-dir>` on the box to generate instrumentals +
-   manifest (start with a chunk; it's resumable). GPU strongly recommended for the full catalog.
-2. Manual end-to-end smoke test against a few seeded songs.
+**Remaining:**
+1. **Full-catalog separation** — ~1,300 songs left; needs a GPU box for a reasonable runtime
+   (`scripts/karaoke/run-batch.sh <music-dir>`, resumable). The local bounded batch only
+   covers a small chunk.
+2. **Sync new instrumentals to mc3** (and any other mirror hosts) after each batch.
+3. Manual listen-test of the live toggle on a seeded song.
 
 ## Known limitations
 
