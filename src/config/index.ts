@@ -13,6 +13,10 @@ export interface AppConfig {
   // App Settings
   appTitle: string
   enableMockData: boolean
+
+  // Karaoke
+  karaokeEnabled: boolean
+  lrclibBaseUrl: string
   
   // Audio Settings
   defaultVolume: number
@@ -39,6 +43,10 @@ const defaultConfig: AppConfig = {
   // App Settings
   appTitle: "Mic's Music Player",
   enableMockData: false,
+
+  // Karaoke
+  karaokeEnabled: true,
+  lrclibBaseUrl: 'https://lrclib.net',
   
   // Audio Settings
   defaultVolume: 0.8,
@@ -65,6 +73,8 @@ const config: AppConfig = {
   posterBaseUrl: import.meta.env.VITE_POSTER_BASE_URL || defaultConfig.posterBaseUrl,
   appTitle: import.meta.env.VITE_APP_TITLE || defaultConfig.appTitle,
   enableMockData: import.meta.env.VITE_ENABLE_MOCK_DATA === 'true',
+  karaokeEnabled: import.meta.env.VITE_KARAOKE_ENABLED !== 'false',
+  lrclibBaseUrl: import.meta.env.VITE_LRCLIB_BASE_URL || defaultConfig.lrclibBaseUrl,
 }
 
 /**
@@ -74,6 +84,23 @@ export function getMusicUrl(filename: string): string {
   const baseUrl = config.musicBaseUrl
   const separator = baseUrl && !baseUrl.endsWith('/') ? '/' : ''
   return `${baseUrl}${separator}${filename}`
+}
+
+/**
+ * Get the karaoke instrumental URL for a song id. Instrumentals are generated offline by
+ * the vocal-removal pipeline (scripts/karaoke) and served next to the originals as
+ * link.{id}.instrumental.mp3. See KARAOKE.md.
+ */
+export function getInstrumentalUrl(songId: number): string {
+  return getMusicUrl(`link.${songId}.instrumental.mp3`)
+}
+
+/**
+ * Get the URL of the karaoke manifest (list of song ids that have an instrumental),
+ * served alongside the music files.
+ */
+export function getKaraokeManifestUrl(): string {
+  return getMusicUrl('karaoke_manifest.json')
 }
 
 /**

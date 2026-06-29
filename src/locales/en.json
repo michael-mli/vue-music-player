@@ -45,7 +45,9 @@
     "songRangeTo": "To",
     "songRangeActive": "Playing songs {min} - {max}",
     "songRangeClear": "Clear",
-    "songRangeSave": "Save"
+    "songRangeSave": "Save",
+    "karaoke": "Karaoke (instrumental)",
+    "karaokeUnavailable": "No instrumental for this song"
   },
   "library": {
     "songs": "Songs",
@@ -71,7 +73,8 @@
     "noLyrics": "No lyrics available for this song",
     "loading": "Loading lyrics...",
     "scrollOn": "Auto-scroll on",
-    "scrollOff": "Auto-scroll off"
+    "scrollOff": "Auto-scroll off",
+    "synced": "Synced"
   },
   "settings": {
     "language": "Language",

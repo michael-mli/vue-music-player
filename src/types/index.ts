@@ -8,6 +8,12 @@ export interface Song {
   matchType?: 'title' | 'lyrics'
 }
 
+/** A single time-stamped lyric line (parsed from LRC). `time` is seconds from start. */
+export interface LyricLine {
+  time: number
+  text: string
+}
+
 export interface Playlist {
   id: string
   name: string

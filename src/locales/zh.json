@@ -45,7 +45,9 @@
     "songRangeTo": "到",
     "songRangeActive": "播放歌曲 {min} - {max}",
     "songRangeClear": "清除",
-    "songRangeSave": "保存"
+    "songRangeSave": "保存",
+    "karaoke": "卡拉OK（伴奏）",
+    "karaokeUnavailable": "该歌曲暂无伴奏"
   },
   "library": {
     "songs": "歌曲",
@@ -71,7 +73,8 @@
     "noLyrics": "该歌曲暂无歌词",
     "loading": "正在加载歌词...",
     "scrollOn": "自动滚动已开启",
-    "scrollOff": "自动滚动已关闭"
+    "scrollOff": "自动滚动已关闭",
+    "synced": "已同步"
   },
   "settings": {
     "language": "语言",
