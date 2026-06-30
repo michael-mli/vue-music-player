@@ -152,6 +152,46 @@
         <div v-else class="h-56 flex items-center justify-center text-light-text-secondary dark:text-gray-400 text-sm text-center px-4">
           {{ lyricsLoading ? $t('lyrics.loading') : $t('karaoke.noSynced') }}
         </div>
+
+        <!-- Record your performance (mic + instrumental -> MP3) -->
+        <div v-if="recorder.supported.value && karaokeAvailable" class="mt-4 pt-4 border-t border-light-border dark:border-spotify-light">
+          <div class="flex items-center justify-between gap-3 flex-wrap">
+            <div class="flex items-center gap-2 text-xs text-light-text-secondary dark:text-gray-400">
+              <span
+                v-if="recorder.recording.value"
+                class="inline-block w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse"
+              ></span>
+              <span>{{ recorder.recording.value ? $t('karaoke.recording', { time: recElapsed }) : $t('karaoke.recordHint') }}</span>
+            </div>
+            <button
+              @click="toggleRecord"
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-colors duration-200"
+              :class="recorder.recording.value
+                ? 'bg-red-500 text-white hover:bg-red-600'
+                : 'bg-white/10 text-light-text-primary dark:text-white hover:bg-white/20'"
+            >
+              <span class="inline-block w-2.5 h-2.5 rounded-full" :class="recorder.recording.value ? 'bg-white' : 'bg-red-500'"></span>
+              {{ recorder.recording.value ? $t('karaoke.recordStop') : $t('karaoke.record') }}
+            </button>
+          </div>
+
+          <p v-if="recorder.error.value" class="mt-2 text-xs text-red-400">
+            {{ $t(`karaoke.record_${recorder.error.value}`) }}
+          </p>
+
+          <!-- Finished recording: play + download -->
+          <div v-if="recorder.resultUrl.value && !recorder.recording.value" class="mt-3 flex items-center gap-3 flex-wrap">
+            <audio :src="recorder.resultUrl.value" controls class="h-9 max-w-full"></audio>
+            <a
+              :href="recorder.resultUrl.value"
+              :download="recorder.resultName.value"
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-spotify-green text-black text-sm font-medium hover:bg-spotify-green/80"
+            >
+              <ArrowDownTrayIcon class="w-4 h-4" />
+              {{ $t('karaoke.recordDownload') }}
+            </a>
+          </div>
+        </div>
       </div>
 
       <!-- Loading -->
@@ -211,7 +251,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onMounted } from 'vue'
-import { MicrophoneIcon } from '@heroicons/vue/24/outline'
+import { MicrophoneIcon, ArrowDownTrayIcon } from '@heroicons/vue/24/outline'
 import SongCover from '@/components/UI/SongCover.vue'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
@@ -219,11 +259,35 @@ import { karaokeService } from '@/services/karaokeService'
 import { lyricsService, activeLineIndex } from '@/services/lyricsService'
 import { songService } from '@/services/songService'
 import { useMicMonitor } from '@/composables/useMicMonitor'
+import { useKaraokeRecorder } from '@/composables/useKaraokeRecorder'
+import { getInstrumentalUrl } from '@/config'
 import type { LyricLine, Song } from '@/types'
 
 const playerStore = usePlayerStore()
 const songsStore = useSongsStore()
 const mic = useMicMonitor()
+const recorder = useKaraokeRecorder()
+
+const recElapsed = computed(() => {
+  const s = recorder.elapsed.value
+  return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`
+})
+
+function toggleRecord() {
+  const song = playerStore.currentSong
+  if (!song) return
+  if (recorder.recording.value) {
+    const safe = (song.title || `song-${song.id}`).replace(/[^\p{L}\p{N} _-]/gu, '').trim() || `song-${song.id}`
+    recorder.stop(`karaoke-${safe}.mp3`)
+  } else {
+    recorder.start({
+      instrumentalUrl: getInstrumentalUrl(song.id),
+      positionSec: playerStore.currentTime,
+      getPosition: () => playerStore.currentTime,
+      name: `karaoke-${song.id}.mp3`,
+    })
+  }
+}
 
 const manifestReady = ref(false)
 
