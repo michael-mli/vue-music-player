@@ -89,6 +89,8 @@
     "loading": "正在加载卡拉OK歌曲...",
     "empty": "暂无卡拉OK歌曲，伴奏正在生成中。",
     "noSynced": "未找到该歌曲的同步歌词——凭感觉唱吧！",
+    "switchKaraoke": "伴奏",
+    "switchOriginal": "原唱",
     "micOn": "麦克风已开启",
     "micOff": "麦克风已关闭",
     "micHint": "请使用耳机——外放可能产生啸叫。",

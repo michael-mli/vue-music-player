@@ -106,6 +106,23 @@
               <span v-else>{{ karaokeMode && karaokeAvailable ? $t('karaoke.modeOn') : '' }}</span>
             </p>
           </div>
+
+          <!-- Quick switch: instrumental (karaoke) vs original (with vocals). Swaps live. -->
+          <div
+            v-if="karaokeAvailable"
+            class="ml-auto flex rounded-full bg-light-bg dark:bg-spotify-black border border-light-border dark:border-spotify-light p-0.5 text-xs font-medium flex-shrink-0"
+          >
+            <button
+              @click="switchMode(true)"
+              class="px-3 py-1.5 rounded-full transition-colors duration-200"
+              :class="karaokeMode ? 'bg-spotify-green text-black' : 'text-light-text-secondary dark:text-gray-400 hover:text-light-text-primary dark:hover:text-white'"
+            >{{ $t('karaoke.switchKaraoke') }}</button>
+            <button
+              @click="switchMode(false)"
+              class="px-3 py-1.5 rounded-full transition-colors duration-200"
+              :class="!karaokeMode ? 'bg-spotify-green text-black' : 'text-light-text-secondary dark:text-gray-400 hover:text-light-text-primary dark:hover:text-white'"
+            >{{ $t('karaoke.switchOriginal') }}</button>
+          </div>
         </div>
 
         <!-- Synced lyrics: line-by-line highlight, click to seek -->
@@ -282,6 +299,12 @@ onMounted(async () => {
 async function sing(song: Song, index: number) {
   playerStore.setKaraokeMode(true) // ensure the instrumental loads from the start
   await playerStore.playSong(song, availableSongs.value, index)
+}
+
+// Switch the currently-playing song between instrumental (karaoke) and original (vocals),
+// live — toggleKaraoke preserves playback position and play/pause state.
+function switchMode(toKaraoke: boolean) {
+  if (toKaraoke !== karaokeMode.value) playerStore.toggleKaraoke()
 }
 
 function formatDuration(duration?: number): string {
