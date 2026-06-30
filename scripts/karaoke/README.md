@@ -22,6 +22,20 @@ build of torch/torchaudio from https://pytorch.org instead of the CPU index abov
 > `separate.py` sidesteps this by saving via `soundfile` + `ffmpeg`, so you do **not**
 > need torchcodec.
 
+## Pre-scan (recommended first)
+
+Long files are almost always multi-song rips (medleys / whole albums in one MP3) — useless
+for karaoke and by far the heaviest CPU hogs. Scan the catalog to see the distribution:
+
+```bash
+./scan.sh /mnt/yteatalk/music
+```
+
+Example (this catalog): 1,339 songs / 138.7 h audio, of which **33 files (2.5%) are >10 min
+but account for 35% of the audio (49.2 h)** — the longest is 223 min. The batch skips these
+by default (`--max-duration 600`, i.e. 10 min), saving ~91 h of CPU. Override the cap with
+`MAX_DURATION=<seconds>` (0 = no cap).
+
 ## Run
 
 ```bash
@@ -31,8 +45,11 @@ python3 separate.py --music-dir /mnt/yteatalk/music --ids 1,100,250
 # Explicit files
 python3 separate.py /mnt/yteatalk/music/link.42.mp3
 
-# Whole catalog + manifest (idempotent, resumable)
+# Whole catalog + manifest (idempotent, resumable; skips files > 10 min by default)
 ./run-batch.sh /mnt/yteatalk/music
+
+# Same, but no duration cap (process everything, including long rips)
+MAX_DURATION=0 ./run-batch.sh /mnt/yteatalk/music
 
 # Just rebuild the manifest after copying instrumentals in by hand
 ./build-manifest.sh /mnt/yteatalk/music

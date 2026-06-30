@@ -10,7 +10,12 @@
 # - CPU separation is ~6-9 min/song. For the full ~1,339-track catalog, run on a GPU box
 #   (Demucs auto-uses CUDA when available) or let this run for a long time in the background.
 # - Safe to re-run after an interruption; already-done files are skipped.
+# - Over-long files (default > 10 min) are skipped: they're almost always multi-song rips,
+#   pointless for karaoke and the heaviest CPU hogs. Override with MAX_DURATION (seconds,
+#   0 = no cap). Run scan.sh first to see the duration distribution.
 set -euo pipefail
+
+MAX_DURATION="${MAX_DURATION:-600}"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MUSIC_DIR="${1:-}"
@@ -24,9 +29,9 @@ fi
 PY="${PYTHON:-python3}"
 
 if [[ -n "$IDS" ]]; then
-  "$PY" "$HERE/separate.py" --music-dir "$MUSIC_DIR" --ids "$IDS"
+  "$PY" "$HERE/separate.py" --music-dir "$MUSIC_DIR" --ids "$IDS" --max-duration "$MAX_DURATION"
 else
-  "$PY" "$HERE/separate.py" --music-dir "$MUSIC_DIR" --all
+  "$PY" "$HERE/separate.py" --music-dir "$MUSIC_DIR" --all --max-duration "$MAX_DURATION"
 fi
 
 bash "$HERE/build-manifest.sh" "$MUSIC_DIR"

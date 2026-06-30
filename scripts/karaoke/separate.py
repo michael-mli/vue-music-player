@@ -32,6 +32,19 @@ def instrumental_path(src: str, out_dir: str | None) -> str:
     return os.path.join(target_dir, base + INSTR_SUFFIX)
 
 
+def probe_duration(path: str) -> float:
+    """Seconds, via ffprobe. 0.0 if it can't be determined."""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", path],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        return float(out)
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
 def encode_mp3(wav_path: str, mp3_path: str, bitrate: str) -> None:
     subprocess.run(
         ["ffmpeg", "-y", "-loglevel", "error", "-i", wav_path, "-b:a", bitrate, mp3_path],
@@ -94,6 +107,10 @@ def main() -> int:
     ap.add_argument("--all", action="store_true", help="process every link.*.mp3 in --music-dir")
     ap.add_argument("--out-dir", help="write instrumentals here (default: next to source)")
     ap.add_argument("--bitrate", default="192k", help="output mp3 bitrate (default 192k)")
+    ap.add_argument("--max-duration", type=float, default=0,
+                    help="skip inputs longer than this many seconds (0 = no limit). "
+                         "Long files are usually multi-song rips — pointless for karaoke "
+                         "and very slow to process.")
     ap.add_argument("--model", default="htdemucs", help="demucs model (default htdemucs)")
     ap.add_argument("--force", action="store_true", help="re-process even if instrumental exists")
     args = ap.parse_args()
@@ -102,6 +119,25 @@ def main() -> int:
     if not inputs:
         print("No input files found.", file=sys.stderr)
         return 1
+
+    # Filter over-long files (multi-song rips) up front, before loading the model — so a
+    # skip-only run doesn't pay for Demucs, and the worklist is clean.
+    skipped_long = 0
+    if args.max_duration > 0:
+        kept = []
+        for src in inputs:
+            dur = probe_duration(src)
+            if dur > args.max_duration:
+                print(f"skip  {os.path.basename(src)} (too long: {dur / 60:.1f} min "
+                      f"> {args.max_duration / 60:.0f} min cap)", flush=True)
+                skipped_long += 1
+            else:
+                kept.append(src)
+        inputs = kept
+        if not inputs:
+            print(f"Nothing to do: all {skipped_long} input(s) exceed the duration cap.",
+                  flush=True)
+            return 0
 
     # Heavy imports only once we know there's work to do.
     import numpy as np
@@ -127,7 +163,10 @@ def main() -> int:
         except Exception as e:  # noqa: BLE001 - keep batch going
             print(f"FAIL  {os.path.basename(src)}: {e}", file=sys.stderr, flush=True)
 
-    print(f"Done: {ok}/{len(inputs)} processed.", flush=True)
+    msg = f"Done: {ok}/{len(inputs)} processed."
+    if skipped_long:
+        msg += f" Skipped {skipped_long} over-long file(s)."
+    print(msg, flush=True)
     return 0
 
 
