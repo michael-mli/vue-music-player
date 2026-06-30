@@ -88,7 +88,17 @@
     "sing": "演唱",
     "loading": "正在加载卡拉OK歌曲...",
     "empty": "暂无卡拉OK歌曲，伴奏正在生成中。",
-    "noSynced": "未找到该歌曲的同步歌词——凭感觉唱吧！"
+    "noSynced": "未找到该歌曲的同步歌词——凭感觉唱吧！",
+    "micOn": "麦克风已开启",
+    "micOff": "麦克风已关闭",
+    "micHint": "请使用耳机——外放可能产生啸叫。",
+    "micStart": "开启麦克风",
+    "micStop": "关闭麦克风",
+    "micVolume": "麦克风音量",
+    "micReverb": "混响",
+    "mic_denied": "麦克风访问被拒绝。请在浏览器设置中允许后再演唱。",
+    "mic_unsupported": "您的浏览器不支持麦克风监听。",
+    "mic_failed": "无法启动麦克风，请重试。"
   },
   "settings": {
     "language": "语言",

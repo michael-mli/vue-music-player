@@ -35,6 +35,61 @@
         </button>
       </div>
 
+      <!-- Mic monitor (sing into your microphone and hear yourself) -->
+      <div
+        v-if="mic.supported"
+        class="p-4 mb-6 rounded-lg border"
+        :class="mic.active.value
+          ? 'bg-spotify-green/10 border-spotify-green/40'
+          : 'bg-light-card dark:bg-spotify-dark border-light-border dark:border-spotify-light'"
+      >
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <MicrophoneIcon class="w-5 h-5" :class="mic.active.value ? 'text-spotify-green' : 'text-gray-400'" />
+            <div>
+              <p class="text-sm font-medium text-light-text-primary dark:text-white">
+                {{ mic.active.value ? $t('karaoke.micOn') : $t('karaoke.micOff') }}
+              </p>
+              <p class="text-xs text-light-text-secondary dark:text-gray-400">⚠️ {{ $t('karaoke.micHint') }}</p>
+            </div>
+          </div>
+          <button
+            @click="mic.toggle()"
+            :disabled="mic.starting.value"
+            class="px-3 py-1.5 rounded-full text-sm font-medium transition-colors duration-200 disabled:opacity-50"
+            :class="mic.active.value
+              ? 'bg-spotify-green text-black hover:bg-spotify-green/80'
+              : 'bg-white/10 text-light-text-primary dark:text-white hover:bg-white/20'"
+          >
+            {{ mic.active.value ? $t('karaoke.micStop') : $t('karaoke.micStart') }}
+          </button>
+        </div>
+
+        <!-- Mic level + reverb -->
+        <div v-if="mic.active.value" class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <label class="text-xs text-light-text-secondary dark:text-gray-400">
+            {{ $t('karaoke.micVolume') }}
+            <input
+              type="range" min="0" max="1.5" step="0.05" :value="mic.gain.value"
+              @input="mic.setGain(+($event.target as HTMLInputElement).value)"
+              class="w-full accent-spotify-green"
+            />
+          </label>
+          <label class="text-xs text-light-text-secondary dark:text-gray-400">
+            {{ $t('karaoke.micReverb') }}
+            <input
+              type="range" min="0" max="0.8" step="0.05" :value="mic.reverb.value"
+              @input="mic.setReverb(+($event.target as HTMLInputElement).value)"
+              class="w-full accent-spotify-green"
+            />
+          </label>
+        </div>
+
+        <p v-if="mic.error.value" class="mt-3 text-xs text-red-400">
+          {{ $t(`karaoke.mic_${mic.error.value}`) }}
+        </p>
+      </div>
+
       <!-- Now-singing lyrics stage -->
       <div
         v-if="currentSong"
@@ -146,10 +201,12 @@ import { useSongsStore } from '@/stores/songs'
 import { karaokeService } from '@/services/karaokeService'
 import { lyricsService, activeLineIndex } from '@/services/lyricsService'
 import { songService } from '@/services/songService'
+import { useMicMonitor } from '@/composables/useMicMonitor'
 import type { LyricLine, Song } from '@/types'
 
 const playerStore = usePlayerStore()
 const songsStore = useSongsStore()
+const mic = useMicMonitor()
 
 const manifestReady = ref(false)
 

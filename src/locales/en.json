@@ -88,7 +88,17 @@
     "sing": "Sing",
     "loading": "Loading karaoke songs...",
     "empty": "No karaoke songs yet. Instrumentals are still being generated.",
-    "noSynced": "No synced lyrics found for this song — sing along by ear!"
+    "noSynced": "No synced lyrics found for this song — sing along by ear!",
+    "micOn": "Microphone is live",
+    "micOff": "Microphone off",
+    "micHint": "Use headphones — speakers can cause feedback.",
+    "micStart": "Turn on mic",
+    "micStop": "Turn off mic",
+    "micVolume": "Mic volume",
+    "micReverb": "Reverb",
+    "mic_denied": "Microphone access was denied. Allow it in your browser settings to sing.",
+    "mic_unsupported": "Your browser doesn't support microphone monitoring.",
+    "mic_failed": "Couldn't start the microphone. Try again."
   },
   "settings": {
     "language": "Language",
