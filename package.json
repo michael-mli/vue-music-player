@@ -10,6 +10,7 @@
     "type-check": "vue-tsc --noEmit"
   },
   "dependencies": {
+    "@breezystack/lamejs": "^1.2.7",
     "@headlessui/vue": "^1.7.16",
     "@heroicons/vue": "^2.0.18",
     "axios": "^1.6.2",
