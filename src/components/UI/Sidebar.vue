@@ -43,7 +43,7 @@
         </li>
         <li>
           <RouterLink
-            to="/karaoke"
+            to="/sing"
             @click="emit('close-mobile')"
             class="flex items-center px-4 py-3 rounded-md text-sm font-medium transition-colors duration-200 hover:bg-light-border dark:hover:bg-spotify-light"
             :class="{ 'bg-light-border text-light-text-primary dark:bg-spotify-light dark:text-white': $route.name === 'Karaoke', 'text-light-text-secondary dark:text-gray-300': $route.name !== 'Karaoke' }"

@@ -25,7 +25,9 @@ const router = createRouter({
       component: Library
     },
     {
-      path: '/karaoke',
+      // Path is /sing (not /karaoke) to avoid colliding with the physical /karaoke/
+      // instrumentals directory served at the web root. Route name stays "Karaoke".
+      path: '/sing',
       name: 'Karaoke',
       component: Karaoke
     },
