@@ -35,6 +35,53 @@
         </button>
       </div>
 
+      <!-- Now-singing lyrics stage -->
+      <div
+        v-if="currentSong"
+        class="mb-8 rounded-xl bg-gradient-to-b from-light-card to-light-bg dark:from-spotify-dark dark:to-spotify-black border border-light-border dark:border-spotify-light p-5"
+      >
+        <div class="flex items-center gap-3 mb-4">
+          <div class="w-12 h-12 rounded overflow-hidden flex-shrink-0 bg-light-border dark:bg-spotify-light">
+            <SongCover :song-id="currentSong.id" :alt="currentSong.title" />
+          </div>
+          <div class="min-w-0">
+            <p class="text-lg font-bold text-light-text-primary dark:text-white truncate">{{ currentSong.title }}</p>
+            <p class="text-xs text-light-text-secondary dark:text-gray-400">
+              <span v-if="syncedLines.length" class="text-spotify-green">♪ {{ $t('lyrics.synced') }}</span>
+              <span v-else>{{ karaokeMode && karaokeAvailable ? $t('karaoke.modeOn') : '' }}</span>
+            </p>
+          </div>
+        </div>
+
+        <!-- Synced lyrics: line-by-line highlight, click to seek -->
+        <div
+          v-if="syncedLines.length"
+          ref="lyricsBox"
+          class="h-56 overflow-y-auto spotify-scrollbar text-center space-y-3 py-12"
+        >
+          <p
+            v-for="(line, i) in syncedLines"
+            :key="i"
+            :data-kline="i"
+            @click="playerStore.seek(line.time)"
+            class="cursor-pointer transition-all duration-200"
+            :class="i === activeIndex
+              ? 'text-spotify-green font-bold text-2xl'
+              : 'text-light-text-secondary dark:text-gray-500 text-lg hover:text-light-text-primary dark:hover:text-gray-300'"
+          >{{ line.text || '♪' }}</p>
+        </div>
+
+        <!-- Plain lyrics fallback -->
+        <div
+          v-else-if="plainLyrics"
+          class="h-56 overflow-y-auto spotify-scrollbar text-center text-light-text-secondary dark:text-gray-300 whitespace-pre-line leading-relaxed py-4"
+        >{{ plainLyrics }}</div>
+
+        <div v-else class="h-56 flex items-center justify-center text-light-text-secondary dark:text-gray-400 text-sm text-center px-4">
+          {{ lyricsLoading ? $t('lyrics.loading') : $t('karaoke.noSynced') }}
+        </div>
+      </div>
+
       <!-- Loading -->
       <div v-if="!manifestReady" class="text-center text-light-text-secondary dark:text-gray-400 py-12">
         {{ $t('karaoke.loading') }}
@@ -91,28 +138,72 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, watch, onMounted } from 'vue'
 import { MicrophoneIcon } from '@heroicons/vue/24/outline'
 import SongCover from '@/components/UI/SongCover.vue'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
 import { karaokeService } from '@/services/karaokeService'
+import { lyricsService, activeLineIndex } from '@/services/lyricsService'
 import { songService } from '@/services/songService'
-import type { Song } from '@/types'
+import type { LyricLine, Song } from '@/types'
 
 const playerStore = usePlayerStore()
 const songsStore = useSongsStore()
 
 const manifestReady = ref(false)
 
+// Now-singing lyrics state
+const syncedLines = ref<LyricLine[]>([])
+const plainLyrics = ref('')
+const activeIndex = ref(-1)
+const lyricsLoading = ref(false)
+const lyricsBox = ref<HTMLElement>()
+
 const karaokeMode = computed(() => playerStore.karaokeMode)
+const karaokeAvailable = computed(() => playerStore.karaokeAvailable)
+const currentSong = computed(() => playerStore.currentSong)
 const currentSongId = computed(() => playerStore.currentSong?.id)
 
-// Songs that have a generated instrumental (depends on manifestReady so it recomputes
-// once the manifest fetch settles).
 const availableSongs = computed<Song[]>(() => {
   void manifestReady.value
   return songsStore.songs.filter((s) => karaokeService.isAvailable(s.id))
+})
+
+// Load lyrics (synced + plain fallback) for whatever song is currently playing.
+watch(currentSong, async (song) => {
+  syncedLines.value = []
+  plainLyrics.value = ''
+  activeIndex.value = -1
+  if (!song) return
+  lyricsLoading.value = true
+  const reqId = song.id
+  try {
+    const duration = playerStore.duration > 0
+      ? playerStore.duration
+      : songService.getCachedDuration(song.id)
+    const [lines, plain] = await Promise.all([
+      lyricsService.getSyncedLyrics(song, duration),
+      songsStore.getSongLyrics(song.id).catch(() => ''),
+    ])
+    if (playerStore.currentSong?.id !== reqId) return
+    syncedLines.value = lines ?? []
+    plainLyrics.value = plain ?? ''
+    if (lines) activeIndex.value = activeLineIndex(lines, playerStore.currentTime)
+  } finally {
+    if (playerStore.currentSong?.id === reqId) lyricsLoading.value = false
+  }
+}, { immediate: true })
+
+// Highlight + center the active synced line as playback advances.
+watch(() => playerStore.currentTime, (t) => {
+  if (!syncedLines.value.length) return
+  const idx = activeLineIndex(syncedLines.value, t + 0.2)
+  if (idx !== activeIndex.value) {
+    activeIndex.value = idx
+    const el = lyricsBox.value?.querySelector(`[data-kline="${idx}"]`) as HTMLElement | null
+    if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }
 })
 
 onMounted(async () => {

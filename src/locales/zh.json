@@ -87,7 +87,8 @@
     "available": "{count} 首歌曲可用于卡拉OK",
     "sing": "演唱",
     "loading": "正在加载卡拉OK歌曲...",
-    "empty": "暂无卡拉OK歌曲，伴奏正在生成中。"
+    "empty": "暂无卡拉OK歌曲，伴奏正在生成中。",
+    "noSynced": "未找到该歌曲的同步歌词——凭感觉唱吧！"
   },
   "settings": {
     "language": "语言",

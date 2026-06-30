@@ -87,7 +87,8 @@
     "available": "{count} songs ready for karaoke",
     "sing": "Sing",
     "loading": "Loading karaoke songs...",
-    "empty": "No karaoke songs yet. Instrumentals are still being generated."
+    "empty": "No karaoke songs yet. Instrumentals are still being generated.",
+    "noSynced": "No synced lyrics found for this song — sing along by ear!"
   },
   "settings": {
     "language": "Language",

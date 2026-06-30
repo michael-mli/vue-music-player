@@ -9,6 +9,7 @@
  * synced lyrics are found, callers fall back to the existing plain-text lyrics. See KARAOKE.md.
  */
 import config from '@/config'
+import { songService } from '@/services/songService'
 import type { LyricLine, Song } from '@/types'
 
 const CACHE_KEY = 'music-player-synced-lyrics'
@@ -111,7 +112,12 @@ class LyricsService {
   }
 
   private async fetchFromLrclib(song: Song, duration?: number): Promise<LyricLine[] | null> {
-    const title = (song.title || '').trim()
+    let title = (song.title || '').trim()
+    // Title may still be the "Song N" placeholder if it hasn't been resolved yet — resolve
+    // it from the lyrics file (first line) so the LRCLIB match isn't skipped.
+    if (!title || title.startsWith('Song ')) {
+      title = (await songService.getTitleFromLyrics(song.id)).trim()
+    }
     if (!title || title.startsWith('Song ')) return null // no usable metadata to match on
 
     const base = config.lrclibBaseUrl.replace(/\/$/, '')
