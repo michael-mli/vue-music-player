@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import Home from '@/views/Home.vue'
 import Search from '@/views/Search.vue'
 import Library from '@/views/Library.vue'
+import Karaoke from '@/views/Karaoke.vue'
 import Playlist from '@/views/Playlist.vue'
 import Music from '@/views/Music.vue'
 
@@ -22,6 +23,11 @@ const router = createRouter({
       path: '/library',
       name: 'Library',
       component: Library
+    },
+    {
+      path: '/karaoke',
+      name: 'Karaoke',
+      component: Karaoke
     },
     {
       path: '/playlist/:id',

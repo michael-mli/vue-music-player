@@ -15,6 +15,7 @@
     "home": "Home",
     "search": "Search",
     "library": "Your Library",
+    "karaoke": "Karaoke",
     "playlists": "Playlists",
     "favorites": "Favorites"
   },
@@ -75,6 +76,18 @@
     "scrollOn": "Auto-scroll on",
     "scrollOff": "Auto-scroll off",
     "synced": "Synced"
+  },
+  "karaoke": {
+    "subtitle": "Sing along — vocals removed, lyrics in sync.",
+    "modeOn": "Karaoke mode is on",
+    "modeOff": "Karaoke mode is off",
+    "modeHint": "Plays the instrumental (vocals removed) for songs that have one.",
+    "turnOn": "Turn on",
+    "turnOff": "Turn off",
+    "available": "{count} songs ready for karaoke",
+    "sing": "Sing",
+    "loading": "Loading karaoke songs...",
+    "empty": "No karaoke songs yet. Instrumentals are still being generated."
   },
   "settings": {
     "language": "Language",

@@ -1,0 +1,145 @@
+<template>
+  <div class="karaoke-view h-full overflow-y-auto spotify-scrollbar">
+    <div class="p-4 sm:p-6">
+      <!-- Header -->
+      <div class="flex items-center gap-3 mb-2">
+        <MicrophoneIcon class="w-8 h-8 text-spotify-green" />
+        <h1 class="text-3xl font-bold text-light-text-primary dark:text-white">{{ $t('navigation.karaoke') }}</h1>
+      </div>
+      <p class="text-light-text-secondary dark:text-gray-400 mb-6">{{ $t('karaoke.subtitle') }}</p>
+
+      <!-- Karaoke mode banner / toggle -->
+      <div
+        class="flex items-center justify-between p-4 mb-6 rounded-lg border"
+        :class="karaokeMode
+          ? 'bg-spotify-green/10 border-spotify-green/40'
+          : 'bg-light-card dark:bg-spotify-dark border-light-border dark:border-spotify-light'"
+      >
+        <div class="flex items-center gap-3">
+          <MicrophoneIcon class="w-5 h-5" :class="karaokeMode ? 'text-spotify-green' : 'text-gray-400'" />
+          <div>
+            <p class="text-sm font-medium text-light-text-primary dark:text-white">
+              {{ karaokeMode ? $t('karaoke.modeOn') : $t('karaoke.modeOff') }}
+            </p>
+            <p class="text-xs text-light-text-secondary dark:text-gray-400">{{ $t('karaoke.modeHint') }}</p>
+          </div>
+        </div>
+        <button
+          @click="playerStore.setKaraokeMode(!karaokeMode)"
+          class="px-3 py-1.5 rounded-full text-sm font-medium transition-colors duration-200"
+          :class="karaokeMode
+            ? 'bg-spotify-green text-black hover:bg-spotify-green/80'
+            : 'bg-white/10 text-light-text-primary dark:text-white hover:bg-white/20'"
+        >
+          {{ karaokeMode ? $t('karaoke.turnOff') : $t('karaoke.turnOn') }}
+        </button>
+      </div>
+
+      <!-- Loading -->
+      <div v-if="!manifestReady" class="text-center text-light-text-secondary dark:text-gray-400 py-12">
+        {{ $t('karaoke.loading') }}
+      </div>
+
+      <!-- Empty state -->
+      <div
+        v-else-if="availableSongs.length === 0"
+        class="text-center text-light-text-secondary dark:text-gray-400 py-12"
+      >
+        <MicrophoneIcon class="w-12 h-12 mx-auto mb-3 opacity-30" />
+        <p>{{ $t('karaoke.empty') }}</p>
+      </div>
+
+      <!-- Available songs -->
+      <template v-else>
+        <p class="text-light-text-secondary dark:text-gray-400 mb-4 text-sm">
+          {{ $t('karaoke.available', { count: availableSongs.length }) }}
+        </p>
+        <div class="space-y-2">
+          <div
+            v-for="(song, index) in availableSongs"
+            :key="song.id"
+            @click="sing(song, index)"
+            class="flex items-center p-3 rounded-lg hover:bg-light-border dark:hover:bg-spotify-light cursor-pointer group transition-colors duration-200"
+            :class="{ 'bg-light-border dark:bg-spotify-light': currentSongId === song.id }"
+          >
+            <div class="w-8 text-center mr-4">
+              <span class="text-light-text-secondary dark:text-gray-400 text-sm">{{ song.id }}</span>
+            </div>
+            <div class="w-10 h-10 bg-light-border dark:bg-spotify-dark rounded mr-3 overflow-hidden flex-shrink-0">
+              <SongCover :song-id="song.id" :alt="song.title" />
+            </div>
+            <div class="flex-1 min-w-0">
+              <p
+                class="font-medium break-words"
+                :class="currentSongId === song.id ? 'text-spotify-green' : 'text-light-text-primary dark:text-white'"
+              >{{ song.title }}</p>
+              <p class="text-light-text-secondary dark:text-gray-400 text-sm">{{ formatDuration(song.duration) }}</p>
+            </div>
+            <button
+              @click.stop="sing(song, index)"
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-spotify-green text-black text-sm font-medium opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-200 hover:bg-spotify-green/80"
+              :title="$t('karaoke.sing')"
+            >
+              <MicrophoneIcon class="w-4 h-4" />
+              {{ $t('karaoke.sing') }}
+            </button>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, ref, onMounted } from 'vue'
+import { MicrophoneIcon } from '@heroicons/vue/24/outline'
+import SongCover from '@/components/UI/SongCover.vue'
+import { usePlayerStore } from '@/stores/player'
+import { useSongsStore } from '@/stores/songs'
+import { karaokeService } from '@/services/karaokeService'
+import { songService } from '@/services/songService'
+import type { Song } from '@/types'
+
+const playerStore = usePlayerStore()
+const songsStore = useSongsStore()
+
+const manifestReady = ref(false)
+
+const karaokeMode = computed(() => playerStore.karaokeMode)
+const currentSongId = computed(() => playerStore.currentSong?.id)
+
+// Songs that have a generated instrumental (depends on manifestReady so it recomputes
+// once the manifest fetch settles).
+const availableSongs = computed<Song[]>(() => {
+  void manifestReady.value
+  return songsStore.songs.filter((s) => karaokeService.isAvailable(s.id))
+})
+
+onMounted(async () => {
+  if (songsStore.songs.length === 0) {
+    await songsStore.fetchSongs()
+  }
+  await karaokeService.ensureLoaded()
+  manifestReady.value = true
+
+  // Fill in real titles for the (small) set of karaoke-ready songs that still show a placeholder.
+  for (const song of availableSongs.value) {
+    if (song.title.startsWith('Song ')) {
+      const title = await songService.getTitleFromLyrics(song.id)
+      if (title && !title.startsWith('Song ')) song.title = title
+    }
+  }
+})
+
+async function sing(song: Song, index: number) {
+  playerStore.setKaraokeMode(true) // ensure the instrumental loads from the start
+  await playerStore.playSong(song, availableSongs.value, index)
+}
+
+function formatDuration(duration?: number): string {
+  if (!duration) return '—'
+  const minutes = Math.floor(duration / 60)
+  const seconds = Math.floor(duration % 60)
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`
+}
+</script>

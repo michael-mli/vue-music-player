@@ -514,6 +514,12 @@ export const usePlayerStore = defineStore('player', () => {
    * instrumental, the audio source is swapped live, preserving playback position and
    * play/pause state. See KARAOKE.md.
    */
+  /** Set karaoke mode explicitly and persist it (no live swap — for fresh playback). */
+  function setKaraokeMode(value: boolean) {
+    karaokeMode.value = value
+    localStorage.setItem(KARAOKE_MODE_KEY, String(value))
+  }
+
   async function toggleKaraoke() {
     karaokeMode.value = !karaokeMode.value
     localStorage.setItem(KARAOKE_MODE_KEY, String(karaokeMode.value))
@@ -1379,6 +1385,7 @@ export const usePlayerStore = defineStore('player', () => {
     previousSong,
     seek,
     toggleKaraoke,
+    setKaraokeMode,
     setVolume,
     toggleMute,
     toggleShuffle,

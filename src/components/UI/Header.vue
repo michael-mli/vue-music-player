@@ -107,6 +107,8 @@ const pageTitle = computed(() => {
       return t('navigation.search')
     case 'Library':
       return t('navigation.library')
+    case 'Karaoke':
+      return t('navigation.karaoke')
     case 'Playlist':
       return t('navigation.playlists') // Will be replaced with actual playlist name
     default:
