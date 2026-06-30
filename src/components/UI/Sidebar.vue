@@ -41,6 +41,17 @@
             {{ $t('navigation.library') }}
           </RouterLink>
         </li>
+        <li>
+          <RouterLink
+            to="/sing"
+            @click="emit('close-mobile')"
+            class="flex items-center px-4 py-3 rounded-md text-sm font-medium transition-colors duration-200 hover:bg-light-border dark:hover:bg-spotify-light"
+            :class="{ 'bg-light-border text-light-text-primary dark:bg-spotify-light dark:text-white': $route.name === 'Karaoke', 'text-light-text-secondary dark:text-gray-300': $route.name !== 'Karaoke' }"
+          >
+            <MicrophoneIcon class="w-5 h-5 mr-3" />
+            {{ $t('navigation.karaoke') }}
+          </RouterLink>
+        </li>
       </ul>
       
       <!-- Playlists Section -->
@@ -107,11 +118,12 @@ const buildLabel = buildDate.toLocaleDateString('en', { month: 'short', day: 'nu
   + ' ' + buildDate.toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit', hour12: false })
 import { RouterLink, useRoute } from 'vue-router'
 import { 
-  HomeIcon, 
-  MagnifyingGlassIcon, 
+  HomeIcon,
+  MagnifyingGlassIcon,
   BuildingLibraryIcon,
+  MicrophoneIcon,
   PlusIcon,
-  UserIcon 
+  UserIcon
 } from '@heroicons/vue/24/outline'
 import { usePlaylistsStore } from '@/stores/playlists'
 import LanguageSwitcher from './LanguageSwitcher.vue'

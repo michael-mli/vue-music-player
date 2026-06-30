@@ -13,6 +13,11 @@ export interface AppConfig {
   // App Settings
   appTitle: string
   enableMockData: boolean
+
+  // Karaoke
+  karaokeEnabled: boolean
+  karaokeBaseUrl: string
+  lrclibBaseUrl: string
   
   // Audio Settings
   defaultVolume: number
@@ -39,6 +44,13 @@ const defaultConfig: AppConfig = {
   // App Settings
   appTitle: "Mic's Music Player",
   enableMockData: false,
+
+  // Karaoke
+  karaokeEnabled: true,
+  // Where instrumentals + manifest live. Empty = co-located with the music files
+  // (musicBaseUrl). Override (e.g. "/karaoke") when the music dir is read-only.
+  karaokeBaseUrl: '',
+  lrclibBaseUrl: 'https://lrclib.net',
   
   // Audio Settings
   defaultVolume: 0.8,
@@ -65,6 +77,9 @@ const config: AppConfig = {
   posterBaseUrl: import.meta.env.VITE_POSTER_BASE_URL || defaultConfig.posterBaseUrl,
   appTitle: import.meta.env.VITE_APP_TITLE || defaultConfig.appTitle,
   enableMockData: import.meta.env.VITE_ENABLE_MOCK_DATA === 'true',
+  karaokeEnabled: import.meta.env.VITE_KARAOKE_ENABLED !== 'false',
+  karaokeBaseUrl: import.meta.env.VITE_KARAOKE_BASE_URL || defaultConfig.karaokeBaseUrl,
+  lrclibBaseUrl: import.meta.env.VITE_LRCLIB_BASE_URL || defaultConfig.lrclibBaseUrl,
 }
 
 /**
@@ -74,6 +89,33 @@ export function getMusicUrl(filename: string): string {
   const baseUrl = config.musicBaseUrl
   const separator = baseUrl && !baseUrl.endsWith('/') ? '/' : ''
   return `${baseUrl}${separator}${filename}`
+}
+
+/**
+ * Get full URL for a karaoke asset. Uses karaokeBaseUrl when set, otherwise falls back to
+ * the music base (co-located with the originals). Override the base when the music dir is
+ * read-only (e.g. an S3 mount) so instrumentals can be served from a writable path.
+ */
+export function getKaraokeUrl(filename: string): string {
+  const baseUrl = config.karaokeBaseUrl || config.musicBaseUrl
+  const separator = baseUrl && !baseUrl.endsWith('/') ? '/' : ''
+  return `${baseUrl}${separator}${filename}`
+}
+
+/**
+ * Get the karaoke instrumental URL for a song id. Instrumentals are generated offline by
+ * the vocal-removal pipeline (scripts/karaoke) and served as link.{id}.instrumental.mp3.
+ * See KARAOKE.md.
+ */
+export function getInstrumentalUrl(songId: number): string {
+  return getKaraokeUrl(`link.${songId}.instrumental.mp3`)
+}
+
+/**
+ * Get the URL of the karaoke manifest (list of song ids that have an instrumental).
+ */
+export function getKaraokeManifestUrl(): string {
+  return getKaraokeUrl('karaoke_manifest.json')
 }
 
 /**

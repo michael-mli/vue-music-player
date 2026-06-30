@@ -1,9 +1,10 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Song, PlayerState, PlayMode } from '@/types'
-import { getMusicUrl, getPosterUrl } from '@/config'
+import { getMusicUrl, getPosterUrl, getInstrumentalUrl } from '@/config'
 import { songService } from '@/services/songService'
 import { audioCacheService } from '@/services/audioCacheService'
+import { karaokeService } from '@/services/karaokeService'
 import { debugLogger, isDebugMode } from '@/services/debugLogger'
 
 export const usePlayerStore = defineStore('player', () => {
@@ -27,6 +28,11 @@ export const usePlayerStore = defineStore('player', () => {
   // Object URL of the in-memory blob currently driving playback (if the track was played
   // from cache). Revoked when the next track loads so blobs don't leak.
   let currentObjectUrl: string | null = null
+
+  // Karaoke mode: when on, play the vocals-removed instrumental for songs that have one.
+  // Persisted so the preference survives reloads. See KARAOKE.md.
+  const KARAOKE_MODE_KEY = 'music-player-karaoke-mode'
+  const karaokeMode = ref(localStorage.getItem(KARAOKE_MODE_KEY) === 'true')
 
   const playHistory = ref<Song[]>([]) // Track actually played songs for previous functionality
   
@@ -90,10 +96,30 @@ export const usePlayerStore = defineStore('player', () => {
     return `rs=${a.readyState} ns=${a.networkState} paused=${a.paused} ended=${a.ended} t=${a.currentTime.toFixed(2)}/${(a.duration || 0).toFixed(2)}`
   }
 
+  /**
+   * Resolve the audio source URL for a song, honoring karaoke mode.
+   *
+   * In karaoke mode (and when the song has an instrumental) we always use the network
+   * instrumental URL — never the in-memory blob, which holds the *vocal* version preloaded
+   * for background playback. Otherwise we prefer the cached blob, falling back to the
+   * normal network URL. See KARAOKE.md.
+   */
+  function sourceUrlFor(song: Song, cachedUrl: string | null): string {
+    if (karaokeMode.value && karaokeService.isAvailable(song.id)) {
+      return getInstrumentalUrl(song.id)
+    }
+    return cachedUrl || getMusicUrl(`link.${song.id}.mp3`)
+  }
+
   // Getters
   const progress = computed(() => {
     return duration.value > 0 ? (currentTime.value / duration.value) * 100 : 0
   })
+
+  /** Whether the currently-playing song has a karaoke instrumental available. */
+  const karaokeAvailable = computed(() =>
+    !!currentSong.value && karaokeService.isAvailable(currentSong.value.id)
+  )
 
   const formattedCurrentTime = computed(() => {
     return formatTime(currentTime.value)
@@ -161,6 +187,9 @@ export const usePlayerStore = defineStore('player', () => {
     loadTotalPlaytime()
     loadSleepTimer()
     loadSongRange()
+
+    // Fetch the karaoke manifest (which songs have instrumentals) in the background.
+    karaokeService.ensureLoaded()
     
     // Setup network connectivity listeners
     setupNetworkListeners()
@@ -194,15 +223,21 @@ export const usePlayerStore = defineStore('player', () => {
         debugLogger.info('PLAYER', `Loading #${song.id} into the active audio element`)
         audioElement.value.pause()
         const cachedUrl = audioCacheService.takeCachedUrl(song.id)
-        debugLogger.info('PLAYER', `#${song.id} source: ${cachedUrl ? 'IN-MEMORY BLOB ✓' : 'NETWORK (not preloaded in time)'}`)
-        audioElement.value.src = cachedUrl || getMusicUrl(`link.${song.id}.mp3`)
+        const useKaraoke = karaokeMode.value && karaokeService.isAvailable(song.id)
+        debugLogger.info('PLAYER', `#${song.id} source: ${useKaraoke ? 'KARAOKE INSTRUMENTAL ♪' : cachedUrl ? 'IN-MEMORY BLOB ✓' : 'NETWORK (not preloaded in time)'}`)
+        audioElement.value.src = sourceUrlFor(song, cachedUrl)
         audioElement.value.load()
         audioElement.value.currentTime = 0
         // Release the previous track's in-memory blob now that we've switched off it
         if (currentObjectUrl && currentObjectUrl !== audioElement.value.src) {
           try { URL.revokeObjectURL(currentObjectUrl) } catch { /* already revoked */ }
         }
-        currentObjectUrl = cachedUrl
+        // Only the original (non-karaoke) blob is owned here; in karaoke mode we used the
+        // network instrumental and the cached blob (if any) was already taken from the cache.
+        currentObjectUrl = useKaraoke ? null : cachedUrl
+        if (useKaraoke && cachedUrl) {
+          try { URL.revokeObjectURL(cachedUrl) } catch { /* already revoked */ }
+        }
 
         debugLogger.info('PLAYER', `Calling play() for #${song.id}`)
         await play()
@@ -270,15 +305,21 @@ export const usePlayerStore = defineStore('player', () => {
         debugLogger.info('PLAYER', `Loading #${song.id} into the active audio element`)
         audioElement.value.pause()
         const cachedUrl = audioCacheService.takeCachedUrl(song.id)
-        debugLogger.info('PLAYER', `#${song.id} source: ${cachedUrl ? 'IN-MEMORY BLOB ✓' : 'NETWORK (not preloaded in time)'}`)
-        audioElement.value.src = cachedUrl || getMusicUrl(`link.${song.id}.mp3`)
+        const useKaraoke = karaokeMode.value && karaokeService.isAvailable(song.id)
+        debugLogger.info('PLAYER', `#${song.id} source: ${useKaraoke ? 'KARAOKE INSTRUMENTAL ♪' : cachedUrl ? 'IN-MEMORY BLOB ✓' : 'NETWORK (not preloaded in time)'}`)
+        audioElement.value.src = sourceUrlFor(song, cachedUrl)
         audioElement.value.load()
         audioElement.value.currentTime = 0
         // Release the previous track's in-memory blob now that we've switched off it
         if (currentObjectUrl && currentObjectUrl !== audioElement.value.src) {
           try { URL.revokeObjectURL(currentObjectUrl) } catch { /* already revoked */ }
         }
-        currentObjectUrl = cachedUrl
+        // Only the original (non-karaoke) blob is owned here; in karaoke mode we used the
+        // network instrumental and the cached blob (if any) was already taken from the cache.
+        currentObjectUrl = useKaraoke ? null : cachedUrl
+        if (useKaraoke && cachedUrl) {
+          try { URL.revokeObjectURL(cachedUrl) } catch { /* already revoked */ }
+        }
 
         debugLogger.info('PLAYER', `Calling play() for #${song.id}`)
         await play()
@@ -465,6 +506,58 @@ export const usePlayerStore = defineStore('player', () => {
       audioElement.value.currentTime = time
       currentTime.value = time
     }
+  }
+
+  /**
+   * Toggle karaoke (instrumental) mode. The preference is persisted and applies to all
+   * songs that have an instrumental. If a song is currently playing and it has an
+   * instrumental, the audio source is swapped live, preserving playback position and
+   * play/pause state. See KARAOKE.md.
+   */
+  /** Set karaoke mode explicitly and persist it (no live swap — for fresh playback). */
+  function setKaraokeMode(value: boolean) {
+    karaokeMode.value = value
+    localStorage.setItem(KARAOKE_MODE_KEY, String(value))
+  }
+
+  async function toggleKaraoke() {
+    karaokeMode.value = !karaokeMode.value
+    localStorage.setItem(KARAOKE_MODE_KEY, String(karaokeMode.value))
+
+    const audio = audioElement.value
+    const song = currentSong.value
+    // Mode flag is flipped regardless; only swap live when the current song actually has
+    // an instrumental to switch to/from.
+    if (!audio || !song || !karaokeService.isAvailable(song.id)) return
+
+    const newSrc = karaokeMode.value
+      ? getInstrumentalUrl(song.id)
+      : getMusicUrl(`link.${song.id}.mp3`)
+    if (audio.src === newSrc) return
+
+    const wasPlaying = !audio.paused && !audio.ended
+    const resumeAt = audio.currentTime || currentTime.value
+
+    isTransitioning.value = true
+    const restore = () => {
+      try { audio.currentTime = resumeAt } catch { /* not seekable yet */ }
+      currentTime.value = resumeAt
+    }
+    audio.addEventListener('loadedmetadata', restore, { once: true })
+
+    // Drop any in-memory blob we were playing — we're switching to a network source.
+    if (currentObjectUrl) {
+      try { URL.revokeObjectURL(currentObjectUrl) } catch { /* already revoked */ }
+      currentObjectUrl = null
+    }
+
+    audio.src = newSrc
+    audio.load()
+    audio.currentTime = resumeAt
+    if (wasPlaying) {
+      await play()
+    }
+    isTransitioning.value = false
   }
 
   function setVolume(newVolume: number) {
@@ -1262,9 +1355,11 @@ export const usePlayerStore = defineStore('player', () => {
     networkRetryAttempts,
     backgroundFreezeDetected,
     dismissBackgroundFreezeHint,
+    karaokeMode,
 
     // Getters
     progress,
+    karaokeAvailable,
     formattedCurrentTime,
     formattedDuration,
     canPlayNext,
@@ -1289,6 +1384,8 @@ export const usePlayerStore = defineStore('player', () => {
     nextSong,
     previousSong,
     seek,
+    toggleKaraoke,
+    setKaraokeMode,
     setVolume,
     toggleMute,
     toggleShuffle,

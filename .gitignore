@@ -55,3 +55,7 @@ temp/
 data
 music
 public/
+
+# Generated karaoke catalog scan
+scripts/karaoke/karaoke_scan.csv
+__pycache__/

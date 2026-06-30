@@ -15,6 +15,7 @@
     "home": "首页",
     "search": "搜索",
     "library": "音乐库",
+    "karaoke": "卡拉OK",
     "playlists": "播放列表",
     "favorites": "收藏"
   },
@@ -45,7 +46,9 @@
     "songRangeTo": "到",
     "songRangeActive": "播放歌曲 {min} - {max}",
     "songRangeClear": "清除",
-    "songRangeSave": "保存"
+    "songRangeSave": "保存",
+    "karaoke": "卡拉OK（伴奏）",
+    "karaokeUnavailable": "该歌曲暂无伴奏"
   },
   "library": {
     "songs": "歌曲",
@@ -71,7 +74,33 @@
     "noLyrics": "该歌曲暂无歌词",
     "loading": "正在加载歌词...",
     "scrollOn": "自动滚动已开启",
-    "scrollOff": "自动滚动已关闭"
+    "scrollOff": "自动滚动已关闭",
+    "synced": "已同步"
+  },
+  "karaoke": {
+    "subtitle": "跟着唱——人声已移除，歌词同步显示。",
+    "modeOn": "卡拉OK模式已开启",
+    "modeOff": "卡拉OK模式已关闭",
+    "modeHint": "对有伴奏的歌曲播放伴奏（已移除人声）。",
+    "turnOn": "开启",
+    "turnOff": "关闭",
+    "available": "{count} 首歌曲可用于卡拉OK",
+    "sing": "演唱",
+    "loading": "正在加载卡拉OK歌曲...",
+    "empty": "暂无卡拉OK歌曲，伴奏正在生成中。",
+    "noSynced": "未找到该歌曲的同步歌词——凭感觉唱吧！",
+    "switchKaraoke": "伴奏",
+    "switchOriginal": "原唱",
+    "micOn": "麦克风已开启",
+    "micOff": "麦克风已关闭",
+    "micHint": "请使用耳机——外放可能产生啸叫。",
+    "micStart": "开启麦克风",
+    "micStop": "关闭麦克风",
+    "micVolume": "麦克风音量",
+    "micReverb": "混响",
+    "mic_denied": "麦克风访问被拒绝。请在浏览器设置中允许后再演唱。",
+    "mic_unsupported": "您的浏览器不支持麦克风监听。",
+    "mic_failed": "无法启动麦克风，请重试。"
   },
   "settings": {
     "language": "语言",

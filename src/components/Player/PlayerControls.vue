@@ -91,14 +91,27 @@
       </div>
       
       <div class="flex items-center space-x-1">
-        <button 
+        <button
+          @click="toggleKaraoke"
+          :disabled="!karaokeAvailable"
+          :class="[
+            'p-1 rounded-full transition-colors duration-200',
+            karaokeMode && karaokeAvailable ? 'text-spotify-green' : 'text-gray-400 hover:text-white',
+            !karaokeAvailable ? 'opacity-40 cursor-not-allowed' : ''
+          ]"
+          :title="karaokeAvailable ? $t('player.karaoke') : $t('player.karaokeUnavailable')"
+        >
+          <MicrophoneIcon class="w-4 h-4" />
+        </button>
+
+        <button
           @click="$emit('toggle-lyrics')"
           class="p-1 rounded-full text-gray-400 hover:text-white transition-colors duration-200"
         >
           <DocumentTextIcon class="w-4 h-4" />
         </button>
-        
-        <button 
+
+        <button
           @click="openAddToPlaylistModal"
           class="p-1 rounded-full text-gray-400 hover:text-white transition-colors duration-200"
           :disabled="!currentSong"
@@ -360,8 +373,22 @@
     
     <!-- Volume Controls & Actions -->
     <div class="flex items-center w-80 justify-end">
+      <!-- Karaoke (instrumental) toggle -->
+      <button
+        @click="toggleKaraoke"
+        :disabled="!karaokeAvailable"
+        :class="[
+          'p-2 rounded-full transition-colors duration-200 mr-2',
+          karaokeMode && karaokeAvailable ? 'text-spotify-green' : 'text-gray-400 hover:text-white',
+          !karaokeAvailable ? 'opacity-40 cursor-not-allowed' : ''
+        ]"
+        :title="karaokeAvailable ? $t('player.karaoke') : $t('player.karaokeUnavailable')"
+      >
+        <MicrophoneIcon class="w-5 h-5" />
+      </button>
+
       <!-- Always visible lyrics button -->
-      <button 
+      <button
         @click="$emit('toggle-lyrics')"
         class="p-2 rounded-full text-gray-400 hover:text-white transition-colors duration-200 mr-2"
         :title="$t('player.toggleLyrics')"
@@ -565,7 +592,8 @@ import {
   ShareIcon,
   ClockIcon,
   SparklesIcon,
-  AdjustmentsHorizontalIcon
+  AdjustmentsHorizontalIcon,
+  MicrophoneIcon
 } from '@heroicons/vue/24/outline'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
@@ -595,6 +623,8 @@ const formattedCurrentTime = computed(() => playerStore.formattedCurrentTime)
 const formattedDuration = computed(() => playerStore.formattedDuration)
 const shuffle = computed(() => playerStore.shuffle)
 const repeat = computed(() => playerStore.repeat)
+const karaokeMode = computed(() => playerStore.karaokeMode)
+const karaokeAvailable = computed(() => playerStore.karaokeAvailable)
 const canPlayNext = computed(() => playerStore.canPlayNext)
 const canPlayPrevious = computed(() => playerStore.canPlayPrevious)
 const sleepTimer = computed(() => playerStore.sleepTimer)
@@ -633,6 +663,10 @@ function toggleShuffle() {
 
 function toggleRepeat() {
   playerStore.toggleRepeat()
+}
+
+function toggleKaraoke() {
+  playerStore.toggleKaraoke()
 }
 
 function toggleMute() {

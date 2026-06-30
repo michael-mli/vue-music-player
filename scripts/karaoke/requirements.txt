@@ -1,0 +1,12 @@
+# Karaoke vocal-removal pipeline dependencies.
+# CPU install:
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+#   pip install demucs soundfile
+# GPU install (recommended for the full catalog): install the CUDA build of torch/torchaudio
+# matching your CUDA version from https://pytorch.org, then `pip install demucs soundfile`.
+#
+# ffmpeg must be on PATH (used to encode the instrumental WAV to MP3).
+demucs>=4.0.1
+soundfile>=0.12
+# torch / torchaudio are intentionally not pinned here — install the build (CPU or CUDA)
+# that matches your machine, per the comments above.
