@@ -22,6 +22,8 @@ export interface AppConfig {
   lrclibFallback: boolean
   // Server-side synced-lyrics (.lrc) cache — avoids per-user LRCLIB API calls.
   syncedLyricsBaseUrl: string
+  // Google Sign-In client id (public). Empty = login UI hidden.
+  googleClientId: string
   
   // Audio Settings
   defaultVolume: number
@@ -58,6 +60,7 @@ const defaultConfig: AppConfig = {
   lrclibFallback: true,
   // Server-side .lrc cache (link.{id}.lrc). Served from a writable path.
   syncedLyricsBaseUrl: '/synced',
+  googleClientId: '',
   
   // Audio Settings
   defaultVolume: 0.8,
@@ -89,6 +92,7 @@ const config: AppConfig = {
   lrclibBaseUrl: import.meta.env.VITE_LRCLIB_BASE_URL || defaultConfig.lrclibBaseUrl,
   lrclibFallback: import.meta.env.VITE_LRCLIB_FALLBACK !== 'false',
   syncedLyricsBaseUrl: import.meta.env.VITE_SYNCED_LYRICS_BASE_URL || defaultConfig.syncedLyricsBaseUrl,
+  googleClientId: import.meta.env.VITE_GOOGLE_CLIENT_ID || defaultConfig.googleClientId,
 }
 
 /**

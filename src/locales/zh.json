@@ -175,5 +175,11 @@
     "invalidSongId": "无效的歌曲 ID。请提供有效的数字。",
     "songNotFoundWithId": "未找到 ID 为 {id} 的歌曲。请检查歌曲 ID 后重试。",
     "failedToLoad": "加载歌曲失败。请重试。"
+  },
+  "auth": {
+    "signIn": "登录",
+    "signInGoogle": "使用 Google 登录",
+    "signOut": "退出登录",
+    "adminPanel": "管理"
   }
 }

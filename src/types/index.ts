@@ -41,6 +41,15 @@ export interface User {
   favorites: number[]
 }
 
+/** An authenticated account (Google Sign-In). */
+export interface AuthUser {
+  id: number
+  email: string
+  name: string
+  picture: string
+  role: 'admin' | 'user'
+}
+
 export interface APIResponse<T> {
   success: boolean
   data: T
