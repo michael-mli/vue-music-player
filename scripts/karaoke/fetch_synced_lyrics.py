@@ -45,17 +45,17 @@ def load_durations(scan):
     return d
 
 
-def lrclib_search(title, retries=3):
+def lrclib_search(title, retries=2):
     url = f"{LRCLIB}/api/search?q={urllib.parse.quote(title)}"
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
     last = None
     for attempt in range(retries):
         try:
-            with urllib.request.urlopen(req, timeout=25) as r:
+            with urllib.request.urlopen(req, timeout=8) as r:
                 return json.loads(r.read().decode("utf-8"))
         except Exception as e:  # noqa: BLE001
             last = e
-            time.sleep(1.5 * (attempt + 1))
+            time.sleep(1.0 * (attempt + 1))
     raise last
 
 
