@@ -18,6 +18,8 @@ export interface AppConfig {
   karaokeEnabled: boolean
   karaokeBaseUrl: string
   lrclibBaseUrl: string
+  // Server-side synced-lyrics (.lrc) cache — avoids per-user LRCLIB API calls.
+  syncedLyricsBaseUrl: string
   
   // Audio Settings
   defaultVolume: number
@@ -51,6 +53,8 @@ const defaultConfig: AppConfig = {
   // (musicBaseUrl). Override (e.g. "/karaoke") when the music dir is read-only.
   karaokeBaseUrl: '',
   lrclibBaseUrl: 'https://lrclib.net',
+  // Server-side .lrc cache (link.{id}.lrc). Served from a writable path.
+  syncedLyricsBaseUrl: '/synced',
   
   // Audio Settings
   defaultVolume: 0.8,
@@ -80,6 +84,7 @@ const config: AppConfig = {
   karaokeEnabled: import.meta.env.VITE_KARAOKE_ENABLED !== 'false',
   karaokeBaseUrl: import.meta.env.VITE_KARAOKE_BASE_URL || defaultConfig.karaokeBaseUrl,
   lrclibBaseUrl: import.meta.env.VITE_LRCLIB_BASE_URL || defaultConfig.lrclibBaseUrl,
+  syncedLyricsBaseUrl: import.meta.env.VITE_SYNCED_LYRICS_BASE_URL || defaultConfig.syncedLyricsBaseUrl,
 }
 
 /**
@@ -116,6 +121,16 @@ export function getInstrumentalUrl(songId: number): string {
  */
 export function getKaraokeManifestUrl(): string {
   return getKaraokeUrl('karaoke_manifest.json')
+}
+
+/**
+ * Get the server-cached synced-lyrics (.lrc) URL for a song id. Populated offline by
+ * scripts/karaoke/fetch_synced_lyrics.py so the browser never calls the LRCLIB API.
+ */
+export function getSyncedLyricsUrl(songId: number): string {
+  const baseUrl = config.syncedLyricsBaseUrl
+  const separator = baseUrl && !baseUrl.endsWith('/') ? '/' : ''
+  return `${baseUrl}${separator}link.${songId}.lrc`
 }
 
 /**
