@@ -10,7 +10,9 @@ import { OAuth2Client } from 'google-auth-library'
 import { initDb } from './db.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-dotenv.config({ path: path.join(__dirname, '..', '.env.server') })
+// override:true so a restart always reflects the current .env.server (pm2 may carry a
+// stale env snapshot from an earlier start).
+dotenv.config({ path: path.join(__dirname, '..', '.env.server'), override: true })
 
 const {
   GOOGLE_CLIENT_ID,
