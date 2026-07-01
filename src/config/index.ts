@@ -18,6 +18,8 @@ export interface AppConfig {
   karaokeEnabled: boolean
   karaokeBaseUrl: string
   lrclibBaseUrl: string
+  // Fall back to the LRCLIB API when a song isn't in the server .lrc cache.
+  lrclibFallback: boolean
   // Server-side synced-lyrics (.lrc) cache — avoids per-user LRCLIB API calls.
   syncedLyricsBaseUrl: string
   
@@ -53,6 +55,7 @@ const defaultConfig: AppConfig = {
   // (musicBaseUrl). Override (e.g. "/karaoke") when the music dir is read-only.
   karaokeBaseUrl: '',
   lrclibBaseUrl: 'https://lrclib.net',
+  lrclibFallback: true,
   // Server-side .lrc cache (link.{id}.lrc). Served from a writable path.
   syncedLyricsBaseUrl: '/synced',
   
@@ -84,6 +87,7 @@ const config: AppConfig = {
   karaokeEnabled: import.meta.env.VITE_KARAOKE_ENABLED !== 'false',
   karaokeBaseUrl: import.meta.env.VITE_KARAOKE_BASE_URL || defaultConfig.karaokeBaseUrl,
   lrclibBaseUrl: import.meta.env.VITE_LRCLIB_BASE_URL || defaultConfig.lrclibBaseUrl,
+  lrclibFallback: import.meta.env.VITE_LRCLIB_FALLBACK !== 'false',
   syncedLyricsBaseUrl: import.meta.env.VITE_SYNCED_LYRICS_BASE_URL || defaultConfig.syncedLyricsBaseUrl,
 }
 

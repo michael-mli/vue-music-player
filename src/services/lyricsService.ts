@@ -2,12 +2,14 @@
  * Synced-lyrics service.
  *
  * Reads time-synced lyrics from the SERVER-side .lrc cache (link.{id}.lrc), populated
- * offline by scripts/karaoke/fetch_synced_lyrics.py. The browser never calls the LRCLIB API
- * at runtime — it just fetches a small same-origin file. Parsed results (incl. misses) are
- * cached in memory for the session. When there's no synced .lrc, callers fall back to the
- * plain-text lyrics. See KARAOKE.md.
+ * offline by scripts/karaoke/fetch_synced_lyrics.py. That same-origin file is the primary
+ * source — no API call for cached songs. When the cache misses, it falls back to the LRCLIB
+ * API (unless disabled via VITE_LRCLIB_FALLBACK=false), so songs not yet in the cache still
+ * sync. Results are cached in memory for the session. When neither has synced lyrics, callers
+ * fall back to the plain-text lyrics. See KARAOKE.md.
  */
-import { getSyncedLyricsUrl } from '@/config'
+import config, { getSyncedLyricsUrl } from '@/config'
+import { songService } from '@/services/songService'
 import type { LyricLine, Song } from '@/types'
 
 /** Parse standard LRC text ("[mm:ss.xx] words") into sorted, de-duplicated lyric lines. */
@@ -58,28 +60,68 @@ class LyricsService {
   private mem = new Map<number, LyricLine[] | null>()
 
   /**
-   * Get synced lyrics for a song from the server .lrc cache, or null if none exist.
-   * Cached in memory for the session. The `_duration` param is accepted for call-site
-   * compatibility but unused (the server already picked the best match).
+   * Get synced lyrics for a song: server .lrc cache first, then the LRCLIB API as a
+   * fallback (unless disabled). Cached in memory for the session. `duration` sharpens the
+   * LRCLIB fallback match when the server cache misses.
    */
-  async getSyncedLyrics(song: Song, _duration?: number): Promise<LyricLine[] | null> {
+  async getSyncedLyrics(song: Song, duration?: number): Promise<LyricLine[] | null> {
     if (this.mem.has(song.id)) return this.mem.get(song.id)!
 
-    let lines: LyricLine[] | null = null
-    try {
-      const res = await fetch(getSyncedLyricsUrl(song.id))
-      if (res.ok) {
-        // Missing files fall through nginx's SPA rewrite to index.html (HTML has no
-        // [mm:ss] tags), so parseLrc yields [] and we correctly treat it as "no match".
-        const parsed = parseLrc(await res.text())
-        lines = parsed.length ? parsed : null
-      }
-    } catch {
-      lines = null
+    let lines = await this.fetchFromServer(song.id)
+    if (!lines && config.lrclibFallback) {
+      lines = await this.fetchFromLrclib(song, duration)
     }
 
     this.mem.set(song.id, lines)
     return lines
+  }
+
+  /** Read the pre-fetched .lrc from the server cache. Null if absent/unparseable. */
+  private async fetchFromServer(id: number): Promise<LyricLine[] | null> {
+    try {
+      const res = await fetch(getSyncedLyricsUrl(id))
+      if (!res.ok) return null
+      // Missing files fall through nginx's SPA rewrite to index.html (HTML has no
+      // [mm:ss] tags), so parseLrc yields [] and we correctly treat it as "no match".
+      const parsed = parseLrc(await res.text())
+      return parsed.length ? parsed : null
+    } catch {
+      return null
+    }
+  }
+
+  /** Fallback: query LRCLIB by title (+ closest duration) for songs not yet cached. */
+  private async fetchFromLrclib(song: Song, duration?: number): Promise<LyricLine[] | null> {
+    let title = (song.title || '').trim()
+    if (!title || title.startsWith('Song ')) {
+      title = (await songService.getTitleFromLyrics(song.id)).trim()
+    }
+    if (!title || title.startsWith('Song ')) return null
+
+    const base = config.lrclibBaseUrl.replace(/\/$/, '')
+    try {
+      const res = await fetch(`${base}/api/search?q=${encodeURIComponent(title)}`, {
+        headers: { Accept: 'application/json' },
+      })
+      if (!res.ok) return null
+      const results = (await res.json()) as Array<{ syncedLyrics?: string | null; duration?: number }>
+      if (!Array.isArray(results)) return null
+      const withSynced = results.filter((r) => r.syncedLyrics && r.syncedLyrics.trim())
+      if (!withSynced.length) return null
+
+      let best = withSynced[0]
+      if (duration && duration > 0) {
+        best = withSynced.reduce((a, b) => {
+          const da = Math.abs((a.duration ?? 0) - duration)
+          const db = Math.abs((b.duration ?? 0) - duration)
+          return db < da ? b : a
+        }, withSynced[0])
+      }
+      const lines = parseLrc(best.syncedLyrics as string)
+      return lines.length ? lines : null
+    } catch {
+      return null
+    }
   }
 }
 
