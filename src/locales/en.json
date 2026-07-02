@@ -183,5 +183,17 @@
     "signInGoogle": "Sign in with Google",
     "signOut": "Sign out",
     "adminPanel": "Admin"
+  },
+  "admin": {
+    "title": "Admin",
+    "checking": "Checking access…",
+    "denied": "Admin access required.",
+    "ingestTitle": "Ingest new songs",
+    "ingestHint": "Run poster + synced lyrics + karaoke instrumental for song id(s), then publish.",
+    "ingestPlaceholder": "e.g. 1340, 1341",
+    "runIngest": "Run ingest",
+    "running": "Running…",
+    "usersTitle": "Users",
+    "removeUser": "Remove user"
   }
 }
