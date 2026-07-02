@@ -183,5 +183,17 @@
     "signInGoogle": "使用 Google 登录",
     "signOut": "退出登录",
     "adminPanel": "管理"
+  },
+  "admin": {
+    "title": "管理",
+    "checking": "正在检查权限…",
+    "denied": "需要管理员权限。",
+    "ingestTitle": "导入新歌曲",
+    "ingestHint": "为歌曲 ID 运行封面 + 同步歌词 + 卡拉OK伴奏，然后发布。",
+    "ingestPlaceholder": "例如 1340, 1341",
+    "runIngest": "运行导入",
+    "running": "运行中…",
+    "usersTitle": "用户",
+    "removeUser": "删除用户"
   }
 }

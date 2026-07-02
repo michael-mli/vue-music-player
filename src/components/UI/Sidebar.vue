@@ -52,6 +52,17 @@
             {{ $t('navigation.karaoke') }}
           </RouterLink>
         </li>
+        <li v-if="auth.isAdmin">
+          <RouterLink
+            to="/admin"
+            @click="emit('close-mobile')"
+            class="flex items-center px-4 py-3 rounded-md text-sm font-medium transition-colors duration-200 hover:bg-light-border dark:hover:bg-spotify-light"
+            :class="{ 'bg-light-border text-light-text-primary dark:bg-spotify-light dark:text-white': $route.name === 'Admin', 'text-light-text-secondary dark:text-gray-300': $route.name !== 'Admin' }"
+          >
+            <Cog6ToothIcon class="w-5 h-5 mr-3" />
+            {{ $t('admin.title') }}
+          </RouterLink>
+        </li>
       </ul>
       
       <!-- Playlists Section -->
@@ -119,9 +130,11 @@ import {
   MagnifyingGlassIcon,
   BuildingLibraryIcon,
   MicrophoneIcon,
-  PlusIcon
+  PlusIcon,
+  Cog6ToothIcon
 } from '@heroicons/vue/24/outline'
 import { usePlaylistsStore } from '@/stores/playlists'
+import { useAuthStore } from '@/stores/auth'
 import LanguageSwitcher from './LanguageSwitcher.vue'
 import CreatePlaylistModal from './CreatePlaylistModal.vue'
 import AuthMenu from './AuthMenu.vue'
@@ -133,6 +146,7 @@ const emit = defineEmits<{
 
 const $route = useRoute()
 const playlistsStore = usePlaylistsStore()
+const auth = useAuthStore()
 
 const showCreatePlaylist = ref(false)
 

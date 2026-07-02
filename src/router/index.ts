@@ -3,6 +3,7 @@ import Home from '@/views/Home.vue'
 import Search from '@/views/Search.vue'
 import Library from '@/views/Library.vue'
 import Karaoke from '@/views/Karaoke.vue'
+import Admin from '@/views/Admin.vue'
 import Playlist from '@/views/Playlist.vue'
 import Music from '@/views/Music.vue'
 
@@ -30,6 +31,11 @@ const router = createRouter({
       path: '/sing',
       name: 'Karaoke',
       component: Karaoke
+    },
+    {
+      path: '/admin',
+      name: 'Admin',
+      component: Admin
     },
     {
       path: '/playlist/:id',
