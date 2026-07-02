@@ -1,24 +1,16 @@
 /**
- * Synced-lyrics service (LRCLIB).
+ * Synced-lyrics service.
  *
- * Fetches time-synced lyrics from LRCLIB (https://lrclib.net), a free, no-auth synced-lyrics
- * API, parses the LRC into LyricLine[], and caches results (including misses) in localStorage.
- *
- * Honest limitation: LRCLIB matches on metadata (artist + title + duration). This catalog has
- * no artist and titles are derived from the first lyric line, so match rate is modest. When no
- * synced lyrics are found, callers fall back to the existing plain-text lyrics. See KARAOKE.md.
+ * Reads time-synced lyrics from the SERVER-side .lrc cache (link.{id}.lrc), populated
+ * offline by scripts/karaoke/fetch_synced_lyrics.py. That same-origin file is the primary
+ * source — no API call for cached songs. When the cache misses, it falls back to the LRCLIB
+ * API (unless disabled via VITE_LRCLIB_FALLBACK=false), so songs not yet in the cache still
+ * sync. Results are cached in memory for the session. When neither has synced lyrics, callers
+ * fall back to the plain-text lyrics. See KARAOKE.md.
  */
-import config from '@/config'
+import config, { getSyncedLyricsUrl } from '@/config'
 import { songService } from '@/services/songService'
 import type { LyricLine, Song } from '@/types'
-
-const CACHE_KEY = 'music-player-synced-lyrics'
-const CACHE_VERSION = 1
-
-interface CacheEntry {
-  v: number
-  lines: LyricLine[] | null // null = looked up, none found
-}
 
 /** Parse standard LRC text ("[mm:ss.xx] words") into sorted, de-duplicated lyric lines. */
 export function parseLrc(lrc: string): LyricLine[] {
@@ -30,7 +22,6 @@ export function parseLrc(lrc: string): LyricLine[] {
     const tags: number[] = []
     let m: RegExpExecArray | null
     let lastIndex = 0
-    // A line may carry multiple timestamps that share the same text.
     while ((m = timeTag.exec(raw)) !== null) {
       const min = parseInt(m[1], 10)
       const sec = parseInt(m[2], 10)
@@ -67,75 +58,57 @@ export function activeLineIndex(lines: LyricLine[], currentTime: number): number
 
 class LyricsService {
   private mem = new Map<number, LyricLine[] | null>()
-  private cache: Record<string, CacheEntry> | null = null
-
-  private loadCache(): Record<string, CacheEntry> {
-    if (this.cache) return this.cache
-    try {
-      const raw = localStorage.getItem(CACHE_KEY)
-      this.cache = raw ? (JSON.parse(raw) as Record<string, CacheEntry>) : {}
-    } catch {
-      this.cache = {}
-    }
-    return this.cache
-  }
-
-  private saveCache() {
-    if (!this.cache) return
-    try {
-      localStorage.setItem(CACHE_KEY, JSON.stringify(this.cache))
-    } catch {
-      /* quota — ignore */
-    }
-  }
 
   /**
-   * Get synced lyrics for a song, or null if none are available. Cached (incl. misses).
-   * `duration` (seconds) sharpens the LRCLIB match when known.
+   * Get synced lyrics for a song: server .lrc cache first, then the LRCLIB API as a
+   * fallback (unless disabled). Cached in memory for the session. `duration` sharpens the
+   * LRCLIB fallback match when the server cache misses.
    */
   async getSyncedLyrics(song: Song, duration?: number): Promise<LyricLine[] | null> {
-    if (!config.karaokeEnabled) return null
     if (this.mem.has(song.id)) return this.mem.get(song.id)!
 
-    const cache = this.loadCache()
-    const cached = cache[song.id]
-    if (cached && cached.v === CACHE_VERSION) {
-      this.mem.set(song.id, cached.lines)
-      return cached.lines
+    let lines = await this.fetchFromServer(song.id)
+    if (!lines && config.lrclibFallback) {
+      lines = await this.fetchFromLrclib(song, duration)
     }
 
-    const lines = await this.fetchFromLrclib(song, duration)
     this.mem.set(song.id, lines)
-    cache[song.id] = { v: CACHE_VERSION, lines }
-    this.saveCache()
     return lines
   }
 
+  /** Read the pre-fetched .lrc from the server cache. Null if absent/unparseable. */
+  private async fetchFromServer(id: number): Promise<LyricLine[] | null> {
+    try {
+      const res = await fetch(getSyncedLyricsUrl(id))
+      if (!res.ok) return null
+      // Missing files fall through nginx's SPA rewrite to index.html (HTML has no
+      // [mm:ss] tags), so parseLrc yields [] and we correctly treat it as "no match".
+      const parsed = parseLrc(await res.text())
+      return parsed.length ? parsed : null
+    } catch {
+      return null
+    }
+  }
+
+  /** Fallback: query LRCLIB by title (+ closest duration) for songs not yet cached. */
   private async fetchFromLrclib(song: Song, duration?: number): Promise<LyricLine[] | null> {
     let title = (song.title || '').trim()
-    // Title may still be the "Song N" placeholder if it hasn't been resolved yet — resolve
-    // it from the lyrics file (first line) so the LRCLIB match isn't skipped.
     if (!title || title.startsWith('Song ')) {
       title = (await songService.getTitleFromLyrics(song.id)).trim()
     }
-    if (!title || title.startsWith('Song ')) return null // no usable metadata to match on
+    if (!title || title.startsWith('Song ')) return null
 
     const base = config.lrclibBaseUrl.replace(/\/$/, '')
     try {
-      // Search by track name; pick the best result that actually has synced lyrics.
-      const url = `${base}/api/search?q=${encodeURIComponent(title)}`
-      const res = await fetch(url, { headers: { Accept: 'application/json' } })
+      const res = await fetch(`${base}/api/search?q=${encodeURIComponent(title)}`, {
+        headers: { Accept: 'application/json' },
+      })
       if (!res.ok) return null
-      const results = (await res.json()) as Array<{
-        syncedLyrics?: string | null
-        duration?: number
-      }>
-      if (!Array.isArray(results) || !results.length) return null
-
+      const results = (await res.json()) as Array<{ syncedLyrics?: string | null; duration?: number }>
+      if (!Array.isArray(results)) return null
       const withSynced = results.filter((r) => r.syncedLyrics && r.syncedLyrics.trim())
       if (!withSynced.length) return null
 
-      // Prefer the closest duration match when we know the song's duration.
       let best = withSynced[0]
       if (duration && duration > 0) {
         best = withSynced.reduce((a, b) => {
@@ -144,11 +117,9 @@ class LyricsService {
           return db < da ? b : a
         }, withSynced[0])
       }
-
       const lines = parseLrc(best.syncedLyrics as string)
       return lines.length ? lines : null
-    } catch (err) {
-      console.warn(`LRCLIB lookup failed for "${title}":`, err)
+    } catch {
       return null
     }
   }

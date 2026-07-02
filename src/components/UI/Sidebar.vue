@@ -84,12 +84,9 @@
     
     <!-- User Menu -->
     <div class="p-4 border-t border-light-border dark:border-spotify-light">
-      <div class="flex items-center">
-        <div class="w-8 h-8 bg-spotify-green rounded-full flex items-center justify-center">
-          <UserIcon class="w-5 h-5 text-white" />
-        </div>
-        <div class="ml-3 flex-1">
-          <p class="text-sm font-medium text-light-text-primary dark:text-white">{{ $t('common.user') }}</p>
+      <div class="flex items-center gap-2">
+        <div class="flex-1 min-w-0">
+          <AuthMenu />
         </div>
         <LanguageSwitcher />
       </div>
@@ -122,12 +119,12 @@ import {
   MagnifyingGlassIcon,
   BuildingLibraryIcon,
   MicrophoneIcon,
-  PlusIcon,
-  UserIcon
+  PlusIcon
 } from '@heroicons/vue/24/outline'
 import { usePlaylistsStore } from '@/stores/playlists'
 import LanguageSwitcher from './LanguageSwitcher.vue'
 import CreatePlaylistModal from './CreatePlaylistModal.vue'
+import AuthMenu from './AuthMenu.vue'
 
 // Define emits
 const emit = defineEmits<{

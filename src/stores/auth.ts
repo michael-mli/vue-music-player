@@ -1,0 +1,113 @@
+import { defineStore } from 'pinia'
+import { ref, computed } from 'vue'
+import axios from 'axios'
+import config from '@/config'
+import type { AuthUser } from '@/types'
+
+const TOKEN_KEY = 'auth_token' // matches the Bearer interceptor in services/api.ts
+
+// Minimal typing for the Google Identity Services global.
+interface GoogleId {
+  accounts: {
+    id: {
+      initialize: (opts: Record<string, unknown>) => void
+      renderButton: (el: HTMLElement, opts: Record<string, unknown>) => void
+      prompt: () => void
+      disableAutoSelect: () => void
+    }
+  }
+}
+declare global {
+  interface Window { google?: GoogleId }
+}
+
+let gisLoading: Promise<void> | null = null
+function loadGis(): Promise<void> {
+  if (window.google?.accounts?.id) return Promise.resolve()
+  if (gisLoading) return gisLoading
+  gisLoading = new Promise((resolve, reject) => {
+    const s = document.createElement('script')
+    s.src = 'https://accounts.google.com/gsi/client'
+    s.async = true
+    s.defer = true
+    s.onload = () => resolve()
+    s.onerror = () => reject(new Error('failed to load Google Identity Services'))
+    document.head.appendChild(s)
+  })
+  return gisLoading
+}
+
+export const useAuthStore = defineStore('auth', () => {
+  const user = ref<AuthUser | null>(null)
+  const token = ref<string | null>(localStorage.getItem(TOKEN_KEY))
+  const ready = ref(false) // becomes true once the initial /me check settles
+
+  const isAuthenticated = computed(() => !!user.value)
+  const isAdmin = computed(() => user.value?.role === 'admin')
+  const loginEnabled = computed(() => !!config.googleClientId)
+
+  function setToken(t: string | null) {
+    token.value = t
+    if (t) localStorage.setItem(TOKEN_KEY, t)
+    else localStorage.removeItem(TOKEN_KEY)
+  }
+
+  /** Exchange a Google ID-token credential for a session, and store the user. */
+  async function loginWithGoogle(credential: string) {
+    const res = await axios.post(`${config.apiBaseUrl}/auth/google`, { credential })
+    const data = res.data?.data
+    if (!data?.token) throw new Error('login failed')
+    setToken(data.token)
+    user.value = data.user
+    return data.user as AuthUser
+  }
+
+  /** Restore session from a stored token (called at app start). */
+  async function fetchMe() {
+    if (!token.value) { ready.value = true; return }
+    try {
+      const res = await axios.get(`${config.apiBaseUrl}/auth/me`, {
+        headers: { Authorization: `Bearer ${token.value}` },
+      })
+      user.value = res.data?.data ?? null
+    } catch {
+      setToken(null)
+      user.value = null
+    } finally {
+      ready.value = true
+    }
+  }
+
+  function logout() {
+    setToken(null)
+    user.value = null
+    try { window.google?.accounts.id.disableAutoSelect() } catch { /* noop */ }
+  }
+
+  /**
+   * Initialize Google Identity Services and render a sign-in button into `el`.
+   * The credential callback logs the user in.
+   */
+  async function renderGoogleButton(el: HTMLElement, onDone?: () => void) {
+    if (!config.googleClientId) return
+    await loadGis()
+    window.google!.accounts.id.initialize({
+      client_id: config.googleClientId,
+      callback: async (resp: { credential: string }) => {
+        try {
+          await loginWithGoogle(resp.credential)
+          onDone?.()
+        } catch (e) {
+          console.error('Google login failed', e)
+        }
+      },
+    })
+    window.google!.accounts.id.renderButton(el, { theme: 'filled_black', size: 'large', shape: 'pill' })
+  }
+
+  return {
+    user, token, ready,
+    isAuthenticated, isAdmin, loginEnabled,
+    loginWithGoogle, fetchMe, logout, renderGoogleButton,
+  }
+})
