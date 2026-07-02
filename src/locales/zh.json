@@ -48,7 +48,9 @@
     "songRangeClear": "清除",
     "songRangeSave": "保存",
     "karaoke": "卡拉OK（伴奏）",
-    "karaokeUnavailable": "该歌曲暂无伴奏"
+    "karaokeUnavailable": "该歌曲暂无伴奏",
+    "keepAwakeOn": "保持屏幕常亮：开",
+    "keepAwakeOff": "保持屏幕常亮"
   },
   "library": {
     "songs": "歌曲",

@@ -48,7 +48,9 @@
     "songRangeClear": "Clear",
     "songRangeSave": "Save",
     "karaoke": "Karaoke (instrumental)",
-    "karaokeUnavailable": "No instrumental for this song"
+    "karaokeUnavailable": "No instrumental for this song",
+    "keepAwakeOn": "Keep screen on: ON",
+    "keepAwakeOff": "Keep screen on"
   },
   "library": {
     "songs": "Songs",

@@ -262,6 +262,18 @@
         </button>
 
         <button
+          v-if="wakeLock.supported.value"
+          @click="wakeLock.toggle()"
+          :class="[
+            'p-1 rounded-full transition-colors duration-200',
+            wakeLock.enabled.value ? 'text-spotify-green' : 'text-gray-400 hover:text-white'
+          ]"
+          :title="wakeLock.enabled.value ? $t('player.keepAwakeOn') : $t('player.keepAwakeOff')"
+        >
+          <SunIcon class="w-4 h-4" />
+        </button>
+
+        <button
           @click="toggleMute"
           class="p-1 rounded-full text-gray-400 hover:text-white transition-colors duration-200"
         >
@@ -552,8 +564,21 @@
       >
         <SparklesIcon class="w-5 h-5" />
       </button>
-      
-      <button 
+
+      <!-- Keep screen awake (Desktop) -->
+      <button
+        v-if="wakeLock.supported.value"
+        @click="wakeLock.toggle()"
+        :class="[
+          'p-2 rounded-full transition-colors duration-200 mr-2',
+          wakeLock.enabled.value ? 'text-spotify-green' : 'text-gray-400 hover:text-white'
+        ]"
+        :title="wakeLock.enabled.value ? $t('player.keepAwakeOn') : $t('player.keepAwakeOff')"
+      >
+        <SunIcon class="w-5 h-5" />
+      </button>
+
+      <button
         @click="toggleMute"
         class="p-2 rounded-full text-gray-400 hover:text-white transition-colors duration-200 mr-2"
         :title="isMuted ? $t('player.unmute') : $t('player.mute')"
@@ -593,8 +618,10 @@ import {
   ClockIcon,
   SparklesIcon,
   AdjustmentsHorizontalIcon,
-  MicrophoneIcon
+  MicrophoneIcon,
+  SunIcon
 } from '@heroicons/vue/24/outline'
+import { useWakeLock } from '@/composables/useWakeLock'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
 import { usePlaylistsStore } from '@/stores/playlists'
@@ -625,6 +652,7 @@ const shuffle = computed(() => playerStore.shuffle)
 const repeat = computed(() => playerStore.repeat)
 const karaokeMode = computed(() => playerStore.karaokeMode)
 const karaokeAvailable = computed(() => playerStore.karaokeAvailable)
+const wakeLock = useWakeLock()
 const canPlayNext = computed(() => playerStore.canPlayNext)
 const canPlayPrevious = computed(() => playerStore.canPlayPrevious)
 const sleepTimer = computed(() => playerStore.sleepTimer)
