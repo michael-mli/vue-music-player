@@ -119,10 +119,11 @@
           <PlusIcon class="w-4 h-4" />
         </button>
         
-        <button 
+        <button
           @click="shareSong"
           class="p-1 rounded-full text-gray-400 hover:text-white transition-colors duration-200"
           :disabled="!currentSong"
+          title="Share Song"
         >
           <ShareIcon class="w-4 h-4" />
         </button>
@@ -597,12 +598,16 @@
       </div>
     </div>
 
-    <!-- Share modal: note input + native share / copy link -->
-    <ShareSongModal
-      v-if="showShareModal && currentSong"
-      :song="currentSong"
-      @close="showShareModal = false"
-    />
+    <!-- Share modal: note input + native share / copy link. Teleported to body —
+         this component's bars are display:none on the other breakpoint, which would
+         otherwise hide the modal (it never showed on mobile). -->
+    <Teleport to="body">
+      <ShareSongModal
+        v-if="showShareModal && currentSong"
+        :song="currentSong"
+        @close="showShareModal = false"
+      />
+    </Teleport>
   </div>
 </template>
 
