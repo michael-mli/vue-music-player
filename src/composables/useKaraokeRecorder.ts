@@ -15,6 +15,7 @@
  */
 import { ref, onUnmounted } from 'vue'
 import { Mp3Encoder } from '@breezystack/lamejs'
+import { getMicStream } from './useMicDevices'
 
 type AnyAudioContext = typeof AudioContext
 function getAudioContextCtor(): AnyAudioContext | null {
@@ -75,9 +76,7 @@ export function useKaraokeRecorder() {
     }
 
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-      })
+      stream = await getMicStream({ echoCancellation: false, noiseSuppression: false, autoGainControl: false })
     } catch (e) {
       error.value = (e as DOMException)?.name === 'NotAllowedError' ? 'denied' : 'failed'
       cleanup()
