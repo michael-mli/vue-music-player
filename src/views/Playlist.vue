@@ -3,11 +3,13 @@
     <div class="p-4 sm:p-6">
       <div v-if="playlist">
         <h1 class="text-3xl font-bold text-light-text-primary dark:text-white mb-2">{{ playlist.name }}</h1>
-        <p class="text-light-text-secondary dark:text-gray-400 mb-6">{{ playlist.songs.length }} songs</p>
-        
-        <div v-if="playlistSongs.length > 0" class="space-y-2">
-          <div 
-            v-for="(song, index) in playlistSongs" 
+        <p class="text-light-text-secondary dark:text-gray-400 mb-4">{{ playlist.songs.length }} songs</p>
+
+        <SearchBar class="mb-6" />
+
+        <div v-if="visibleSongs.length > 0" class="space-y-2">
+          <div
+            v-for="(song, index) in visibleSongs"
             :key="song.id"
             @click="playSong(song, index)"
             class="flex items-center p-3 rounded-lg hover:bg-light-border dark:hover:bg-spotify-light cursor-pointer group transition-colors duration-200"
@@ -32,7 +34,7 @@
         </div>
         
         <div v-else class="text-center text-light-text-secondary dark:text-gray-400 mt-12">
-          {{ $t('playlist.emptyPlaylist') }}
+          {{ playlistSongs.length > 0 ? $t('search.noResults') : $t('playlist.emptyPlaylist') }}
         </div>
       </div>
       
@@ -47,6 +49,7 @@
 import { computed, watchEffect } from 'vue'
 import { XMarkIcon } from '@heroicons/vue/24/outline'
 import SongCover from '@/components/UI/SongCover.vue'
+import SearchBar from '@/components/UI/SearchBar.vue'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
 import { usePlaylistsStore } from '@/stores/playlists'
@@ -71,8 +74,11 @@ const playlistSongs = computed(() => {
     .filter(Boolean) as Song[]
 })
 
+// Playlist songs narrowed by the quick search bar
+const visibleSongs = computed(() => songsStore.applyQuickFilter(playlistSongs.value))
+
 function playSong(song: Song, index: number) {
-  playerStore.playSong(song, playlistSongs.value, index)
+  playerStore.playSong(song, visibleSongs.value, index)
 }
 
 function removeSong(song: Song) {

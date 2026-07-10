@@ -8,7 +8,55 @@
         </h1>
         <p class="text-light-text-secondary dark:text-gray-400">{{ $t('app.subtitle') }}</p>
       </div>
-      
+
+      <!-- Quick search -->
+      <SearchBar class="mb-8" />
+
+      <!-- Search results (replaces the sections below while a filter is active) -->
+      <section v-if="isFiltering" class="mb-8">
+        <h2 class="text-xl font-bold text-light-text-primary dark:text-white mb-4">
+          {{ $t('search.results', { count: filteredSongs.length }) }}
+        </h2>
+        <div class="space-y-2">
+          <div
+            v-for="song in visibleResults"
+            :key="song.id"
+            @click="playFilteredSong(song)"
+            class="flex items-center p-3 rounded-lg hover:bg-light-border dark:hover:bg-spotify-light cursor-pointer group transition-colors duration-200"
+          >
+            <div class="w-10 h-10 bg-light-border dark:bg-spotify-light rounded mr-3 overflow-hidden flex-shrink-0">
+              <SongCover :song-id="song.id" :alt="song.title" />
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="text-light-text-primary dark:text-white font-medium break-words">{{ song.title }}</p>
+              <p class="text-light-text-secondary dark:text-gray-400 text-sm">
+                {{ [song.artist, song.year].filter(Boolean).join(' · ') || `#${song.id}` }}
+              </p>
+            </div>
+            <button
+              @click.stop="toggleFavorite(song)"
+              class="p-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+            >
+              <HeartIcon
+                :class="['w-4 h-4', song.isFavorite ? 'text-spotify-green fill-current' : 'text-gray-400']"
+              />
+            </button>
+          </div>
+        </div>
+        <div v-if="filteredSongs.length === 0" class="text-center text-light-text-secondary dark:text-gray-400 mt-8">
+          {{ $t('search.noResults') }}
+        </div>
+        <button
+          v-else-if="filteredSongs.length > resultLimit"
+          @click="resultLimit += 50"
+          class="mt-4 mx-auto flex flex-col items-center text-light-text-secondary dark:text-gray-400 hover:text-spotify-green transition-colors duration-200"
+        >
+          <span class="text-sm font-medium">{{ $t('library.showMore') }}</span>
+          <ChevronDownIcon class="w-6 h-6 animate-bounce" />
+        </button>
+      </section>
+
+      <template v-else>
       <!-- Quick Actions -->
       <div class="grid grid-cols-2 md:grid-cols-3 gap-4 mb-8">
         <button 
@@ -104,6 +152,7 @@
           <ChevronDownIcon class="w-6 h-6 animate-bounce" />
         </button>
       </section>
+      </template>
     </div>
   </div>
 </template>
@@ -121,15 +170,27 @@ import { useI18n } from 'vue-i18n'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
 import SongCover from '@/components/UI/SongCover.vue'
+import SearchBar from '@/components/UI/SearchBar.vue'
 import type { Song } from '@/types'
 
 const { t } = useI18n()
 const playerStore = usePlayerStore()
 const songsStore = useSongsStore()
 
-const recentSongs = computed(() => 
+const recentSongs = computed(() =>
   songsStore.songs.slice(0, 12)
 )
+
+// Quick-search results
+const isFiltering = computed(() => songsStore.quickQuery.trim().length > 0)
+const filteredSongs = computed(() => songsStore.quickFilteredSongs)
+const resultLimit = ref(50)
+const visibleResults = computed(() => filteredSongs.value.slice(0, resultLimit.value))
+
+function playFilteredSong(song: Song) {
+  const queue = filteredSongs.value
+  playerStore.playSong(song, queue, queue.findIndex(s => s.id === song.id))
+}
 
 const POPULAR_PAGE_SIZE = 10
 const popularLimit = ref(POPULAR_PAGE_SIZE)

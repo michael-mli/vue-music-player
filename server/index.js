@@ -114,27 +114,27 @@ app.get('/api/auth/me', authMiddleware, (req, res) => {
 // Stateless JWT — logout is client-side (drop the token). Endpoint kept for symmetry.
 app.post('/api/auth/logout', (req, res) => res.json({ success: true, data: {} }))
 
-// ─── Admin: ingest new songs (Phase 2) ──────────────────────────────────────
+// ─── Admin: batch jobs (ingest Phase 2, metadata) ───────────────────────────
 // In-memory job registry (ephemeral; restart clears history).
 const jobs = new Map()
 let jobSeq = 0
 
-app.post('/api/admin/ingest', authMiddleware, requireAdmin, (req, res) => {
-  const raw = Array.isArray(req.body?.ids) ? req.body.ids : []
-  // Strict validation — only positive integers, capped, deduped. No shell strings.
+// Validate request ids — only positive integers, capped, deduped. No shell strings.
+function parseIds(body, max) {
+  const raw = Array.isArray(body?.ids) ? body.ids : []
   const ids = [...new Set(raw.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0 && n < 100000))]
-  if (!ids.length) return res.status(400).json({ success: false, message: 'provide 1..N numeric song ids' })
-  if (ids.length > 200) return res.status(400).json({ success: false, message: 'too many ids (max 200)' })
+  if (ids.length > max) return null
+  return ids
+}
 
+// Spawn a repo script and stream its output into the job log.
+// Args are passed as an array (no shell) → the ids can't inject shell.
+function startJob(kind, argv, ids, email) {
   const jobId = `job-${++jobSeq}`
-  const job = { id: jobId, ids, running: true, log: [], startedAt: now(), exitCode: null, by: req.auth.email }
+  const job = { id: jobId, kind, ids, running: true, log: [], startedAt: now(), exitCode: null, by: email }
   jobs.set(jobId, job)
 
-  // Args are passed as an array (no shell) → the ids can't inject shell.
-  const child = spawn('bash', ['scripts/karaoke/ingest.sh', ...ids.map(String)], {
-    cwd: REPO_DIR,
-    env: process.env,
-  })
+  const child = spawn('bash', argv, { cwd: REPO_DIR, env: process.env })
   const push = (buf) => {
     for (const line of buf.toString().split(/\r?\n/)) {
       if (line) { job.log.push(line); if (job.log.length > 2000) job.log.shift() }
@@ -144,15 +144,35 @@ app.post('/api/admin/ingest', authMiddleware, requireAdmin, (req, res) => {
   child.stderr.on('data', push)
   child.on('close', (code) => { job.running = false; job.exitCode = code })
   child.on('error', (e) => { job.running = false; job.exitCode = -1; job.log.push(`spawn error: ${e.message}`) })
+  return jobId
+}
 
-  res.json({ success: true, data: { jobId, ids } })
-})
-
-app.get('/api/admin/ingest/:jobId', authMiddleware, requireAdmin, (req, res) => {
+function jobStatus(req, res) {
   const job = jobs.get(req.params.jobId)
   if (!job) return res.status(404).json({ success: false, message: 'no such job' })
   res.json({ success: true, data: { running: job.running, exitCode: job.exitCode, ids: job.ids, log: job.log } })
+}
+
+app.post('/api/admin/ingest', authMiddleware, requireAdmin, (req, res) => {
+  const ids = parseIds(req.body, 200)
+  if (!ids) return res.status(400).json({ success: false, message: 'too many ids (max 200)' })
+  if (!ids.length) return res.status(400).json({ success: false, message: 'provide 1..N numeric song ids' })
+  const jobId = startJob('ingest', ['scripts/karaoke/ingest.sh', ...ids.map(String)], ids, req.auth.email)
+  res.json({ success: true, data: { jobId, ids } })
 })
+
+// Build song metadata (artist/album/year/genre) → data/metadata.json.
+// Empty ids = process every song still missing metadata.
+app.post('/api/admin/metadata', authMiddleware, requireAdmin, (req, res) => {
+  const ids = parseIds(req.body, 500)
+  if (!ids) return res.status(400).json({ success: false, message: 'too many ids (max 500)' })
+  const argv = ids.length ? ['scripts/metadata.sh', ...ids.map(String)] : ['scripts/metadata.sh', '--auto']
+  const jobId = startJob('metadata', argv, ids, req.auth.email)
+  res.json({ success: true, data: { jobId, ids } })
+})
+
+app.get('/api/admin/ingest/:jobId', authMiddleware, requireAdmin, jobStatus)
+app.get('/api/admin/jobs/:jobId', authMiddleware, requireAdmin, jobStatus)
 
 // ─── Admin: user management (Phase 3) ────────────────────────────────────────
 app.get('/api/admin/users', authMiddleware, requireAdmin, (req, res) => {

@@ -11,6 +11,20 @@
     "steps": "Settings → Apps → Chrome → Battery → Unrestricted",
     "dismiss": "Got it"
   },
+  "search": {
+    "placeholder": "Type to filter songs...",
+    "scopeTitle": "Search field",
+    "results": "{count} results",
+    "noResults": "No songs match your search",
+    "scope": {
+      "all": "All",
+      "title": "Title",
+      "artist": "Artist",
+      "album": "Album",
+      "year": "Year",
+      "genre": "Genre"
+    }
+  },
   "navigation": {
     "home": "Home",
     "search": "Search",
@@ -192,6 +206,10 @@
     "ingestHint": "Run poster + synced lyrics + karaoke instrumental for song id(s), then publish.",
     "ingestPlaceholder": "e.g. 1340, 1341",
     "runIngest": "Run ingest",
+    "metadataTitle": "Build song metadata",
+    "metadataHint": "Extract artist, album, year, genre etc. from ID3 tags + iTunes into data/metadata.json — powers scoped search. Leave blank to process all songs missing metadata.",
+    "metadataPlaceholder": "e.g. 1340, 1341 (blank = all missing)",
+    "runMetadata": "Build metadata",
     "running": "Running…",
     "usersTitle": "Users",
     "removeUser": "Remove user"

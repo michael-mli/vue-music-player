@@ -21,4 +21,11 @@ export const adminService = {
   ingestStatus(jobId: string): Promise<{ success: boolean; data: IngestStatus }> {
     return api.get(`/admin/ingest/${jobId}`)
   },
+  // Empty ids = build metadata for every song still missing it
+  startMetadata(ids: number[]): Promise<{ success: boolean; data: IngestStart; message?: string }> {
+    return api.post('/admin/metadata', { ids })
+  },
+  jobStatus(jobId: string): Promise<{ success: boolean; data: IngestStatus }> {
+    return api.get(`/admin/jobs/${jobId}`)
+  },
 }

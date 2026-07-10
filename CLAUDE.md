@@ -41,6 +41,7 @@ The app maintains compatibility with existing file structure:
   1. `/data/song_number.txt` (primary)
   2. `/song_number.txt` (fallback)
   3. `1282` (hardcoded fallback)
+- Song metadata index (artist/album/year/genre/language/duration): `/data/metadata.json` with `/metadata.json` fallback. Built offline by `scripts/build_metadata.py` (ID3 tags via mutagen + iTunes Search API), wrapped by `scripts/metadata.sh`, runnable from the Admin page (`POST /api/admin/metadata`) and automatically during `scripts/karaoke/ingest.sh`. Note: the production `data/` dir is a read-only share, so the file is written to the web root (`/var/www/html/others/music/metadata.json`).
 
 ### Configuration System
 Environment-based configuration in `src/config/index.ts`:
