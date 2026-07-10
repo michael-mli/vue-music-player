@@ -43,8 +43,12 @@ export const useAuthStore = defineStore('auth', () => {
   const ready = ref(false) // becomes true once the initial /me check settles
 
   const isAuthenticated = computed(() => !!user.value)
+  /** Registered = attached to a Google account. Guests are identities too, just unregistered. */
+  const isRegistered = computed(() => user.value?.kind === 'google')
   const isAdmin = computed(() => user.value?.role === 'admin')
   const loginEnabled = computed(() => !!config.googleClientId)
+  /** What the UI should call this user. */
+  const displayName = computed(() => user.value?.name || user.value?.username || user.value?.email || '')
 
   function setToken(t: string | null) {
     token.value = t
@@ -52,9 +56,14 @@ export const useAuthStore = defineStore('auth', () => {
     else localStorage.removeItem(TOKEN_KEY)
   }
 
-  /** Exchange a Google ID-token credential for a session, and store the user. */
+  /**
+   * Exchange a Google ID-token credential for a session. The current (guest) token rides
+   * along so the server upgrades that identity in place instead of creating a new one.
+   */
   async function loginWithGoogle(credential: string) {
-    const res = await axios.post(`${config.apiBaseUrl}/auth/google`, { credential })
+    const res = await axios.post(`${config.apiBaseUrl}/auth/google`, { credential }, {
+      headers: token.value ? { Authorization: `Bearer ${token.value}` } : {},
+    })
     const data = res.data?.data
     if (!data?.token) throw new Error('login failed')
     setToken(data.token)
@@ -78,10 +87,43 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  function logout() {
+  /** Ask the server for a system-assigned guest identity and store it. */
+  async function createGuest() {
+    try {
+      const res = await axios.post(`${config.apiBaseUrl}/auth/guest`, {}, {
+        headers: token.value ? { Authorization: `Bearer ${token.value}` } : {},
+      })
+      const data = res.data?.data
+      if (data?.token) {
+        setToken(data.token)
+        user.value = data.user
+      }
+    } catch {
+      // Backend unreachable — the app still works without an identity.
+    }
+  }
+
+  /** App-start identity bootstrap: restore a session, else become a fresh guest. */
+  async function ensureIdentity() {
+    await fetchMe()
+    if (!user.value) await createGuest()
+  }
+
+  /** Update own profile fields (username / display name / bio / avatar data-URL). */
+  async function updateProfile(fields: Partial<Pick<AuthUser, 'username' | 'name' | 'bio' | 'avatar'>>) {
+    const res = await axios.patch(`${config.apiBaseUrl}/profile`, fields, {
+      headers: { Authorization: `Bearer ${token.value}` },
+    })
+    user.value = res.data?.data ?? user.value
+    return user.value as AuthUser
+  }
+
+  /** Sign out of the registered account; the device gets a fresh guest identity. */
+  async function logout() {
     setToken(null)
     user.value = null
     try { window.google?.accounts.id.disableAutoSelect() } catch { /* noop */ }
+    await createGuest()
   }
 
   /**
@@ -107,7 +149,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   return {
     user, token, ready,
-    isAuthenticated, isAdmin, loginEnabled,
-    loginWithGoogle, fetchMe, logout, renderGoogleButton,
+    isAuthenticated, isRegistered, isAdmin, loginEnabled, displayName,
+    loginWithGoogle, fetchMe, ensureIdentity, createGuest, updateProfile, logout, renderGoogleButton,
   }
 })

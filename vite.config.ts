@@ -103,7 +103,11 @@ export default defineConfig({
   },
   server: {
     host: '0.0.0.0',
-    port: 5173
+    port: 5173,
+    proxy: {
+      // Auth/admin backend (karaoke-auth) — lets dev exercise guest identities/profiles
+      '/api': 'http://127.0.0.1:3101'
+    }
   },
   publicDir: false,
   build: {

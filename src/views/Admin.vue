@@ -72,10 +72,18 @@
               :key="u.id"
               class="flex items-center gap-3 p-2 rounded hover:bg-light-border dark:hover:bg-spotify-light"
             >
-              <img v-if="u.picture" :src="u.picture" class="w-8 h-8 rounded-full flex-shrink-0" referrerpolicy="no-referrer" />
+              <UserAvatar :user="u" :size="32" />
               <div class="flex-1 min-w-0">
-                <p class="text-sm text-light-text-primary dark:text-white truncate">{{ u.name || u.email }}</p>
-                <p class="text-xs text-light-text-secondary dark:text-gray-400 truncate">{{ u.email }}</p>
+                <p class="text-sm text-light-text-primary dark:text-white truncate">
+                  {{ u.name || u.username || u.email }}
+                  <span
+                    v-if="u.kind === 'guest'"
+                    class="ml-1 text-[9px] uppercase font-bold px-1 py-0.5 rounded bg-white/10 text-gray-400 align-middle"
+                  >{{ $t('profile.guestBadge') }}</span>
+                </p>
+                <p class="text-xs text-light-text-secondary dark:text-gray-400 truncate">
+                  @{{ u.username }}{{ u.email ? ' · ' + u.email : '' }}
+                </p>
               </div>
               <select
                 :value="u.role"
@@ -106,6 +114,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { Cog6ToothIcon, TrashIcon } from '@heroicons/vue/24/outline'
 import { useAuthStore } from '@/stores/auth'
+import UserAvatar from '@/components/UI/UserAvatar.vue'
 import { adminService } from '@/services/adminService'
 import type { AuthUser } from '@/types'
 

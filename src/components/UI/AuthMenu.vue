@@ -1,57 +1,51 @@
 <template>
   <div class="auth-menu">
-    <!-- Signed in -->
-    <div v-if="auth.isAuthenticated" class="flex items-center gap-2">
-      <img
-        v-if="auth.user?.picture"
-        :src="auth.user.picture"
-        :alt="auth.user?.name"
-        class="w-8 h-8 rounded-full flex-shrink-0"
-        referrerpolicy="no-referrer"
-      />
+    <!-- Identity chip: guest or registered — click to manage profile -->
+    <button
+      v-if="auth.user"
+      @click="showProfile = true"
+      class="w-full flex items-center gap-2 text-left rounded-lg p-1 -m-1 hover:bg-light-border dark:hover:bg-spotify-light transition-colors duration-200"
+      :title="$t('profile.title')"
+    >
+      <UserAvatar :user="auth.user" :size="32" />
       <div class="min-w-0 flex-1">
         <p class="text-sm font-medium text-light-text-primary dark:text-white truncate">
-          {{ auth.user?.name || auth.user?.email }}
+          {{ auth.displayName }}
           <span
             v-if="auth.isAdmin"
             class="ml-1 text-[9px] uppercase font-bold px-1 py-0.5 rounded bg-spotify-green/20 text-spotify-green align-middle"
           >admin</span>
+          <span
+            v-else-if="!auth.isRegistered"
+            class="ml-1 text-[9px] uppercase font-bold px-1 py-0.5 rounded bg-white/10 text-gray-400 align-middle"
+          >{{ $t('profile.guestBadge') }}</span>
         </p>
-        <button
-          @click="auth.logout()"
-          class="text-xs text-light-text-secondary dark:text-gray-400 hover:text-light-text-primary dark:hover:text-white"
-        >{{ $t('auth.signOut') }}</button>
+        <p class="text-xs text-light-text-secondary dark:text-gray-400 truncate">
+          {{ auth.isRegistered ? auth.user.email : '@' + auth.user.username }}
+        </p>
       </div>
-    </div>
+    </button>
 
-    <!-- Signed out -->
-    <div v-else-if="auth.loginEnabled">
-      <!-- Google Identity Services renders its button into this element -->
-      <div ref="gbtn"></div>
-    </div>
+    <!-- Identity still bootstrapping (or backend unreachable) -->
+    <p v-else class="text-xs text-light-text-secondary dark:text-gray-500 px-1">
+      {{ $t('common.loading') }}
+    </p>
+
+    <ProfileModal v-if="showProfile" @close="showProfile = false" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import UserAvatar from './UserAvatar.vue'
+import ProfileModal from './ProfileModal.vue'
 
 const auth = useAuthStore()
-const gbtn = ref<HTMLElement>()
-
-async function mountButton() {
-  if (!auth.isAuthenticated && auth.loginEnabled && gbtn.value) {
-    await auth.renderGoogleButton(gbtn.value)
-  }
-}
+const showProfile = ref(false)
 
 onMounted(async () => {
-  await auth.fetchMe() // restore session if a token is stored
-  await mountButton()
-})
-
-// Re-render the Google button if the user signs out.
-watch(() => auth.isAuthenticated, async (v) => {
-  if (!v) await mountButton()
+  // Restore a stored session, else become a system-assigned guest identity
+  await auth.ensureIdentity()
 })
 </script>

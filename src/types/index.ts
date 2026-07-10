@@ -60,13 +60,17 @@ export interface User {
   favorites: number[]
 }
 
-/** An authenticated account (Google Sign-In). */
+/** An identity: system-assigned guest or a registered (Google) account. */
 export interface AuthUser {
   id: number
-  email: string
+  email: string | null
+  username: string
   name: string
   picture: string
+  avatar?: string | null
+  bio?: string | null
   role: 'admin' | 'user'
+  kind: 'guest' | 'google'
 }
 
 export interface APIResponse<T> {

@@ -217,6 +217,21 @@
     "signOut": "Sign out",
     "adminPanel": "Admin"
   },
+  "profile": {
+    "title": "My profile",
+    "guestBadge": "guest",
+    "username": "Username",
+    "usernameHint": "3-20 characters: letters, digits, underscore. Must be unique.",
+    "displayName": "Display name",
+    "displayNamePlaceholder": "How should we call you?",
+    "bio": "About me",
+    "bioPlaceholder": "A line about you (optional)",
+    "changeAvatar": "Change avatar",
+    "removeAvatar": "Remove avatar",
+    "registeredAs": "Registered with Google as",
+    "guestHint": "You're using a system-assigned guest identity. Register with Google to keep your profile across devices.",
+    "saved": "Profile saved"
+  },
   "admin": {
     "title": "Admin",
     "checking": "Checking access…",

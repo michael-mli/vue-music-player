@@ -39,16 +39,59 @@ const db = initDb(DATA_DIR)
 const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID)
 
 const app = express()
-app.use(express.json())
+// Bumped limit: profile avatars travel as small base64 data URLs (~≤150KB)
+app.use(express.json({ limit: '300kb' }))
 app.use(cors({ origin: true }))
 
 const now = () => new Date().toISOString()
-const publicUser = (u) => ({ id: u.id, email: u.email, name: u.name, picture: u.picture, role: u.role })
+const publicUser = (u) => ({
+  id: u.id, email: u.email, username: u.username, name: u.name, picture: u.picture,
+  avatar: u.avatar, bio: u.bio, role: u.role, kind: u.kind,
+})
 
+// Guests get a long-lived token — it IS their identity; expiring it would orphan them.
 function signToken(user) {
   return jwt.sign({ sub: user.id, email: user.email, role: user.role }, JWT_SECRET, {
-    expiresIn: `${SESSION_TTL_HOURS}h`,
+    expiresIn: user.kind === 'guest' ? '3650d' : `${SESSION_TTL_HOURS}h`,
   })
+}
+
+// ─── Guest identities ────────────────────────────────────────────────────────
+const GUEST_NAMES = [
+  'Oliver', 'Emma', 'Liam', 'Sophia', 'Noah', 'Ava', 'Ethan', 'Mia', 'Lucas', 'Luna',
+  'Mason', 'Chloe', 'Henry', 'Grace', 'Leo', 'Zoe', 'Jack', 'Lily', 'Owen', 'Ruby',
+  'Felix', 'Ivy', 'Oscar', 'Nora', 'Max', 'Stella', 'Miles', 'Hazel', 'Jasper', 'Violet',
+  'Hugo', 'Daisy', 'Arthur', 'Willow', 'Theo', 'Aurora', 'Finn', 'Penny', 'Reuben', 'Iris',
+]
+
+function generateUsername() {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const base = GUEST_NAMES[Math.floor(Math.random() * GUEST_NAMES.length)]
+    const candidate = attempt === 0 && Math.random() < 0.3
+      ? base
+      : `${base}${Math.floor(Math.random() * 900) + 100}`
+    const exists = db.prepare('SELECT 1 FROM users WHERE username = ?').get(candidate)
+    if (!exists) return candidate
+  }
+  return `Guest${Date.now() % 1000000}`
+}
+
+// Light abuse guard on open guest creation: per-IP daily cap.
+const guestHits = new Map()
+function guestRateOk(ip) {
+  const day = new Date().toISOString().slice(0, 10)
+  const entry = guestHits.get(ip)
+  if (!entry || entry.day !== day) { guestHits.set(ip, { day, count: 1 }); return true }
+  entry.count++
+  return entry.count <= 30
+}
+
+// Reads a Bearer token if present without rejecting the request.
+function optionalAuth(req) {
+  const h = req.headers.authorization || ''
+  const t = h.startsWith('Bearer ') ? h.slice(7) : null
+  if (!t) return null
+  try { return jwt.verify(t, JWT_SECRET) } catch { return null }
 }
 
 function authMiddleware(req, res, next) {
@@ -125,7 +168,28 @@ app.get('/api/health', (req, res) =>
   res.json({ success: true, data: { ok: true, configOk, users: db.prepare('SELECT COUNT(*) c FROM users').get().c, ts: now() } }),
 )
 
+// Create a guest identity: server-generated unique English username, long-lived token.
+// Idempotent for callers that already carry a valid token.
+app.post('/api/auth/guest', (req, res) => {
+  if (!JWT_SECRET) return res.status(503).json({ success: false, message: 'auth not configured' })
+  const existing = optionalAuth(req)
+  if (existing) {
+    const u = db.prepare('SELECT * FROM users WHERE id = ?').get(existing.sub)
+    if (u) return res.json({ success: true, data: { token: signToken(u), user: publicUser(u) } })
+  }
+  const ip = req.headers['x-real-ip'] || req.socket.remoteAddress || 'unknown'
+  if (!guestRateOk(String(ip))) return res.status(429).json({ success: false, message: 'too many guest accounts' })
+  const username = generateUsername()
+  const info = db
+    .prepare("INSERT INTO users (username, role, kind, created_at, last_login) VALUES (?, 'user', 'guest', ?, ?)")
+    .run(username, now(), now())
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid)
+  res.json({ success: true, data: { token: signToken(user), user: publicUser(user) } })
+})
+
 // Verify a Google ID token (from Google Identity Services), upsert the user, return a JWT.
+// When the caller carries a guest token, the guest row is upgraded in place (keeps id,
+// username, avatar, bio) so the identity "becomes" registered.
 app.post('/api/auth/google', async (req, res) => {
   if (!configOk) return res.status(503).json({ success: false, message: 'auth not configured' })
   const { credential } = req.body || {}
@@ -137,12 +201,24 @@ app.post('/api/auth/google', async (req, res) => {
     if (!email || !p.email_verified) {
       return res.status(401).json({ success: false, message: 'unverified google account' })
     }
+    const caller = optionalAuth(req)
+    const guest = caller
+      ? db.prepare("SELECT * FROM users WHERE id = ? AND kind = 'guest'").get(caller.sub)
+      : null
+
     let user = db.prepare('SELECT * FROM users WHERE email = ?').get(email)
-    if (!user) {
+    if (!user && guest) {
+      // Register: attach the Google account to the existing guest identity.
+      const role = adminEmails.has(email) ? 'admin' : guest.role
+      db.prepare("UPDATE users SET email = ?, name = ?, picture = ?, role = ?, kind = 'google', last_login = ? WHERE id = ?")
+        .run(email, p.name || guest.name || '', p.picture || '', role, now(), guest.id)
+      user = db.prepare('SELECT * FROM users WHERE id = ?').get(guest.id)
+    } else if (!user) {
       const role = adminEmails.has(email) ? 'admin' : 'user'
+      const username = generateUsername()
       const info = db
-        .prepare('INSERT INTO users (email, name, picture, role, created_at, last_login) VALUES (?,?,?,?,?,?)')
-        .run(email, p.name || '', p.picture || '', role, now(), now())
+        .prepare("INSERT INTO users (email, username, name, picture, role, kind, created_at, last_login) VALUES (?,?,?,?,?,'google',?,?)")
+        .run(email, username, p.name || '', p.picture || '', role, now(), now())
       user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid)
     } else {
       db.prepare('UPDATE users SET name = ?, picture = ?, last_login = ? WHERE id = ?').run(
@@ -153,11 +229,49 @@ app.post('/api/auth/google', async (req, res) => {
         db.prepare('UPDATE users SET role = ? WHERE id = ?').run('admin', user.id)
         user.role = 'admin'
       }
+      // The Google account already exists — drop the now-orphaned guest row.
+      if (guest && guest.id !== user.id) {
+        db.prepare("DELETE FROM users WHERE id = ? AND kind = 'guest'").run(guest.id)
+      }
     }
     res.json({ success: true, data: { token: signToken(user), user: publicUser(user) } })
   } catch {
     res.status(401).json({ success: false, message: 'google verification failed' })
   }
+})
+
+// ─── Self-service profile ────────────────────────────────────────────────────
+app.patch('/api/profile', authMiddleware, (req, res) => {
+  const u = db.prepare('SELECT * FROM users WHERE id = ?').get(req.auth.sub)
+  if (!u) return res.status(401).json({ success: false, message: 'user gone' })
+  const { username, name, bio, avatar } = req.body || {}
+
+  if (username !== undefined) {
+    if (typeof username !== 'string' || !/^[A-Za-z][A-Za-z0-9_]{2,19}$/.test(username)) {
+      return res.status(400).json({ success: false, message: 'username: 3-20 chars, letters/digits/_, starts with a letter' })
+    }
+    const clash = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(username, u.id)
+    if (clash) return res.status(409).json({ success: false, message: 'username already taken' })
+  }
+  if (name !== undefined && (typeof name !== 'string' || name.length > 60)) {
+    return res.status(400).json({ success: false, message: 'name too long (max 60)' })
+  }
+  if (bio !== undefined && (typeof bio !== 'string' || bio.length > 300)) {
+    return res.status(400).json({ success: false, message: 'bio too long (max 300)' })
+  }
+  if (avatar !== undefined && avatar !== '' &&
+      (typeof avatar !== 'string' || !/^data:image\/(png|jpeg|webp);base64,/.test(avatar) || avatar.length > 150000)) {
+    return res.status(400).json({ success: false, message: 'avatar must be a small png/jpeg/webp image' })
+  }
+
+  db.prepare('UPDATE users SET username = ?, name = ?, bio = ?, avatar = ? WHERE id = ?').run(
+    username !== undefined ? username : u.username,
+    name !== undefined ? name : u.name,
+    bio !== undefined ? bio : u.bio,
+    avatar !== undefined ? avatar : u.avatar,
+    u.id,
+  )
+  res.json({ success: true, data: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(u.id)) })
 })
 
 app.get('/api/auth/me', authMiddleware, (req, res) => {
@@ -231,7 +345,7 @@ app.get('/api/admin/jobs/:jobId', authMiddleware, requireAdmin, jobStatus)
 
 // ─── Admin: user management (Phase 3) ────────────────────────────────────────
 app.get('/api/admin/users', authMiddleware, requireAdmin, (req, res) => {
-  const rows = db.prepare('SELECT id, email, name, picture, role, created_at, last_login FROM users ORDER BY id').all()
+  const rows = db.prepare('SELECT id, email, username, name, picture, avatar, role, kind, created_at, last_login FROM users ORDER BY id').all()
   res.json({ success: true, data: rows })
 })
 

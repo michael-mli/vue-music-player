@@ -217,6 +217,21 @@
     "signOut": "退出登录",
     "adminPanel": "管理"
   },
+  "profile": {
+    "title": "我的资料",
+    "guestBadge": "访客",
+    "username": "用户名",
+    "usernameHint": "3-20 个字符：字母、数字、下划线，且不能重复。",
+    "displayName": "昵称",
+    "displayNamePlaceholder": "想让大家怎么称呼你？",
+    "bio": "个人简介",
+    "bioPlaceholder": "一句话介绍自己（可选）",
+    "changeAvatar": "更换头像",
+    "removeAvatar": "移除头像",
+    "registeredAs": "已用 Google 注册：",
+    "guestHint": "你正在使用系统分配的访客身份。用 Google 注册后，资料可跨设备保留。",
+    "saved": "资料已保存"
+  },
   "admin": {
     "title": "管理",
     "checking": "正在检查权限…",
