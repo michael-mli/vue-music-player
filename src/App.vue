@@ -348,6 +348,13 @@ function cleanupActivityListeners() {
 }
 
 // Watch for player state changes
+// Turning karaoke mode on opens the lyrics panel — singers need the words, and may not
+// know about the lyrics toggle. The Karaoke page is excluded: it has its own synced
+// lyrics stage (and on mobile the panel is an overlay that would cover it).
+watch(() => playerStore.karaokeMode, (on) => {
+  if (on && route.name !== 'Karaoke') showLyrics.value = true
+})
+
 watch(() => playerStore.isPlaying, (isPlaying) => {
   if (isPlaying) {
     resetInactivityTimer()
