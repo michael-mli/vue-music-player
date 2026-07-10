@@ -750,8 +750,13 @@ watch(() => props.isVisible, async (newValue) => {
 })
 
 // Save settings to localStorage
+// v2: defaults became rainbow + minimum bar height. v1 saves carried color/height values
+// users never deliberately picked (changing ANY setting saved all fields), so loads only
+// honor those two fields from v2-stamped saves.
+const SETTINGS_VERSION = 2
 watch([visualizerType, backgroundOpacity, colorScheme, barHeight], () => {
   localStorage.setItem('music-visualizer-settings', JSON.stringify({
+    v: SETTINGS_VERSION,
     type: visualizerType.value,
     backgroundOpacity: backgroundOpacity.value,
     colorScheme: colorScheme.value,
@@ -781,8 +786,11 @@ onMounted(() => {
       const settings = JSON.parse(saved)
       visualizerType.value = settings.type || 'bars'
       backgroundOpacity.value = settings.backgroundOpacity ?? 0.0
-      colorScheme.value = settings.colorScheme || 'rainbow'
-      barHeight.value = settings.barHeight ?? 0.2
+      if (settings.v === SETTINGS_VERSION) {
+        colorScheme.value = settings.colorScheme || 'rainbow'
+        barHeight.value = settings.barHeight ?? 0.2
+      }
+      // pre-v2 saves: keep type/opacity but adopt the new rainbow/min-height defaults
     } catch (error) {
       console.error('Error loading visualizer settings:', error)
     }
