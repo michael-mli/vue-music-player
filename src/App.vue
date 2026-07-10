@@ -70,10 +70,13 @@
     />
     
     <!-- Music Visualizer -->
-    <MusicVisualizer 
+    <MusicVisualizer
       :is-visible="showVisualizer"
       @close="showVisualizer = false"
     />
+
+    <!-- Floating karaoke recorder (shown while karaoke mode is on) -->
+    <FloatingRecorder />
     
     <!-- PWA Install Prompt -->
     <InstallPrompt 
@@ -132,6 +135,7 @@ import UpdateNotification from '@/components/UI/UpdateNotification.vue'
 import AddToPlaylistModal from '@/components/UI/AddToPlaylistModal.vue'
 import CreatePlaylistModal from '@/components/UI/CreatePlaylistModal.vue'
 import MusicVisualizer from '@/components/Player/MusicVisualizer.vue'
+import FloatingRecorder from '@/components/Player/FloatingRecorder.vue'
 import BackgroundPlaybackHint from '@/components/UI/BackgroundPlaybackHint.vue'
 import DebugPanel from '@/components/Debug/DebugPanel.vue'
 
