@@ -589,13 +589,20 @@
       </button>
       
       <div class="w-24">
-        <VolumeControl 
-          :volume="volume" 
+        <VolumeControl
+          :volume="volume"
           :muted="isMuted"
           @volume-change="setVolume"
         />
       </div>
     </div>
+
+    <!-- Share modal: note input + native share / copy link -->
+    <ShareSongModal
+      v-if="showShareModal && currentSong"
+      :song="currentSong"
+      @close="showShareModal = false"
+    />
   </div>
 </template>
 
@@ -621,7 +628,6 @@ import {
   MicrophoneIcon,
   SunIcon
 } from '@heroicons/vue/24/outline'
-import { useI18n } from 'vue-i18n'
 import { useWakeLock } from '@/composables/useWakeLock'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
@@ -629,6 +635,7 @@ import { usePlaylistsStore } from '@/stores/playlists'
 import ProgressBar from './ProgressBar.vue'
 import VolumeControl from './VolumeControl.vue'
 import SongCover from '@/components/UI/SongCover.vue'
+import ShareSongModal from '@/components/UI/ShareSongModal.vue'
 
 // Define emits
 const emit = defineEmits<{
@@ -637,7 +644,6 @@ const emit = defineEmits<{
   'toggle-visualizer': []
 }>()
 
-const { t } = useI18n()
 const playerStore = usePlayerStore()
 const songsStore = useSongsStore()
 const playlistsStore = usePlaylistsStore()
@@ -665,6 +671,7 @@ const formattedSessionPlaytime = computed(() => playerStore.formattedSessionPlay
 
 // Sleep timer menu state
 const showSleepTimerMenu = ref(false)
+const showShareModal = ref(false)
 
 // Song range state
 const showSongRangeMenu = ref(false)
@@ -744,72 +751,12 @@ function openAddToPlaylistModal() {
   }
 }
 
-async function shareSong() {
+// Opens the share modal (note input + native share / copy). The modal's own button
+// click carries the user activation navigator.share needs — calling prompt() here first
+// used to consume it and force the clipboard fallback.
+function shareSong() {
   if (!currentSong.value) return
-
-  // Optional quick comment for the receiver — travels in the link (?note=) and is shown
-  // on the shared-song page. Cancelling the prompt just shares without a note.
-  const note = (window.prompt(t('share.notePrompt'), '') || '').trim().slice(0, 200)
-  const shareUrl = `${window.location.origin}/music/?song=${currentSong.value.id}`
-    + (note ? `&note=${encodeURIComponent(note)}` : '')
-  const shareText = note || `Check out this song: ${currentSong.value.title}`
-  
-  // Try to use Web Share API if available (mobile)
-  if (navigator.share) {
-    try {
-      await navigator.share({
-        title: currentSong.value.title,
-        text: shareText,
-        url: shareUrl
-      })
-      console.log('Song shared successfully')
-    } catch (error) {
-      // User cancelled or error occurred, fallback to clipboard
-      if ((error as Error).name !== 'AbortError') {
-        copyToClipboard(shareUrl)
-      }
-    }
-  } else {
-    // Fallback to clipboard
-    copyToClipboard(shareUrl)
-  }
-}
-
-function copyToClipboard(text: string) {
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(text).then(() => {
-      // Show a brief success message (you could add a toast notification here)
-      console.log('Song URL copied to clipboard')
-      alert('Song link copied to clipboard!')
-    }).catch(() => {
-      // Fallback for older browsers
-      fallbackCopyToClipboard(text)
-    })
-  } else {
-    fallbackCopyToClipboard(text)
-  }
-}
-
-function fallbackCopyToClipboard(text: string) {
-  const textArea = document.createElement('textarea')
-  textArea.value = text
-  textArea.style.position = 'fixed'
-  textArea.style.left = '-999999px'
-  textArea.style.top = '-999999px'
-  document.body.appendChild(textArea)
-  textArea.focus()
-  textArea.select()
-  
-  try {
-    document.execCommand('copy')
-    console.log('Song URL copied to clipboard (fallback)')
-    alert('Song link copied to clipboard!')
-  } catch (err) {
-    console.error('Failed to copy to clipboard:', err)
-    alert(`Copy this link: ${text}`)
-  }
-  
-  document.body.removeChild(textArea)
+  showShareModal.value = true
 }
 
 // Click outside handler to close sleep timer menu  

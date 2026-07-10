@@ -203,7 +203,12 @@
     "effect": "Effect"
   },
   "share": {
-    "notePrompt": "Add a note for the receiver (optional):",
+    "title": "Share song",
+    "noteLabel": "Quick note for the receiver (optional)",
+    "notePlaceholder": "e.g. This song reminds me of you 🎵",
+    "shareBtn": "Share",
+    "copyBtn": "Copy link",
+    "copied": "Link copied to clipboard",
     "noteFrom": "Message from the sender"
   },
   "auth": {
