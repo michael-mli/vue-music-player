@@ -53,6 +53,7 @@ coverage/
 tmp/
 temp/
 data
+metadata.json
 music
 public/
 

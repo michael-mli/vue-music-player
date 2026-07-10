@@ -11,6 +11,20 @@
     "steps": "设置 → 应用 → Chrome → 电池 → 不受限制",
     "dismiss": "知道了"
   },
+  "search": {
+    "placeholder": "输入以筛选歌曲...",
+    "scopeTitle": "搜索范围",
+    "results": "{count} 个结果",
+    "noResults": "没有匹配的歌曲",
+    "scope": {
+      "all": "全部",
+      "title": "标题",
+      "artist": "歌手",
+      "album": "专辑",
+      "year": "年份",
+      "genre": "风格"
+    }
+  },
   "navigation": {
     "home": "首页",
     "search": "搜索",
@@ -61,7 +75,9 @@
     "noResults": "未找到歌曲",
     "totalSongs": "{count} 首歌曲",
     "loadingTitles": "正在加载歌曲标题...",
-    "showMore": "显示更多"
+    "showMore": "显示更多",
+    "showLess": "收起",
+    "uncategorized": "未分类"
   },
   "playlist": {
     "create": "创建播放列表",
@@ -192,6 +208,10 @@
     "ingestHint": "为歌曲 ID 运行封面 + 同步歌词 + 卡拉OK伴奏，然后发布。",
     "ingestPlaceholder": "例如 1340, 1341",
     "runIngest": "运行导入",
+    "metadataTitle": "生成歌曲元数据",
+    "metadataHint": "从 ID3 标签 + iTunes 提取歌手、专辑、年份、风格等信息写入 data/metadata.json——用于按字段搜索。留空则处理所有缺少元数据的歌曲。",
+    "metadataPlaceholder": "例如 1340, 1341（留空 = 所有缺失的）",
+    "runMetadata": "生成元数据",
     "running": "运行中…",
     "usersTitle": "用户",
     "removeUser": "删除用户"

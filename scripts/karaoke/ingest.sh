@@ -46,6 +46,10 @@ echo "== synced lyrics =="
 "$PY" "$REPO/scripts/karaoke/fetch_synced_lyrics.py" \
   --lyrics-dir "$LYRICS_DIR" --out-dir "$SYNCDIR" --scan "$SCAN" --ids "$CSV" || true
 
+# ---- 2b. metadata (ID3 + iTunes → data/metadata.json, powers scoped search) ------------
+echo "== metadata =="
+bash "$REPO/scripts/metadata.sh" $IDS || true
+
 # ---- 3. instrumental (GPU preferred, CPU fallback) -------------------------------------
 echo "== instrumental =="
 code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$GPU_HOST/" 2>/dev/null || echo 000)

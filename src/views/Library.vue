@@ -1,10 +1,47 @@
 <template>
   <div class="library-view h-full overflow-y-auto spotify-scrollbar">
     <div class="p-4 sm:p-6">
-      <h1 class="text-3xl font-bold text-light-text-primary dark:text-white mb-6">{{ $t('navigation.library') }}</h1>
-      
+      <h1 class="text-3xl font-bold text-light-text-primary dark:text-white mb-4">{{ $t('navigation.library') }}</h1>
+
+      <SearchBar class="mb-4" />
+
+      <!-- Category cards (genre) — click to browse one category, All is the default -->
+      <div v-if="hasCategories" class="mb-6 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+        <button
+          @click="selectCategory('all')"
+          class="relative overflow-hidden rounded-lg p-3 text-left text-white bg-gradient-to-br from-spotify-green to-emerald-700 transition-transform duration-150 hover:scale-105"
+          :class="selectedCategory === 'all' ? 'ring-2 ring-spotify-green ring-offset-2 ring-offset-light-bg dark:ring-offset-spotify-black' : 'opacity-90'"
+        >
+          <p class="font-bold text-sm break-words">{{ $t('search.scope.all') }}</p>
+          <p class="text-xs text-white/80 mt-1">{{ $t('library.totalSongs', { count: songs.length }) }}</p>
+        </button>
+        <button
+          v-for="cat in visibleCategories"
+          :key="cat.key"
+          @click="selectCategory(cat.key)"
+          class="relative overflow-hidden rounded-lg p-3 text-left text-white bg-gradient-to-br transition-transform duration-150 hover:scale-105"
+          :class="[gradientFor(cat.key), selectedCategory === cat.key ? 'ring-2 ring-spotify-green ring-offset-2 ring-offset-light-bg dark:ring-offset-spotify-black' : 'opacity-90']"
+        >
+          <p class="font-bold text-sm break-words">{{ cat.key === '__none__' ? $t('library.uncategorized') : cat.key }}</p>
+          <p class="text-xs text-white/80 mt-1">{{ $t('library.totalSongs', { count: cat.count }) }}</p>
+        </button>
+        <button
+          v-if="categories.length > COLLAPSED_CATEGORY_COUNT"
+          @click="categoriesExpanded = !categoriesExpanded"
+          class="rounded-lg p-3 text-left border border-dashed border-light-border dark:border-spotify-light text-light-text-secondary dark:text-gray-400 hover:text-spotify-green hover:border-spotify-green transition-colors duration-150"
+        >
+          <p class="font-bold text-sm">
+            {{ categoriesExpanded ? $t('library.showLess') : `+${categories.length - COLLAPSED_CATEGORY_COUNT}` }}
+          </p>
+          <p class="text-xs mt-1">{{ categoriesExpanded ? '' : $t('library.showMore') }}</p>
+        </button>
+      </div>
+
       <div class="mb-6 flex items-center justify-between">
-        <p class="text-light-text-secondary dark:text-gray-400">{{ $t('library.totalSongs', { count: songs.length }) }}</p>
+        <p class="text-light-text-secondary dark:text-gray-400">
+          {{ $t('library.totalSongs', { count: filteredCount }) }}
+          <span v-if="isFiltering" class="text-xs"> / {{ songs.length }}</span>
+        </p>
         <div v-if="isLoadingTitles" class="text-spotify-green text-sm flex items-center">
           <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-spotify-green" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -29,7 +66,7 @@
           </div>
           <div class="flex-1 min-w-0">
             <p class="text-light-text-primary dark:text-white font-medium break-words">{{ song.title }}</p>
-            <p class="text-light-text-secondary dark:text-gray-400 text-sm">{{ formatDuration(song.duration) }}</p>
+            <p class="text-light-text-secondary dark:text-gray-400 text-sm">{{ songSubtitle(song) }}</p>
           </div>
           <div class="flex items-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-200">
             <button 
@@ -52,7 +89,12 @@
           </div>
         </div>
       </div>
-      
+
+      <!-- No results for the current quick filter -->
+      <div v-if="isFiltering && filteredCount === 0" class="text-center text-light-text-secondary dark:text-gray-400 mt-12">
+        {{ $t('search.noResults') }}
+      </div>
+
       <!-- Pagination -->
       <div v-if="totalPages > 1" class="flex flex-col items-center mt-8 space-y-4">
         <!-- Page Numbers -->
@@ -163,6 +205,7 @@
 import { computed, ref, onMounted } from 'vue'
 import { HeartIcon, EllipsisHorizontalIcon } from '@heroicons/vue/24/outline'
 import SongCover from '@/components/UI/SongCover.vue'
+import SearchBar from '@/components/UI/SearchBar.vue'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
 import { usePlaylistsStore } from '@/stores/playlists'
@@ -190,6 +233,48 @@ const songs = computed(() => songsStore.songs)
 const paginatedSongs = computed(() => songsStore.paginatedSongs)
 const currentPage = computed(() => songsStore.currentPage)
 const totalPages = computed(() => songsStore.totalPages)
+const isFiltering = computed(() => songsStore.quickQuery.trim().length > 0 || songsStore.category !== 'all')
+const filteredCount = computed(() => songsStore.libraryFilteredSongs.length)
+
+// Category cards
+const COLLAPSED_CATEGORY_COUNT = 10
+const categoriesExpanded = ref(false)
+const categories = computed(() => songsStore.categories)
+// Only show the card grid once metadata provides real genres
+const hasCategories = computed(() => categories.value.some(c => c.key !== '__none__'))
+const selectedCategory = computed(() => songsStore.category)
+const visibleCategories = computed(() => {
+  if (categoriesExpanded.value) return categories.value
+  const shown = categories.value.slice(0, COLLAPSED_CATEGORY_COUNT)
+  // keep the selected category visible even when collapsed
+  const selected = categories.value.find(c => c.key === selectedCategory.value)
+  if (selected && !shown.includes(selected)) shown[shown.length - 1] = selected
+  return shown
+})
+
+function selectCategory(key: string) {
+  songsStore.setCategory(key)
+}
+
+// Deterministic card gradient per category name
+const CARD_GRADIENTS = [
+  'from-purple-500 to-indigo-700',
+  'from-rose-500 to-red-700',
+  'from-amber-500 to-orange-700',
+  'from-sky-500 to-blue-700',
+  'from-teal-500 to-cyan-700',
+  'from-fuchsia-500 to-pink-700',
+  'from-lime-600 to-green-800',
+  'from-violet-500 to-purple-800',
+  'from-orange-500 to-rose-700',
+  'from-blue-500 to-violet-700',
+]
+function gradientFor(name: string): string {
+  if (name === '__none__') return 'from-gray-500 to-gray-700'
+  let hash = 0
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0
+  return CARD_GRADIENTS[hash % CARD_GRADIENTS.length]
+}
 
 // Jump to page input
 const jumpToPageInput = ref<number | null>(null)
@@ -213,8 +298,10 @@ const visiblePages = computed(() => {
 })
 
 async function playSong(song: Song, index: number) {
+  // Queue is the (possibly filtered) list so next/previous stay within the results
+  const queue = songsStore.libraryFilteredSongs
   const startIndex = (currentPage.value - 1) * songsStore.pageSize + index
-  await playerStore.playSong(song, songs.value, startIndex)
+  await playerStore.playSong(song, queue, startIndex)
 }
 
 function toggleFavorite(song: Song) {
@@ -266,6 +353,11 @@ function formatDuration(duration?: number): string {
   const seconds = Math.floor(duration % 60)
   return `${minutes}:${seconds.toString().padStart(2, '0')}`
 }
+
+function songSubtitle(song: Song): string {
+  return [song.artist, song.year, formatDuration(song.duration)].filter(Boolean).join(' · ')
+}
+
 function openAddToPlaylistModal(song: Song) {
   selectedSong.value = song
   showAddToPlaylistModal.value = true

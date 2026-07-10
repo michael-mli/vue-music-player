@@ -210,12 +210,16 @@
 
       <!-- Available songs -->
       <template v-else>
+        <SearchBar class="mb-4" />
         <p class="text-light-text-secondary dark:text-gray-400 mb-4 text-sm">
-          {{ $t('karaoke.available', { count: availableSongs.length }) }}
+          {{ $t('karaoke.available', { count: visibleSongs.length }) }}
         </p>
+        <div v-if="visibleSongs.length === 0" class="text-center text-light-text-secondary dark:text-gray-400 py-8">
+          {{ $t('search.noResults') }}
+        </div>
         <div class="space-y-2">
           <div
-            v-for="(song, index) in availableSongs"
+            v-for="(song, index) in visibleSongs"
             :key="song.id"
             @click="sing(song, index)"
             class="flex items-center p-3 rounded-lg hover:bg-light-border dark:hover:bg-spotify-light cursor-pointer group transition-colors duration-200"
@@ -253,6 +257,7 @@
 import { computed, ref, watch, onMounted } from 'vue'
 import { MicrophoneIcon, ArrowDownTrayIcon } from '@heroicons/vue/24/outline'
 import SongCover from '@/components/UI/SongCover.vue'
+import SearchBar from '@/components/UI/SearchBar.vue'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
 import { karaokeService } from '@/services/karaokeService'
@@ -308,6 +313,9 @@ const availableSongs = computed<Song[]>(() => {
   return songsStore.songs.filter((s) => karaokeService.isAvailable(s.id))
 })
 
+// Karaoke-ready songs narrowed by the quick search bar
+const visibleSongs = computed<Song[]>(() => songsStore.applyQuickFilter(availableSongs.value))
+
 // Load lyrics (synced + plain fallback) for whatever song is currently playing.
 watch(currentSong, async (song) => {
   syncedLines.value = []
@@ -362,7 +370,7 @@ onMounted(async () => {
 
 async function sing(song: Song, index: number) {
   playerStore.setKaraokeMode(true) // ensure the instrumental loads from the start
-  await playerStore.playSong(song, availableSongs.value, index)
+  await playerStore.playSong(song, visibleSongs.value, index)
 }
 
 // Switch the currently-playing song between instrumental (karaoke) and original (vocals),

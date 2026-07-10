@@ -6,7 +6,26 @@ export interface Song {
   lyrics?: string
   isFavorite: boolean
   matchType?: 'title' | 'lyrics'
+  artist?: string
+  album?: string
+  year?: number
+  genre?: string
+  language?: string
 }
+
+/** Per-song metadata built offline by scripts/build_metadata.py → /data/metadata.json */
+export interface SongMeta {
+  title?: string
+  artist?: string
+  album?: string
+  year?: number
+  genre?: string
+  language?: string
+  duration?: number
+}
+
+/** Which metadata field the quick search filters on. */
+export type SearchScope = 'all' | 'title' | 'artist' | 'album' | 'year' | 'genre'
 
 /** A single time-stamped lyric line (parsed from LRC). `time` is seconds from start. */
 export interface LyricLine {

@@ -21,17 +21,6 @@
         </li>
         <li>
           <RouterLink 
-            to="/search" 
-            @click="emit('close-mobile')"
-            class="flex items-center px-4 py-3 rounded-md text-sm font-medium transition-colors duration-200 hover:bg-light-border dark:hover:bg-spotify-light"
-            :class="{ 'bg-light-border text-light-text-primary dark:bg-spotify-light dark:text-white': $route.name === 'Search', 'text-light-text-secondary dark:text-gray-300': $route.name !== 'Search' }"
-          >
-            <MagnifyingGlassIcon class="w-5 h-5 mr-3" />
-            {{ $t('navigation.search') }}
-          </RouterLink>
-        </li>
-        <li>
-          <RouterLink 
             to="/library" 
             @click="emit('close-mobile')"
             class="flex items-center px-4 py-3 rounded-md text-sm font-medium transition-colors duration-200 hover:bg-light-border dark:hover:bg-spotify-light"
@@ -125,9 +114,8 @@ const buildDate = new Date(buildTime)
 const buildLabel = buildDate.toLocaleDateString('en', { month: 'short', day: 'numeric' })
   + ' ' + buildDate.toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit', hour12: false })
 import { RouterLink, useRoute } from 'vue-router'
-import { 
+import {
   HomeIcon,
-  MagnifyingGlassIcon,
   BuildingLibraryIcon,
   MicrophoneIcon,
   PlusIcon,

@@ -37,6 +37,32 @@
           >{{ ingestLog.join('\n') }}</pre>
         </section>
 
+        <!-- Metadata -->
+        <section class="mb-10 p-4 rounded-lg bg-light-card dark:bg-spotify-dark border border-light-border dark:border-spotify-light">
+          <h2 class="text-lg font-bold text-light-text-primary dark:text-white mb-1">{{ $t('admin.metadataTitle') }}</h2>
+          <p class="text-sm text-light-text-secondary dark:text-gray-400 mb-3">{{ $t('admin.metadataHint') }}</p>
+          <div class="flex items-center gap-2 mb-3">
+            <input
+              v-model="metaIdsInput"
+              type="text"
+              :placeholder="$t('admin.metadataPlaceholder')"
+              class="flex-1 px-3 py-2 rounded bg-white/10 border border-white/20 focus:border-spotify-green text-light-text-primary dark:text-white text-sm"
+              @keyup.enter="runMetadata"
+            />
+            <button
+              @click="runMetadata"
+              :disabled="metaRunning"
+              class="px-4 py-2 rounded-full bg-spotify-green text-black text-sm font-medium hover:bg-spotify-green/80 disabled:opacity-40"
+            >{{ metaRunning ? $t('admin.running') : $t('admin.runMetadata') }}</button>
+          </div>
+          <p v-if="metaError" class="text-xs text-red-400 mb-2">{{ metaError }}</p>
+          <pre
+            v-if="metaLog.length"
+            ref="metaLogBox"
+            class="text-xs bg-black/40 text-gray-200 rounded p-3 max-h-72 overflow-y-auto whitespace-pre-wrap"
+          >{{ metaLog.join('\n') }}</pre>
+        </section>
+
         <!-- Users -->
         <section class="p-4 rounded-lg bg-light-card dark:bg-spotify-dark border border-light-border dark:border-spotify-light">
           <h2 class="text-lg font-bold text-light-text-primary dark:text-white mb-3">{{ $t('admin.usersTitle') }} ({{ users.length }})</h2>
@@ -92,12 +118,21 @@ const ingestError = ref('')
 const logBox = ref<HTMLElement>()
 let pollTimer: number | null = null
 
+const metaIdsInput = ref('')
+const metaRunning = ref(false)
+const metaLog = ref<string[]>([])
+const metaError = ref('')
+const metaLogBox = ref<HTMLElement>()
+let metaPollTimer: number | null = null
+
 const users = ref<(AuthUser & { created_at: string; last_login: string })[]>([])
 const usersError = ref('')
 
-const parsedIds = computed(() =>
-  [...new Set(idsInput.value.split(/[\s,]+/).map((s) => parseInt(s, 10)).filter((n) => Number.isInteger(n) && n > 0))],
-)
+const parseIdList = (input: string) =>
+  [...new Set(input.split(/[\s,]+/).map((s) => parseInt(s, 10)).filter((n) => Number.isInteger(n) && n > 0))]
+
+const parsedIds = computed(() => parseIdList(idsInput.value))
+const parsedMetaIds = computed(() => parseIdList(metaIdsInput.value))
 
 async function loadUsers() {
   try {
@@ -139,6 +174,37 @@ async function runIngest() {
   }
 }
 
+// Build metadata (blank input = all songs missing metadata)
+async function runMetadata() {
+  if (metaRunning.value) return
+  metaError.value = ''
+  metaLog.value = []
+  try {
+    const res = await adminService.startMetadata(parsedMetaIds.value)
+    if (!res.success) { metaError.value = res.message || 'failed to start'; return }
+    metaRunning.value = true
+    const jobId = res.data.jobId
+    metaPollTimer = window.setInterval(async () => {
+      try {
+        const s = await adminService.jobStatus(jobId)
+        metaLog.value = s.data.log
+        await nextTick()
+        if (metaLogBox.value) metaLogBox.value.scrollTop = metaLogBox.value.scrollHeight
+        if (!s.data.running) {
+          metaRunning.value = false
+          if (metaPollTimer) { clearInterval(metaPollTimer); metaPollTimer = null }
+          metaLog.value.push(`--- finished (exit ${s.data.exitCode}) ---`)
+        }
+      } catch {
+        metaRunning.value = false
+        if (metaPollTimer) { clearInterval(metaPollTimer); metaPollTimer = null }
+      }
+    }, 2000)
+  } catch (e) {
+    metaError.value = (e as Error).message || 'metadata build failed'
+  }
+}
+
 async function changeRole(u: AuthUser, role: string) {
   try {
     await adminService.setRole(u.id, role as 'admin' | 'user')
@@ -163,5 +229,8 @@ onMounted(async () => {
   if (!auth.ready) await auth.fetchMe()
   if (auth.isAdmin) await loadUsers()
 })
-onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
+onUnmounted(() => {
+  if (pollTimer) clearInterval(pollTimer)
+  if (metaPollTimer) clearInterval(metaPollTimer)
+})
 </script>
