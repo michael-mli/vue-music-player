@@ -15,18 +15,18 @@
         <section class="mb-10 p-4 rounded-lg bg-light-card dark:bg-spotify-dark border border-light-border dark:border-spotify-light">
           <h2 class="text-lg font-bold text-light-text-primary dark:text-white mb-1">{{ $t('admin.ingestTitle') }}</h2>
           <p class="text-sm text-light-text-secondary dark:text-gray-400 mb-3">{{ $t('admin.ingestHint') }}</p>
-          <div class="flex items-center gap-2 mb-3">
+          <div class="flex flex-col sm:flex-row sm:items-center gap-2 mb-3">
             <input
               v-model="idsInput"
               type="text"
               :placeholder="$t('admin.ingestPlaceholder')"
-              class="flex-1 px-3 py-2 rounded bg-white/10 border border-white/20 focus:border-spotify-green text-light-text-primary dark:text-white text-sm"
+              class="w-full sm:flex-1 min-w-0 px-3 py-2 rounded bg-white/10 border border-white/20 focus:border-spotify-green text-light-text-primary dark:text-white text-sm"
               @keyup.enter="runIngest"
             />
             <button
               @click="runIngest"
               :disabled="ingestRunning || !parsedIds.length"
-              class="px-4 py-2 rounded-full bg-spotify-green text-black text-sm font-medium hover:bg-spotify-green/80 disabled:opacity-40"
+              class="w-full sm:w-auto flex-shrink-0 px-4 py-2 rounded-full bg-spotify-green text-black text-sm font-medium hover:bg-spotify-green/80 disabled:opacity-40"
             >{{ ingestRunning ? $t('admin.running') : $t('admin.runIngest') }}</button>
           </div>
           <p v-if="ingestError" class="text-xs text-red-400 mb-2">{{ ingestError }}</p>
@@ -41,18 +41,18 @@
         <section class="mb-10 p-4 rounded-lg bg-light-card dark:bg-spotify-dark border border-light-border dark:border-spotify-light">
           <h2 class="text-lg font-bold text-light-text-primary dark:text-white mb-1">{{ $t('admin.metadataTitle') }}</h2>
           <p class="text-sm text-light-text-secondary dark:text-gray-400 mb-3">{{ $t('admin.metadataHint') }}</p>
-          <div class="flex items-center gap-2 mb-3">
+          <div class="flex flex-col sm:flex-row sm:items-center gap-2 mb-3">
             <input
               v-model="metaIdsInput"
               type="text"
               :placeholder="$t('admin.metadataPlaceholder')"
-              class="flex-1 px-3 py-2 rounded bg-white/10 border border-white/20 focus:border-spotify-green text-light-text-primary dark:text-white text-sm"
+              class="w-full sm:flex-1 min-w-0 px-3 py-2 rounded bg-white/10 border border-white/20 focus:border-spotify-green text-light-text-primary dark:text-white text-sm"
               @keyup.enter="runMetadata"
             />
             <button
               @click="runMetadata"
               :disabled="metaRunning"
-              class="px-4 py-2 rounded-full bg-spotify-green text-black text-sm font-medium hover:bg-spotify-green/80 disabled:opacity-40"
+              class="w-full sm:w-auto flex-shrink-0 px-4 py-2 rounded-full bg-spotify-green text-black text-sm font-medium hover:bg-spotify-green/80 disabled:opacity-40"
             >{{ metaRunning ? $t('admin.running') : $t('admin.runMetadata') }}</button>
           </div>
           <p v-if="metaError" class="text-xs text-red-400 mb-2">{{ metaError }}</p>
@@ -70,7 +70,7 @@
             <div
               v-for="u in users"
               :key="u.id"
-              class="flex items-center gap-3 p-2 rounded hover:bg-light-border dark:hover:bg-spotify-light"
+              class="flex flex-wrap items-center gap-x-3 gap-y-2 p-2 rounded hover:bg-light-border dark:hover:bg-spotify-light"
             >
               <UserAvatar :user="u" :size="32" />
               <div class="flex-1 min-w-0">
