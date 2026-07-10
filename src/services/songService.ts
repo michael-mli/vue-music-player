@@ -31,6 +31,22 @@ export const songService = {
     return this._loadTitleCache().get(id)
   },
 
+  // Seed the title cache from the server-built metadata index so first-time clients get
+  // every title from one fetch instead of deriving them lyrics-file by lyrics-file.
+  // Existing cache entries win. Returns how many titles were added.
+  seedTitleCache(titles: Map<number, string>): number {
+    const cache = this._loadTitleCache()
+    let added = 0
+    for (const [id, title] of titles) {
+      if (title && !cache.has(id)) {
+        cache.set(id, title)
+        added++
+      }
+    }
+    if (added > 0) this._saveTitleCache()
+    return added
+  },
+
   _loadDurationCache(): Map<number, number> {
     if (this._durationCache) return this._durationCache
     try {

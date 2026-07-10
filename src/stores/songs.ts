@@ -171,6 +171,15 @@ export const useSongsStore = defineStore('songs', () => {
   async function loadMetadata() {
     const meta = await metadataService.load()
     if (meta.size === 0) return
+
+    // Server-built titles → title cache, so fetchUncachedTitles has (almost) nothing
+    // left to derive from lyrics files and first launch skips the slow title build.
+    const titleSeed = new Map<number, string>()
+    for (const [id, m] of meta) {
+      if (m.title) titleSeed.set(id, m.title)
+    }
+    songService.seedTitleCache(titleSeed)
+
     songs.value = songs.value.map(song => {
       const m = meta.get(song.id)
       if (!m) return song
