@@ -199,7 +199,12 @@
     "example": "示例：/music/?song=124",
     "invalidSongId": "无效的歌曲 ID。请提供有效的数字。",
     "songNotFoundWithId": "未找到 ID 为 {id} 的歌曲。请检查歌曲 ID 后重试。",
-    "failedToLoad": "加载歌曲失败。请重试。"
+    "failedToLoad": "加载歌曲失败。请重试。",
+    "effect": "特效"
+  },
+  "share": {
+    "notePrompt": "给对方留言（可选）：",
+    "noteFrom": "来自分享者的留言"
   },
   "auth": {
     "signIn": "登录",

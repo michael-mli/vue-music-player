@@ -199,7 +199,12 @@
     "example": "Example: /music/?song=124",
     "invalidSongId": "Invalid song ID. Please provide a valid number.",
     "songNotFoundWithId": "Song with ID {id} not found. Please check the song ID and try again.",
-    "failedToLoad": "Failed to load the song. Please try again."
+    "failedToLoad": "Failed to load the song. Please try again.",
+    "effect": "Effect"
+  },
+  "share": {
+    "notePrompt": "Add a note for the receiver (optional):",
+    "noteFrom": "Message from the sender"
   },
   "auth": {
     "signIn": "Sign in",
