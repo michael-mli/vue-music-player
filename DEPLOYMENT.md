@@ -220,3 +220,24 @@ npm run build -- --mode production --env-file .env.custom
 ```
 
 This configuration system ensures your MP3 files are properly accessible regardless of your deployment architecture!
+## Shared-song link previews (nginx)
+
+Chat apps read raw HTML without running JS, so `/music?song=N` previews need server-side
+tags. The auth backend (`server/index.js`) serves the deployed `index.html` with
+`<title>`/`og:` tags rewritten (song title from `metadata.json`, `?note=`, poster image).
+Route it in the nginx site config, before the SPA `location /`:
+
+```nginx
+location = /music {
+    proxy_pass http://127.0.0.1:3101;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+location = /music/ {
+    proxy_pass http://127.0.0.1:3101;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```

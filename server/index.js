@@ -1,6 +1,7 @@
 // Karaoke backend — Phase 1: Google Sign-In + roles + JWT sessions.
 // nginx proxies /api → this service. Admin ingest + user management land in later phases.
 import dotenv from 'dotenv'
+import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import express from 'express'
@@ -23,6 +24,7 @@ const {
   DATA_DIR = '/var/www/html/others/music/_auth',
   SESSION_TTL_HOURS = '168',
   REPO_DIR = '/home/mli/others/vue-music-player',
+  WEB_ROOT = '/var/www/html/others/music',
 } = process.env
 
 const configOk = Boolean(GOOGLE_CLIENT_ID && JWT_SECRET)
@@ -65,6 +67,59 @@ function requireAdmin(req, res, next) {
   if (req.auth?.role !== 'admin') return res.status(403).json({ success: false, message: 'admin only' })
   next()
 }
+
+// ─── Shared-song link previews ───────────────────────────────────────────────
+// Chat apps (WeChat/WhatsApp/etc.) read the raw HTML without running JS, so the SPA's
+// dynamic tab title never reaches them. nginx routes /music here; we serve the deployed
+// index.html with the <title> and og: tags rewritten for the shared song, so previews
+// show "song — note" while browsers still boot the exact same app.
+const escapeHtml = (s) =>
+  String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+
+let songMetaCache = { mtime: 0, songs: {} }
+function songTitle(id) {
+  try {
+    const p = path.join(WEB_ROOT, 'metadata.json')
+    const mtime = fs.statSync(p).mtimeMs
+    if (mtime !== songMetaCache.mtime) {
+      songMetaCache = { mtime, songs: JSON.parse(fs.readFileSync(p, 'utf8')).songs || {} }
+    }
+    return songMetaCache.songs[String(id)]?.title || null
+  } catch {
+    return null
+  }
+}
+
+app.get(['/music', '/music/'], (req, res) => {
+  let html
+  try {
+    html = fs.readFileSync(path.join(WEB_ROOT, 'index.html'), 'utf8')
+  } catch {
+    return res.status(404).send('not found')
+  }
+  const id = parseInt(req.query.song, 10)
+  if (Number.isInteger(id) && id > 0 && id < 100000) {
+    const note = typeof req.query.note === 'string' ? req.query.note.slice(0, 200).trim() : ''
+    const host = req.headers.host || 'music.micstec.com'
+    const title = songTitle(id) || `Song ${id}`
+    const label = note ? `${title} — ${note}` : title
+    const url = `https://${host}/music/?song=${id}${note ? `&note=${encodeURIComponent(note)}` : ''}`
+    const tags = [
+      `<meta property="og:title" content="${escapeHtml(label)}">`,
+      `<meta property="og:description" content="${escapeHtml(note || "Listen on Mic's Music Player")}">`,
+      `<meta property="og:type" content="music.song">`,
+      `<meta property="og:url" content="${escapeHtml(url)}">`,
+      `<meta property="og:image" content="https://${escapeHtml(host)}/poster/link.${id}.jpg">`,
+      `<meta name="twitter:card" content="summary">`,
+    ].join('\n    ')
+    html = html.replace(
+      /<title>.*?<\/title>/,
+      `<title>${escapeHtml(label)} | Mic's Music Player</title>\n    ${tags}`,
+    )
+  }
+  res.setHeader('Cache-Control', 'no-cache')
+  res.type('html').send(html)
+})
 
 app.get('/api/health', (req, res) =>
   res.json({ success: true, data: { ok: true, configOk, users: db.prepare('SELECT COUNT(*) c FROM users').get().c, ts: now() } }),
