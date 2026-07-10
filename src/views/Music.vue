@@ -134,7 +134,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { MicrophoneIcon, DocumentTextIcon, SparklesIcon } from '@heroicons/vue/24/outline'
@@ -142,6 +142,7 @@ import SongCover from '@/components/UI/SongCover.vue'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
 import { useUiStore } from '@/stores/ui'
+import config from '@/config'
 
 const route = useRoute()
 const playerStore = usePlayerStore()
@@ -160,6 +161,20 @@ const currentSong = computed(() => playerStore.currentSong)
 const shareNote = computed(() => {
   const note = route.query.note
   return typeof note === 'string' ? note.slice(0, 200).trim() : ''
+})
+
+// Tab title: "song — note | app". The note belongs to the shared song only, so it drops
+// out of the title when playback moves on to another song in the queue.
+const sharedSongId = computed(() => parseInt(route.query.song as string, 10))
+watch([currentSong, shareNote], ([song]) => {
+  if (!song) return
+  const note = song.id === sharedSongId.value ? shareNote.value : ''
+  const label = [song.title, note].filter(Boolean).join(' — ')
+  document.title = `${label} | ${config.appTitle}`
+}, { immediate: true })
+
+onUnmounted(() => {
+  document.title = config.appTitle
 })
 
 onMounted(async () => {
