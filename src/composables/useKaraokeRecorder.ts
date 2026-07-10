@@ -16,6 +16,7 @@
 import { ref, onUnmounted } from 'vue'
 import { Mp3Encoder } from '@breezystack/lamejs'
 import { getMicStream } from './useMicDevices'
+import { usePlayerStore } from '@/stores/player'
 
 type AnyAudioContext = typeof AudioContext
 function getAudioContextCtor(): AnyAudioContext | null {
@@ -40,6 +41,7 @@ export interface RecordOptions {
 }
 
 export function useKaraokeRecorder() {
+  const playerStore = usePlayerStore()
   const recording = ref(false)
   const error = ref<'' | 'denied' | 'unsupported' | 'failed'>('')
   const elapsed = ref(0)
@@ -111,6 +113,12 @@ export function useKaraokeRecorder() {
       processor.connect(silent)
       silent.connect(ctx.destination)
 
+      // The user hears the music from THIS context (mic stays recorder-only — no
+      // feedback), while the main player element is muted below: playing both copies
+      // near-synced phases badly and sounds like a big quality drop.
+      musicSrc.connect(ctx.destination)
+      playerStore.setRecordingDuck(true)
+
       encoder = new Mp3Encoder(2, ctx.sampleRate, 128)
       mp3Chunks = []
       processor.onaudioprocess = (e) => {
@@ -160,6 +168,8 @@ export function useKaraokeRecorder() {
   }
 
   function cleanup() {
+    // Restore the main player's audio on every exit path (stop, error, unmount)
+    playerStore.setRecordingDuck(false)
     if (processor) {
       processor.onaudioprocess = null
       try { processor.disconnect() } catch { /* noop */ }

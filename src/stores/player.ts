@@ -573,7 +573,18 @@ export const usePlayerStore = defineStore('player', () => {
   function toggleMute() {
     isMuted.value = !isMuted.value
     if (audioElement.value) {
-      audioElement.value.muted = isMuted.value
+      audioElement.value.muted = isMuted.value || recordingDuck
+    }
+  }
+
+  // While the karaoke recorder runs, ITS context plays the instrumental to the speakers;
+  // the main element is muted meanwhile — two near-synced copies phase against each other
+  // and sound like a dramatic quality drop. User mute state is preserved underneath.
+  let recordingDuck = false
+  function setRecordingDuck(on: boolean) {
+    recordingDuck = on
+    if (audioElement.value) {
+      audioElement.value.muted = on || isMuted.value
     }
   }
 
@@ -1388,6 +1399,7 @@ export const usePlayerStore = defineStore('player', () => {
     setKaraokeMode,
     setVolume,
     toggleMute,
+    setRecordingDuck,
     toggleShuffle,
     toggleRepeat,
     setSleepTimer,

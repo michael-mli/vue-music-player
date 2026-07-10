@@ -63,11 +63,10 @@ const recorder = useKaraokeRecorder()
 
 const showResult = ref(false)
 
-const visible = computed(() =>
-  playerStore.karaokeMode && recorder.supported.value && !!playerStore.currentSong
-)
-// Recording needs an instrumental for the current song
-const canRecord = computed(() => playerStore.karaokeAvailable)
+// Present the whole time karaoke mode is on — on every page, Karaoke included
+const visible = computed(() => playerStore.karaokeMode && recorder.supported.value)
+// Recording needs a current song with an instrumental
+const canRecord = computed(() => !!playerStore.currentSong && playerStore.karaokeAvailable)
 
 const elapsedLabel = computed(() => {
   const s = recorder.elapsed.value
