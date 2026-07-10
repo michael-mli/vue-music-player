@@ -228,16 +228,23 @@ tags. The auth backend (`server/index.js`) serves the deployed `index.html` with
 Route it in the nginx site config, before the SPA `location /`:
 
 ```nginx
+# NB: the add_header lines are required. Defining ANY add_header in a location stops
+# inheritance of the server-level security headers — including a Content-Security-Policy
+# without 'unsafe-eval' that breaks the SPA (vue-i18n compiles messages with eval), which
+# otherwise makes shared links load a blank page forever. "location /" already defines
+# its own add_header, which is why the rest of the app never sees that CSP.
 location = /music {
     proxy_pass http://127.0.0.1:3101;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-Proto $scheme;
+    add_header Cache-Control "no-cache, no-store, must-revalidate";
 }
 location = /music/ {
     proxy_pass http://127.0.0.1:3101;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-Proto $scheme;
+    add_header Cache-Control "no-cache, no-store, must-revalidate";
 }
 ```
