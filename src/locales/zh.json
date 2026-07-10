@@ -203,7 +203,12 @@
     "effect": "特效"
   },
   "share": {
-    "notePrompt": "给对方留言（可选）：",
+    "title": "分享歌曲",
+    "noteLabel": "给对方的留言（可选）",
+    "notePlaceholder": "例如：这首歌让我想起你 🎵",
+    "shareBtn": "分享",
+    "copyBtn": "复制链接",
+    "copied": "链接已复制",
     "noteFrom": "来自分享者的留言"
   },
   "auth": {
