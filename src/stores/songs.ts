@@ -49,6 +49,40 @@ export const useSongsStore = defineStore('songs', () => {
 
   const quickFilteredSongs = computed(() => applyQuickFilter(songs.value))
 
+  // Library category (genre) filter — combines with the quick filter, Library page only.
+  // 'all' = everything, '__none__' = songs without a genre.
+  const category = ref<string>('all')
+
+  const categories = computed(() => {
+    const counts = new Map<string, number>()
+    let uncategorized = 0
+    for (const song of songs.value) {
+      if (song.genre) counts.set(song.genre, (counts.get(song.genre) || 0) + 1)
+      else uncategorized++
+    }
+    const list = [...counts.entries()]
+      .map(([key, count]) => ({ key, count }))
+      .sort((a, b) => b.count - a.count)
+    if (uncategorized > 0) list.push({ key: '__none__', count: uncategorized })
+    return list
+  })
+
+  function matchesCategory(song: Song): boolean {
+    if (category.value === 'all') return true
+    if (category.value === '__none__') return !song.genre
+    return song.genre === category.value
+  }
+
+  function setCategory(key: string) {
+    category.value = key
+    currentPage.value = 1
+  }
+
+  // What the Library page lists/paginates: category first, then the quick filter.
+  const libraryFilteredSongs = computed(() =>
+    applyQuickFilter(category.value === 'all' ? songs.value : songs.value.filter(matchesCategory))
+  )
+
   function setQuickQuery(query: string) {
     quickQuery.value = query
     currentPage.value = 1
@@ -83,7 +117,7 @@ export const useSongsStore = defineStore('songs', () => {
   const paginatedSongs = computed(() => {
     const start = (currentPage.value - 1) * pageSize.value
     const end = start + pageSize.value
-    return quickFilteredSongs.value.slice(start, end)
+    return libraryFilteredSongs.value.slice(start, end)
   })
 
   const paginatedSearchSongs = computed(() => {
@@ -93,7 +127,7 @@ export const useSongsStore = defineStore('songs', () => {
   })
 
   const totalPages = computed(() => {
-    return Math.max(1, Math.ceil(quickFilteredSongs.value.length / pageSize.value))
+    return Math.max(1, Math.ceil(libraryFilteredSongs.value.length / pageSize.value))
   })
 
   const totalSearchPages = computed(() => {
@@ -353,7 +387,7 @@ export const useSongsStore = defineStore('songs', () => {
   // Load titles for songs currently visible on the page (respects the quick filter)
   async function loadTitlesForCurrentPage() {
     const startIndex = (currentPage.value - 1) * pageSize.value
-    const pageSongs = quickFilteredSongs.value.slice(startIndex, startIndex + pageSize.value)
+    const pageSongs = libraryFilteredSongs.value.slice(startIndex, startIndex + pageSize.value)
     const songsToUpdate = pageSongs.filter(song => song.title.startsWith('Song '))
     if (songsToUpdate.length === 0) return
 
@@ -417,10 +451,13 @@ export const useSongsStore = defineStore('songs', () => {
     titleLoadingProgress,
     quickQuery,
     quickScope,
+    category,
 
     // Getters
     filteredSongs,
     quickFilteredSongs,
+    libraryFilteredSongs,
+    categories,
     paginatedSongs,
     paginatedSearchSongs,
     totalPages,
@@ -432,6 +469,7 @@ export const useSongsStore = defineStore('songs', () => {
     loadMetadata,
     setQuickQuery,
     setQuickScope,
+    setCategory,
     clearQuickFilter,
     applyQuickFilter,
     fetchUncachedTitles,

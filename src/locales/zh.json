@@ -75,7 +75,9 @@
     "noResults": "未找到歌曲",
     "totalSongs": "{count} 首歌曲",
     "loadingTitles": "正在加载歌曲标题...",
-    "showMore": "显示更多"
+    "showMore": "显示更多",
+    "showLess": "收起",
+    "uncategorized": "未分类"
   },
   "playlist": {
     "create": "创建播放列表",
