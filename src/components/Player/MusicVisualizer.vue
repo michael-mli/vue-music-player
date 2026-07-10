@@ -146,8 +146,8 @@ const canvasHeight = ref(window.innerHeight)
 // Settings
 const visualizerType = ref<'bars' | 'circle' | 'wave' | 'galaxy' | 'fountain' | 'terrain'>('bars')
 const backgroundOpacity = ref(0.0)
-const colorScheme = ref<'spotify' | 'rainbow' | 'blue' | 'fire'>('spotify')
-const barHeight = ref(0.8)
+const colorScheme = ref<'spotify' | 'rainbow' | 'blue' | 'fire'>('rainbow')
+const barHeight = ref(0.2)
 const showSettings = ref(false)
 
 // Audio context and analyzer
@@ -781,8 +781,8 @@ onMounted(() => {
       const settings = JSON.parse(saved)
       visualizerType.value = settings.type || 'bars'
       backgroundOpacity.value = settings.backgroundOpacity ?? 0.0
-      colorScheme.value = settings.colorScheme || 'spotify'
-      barHeight.value = settings.barHeight ?? 0.8
+      colorScheme.value = settings.colorScheme || 'rainbow'
+      barHeight.value = settings.barHeight ?? 0.2
     } catch (error) {
       console.error('Error loading visualizer settings:', error)
     }

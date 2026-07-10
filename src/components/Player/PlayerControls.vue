@@ -621,6 +621,7 @@ import {
   MicrophoneIcon,
   SunIcon
 } from '@heroicons/vue/24/outline'
+import { useI18n } from 'vue-i18n'
 import { useWakeLock } from '@/composables/useWakeLock'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
@@ -636,6 +637,7 @@ const emit = defineEmits<{
   'toggle-visualizer': []
 }>()
 
+const { t } = useI18n()
 const playerStore = usePlayerStore()
 const songsStore = useSongsStore()
 const playlistsStore = usePlaylistsStore()
@@ -744,9 +746,13 @@ function openAddToPlaylistModal() {
 
 async function shareSong() {
   if (!currentSong.value) return
-  
+
+  // Optional quick comment for the receiver — travels in the link (?note=) and is shown
+  // on the shared-song page. Cancelling the prompt just shares without a note.
+  const note = (window.prompt(t('share.notePrompt'), '') || '').trim().slice(0, 200)
   const shareUrl = `${window.location.origin}/music/?song=${currentSong.value.id}`
-  const shareText = `Check out this song: ${currentSong.value.title}`
+    + (note ? `&note=${encodeURIComponent(note)}` : '')
+  const shareText = note || `Check out this song: ${currentSong.value.title}`
   
   // Try to use Web Share API if available (mobile)
   if (navigator.share) {

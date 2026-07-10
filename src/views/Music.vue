@@ -16,9 +16,55 @@
 
       <!-- Song found and playing -->
       <div v-else-if="currentSong" class="text-center">
+        <!-- Quick toggles at page top (also present in the bottom player bar) -->
+        <div class="flex justify-center gap-2 sm:gap-3 mb-6 flex-wrap">
+          <button
+            @click="playerStore.toggleKaraoke()"
+            :disabled="!playerStore.karaokeAvailable"
+            :title="playerStore.karaokeAvailable ? t('player.karaoke') : t('player.karaokeUnavailable')"
+            class="flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-colors duration-200 disabled:opacity-40"
+            :class="playerStore.karaokeMode && playerStore.karaokeAvailable
+              ? 'bg-spotify-green text-black hover:bg-spotify-green/80'
+              : 'bg-light-border dark:bg-white/10 text-light-text-primary dark:text-white hover:bg-light-border/70 dark:hover:bg-white/20'"
+          >
+            <MicrophoneIcon class="w-4 h-4" />
+            {{ t('navigation.karaoke') }}
+          </button>
+          <button
+            @click="ui.toggleLyrics()"
+            class="flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-colors duration-200"
+            :class="ui.showLyrics
+              ? 'bg-spotify-green text-black hover:bg-spotify-green/80'
+              : 'bg-light-border dark:bg-white/10 text-light-text-primary dark:text-white hover:bg-light-border/70 dark:hover:bg-white/20'"
+          >
+            <DocumentTextIcon class="w-4 h-4" />
+            {{ t('lyrics.title') }}
+          </button>
+          <button
+            @click="ui.toggleVisualizer()"
+            class="flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-colors duration-200"
+            :class="ui.showVisualizer
+              ? 'bg-spotify-green text-black hover:bg-spotify-green/80'
+              : 'bg-light-border dark:bg-white/10 text-light-text-primary dark:text-white hover:bg-light-border/70 dark:hover:bg-white/20'"
+          >
+            <SparklesIcon class="w-4 h-4" />
+            {{ t('music.effect') }}
+          </button>
+        </div>
+
         <h1 class="text-3xl font-bold text-light-text-primary dark:text-white mb-2">
           {{ t('music.nowPlaying') }}
         </h1>
+
+        <!-- Note the sender attached to the share link -->
+        <div
+          v-if="shareNote"
+          class="max-w-md mx-auto mb-6 p-4 rounded-lg bg-spotify-green/10 border border-spotify-green/40 text-left"
+        >
+          <p class="text-xs text-spotify-green font-medium mb-1">💬 {{ t('share.noteFrom') }}</p>
+          <p class="text-light-text-primary dark:text-white break-words">{{ shareNote }}</p>
+        </div>
+
         <div class="max-w-md mx-auto bg-light-card dark:bg-spotify-dark rounded-lg p-6 mb-6">
           <div class="w-32 h-32 bg-light-border dark:bg-spotify-light rounded-lg mx-auto mb-4 overflow-hidden">
             <SongCover :song-id="currentSong.id" :alt="currentSong.title" />
@@ -91,14 +137,16 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { MicrophoneIcon, DocumentTextIcon, SparklesIcon } from '@heroicons/vue/24/outline'
 import SongCover from '@/components/UI/SongCover.vue'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
-import type { Song } from '@/types'
+import { useUiStore } from '@/stores/ui'
 
 const route = useRoute()
 const playerStore = usePlayerStore()
 const songsStore = useSongsStore()
+const ui = useUiStore()
 const { t } = useI18n()
 
 const loading = ref(false)
@@ -106,6 +154,13 @@ const loadingMessage = ref('')
 const error = ref('')
 
 const currentSong = computed(() => playerStore.currentSong)
+
+// Optional note the sender attached to the share link (?note=...). Rendered as plain
+// text (Vue escapes it) and length-capped to match what the share flow produces.
+const shareNote = computed(() => {
+  const note = route.query.note
+  return typeof note === 'string' ? note.slice(0, 200).trim() : ''
+})
 
 onMounted(async () => {
   const songIdParam = route.query.song as string

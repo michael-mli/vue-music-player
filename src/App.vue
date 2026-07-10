@@ -114,11 +114,13 @@
 
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { RouterView, useRoute } from 'vue-router'
 import { MusicalNoteIcon } from '@heroicons/vue/24/outline'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
 import { usePlaylistsStore } from '@/stores/playlists'
+import { useUiStore } from '@/stores/ui'
 
 // Components
 import Sidebar from '@/components/UI/Sidebar.vue'
@@ -140,10 +142,9 @@ const playlistsStore = usePlaylistsStore()
 const route = useRoute()
 
 // Reactive state
-// Default open on desktop (lyrics is a side panel there), closed on mobile where it's
-// a full overlay — the app auto-loads a random song at launch without autoplaying on
-// mobile, so an unprompted lyrics overlay there is confusing. Matches Tailwind's `lg`.
-const showLyrics = ref(window.matchMedia('(min-width: 1024px)').matches)
+// Lyrics/visualizer visibility lives in the ui store so other pages (e.g. the shared-song
+// Music view) can toggle the same panels.
+const { showLyrics, showVisualizer } = storeToRefs(useUiStore())
 const showInstallPrompt = ref(false)
 const updateAvailable = ref(false)
 const showMobileSidebar = ref(false)
@@ -153,7 +154,6 @@ const deferredPrompt = ref<any>(null)
 const showPlayerAddToPlaylistModal = ref(false)
 const showPlayerCreatePlaylistModal = ref(false)
 const selectedSongFromPlayer = ref<any>(null)
-const showVisualizer = ref(false)
 
 // Auto-visualizer activation state
 const inactivityTimer = ref<number | null>(null)
