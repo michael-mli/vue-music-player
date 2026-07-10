@@ -9,6 +9,7 @@
  *   that trades feedback safety for fidelity, hence the headphones note.
  */
 import { ref, onUnmounted } from 'vue'
+import { getMicStream } from './useMicDevices'
 
 type AnyAudioContext = typeof AudioContext
 
@@ -62,9 +63,7 @@ export function useMicMonitor() {
     starting.value = true
     error.value = ''
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-      })
+      stream = await getMicStream({ echoCancellation: false, noiseSuppression: false, autoGainControl: false })
       ctx = new AC()
       await ctx.resume()
 
