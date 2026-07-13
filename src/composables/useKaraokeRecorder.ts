@@ -43,7 +43,6 @@ export interface RecordOptions {
 export function useKaraokeRecorder() {
   const playerStore = usePlayerStore()
   const recording = ref(false)
-  const starting = ref(false)
   const error = ref<'' | 'denied' | 'unsupported' | 'failed'>('')
   const elapsed = ref(0)
   const resultUrl = ref('')
@@ -63,17 +62,14 @@ export function useKaraokeRecorder() {
   let mp3Chunks: Uint8Array[] = []
   let syncTimer: number | null = null
   let tickTimer: number | null = null
-  let startGeneration = 0
 
   async function start(opts: RecordOptions) {
-    if (recording.value || starting.value) return
+    if (recording.value) return
     const AC = getAudioContextCtor()
     if (!AC || !navigator.mediaDevices?.getUserMedia) {
       error.value = 'unsupported'
       return
     }
-    const generation = ++startGeneration
-    starting.value = true
     error.value = ''
     elapsed.value = 0
     if (resultUrl.value) {
@@ -82,18 +78,16 @@ export function useKaraokeRecorder() {
     }
 
     try {
-      const micStream = await getMicStream({ echoCancellation: false, noiseSuppression: false, autoGainControl: false })
-      // getUserMedia cannot be aborted. If karaoke was turned off while its prompt was
-      // open, release the returned track before it can keep a headset capture profile live.
-      if (generation !== startGeneration) {
-        micStream.getTracks().forEach((track) => track.stop())
-        return
-      }
-      stream = micStream
+      stream = await getMicStream({ echoCancellation: false, noiseSuppression: false, autoGainControl: false })
+    } catch (e) {
+      error.value = (e as DOMException)?.name === 'NotAllowedError' ? 'denied' : 'failed'
+      cleanup()
+      return
+    }
 
+    try {
       ctx = new AC()
       await ctx.resume()
-      if (generation !== startGeneration) return
 
       // Hidden element that plays the instrumental into our context (muted to speakers).
       recAudio = new Audio(opts.instrumentalUrl)
@@ -104,7 +98,6 @@ export function useKaraokeRecorder() {
         recAudio!.addEventListener('error', () => reject(new Error('load')), { once: true })
         recAudio!.load()
       })
-      if (generation !== startGeneration) return
       try { recAudio.currentTime = opts.positionSec || 0 } catch { /* not seekable yet */ }
 
       const musicSrc = ctx.createMediaElementSource(recAudio)
@@ -137,7 +130,6 @@ export function useKaraokeRecorder() {
       }
 
       await recAudio.play()
-      if (generation !== startGeneration) return
       recording.value = true
 
       const startedAt = ctx.currentTime
@@ -152,41 +144,32 @@ export function useKaraokeRecorder() {
           try { recAudio.currentTime = target } catch { /* noop */ }
         }
       }, 1000)
-    } catch (e) {
-      if (generation !== startGeneration) return
-      const name = (e as DOMException)?.name
-      error.value = name === 'NotAllowedError' || name === 'SecurityError' ? 'denied' : 'failed'
+    } catch {
+      error.value = 'failed'
       cleanup()
-    } finally {
-      if (generation === startGeneration) starting.value = false
     }
   }
 
   function stop(name = 'karaoke-recording.mp3') {
-    const wasRecording = recording.value
-    if (!wasRecording && !starting.value) return
-
-    // Invalidate every pending await in start() before releasing its current resources.
-    startGeneration++
-    starting.value = false
+    if (!recording.value) return
     recording.value = false
+    if (syncTimer) { clearInterval(syncTimer); syncTimer = null }
+    if (tickTimer) { clearInterval(tickTimer); tickTimer = null }
 
-    if (wasRecording && encoder) {
+    if (encoder) {
       const end = encoder.flush()
       if (end.length > 0) mp3Chunks.push(new Uint8Array(end))
     }
-    if (wasRecording) {
-      const blob = new Blob(mp3Chunks as BlobPart[], { type: 'audio/mpeg' })
-      if (resultUrl.value) URL.revokeObjectURL(resultUrl.value)
-      resultUrl.value = URL.createObjectURL(blob)
-      resultName.value = name
-    }
+    const blob = new Blob(mp3Chunks as BlobPart[], { type: 'audio/mpeg' })
+    if (resultUrl.value) URL.revokeObjectURL(resultUrl.value)
+    resultUrl.value = URL.createObjectURL(blob)
+    resultName.value = name
     cleanup()
   }
 
   function cleanup() {
-    if (syncTimer) { clearInterval(syncTimer); syncTimer = null }
-    if (tickTimer) { clearInterval(tickTimer); tickTimer = null }
+    // Restore the main player's audio on every exit path (stop, error, unmount)
+    playerStore.setRecordingDuck(false)
     if (processor) {
       processor.onaudioprocess = null
       try { processor.disconnect() } catch { /* noop */ }
@@ -202,18 +185,17 @@ export function useKaraokeRecorder() {
     stream = null
     ctx = null
     encoder = null
-    // Restore playback after capture has been released. Bluetooth headphones can remain
-    // in their low-quality headset profile while any microphone track is still live.
-    playerStore.setRecordingDuck(false)
   }
 
   onUnmounted(() => {
-    startGeneration++
-    recording.value = false
-    starting.value = false
-    cleanup()
+    if (recording.value) {
+      if (syncTimer) clearInterval(syncTimer)
+      if (tickTimer) clearInterval(tickTimer)
+      recording.value = false
+      cleanup()
+    }
     if (resultUrl.value) URL.revokeObjectURL(resultUrl.value)
   })
 
-  return { recording, starting, error, elapsed, supported, resultUrl, resultName, start, stop }
+  return { recording, error, elapsed, supported, resultUrl, resultName, start, stop }
 }
