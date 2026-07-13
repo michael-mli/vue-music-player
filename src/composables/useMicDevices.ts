@@ -13,6 +13,56 @@ const selectedId = ref<string>(
   typeof localStorage !== 'undefined' ? localStorage.getItem(DEVICE_KEY) || '' : ''
 )
 let listening = false
+let lifecycleListening = false
+let captureGeneration = 0
+const activeMicStreams = new Set<MediaStream>()
+
+function stopTracks(stream: MediaStream) {
+  stream.getTracks().forEach((track) => {
+    try { track.stop() } catch { /* noop */ }
+  })
+}
+
+/** Release one app-owned microphone stream. Calling this for every owner is important on
+ * Android: Chrome keeps Bluetooth SCO (call-quality audio) until its final input closes. */
+export function releaseMicStream(stream: MediaStream | null | undefined) {
+  if (!stream) return
+  stopTracks(stream)
+  activeMicStreams.delete(stream)
+}
+
+/** Stop active streams and invalidate getUserMedia requests that have not resolved yet. */
+export function releaseAllMicStreams() {
+  captureGeneration++
+  activeMicStreams.forEach(stopTracks)
+  activeMicStreams.clear()
+}
+
+function installLifecycleCleanup() {
+  if (lifecycleListening || typeof window === 'undefined' || typeof document === 'undefined') return
+  lifecycleListening = true
+  // Chrome on Android can keep an audio capture alive when the app is backgrounded. Stop
+  // it as soon as the document is hidden so Bluetooth can leave its SCO/call profile.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) releaseAllMicStreams()
+  })
+  window.addEventListener('pagehide', releaseAllMicStreams)
+}
+
+function registerMicStream(stream: MediaStream, generation: number): MediaStream {
+  if (generation !== captureGeneration) {
+    stopTracks(stream)
+    throw new DOMException('Microphone request cancelled', 'AbortError')
+  }
+  activeMicStreams.add(stream)
+  const forgetEndedStream = () => {
+    if (stream.getTracks().every((track) => track.readyState === 'ended')) {
+      activeMicStreams.delete(stream)
+    }
+  }
+  stream.getTracks().forEach((track) => track.addEventListener('ended', forgetEndedStream, { once: true }))
+  return stream
+}
 
 async function refresh() {
   if (!navigator.mediaDevices?.enumerateDevices) return
@@ -41,6 +91,8 @@ function select(id: string) {
  * Refreshes the device list afterwards so labels appear once permission is granted.
  */
 export async function getMicStream(base: MediaTrackConstraints = {}): Promise<MediaStream> {
+  installLifecycleCleanup()
+  const generation = captureGeneration
   const md = navigator.mediaDevices
   if (selectedId.value) {
     try {
@@ -48,7 +100,7 @@ export async function getMicStream(base: MediaTrackConstraints = {}): Promise<Me
         audio: { ...base, deviceId: { exact: selectedId.value } },
       })
       refresh()
-      return stream
+      return registerMicStream(stream, generation)
     } catch (e) {
       const name = (e as DOMException)?.name
       if (name !== 'OverconstrainedError' && name !== 'NotFoundError') throw e
@@ -56,7 +108,7 @@ export async function getMicStream(base: MediaTrackConstraints = {}): Promise<Me
   }
   const stream = await md.getUserMedia({ audio: base })
   refresh()
-  return stream
+  return registerMicStream(stream, generation)
 }
 
 export function useMicDevices() {

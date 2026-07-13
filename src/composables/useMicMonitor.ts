@@ -9,7 +9,7 @@
  *   that trades feedback safety for fidelity, hence the headphones note.
  */
 import { ref, onUnmounted } from 'vue'
-import { getMicStream } from './useMicDevices'
+import { getMicStream, releaseMicStream } from './useMicDevices'
 
 type AnyAudioContext = typeof AudioContext
 
@@ -52,6 +52,7 @@ export function useMicMonitor() {
   let dryNode: GainNode | null = null
   let wetNode: GainNode | null = null
   let convolver: ConvolverNode | null = null
+  let startGeneration = 0
 
   async function start() {
     if (active.value || starting.value) return
@@ -60,12 +61,19 @@ export function useMicMonitor() {
       error.value = 'unsupported'
       return
     }
+    const generation = ++startGeneration
     starting.value = true
     error.value = ''
     try {
-      stream = await getMicStream({ echoCancellation: false, noiseSuppression: false, autoGainControl: false })
+      const micStream = await getMicStream({ echoCancellation: false, noiseSuppression: false, autoGainControl: false })
+      if (generation !== startGeneration) {
+        releaseMicStream(micStream)
+        return
+      }
+      stream = micStream
       ctx = new AC()
       await ctx.resume()
+      if (generation !== startGeneration) return
 
       srcNode = ctx.createMediaStreamSource(stream)
       gainNode = ctx.createGain()
@@ -87,22 +95,27 @@ export function useMicMonitor() {
 
       active.value = true
     } catch (e) {
+      if (generation !== startGeneration) return
       const name = (e as DOMException)?.name
-      error.value = name === 'NotAllowedError' || name === 'SecurityError' ? 'denied' : 'failed'
+      if (name !== 'AbortError') {
+        error.value = name === 'NotAllowedError' || name === 'SecurityError' ? 'denied' : 'failed'
+      }
       stop()
     } finally {
-      starting.value = false
+      if (generation === startGeneration) starting.value = false
     }
   }
 
   function stop() {
+    startGeneration++
+    starting.value = false
     active.value = false
     try { srcNode?.disconnect() } catch { /* noop */ }
     try { gainNode?.disconnect() } catch { /* noop */ }
     try { dryNode?.disconnect() } catch { /* noop */ }
     try { wetNode?.disconnect() } catch { /* noop */ }
     try { convolver?.disconnect() } catch { /* noop */ }
-    stream?.getTracks().forEach((t) => t.stop())
+    releaseMicStream(stream)
     stream = null
     srcNode = gainNode = dryNode = wetNode = null
     convolver = null
@@ -127,7 +140,18 @@ export function useMicMonitor() {
     if (wetNode && ctx) wetNode.gain.setTargetAtTime(v, ctx.currentTime, 0.01)
   }
 
-  onUnmounted(stop)
+  const onVisibilityChange = () => {
+    if (document.hidden) stop()
+  }
+  const onPageHide = () => stop()
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibilityChange)
+  if (typeof window !== 'undefined') window.addEventListener('pagehide', onPageHide)
+
+  onUnmounted(() => {
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibilityChange)
+    if (typeof window !== 'undefined') window.removeEventListener('pagehide', onPageHide)
+    stop()
+  })
 
   return { active, starting, error, supported, gain, reverb, toggle, start, stop, setGain, setReverb }
 }

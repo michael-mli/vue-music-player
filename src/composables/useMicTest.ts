@@ -3,7 +3,7 @@
  * and can record a short clip that plays back so the user can hear how their mic sounds.
  */
 import { ref, onUnmounted } from 'vue'
-import { getMicStream } from './useMicDevices'
+import { getMicStream, releaseMicStream } from './useMicDevices'
 
 type AnyAudioContext = typeof AudioContext
 function getAudioContextCtor(): AnyAudioContext | null {
@@ -15,6 +15,7 @@ const CLIP_SECONDS = 3
 
 export function useMicTest() {
   const testing = ref(false)
+  const starting = ref(false)
   const level = ref(0) // live input level, 0..1
   const clipUrl = ref('')
   const clipRecording = ref(false)
@@ -33,6 +34,7 @@ export function useMicTest() {
   let rafId: number | null = null
   let recorder: MediaRecorder | null = null
   let countdownTimer: number | null = null
+  let startGeneration = 0
 
   function meterLoop() {
     if (!analyser) return
@@ -53,17 +55,25 @@ export function useMicTest() {
   }
 
   async function start() {
-    if (testing.value) return
+    if (testing.value || starting.value) return
     const AC = getAudioContextCtor()
     if (!AC || !navigator.mediaDevices?.getUserMedia) {
       error.value = 'unsupported'
       return
     }
+    const generation = ++startGeneration
+    starting.value = true
     error.value = ''
     try {
-      stream = await getMicStream({ echoCancellation: false, noiseSuppression: false, autoGainControl: false })
+      const micStream = await getMicStream({ echoCancellation: false, noiseSuppression: false, autoGainControl: false })
+      if (generation !== startGeneration) {
+        releaseMicStream(micStream)
+        return
+      }
+      stream = micStream
       ctx = new AC()
       await ctx.resume()
+      if (generation !== startGeneration) return
       analyser = ctx.createAnalyser()
       analyser.fftSize = 2048
       // Analyser only — nothing is routed to the speakers
@@ -71,13 +81,20 @@ export function useMicTest() {
       testing.value = true
       meterLoop()
     } catch (e) {
+      if (generation !== startGeneration) return
       const name = (e as DOMException)?.name
-      error.value = name === 'NotAllowedError' || name === 'SecurityError' ? 'denied' : 'failed'
+      if (name !== 'AbortError') {
+        error.value = name === 'NotAllowedError' || name === 'SecurityError' ? 'denied' : 'failed'
+      }
       stop()
+    } finally {
+      if (generation === startGeneration) starting.value = false
     }
   }
 
   function stop() {
+    startGeneration++
+    starting.value = false
     testing.value = false
     level.value = 0
     if (rafId) { cancelAnimationFrame(rafId); rafId = null }
@@ -88,7 +105,7 @@ export function useMicTest() {
     clipCountdown.value = 0
     try { analyser?.disconnect() } catch { /* noop */ }
     analyser = null
-    stream?.getTracks().forEach((t) => t.stop())
+    releaseMicStream(stream)
     stream = null
     if (ctx) {
       ctx.close().catch(() => { /* noop */ })
@@ -137,10 +154,19 @@ export function useMicTest() {
     }, 1000)
   }
 
+  const onVisibilityChange = () => {
+    if (document.hidden) stop()
+  }
+  const onPageHide = () => stop()
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibilityChange)
+  if (typeof window !== 'undefined') window.addEventListener('pagehide', onPageHide)
+
   onUnmounted(() => {
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibilityChange)
+    if (typeof window !== 'undefined') window.removeEventListener('pagehide', onPageHide)
     stop()
     if (clipUrl.value) URL.revokeObjectURL(clipUrl.value)
   })
 
-  return { testing, level, clipUrl, clipRecording, clipCountdown, error, supported, start, stop, toggle, recordClip }
+  return { testing, starting, level, clipUrl, clipRecording, clipCountdown, error, supported, start, stop, toggle, recordClip }
 }

@@ -81,6 +81,7 @@
           </label>
           <button
             @click="micTest.toggle()"
+            :disabled="micTest.starting.value"
             class="px-3 py-1.5 rounded-full text-sm font-medium transition-colors duration-200 flex-shrink-0"
             :class="micTest.testing.value
               ? 'bg-amber-500 text-black hover:bg-amber-400'
@@ -318,6 +319,14 @@ const lyricsBox = ref<HTMLElement>()
 const karaokeMode = computed(() => playerStore.karaokeMode)
 const karaokeAvailable = computed(() => playerStore.karaokeAvailable)
 const currentSong = computed(() => playerStore.currentSong)
+
+// Close the monitor/test audio contexts as well as their tracks when karaoke is disabled.
+watch(karaokeMode, (on) => {
+  if (on) return
+  mic.stop()
+  micTest.stop()
+})
+
 const currentSongId = computed(() => playerStore.currentSong?.id)
 
 const availableSongs = computed<Song[]>(() => {

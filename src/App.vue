@@ -124,6 +124,7 @@ import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
 import { usePlaylistsStore } from '@/stores/playlists'
 import { useUiStore } from '@/stores/ui'
+import { releaseAllMicStreams } from '@/composables/useMicDevices'
 
 // Components
 import Sidebar from '@/components/UI/Sidebar.vue'
@@ -353,6 +354,7 @@ function cleanupActivityListeners() {
 // lyrics stage (and on mobile the panel is an overlay that would cover it).
 watch(() => playerStore.karaokeMode, (on) => {
   if (on && route.name !== 'Karaoke') showLyrics.value = true
+  if (!on) releaseAllMicStreams()
 })
 
 watch(() => playerStore.isPlaying, (isPlaying) => {

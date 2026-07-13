@@ -33,7 +33,7 @@
     <!-- The record / stop button -->
     <button
       @click="toggleRecord"
-      :disabled="!canRecord"
+      :disabled="!canRecord || recorder.starting.value"
       :title="canRecord
         ? (recorder.recording.value ? $t('karaoke.recordStop') : $t('karaoke.recordHint'))
         : $t('player.karaokeUnavailable')"
@@ -89,6 +89,11 @@ function toggleRecord() {
     })
   }
 }
+
+// The component stays mounted when hidden, so karaoke-off must explicitly finish capture.
+watch(() => playerStore.karaokeMode, (on) => {
+  if (!on) recorder.stop()
+})
 
 // Pop the result panel open when a recording finishes
 watch(() => recorder.recording.value, (rec, was) => {

@@ -15,7 +15,7 @@
  */
 import { ref, onUnmounted } from 'vue'
 import { Mp3Encoder } from '@breezystack/lamejs'
-import { getMicStream } from './useMicDevices'
+import { getMicStream, releaseMicStream } from './useMicDevices'
 import { usePlayerStore } from '@/stores/player'
 
 type AnyAudioContext = typeof AudioContext
@@ -43,6 +43,7 @@ export interface RecordOptions {
 export function useKaraokeRecorder() {
   const playerStore = usePlayerStore()
   const recording = ref(false)
+  const starting = ref(false)
   const error = ref<'' | 'denied' | 'unsupported' | 'failed'>('')
   const elapsed = ref(0)
   const resultUrl = ref('')
@@ -62,14 +63,17 @@ export function useKaraokeRecorder() {
   let mp3Chunks: Uint8Array[] = []
   let syncTimer: number | null = null
   let tickTimer: number | null = null
+  let startGeneration = 0
 
   async function start(opts: RecordOptions) {
-    if (recording.value) return
+    if (recording.value || starting.value) return
     const AC = getAudioContextCtor()
     if (!AC || !navigator.mediaDevices?.getUserMedia) {
       error.value = 'unsupported'
       return
     }
+    const generation = ++startGeneration
+    starting.value = true
     error.value = ''
     elapsed.value = 0
     if (resultUrl.value) {
@@ -78,16 +82,16 @@ export function useKaraokeRecorder() {
     }
 
     try {
-      stream = await getMicStream({ echoCancellation: false, noiseSuppression: false, autoGainControl: false })
-    } catch (e) {
-      error.value = (e as DOMException)?.name === 'NotAllowedError' ? 'denied' : 'failed'
-      cleanup()
-      return
-    }
+      const micStream = await getMicStream({ echoCancellation: false, noiseSuppression: false, autoGainControl: false })
+      if (generation !== startGeneration) {
+        releaseMicStream(micStream)
+        return
+      }
+      stream = micStream
 
-    try {
       ctx = new AC()
       await ctx.resume()
+      if (generation !== startGeneration) return
 
       // Hidden element that plays the instrumental into our context (muted to speakers).
       recAudio = new Audio(opts.instrumentalUrl)
@@ -98,6 +102,7 @@ export function useKaraokeRecorder() {
         recAudio!.addEventListener('error', () => reject(new Error('load')), { once: true })
         recAudio!.load()
       })
+      if (generation !== startGeneration) return
       try { recAudio.currentTime = opts.positionSec || 0 } catch { /* not seekable yet */ }
 
       const musicSrc = ctx.createMediaElementSource(recAudio)
@@ -130,6 +135,7 @@ export function useKaraokeRecorder() {
       }
 
       await recAudio.play()
+      if (generation !== startGeneration) return
       recording.value = true
 
       const startedAt = ctx.currentTime
@@ -144,58 +150,84 @@ export function useKaraokeRecorder() {
           try { recAudio.currentTime = target } catch { /* noop */ }
         }
       }, 1000)
-    } catch {
-      error.value = 'failed'
+    } catch (e) {
+      if (generation !== startGeneration) return
+      const name = (e as DOMException)?.name
+      if (name !== 'AbortError') {
+        error.value = name === 'NotAllowedError' || name === 'SecurityError' ? 'denied' : 'failed'
+      }
       cleanup()
+    } finally {
+      if (generation === startGeneration) starting.value = false
     }
   }
 
-  function stop(name = 'karaoke-recording.mp3') {
-    if (!recording.value) return
-    recording.value = false
-    if (syncTimer) { clearInterval(syncTimer); syncTimer = null }
-    if (tickTimer) { clearInterval(tickTimer); tickTimer = null }
+  function finish(save: boolean, name = 'karaoke-recording.mp3') {
+    const wasRecording = recording.value
+    if (!wasRecording && !starting.value && !stream && !ctx) return
 
-    if (encoder) {
+    startGeneration++
+    starting.value = false
+    recording.value = false
+
+    if (save && wasRecording && encoder) {
       const end = encoder.flush()
       if (end.length > 0) mp3Chunks.push(new Uint8Array(end))
     }
-    const blob = new Blob(mp3Chunks as BlobPart[], { type: 'audio/mpeg' })
-    if (resultUrl.value) URL.revokeObjectURL(resultUrl.value)
-    resultUrl.value = URL.createObjectURL(blob)
-    resultName.value = name
+    if (save && wasRecording) {
+      const blob = new Blob(mp3Chunks as BlobPart[], { type: 'audio/mpeg' })
+      if (resultUrl.value) URL.revokeObjectURL(resultUrl.value)
+      resultUrl.value = URL.createObjectURL(blob)
+      resultName.value = name
+    }
     cleanup()
   }
 
+  function stop(name = 'karaoke-recording.mp3') {
+    finish(true, name)
+  }
+
+  function cancel() {
+    finish(false)
+  }
+
   function cleanup() {
-    // Restore the main player's audio on every exit path (stop, error, unmount)
-    playerStore.setRecordingDuck(false)
+    if (syncTimer) { clearInterval(syncTimer); syncTimer = null }
+    if (tickTimer) { clearInterval(tickTimer); tickTimer = null }
     if (processor) {
       processor.onaudioprocess = null
       try { processor.disconnect() } catch { /* noop */ }
     }
     if (recAudio) {
       try { recAudio.pause() } catch { /* noop */ }
-      recAudio.src = ''
+      recAudio.removeAttribute('src')
+      try { recAudio.load() } catch { /* noop */ }
     }
-    stream?.getTracks().forEach((t) => t.stop())
+    releaseMicStream(stream)
     if (ctx) ctx.close().catch(() => { /* noop */ })
     processor = null
     recAudio = null
     stream = null
     ctx = null
     encoder = null
+    mp3Chunks = []
+    // Restore the main element only after Chrome's final microphone input is stopped.
+    playerStore.setRecordingDuck(false)
   }
 
+  const onVisibilityChange = () => {
+    if (document.hidden) cancel()
+  }
+  const onPageHide = () => cancel()
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibilityChange)
+  if (typeof window !== 'undefined') window.addEventListener('pagehide', onPageHide)
+
   onUnmounted(() => {
-    if (recording.value) {
-      if (syncTimer) clearInterval(syncTimer)
-      if (tickTimer) clearInterval(tickTimer)
-      recording.value = false
-      cleanup()
-    }
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibilityChange)
+    if (typeof window !== 'undefined') window.removeEventListener('pagehide', onPageHide)
+    cancel()
     if (resultUrl.value) URL.revokeObjectURL(resultUrl.value)
   })
 
-  return { recording, error, elapsed, supported, resultUrl, resultName, start, stop }
+  return { recording, starting, error, elapsed, supported, resultUrl, resultName, start, stop, cancel }
 }
