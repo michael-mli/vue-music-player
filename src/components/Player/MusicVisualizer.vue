@@ -749,6 +749,17 @@ watch(() => props.isVisible, async (newValue) => {
   }
 })
 
+// Android Bluetooth recovery may replace the player's HTMLAudioElement to open a fresh
+// media-output session. Rebind the visualizer so it never remains attached to the old one.
+watch(() => playerStore.audioElement, async (nextAudio, previousAudio) => {
+  if (nextAudio === previousAudio) return
+  await cleanupAudio()
+  if (props.isVisible) {
+    await setupAudio()
+    animate()
+  }
+})
+
 // Save settings to localStorage
 // v2: defaults became rainbow + minimum bar height. v1 saves carried color/height values
 // users never deliberately picked (changing ANY setting saved all fields), so loads only

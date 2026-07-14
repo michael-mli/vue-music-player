@@ -6,6 +6,8 @@ import { songService } from '@/services/songService'
 import { audioCacheService } from '@/services/audioCacheService'
 import { karaokeService } from '@/services/karaokeService'
 import { debugLogger, isDebugMode } from '@/services/debugLogger'
+import { MIC_CAPTURE_STATE_EVENT } from '@/composables/useMicDevices'
+import type { MicCaptureStateDetail } from '@/composables/useMicDevices'
 
 export const usePlayerStore = defineStore('player', () => {
   // State
@@ -88,6 +90,16 @@ export const usePlayerStore = defineStore('player', () => {
 
   // AbortController for current audio element's event listeners — replaced on each swap
   let currentAudioAbortController: AbortController | null = null
+
+  // Android Chrome can release every mic track yet leave an already-open media output
+  // attached to the Bluetooth communication route. Recreate that output after capture.
+  const isAndroid = /Android/i.test(navigator.userAgent)
+  const MIC_OUTPUT_RESET_KEY = 'music-player-mic-output-reset'
+  const MIC_OUTPUT_RESET_DELAY_MS = 1500
+  let micCaptureActive = false
+  let micOutputResetPending = isAndroid && localStorage.getItem(MIC_OUTPUT_RESET_KEY) === '1'
+  let micOutputResetTimer: number | null = null
+  let micOutputResetInFlight = false
 
   /** Compact snapshot of HTMLAudioElement state for debug logs */
   function snapAudio(): string {
@@ -588,6 +600,126 @@ export const usePlayerStore = defineStore('player', () => {
     }
   }
 
+  function cancelScheduledMicOutputReset() {
+    if (micOutputResetTimer !== null) {
+      clearTimeout(micOutputResetTimer)
+      micOutputResetTimer = null
+    }
+  }
+
+  function scheduleMicOutputReset() {
+    if (!isAndroid) return
+    micOutputResetPending = true
+    localStorage.setItem(MIC_OUTPUT_RESET_KEY, '1')
+    if (document.hidden || micOutputResetInFlight) return
+
+    cancelScheduledMicOutputReset()
+    micOutputResetTimer = window.setTimeout(() => {
+      micOutputResetTimer = null
+      rebuildAudioOutputAfterMic().catch((error) => {
+        debugLogger.error('AUDIO', 'Bluetooth output reset failed: ' + String(error))
+      })
+    }, MIC_OUTPUT_RESET_DELAY_MS)
+  }
+
+  function waitForMetadata(audio: HTMLAudioElement): Promise<void> {
+    if (audio.readyState >= HTMLMediaElement.HAVE_METADATA) return Promise.resolve()
+    return new Promise((resolve) => {
+      let settled = false
+      const done = () => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        audio.removeEventListener('loadedmetadata', done)
+        audio.removeEventListener('error', done)
+        resolve()
+      }
+      const timer = window.setTimeout(done, 3000)
+      audio.addEventListener('loadedmetadata', done)
+      audio.addEventListener('error', done)
+    })
+  }
+
+  /**
+   * Rebuild the media output after Chrome has had time to leave Android communication mode.
+   * A new HTMLAudioElement creates the fresh media session that opening YouTube otherwise
+   * creates, while preserving the current source, position, volume and play state.
+   */
+  async function rebuildAudioOutputAfterMic() {
+    if (!isAndroid || document.hidden || micOutputResetInFlight || !micOutputResetPending) return
+
+    const oldAudio = audioElement.value
+    const song = currentSong.value
+    const source = oldAudio?.currentSrc || oldAudio?.src || ''
+    // Keep the dirty marker until a real output exists. If the page was reopened before a
+    // song loaded, the first 'playing' event below will schedule another attempt.
+    if (!oldAudio || !song || !source) return
+
+    micOutputResetPending = false
+    micOutputResetInFlight = true
+    const songId = song.id
+    const resumeAt = oldAudio.currentTime || currentTime.value
+    const shouldResume = !oldAudio.paused && !oldAudio.ended
+    const freshAudio = new Audio()
+    freshAudio.preload = oldAudio.preload || 'auto'
+    freshAudio.playbackRate = oldAudio.playbackRate
+    if (oldAudio.crossOrigin) freshAudio.crossOrigin = oldAudio.crossOrigin
+
+    // Install listeners on the replacement first; this aborts the old element's listeners,
+    // so deliberately stopping its pipeline cannot trigger pause/error recovery handlers.
+    transferAudioEventListeners(oldAudio, freshAudio)
+    audioElement.value = freshAudio
+
+    try {
+      oldAudio.pause()
+      oldAudio.removeAttribute('src')
+      oldAudio.load()
+
+      // Give Android a short output-free window after Chromium drops MODE_IN_COMMUNICATION.
+      await new Promise(resolve => setTimeout(resolve, 100))
+      if (audioElement.value !== freshAudio || currentSong.value?.id !== songId) return
+
+      const metadataReady = waitForMetadata(freshAudio)
+      freshAudio.src = source
+      freshAudio.load()
+      await metadataReady
+      if (audioElement.value !== freshAudio || currentSong.value?.id !== songId) return
+
+      const maxPosition = Number.isFinite(freshAudio.duration)
+        ? Math.max(0, freshAudio.duration - 0.05)
+        : resumeAt
+      const restoredPosition = Math.min(Math.max(0, resumeAt), maxPosition)
+      try { freshAudio.currentTime = restoredPosition } catch { /* metadata may still be sparse */ }
+      currentTime.value = restoredPosition
+      freshAudio.volume = volume.value
+      freshAudio.muted = isMuted.value || recordingDuck
+
+      if (shouldResume) await play()
+      debugLogger.info('AUDIO', 'Bluetooth output rebuilt after mic release — ' + snapAudio())
+    } finally {
+      micOutputResetInFlight = false
+      if (!micCaptureActive) {
+        localStorage.removeItem(MIC_OUTPUT_RESET_KEY)
+      }
+      if (micOutputResetPending && !micCaptureActive && !document.hidden) {
+        scheduleMicOutputReset()
+      }
+    }
+  }
+
+  function handleMicCaptureState(event: Event) {
+    if (!isAndroid) return
+    const active = (event as CustomEvent<MicCaptureStateDetail>).detail?.active === true
+    micCaptureActive = active
+    if (active) {
+      cancelScheduledMicOutputReset()
+      micOutputResetPending = false
+      localStorage.setItem(MIC_OUTPUT_RESET_KEY, '1')
+      return
+    }
+    scheduleMicOutputReset()
+  }
+
   function toggleShuffle() {
     shuffle.value = !shuffle.value
     
@@ -634,6 +766,7 @@ export const usePlayerStore = defineStore('player', () => {
   }
   
   function setupNetworkListeners() {
+    window.addEventListener(MIC_CAPTURE_STATE_EVENT, handleMicCaptureState)
     // Listen for online/offline events
     window.addEventListener('online', () => {
       isOnline.value = true
@@ -667,6 +800,9 @@ export const usePlayerStore = defineStore('player', () => {
         }
         return
       }
+
+      // A hidden/PWA page cannot safely restart playback. Do it after it becomes visible.
+      if (micOutputResetPending && !micCaptureActive) scheduleMicOutputReset()
 
       // Returning to foreground: did playback freeze while we were away? Compare real
       // elapsed time against actual playback time (totalPlaytime advances ~1/s only while
@@ -962,6 +1098,12 @@ export const usePlayerStore = defineStore('player', () => {
         startSleepTimerCountdown()
       }
       debugLogger.info('AUDIO', `playing event (audio decoding) — consecutiveFailures reset — ${snapAudio()}`)
+
+      // A previous page may have closed while Android was still leaving communication mode.
+      // Once playback exists again, recreate it if the persisted dirty marker is present.
+      if (micOutputResetPending && !micCaptureActive && !micOutputResetInFlight) {
+        scheduleMicOutputReset()
+      }
     }, { signal })
 
     audio.addEventListener('play', () => {

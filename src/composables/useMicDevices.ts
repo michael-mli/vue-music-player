@@ -5,6 +5,11 @@
  */
 import { ref } from 'vue'
 
+export const MIC_CAPTURE_STATE_EVENT = 'music-player:mic-capture-state'
+export interface MicCaptureStateDetail {
+  active: boolean
+}
+
 const DEVICE_KEY = 'music-player-mic-device'
 
 // Module-level singletons: one selection shared by every consumer.
@@ -16,6 +21,20 @@ let listening = false
 let lifecycleListening = false
 let captureGeneration = 0
 const activeMicStreams = new Set<MediaStream>()
+let pendingMicRequests = 0
+let lastNotifiedCaptureState = false
+
+function notifyCaptureState() {
+  const active = pendingMicRequests > 0 || activeMicStreams.size > 0
+  if (active === lastNotifiedCaptureState) return
+  lastNotifiedCaptureState = active
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent<MicCaptureStateDetail>(
+      MIC_CAPTURE_STATE_EVENT,
+      { detail: { active } },
+    ))
+  }
+}
 
 function stopTracks(stream: MediaStream) {
   stream.getTracks().forEach((track) => {
@@ -29,6 +48,7 @@ export function releaseMicStream(stream: MediaStream | null | undefined) {
   if (!stream) return
   stopTracks(stream)
   activeMicStreams.delete(stream)
+  notifyCaptureState()
 }
 
 /** Stop active streams and invalidate getUserMedia requests that have not resolved yet. */
@@ -36,6 +56,7 @@ export function releaseAllMicStreams() {
   captureGeneration++
   activeMicStreams.forEach(stopTracks)
   activeMicStreams.clear()
+  notifyCaptureState()
 }
 
 function installLifecycleCleanup() {
@@ -55,9 +76,11 @@ function registerMicStream(stream: MediaStream, generation: number): MediaStream
     throw new DOMException('Microphone request cancelled', 'AbortError')
   }
   activeMicStreams.add(stream)
+  notifyCaptureState()
   const forgetEndedStream = () => {
     if (stream.getTracks().every((track) => track.readyState === 'ended')) {
       activeMicStreams.delete(stream)
+      notifyCaptureState()
     }
   }
   stream.getTracks().forEach((track) => track.addEventListener('ended', forgetEndedStream, { once: true }))
@@ -92,23 +115,30 @@ function select(id: string) {
  */
 export async function getMicStream(base: MediaTrackConstraints = {}): Promise<MediaStream> {
   installLifecycleCleanup()
+  pendingMicRequests++
+  notifyCaptureState()
   const generation = captureGeneration
-  const md = navigator.mediaDevices
-  if (selectedId.value) {
-    try {
-      const stream = await md.getUserMedia({
-        audio: { ...base, deviceId: { exact: selectedId.value } },
-      })
-      refresh()
-      return registerMicStream(stream, generation)
-    } catch (e) {
-      const name = (e as DOMException)?.name
-      if (name !== 'OverconstrainedError' && name !== 'NotFoundError') throw e
+  try {
+    const md = navigator.mediaDevices
+    if (selectedId.value) {
+      try {
+        const stream = await md.getUserMedia({
+          audio: { ...base, deviceId: { exact: selectedId.value } },
+        })
+        refresh()
+        return registerMicStream(stream, generation)
+      } catch (e) {
+        const name = (e as DOMException)?.name
+        if (name !== 'OverconstrainedError' && name !== 'NotFoundError') throw e
+      }
     }
+    const stream = await md.getUserMedia({ audio: base })
+    refresh()
+    return registerMicStream(stream, generation)
+  } finally {
+    pendingMicRequests--
+    notifyCaptureState()
   }
-  const stream = await md.getUserMedia({ audio: base })
-  refresh()
-  return registerMicStream(stream, generation)
 }
 
 export function useMicDevices() {
