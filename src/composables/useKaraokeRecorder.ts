@@ -24,14 +24,42 @@ function getAudioContextCtor(): AnyAudioContext | null {
   return window.AudioContext || (window as unknown as { webkitAudioContext?: AnyAudioContext }).webkitAudioContext || null
 }
 
-// Leave enough room for the two independent sources before the final safety limiter.
-// These gains affect the saved mix only; the singer still hears the instrumental at its
-// normal level through the separate destination connection below.
-const RECORD_MUSIC_GAIN = 0.7
-const RECORD_VOICE_GAIN = 0.85
+// Keep music and voice separate until the last mix so vocal processing never changes what
+// the singer hears. Measurements from real Android/Bluetooth recordings put an unprocessed
+// vocal several dB too far forward, so the vocal is levelled independently before mixing.
+const RECORD_MUSIC_GAIN = 0.72
+const RECORD_VOICE_GAIN = 0.62
+const VOICE_REVERB_GAIN = 0.1
 const LIMITER_CEILING = 0.8 // about -1.9 dBFS, leaving room for MP3 inter-sample peaks
 const LIMITER_RELEASE_PER_BLOCK = 0.08
 const MP3_BITRATE_KBPS = 192
+
+/** Deterministic, short stereo room used to place a dry headset mic into the music. */
+function makeVocalRoomImpulse(context: AudioContext): AudioBuffer {
+  const seconds = 0.9
+  const length = Math.max(1, Math.round(context.sampleRate * seconds))
+  const impulse = context.createBuffer(2, length, context.sampleRate)
+
+  // A repeatable pseudo-random sequence avoids a different vocal sound on every take.
+  let state = 0x51f15e
+  const noise = () => {
+    state ^= state << 13
+    state ^= state >>> 17
+    state ^= state << 5
+    return ((state >>> 0) / 0xffffffff) * 2 - 1
+  }
+
+  for (let channel = 0; channel < impulse.numberOfChannels; channel++) {
+    const data = impulse.getChannelData(channel)
+    // Different starting states give the left and right reflections useful width.
+    state ^= channel === 0 ? 0x13579b : 0x2468ac
+    for (let i = 0; i < length; i++) {
+      const progress = i / length
+      data[i] = noise() * Math.pow(1 - progress, 3.5)
+    }
+  }
+  return impulse
+}
 
 function floatToInt16(buf: Float32Array, gain = 1): Int16Array {
   const out = new Int16Array(buf.length)
@@ -125,13 +153,62 @@ export function useKaraokeRecorder() {
       const micSrc = ctx.createMediaStreamSource(stream)
       const musicRecordGain = ctx.createGain()
       musicRecordGain.gain.value = RECORD_MUSIC_GAIN
+
+      // Vocal-only post-processing. Headset captures tend to be boomy below 250 Hz,
+      // unnaturally sharp above 4 kHz, dynamically uneven, and completely dry. Correcting
+      // those traits before the mix makes the voice sit inside the instrumental instead of
+      // making the final master limiter pull the whole song down around vocal peaks.
+      const voiceHighpass = ctx.createBiquadFilter()
+      voiceHighpass.type = 'highpass'
+      voiceHighpass.frequency.value = 80
+      voiceHighpass.Q.value = 0.707
+      const voiceBody = ctx.createBiquadFilter()
+      voiceBody.type = 'peaking'
+      voiceBody.frequency.value = 180
+      voiceBody.Q.value = 0.8
+      voiceBody.gain.value = -2.5
+      const voiceHarshness = ctx.createBiquadFilter()
+      voiceHarshness.type = 'highshelf'
+      voiceHarshness.frequency.value = 4000
+      voiceHarshness.gain.value = -4
+      const voiceCompressor = ctx.createDynamicsCompressor()
+      voiceCompressor.threshold.value = -22
+      voiceCompressor.knee.value = 12
+      voiceCompressor.ratio.value = 3.5
+      voiceCompressor.attack.value = 0.006
+      voiceCompressor.release.value = 0.18
       const voiceRecordGain = ctx.createGain()
       voiceRecordGain.gain.value = RECORD_VOICE_GAIN
+
+      const reverbPreDelay = ctx.createDelay(0.1)
+      reverbPreDelay.delayTime.value = 0.025
+      const voiceReverb = ctx.createConvolver()
+      voiceReverb.normalize = true
+      voiceReverb.buffer = makeVocalRoomImpulse(ctx)
+      const reverbHighpass = ctx.createBiquadFilter()
+      reverbHighpass.type = 'highpass'
+      reverbHighpass.frequency.value = 180
+      const reverbLowpass = ctx.createBiquadFilter()
+      reverbLowpass.type = 'lowpass'
+      reverbLowpass.frequency.value = 6000
+      const reverbGain = ctx.createGain()
+      reverbGain.gain.value = VOICE_REVERB_GAIN
+
       const mix = ctx.createGain()
       musicSrc.connect(musicRecordGain)
       musicRecordGain.connect(mix)
-      micSrc.connect(voiceRecordGain)
+      micSrc.connect(voiceHighpass)
+      voiceHighpass.connect(voiceBody)
+      voiceBody.connect(voiceHarshness)
+      voiceHarshness.connect(voiceCompressor)
+      voiceCompressor.connect(voiceRecordGain)
       voiceRecordGain.connect(mix)
+      voiceRecordGain.connect(reverbPreDelay)
+      reverbPreDelay.connect(voiceReverb)
+      voiceReverb.connect(reverbHighpass)
+      reverbHighpass.connect(reverbLowpass)
+      reverbLowpass.connect(reverbGain)
+      reverbGain.connect(mix)
 
       processor = ctx.createScriptProcessor(4096, 2, 2)
       const silent = ctx.createGain()
