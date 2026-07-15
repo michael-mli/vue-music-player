@@ -4,10 +4,15 @@
     <select
       :value="songsStore.quickScope"
       @change="onScopeChange"
-      class="flex-shrink-0 px-2 sm:px-3 py-3 bg-light-surface text-light-text-primary dark:bg-spotify-light dark:text-white rounded-full border border-light-border dark:border-gray-600 focus:border-spotify-green focus:outline-none text-sm cursor-pointer"
+      class="flex-shrink-0 px-2 sm:px-3 py-3 bg-light-surface text-light-text-primary dark:bg-spotify-light dark:text-white rounded-full border border-light-border dark:border-gray-600 focus:border-spotify-green focus:outline-none text-sm cursor-pointer [color-scheme:light] dark:[color-scheme:dark]"
       :title="$t('search.scopeTitle')"
     >
-      <option v-for="scope in scopes" :key="scope" :value="scope">
+      <option
+        v-for="scope in scopes"
+        :key="scope"
+        :value="scope"
+        class="bg-white text-gray-900 dark:bg-spotify-light dark:text-white"
+      >
         {{ $t(`search.scope.${scope}`) }}
       </option>
     </select>

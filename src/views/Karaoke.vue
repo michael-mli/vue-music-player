@@ -35,48 +35,29 @@
         </button>
       </div>
 
-      <!-- Mic monitor (sing into your microphone and hear yourself) -->
+      <!-- Microphone setup for the floating karaoke recorder -->
       <div
-        v-if="mic.supported"
-        class="p-4 mb-6 rounded-lg border"
-        :class="mic.active.value
-          ? 'bg-spotify-green/10 border-spotify-green/40'
-          : 'bg-light-card dark:bg-spotify-dark border-light-border dark:border-spotify-light'"
+        v-if="micTest.supported.value"
+        class="p-4 mb-6 rounded-lg border bg-light-card dark:bg-spotify-dark border-light-border dark:border-spotify-light"
       >
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-3">
-            <MicrophoneIcon class="w-5 h-5" :class="mic.active.value ? 'text-spotify-green' : 'text-gray-400'" />
-            <div>
-              <p class="text-sm font-medium text-light-text-primary dark:text-white">
-                {{ mic.active.value ? $t('karaoke.micOn') : $t('karaoke.micOff') }}
-              </p>
-              <p class="text-xs text-light-text-secondary dark:text-gray-400">⚠️ {{ $t('karaoke.micHint') }}</p>
-            </div>
-          </div>
-          <button
-            @click="mic.toggle()"
-            :disabled="mic.starting.value"
-            class="px-3 py-1.5 rounded-full text-sm font-medium transition-colors duration-200 disabled:opacity-50"
-            :class="mic.active.value
-              ? 'bg-spotify-green text-black hover:bg-spotify-green/80'
-              : 'bg-white/10 text-light-text-primary dark:text-white hover:bg-white/20'"
-          >
-            {{ mic.active.value ? $t('karaoke.micStop') : $t('karaoke.micStart') }}
-          </button>
-        </div>
-
-        <!-- Device picker + mic test -->
-        <div class="mt-4 flex flex-col sm:flex-row sm:items-end gap-3">
+        <div class="flex flex-col sm:flex-row sm:items-end gap-3">
           <label class="flex-1 text-xs text-light-text-secondary dark:text-gray-400">
             {{ $t('karaoke.micDevice') }}
             <select
               :value="micDeviceId"
               @change="onMicDeviceChange"
               @focus="refreshMicDevices()"
-              class="mt-1 w-full px-2 py-1.5 rounded bg-white/10 border border-white/20 focus:border-spotify-green text-light-text-primary dark:text-white text-xs"
+              class="mt-1 w-full px-2 py-1.5 rounded bg-white dark:bg-spotify-light border border-light-border dark:border-gray-600 focus:border-spotify-green text-light-text-primary dark:text-white text-xs [color-scheme:light] dark:[color-scheme:dark]"
             >
-              <option value="">{{ $t('karaoke.micDeviceDefault') }}</option>
-              <option v-for="d in micDevices" :key="d.deviceId" :value="d.deviceId">{{ d.label }}</option>
+              <option value="" class="bg-white text-gray-900 dark:bg-spotify-light dark:text-white">
+                {{ $t('karaoke.micDeviceDefault') }}
+              </option>
+              <option
+                v-for="d in micDevices"
+                :key="d.deviceId"
+                :value="d.deviceId"
+                class="bg-white text-gray-900 dark:bg-spotify-light dark:text-white"
+              >{{ d.label }}</option>
             </select>
           </label>
           <button
@@ -117,29 +98,6 @@
           </p>
         </div>
 
-        <!-- Mic level + reverb -->
-        <div v-if="mic.active.value" class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <label class="text-xs text-light-text-secondary dark:text-gray-400">
-            {{ $t('karaoke.micVolume') }}
-            <input
-              type="range" min="0" max="1.5" step="0.05" :value="mic.gain.value"
-              @input="mic.setGain(+($event.target as HTMLInputElement).value)"
-              class="w-full accent-spotify-green"
-            />
-          </label>
-          <label class="text-xs text-light-text-secondary dark:text-gray-400">
-            {{ $t('karaoke.micReverb') }}
-            <input
-              type="range" min="0" max="0.8" step="0.05" :value="mic.reverb.value"
-              @input="mic.setReverb(+($event.target as HTMLInputElement).value)"
-              class="w-full accent-spotify-green"
-            />
-          </label>
-        </div>
-
-        <p v-if="mic.error.value" class="mt-3 text-xs text-red-400">
-          {{ $t(`karaoke.mic_${mic.error.value}`) }}
-        </p>
       </div>
 
       <!-- Now-singing lyrics stage -->
@@ -283,24 +241,18 @@ import { useSongsStore } from '@/stores/songs'
 import { karaokeService } from '@/services/karaokeService'
 import { lyricsService, activeLineIndex } from '@/services/lyricsService'
 import { songService } from '@/services/songService'
-import { useMicMonitor } from '@/composables/useMicMonitor'
 import { useMicDevices } from '@/composables/useMicDevices'
 import { useMicTest } from '@/composables/useMicTest'
 import type { LyricLine, Song } from '@/types'
 
 const playerStore = usePlayerStore()
 const songsStore = useSongsStore()
-const mic = useMicMonitor()
 const micTest = useMicTest()
 const { devices: micDevices, selectedId: micDeviceId, select: selectMicDevice, refresh: refreshMicDevices } = useMicDevices()
 
-// Switching device restarts whatever is live so the new input takes effect immediately
+// Switching device restarts an active test so the new input takes effect immediately.
 async function onMicDeviceChange(e: Event) {
   selectMicDevice((e.target as HTMLSelectElement).value)
-  if (mic.active.value) {
-    mic.stop()
-    await mic.start()
-  }
   if (micTest.testing.value) {
     micTest.stop()
     await micTest.start()
@@ -320,10 +272,9 @@ const karaokeMode = computed(() => playerStore.karaokeMode)
 const karaokeAvailable = computed(() => playerStore.karaokeAvailable)
 const currentSong = computed(() => playerStore.currentSong)
 
-// Close the monitor/test audio contexts as well as their tracks when karaoke is disabled.
+// Close the test audio context and its tracks when karaoke is disabled.
 watch(karaokeMode, (on) => {
   if (on) return
-  mic.stop()
   micTest.stop()
 })
 
