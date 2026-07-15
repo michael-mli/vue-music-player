@@ -24,10 +24,19 @@ function getAudioContextCtor(): AnyAudioContext | null {
   return window.AudioContext || (window as unknown as { webkitAudioContext?: AnyAudioContext }).webkitAudioContext || null
 }
 
-function floatToInt16(buf: Float32Array): Int16Array {
+// Leave enough room for the two independent sources before the final safety limiter.
+// These gains affect the saved mix only; the singer still hears the instrumental at its
+// normal level through the separate destination connection below.
+const RECORD_MUSIC_GAIN = 0.7
+const RECORD_VOICE_GAIN = 0.85
+const LIMITER_CEILING = 0.8 // about -1.9 dBFS, leaving room for MP3 inter-sample peaks
+const LIMITER_RELEASE_PER_BLOCK = 0.08
+const MP3_BITRATE_KBPS = 192
+
+function floatToInt16(buf: Float32Array, gain = 1): Int16Array {
   const out = new Int16Array(buf.length)
   for (let i = 0; i < buf.length; i++) {
-    const s = Math.max(-1, Math.min(1, buf[i]))
+    const s = Math.max(-1, Math.min(1, buf[i] * gain))
     out[i] = s < 0 ? s * 0x8000 : s * 0x7fff
   }
   return out
@@ -64,6 +73,7 @@ export function useKaraokeRecorder() {
   let syncTimer: number | null = null
   let tickTimer: number | null = null
   let startGeneration = 0
+  let limiterGain = 1
 
   async function start(opts: RecordOptions) {
     if (recording.value || starting.value) return
@@ -82,7 +92,13 @@ export function useKaraokeRecorder() {
     }
 
     try {
-      const micStream = await getMicStream({ echoCancellation: false, noiseSuppression: false, autoGainControl: false })
+      const micStream = await getMicStream({
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+        channelCount: { ideal: 1 },
+        sampleRate: { ideal: 48000 },
+      })
       if (generation !== startGeneration) {
         releaseMicStream(micStream)
         return
@@ -107,9 +123,15 @@ export function useKaraokeRecorder() {
 
       const musicSrc = ctx.createMediaElementSource(recAudio)
       const micSrc = ctx.createMediaStreamSource(stream)
+      const musicRecordGain = ctx.createGain()
+      musicRecordGain.gain.value = RECORD_MUSIC_GAIN
+      const voiceRecordGain = ctx.createGain()
+      voiceRecordGain.gain.value = RECORD_VOICE_GAIN
       const mix = ctx.createGain()
-      musicSrc.connect(mix)
-      micSrc.connect(mix)
+      musicSrc.connect(musicRecordGain)
+      musicRecordGain.connect(mix)
+      micSrc.connect(voiceRecordGain)
+      voiceRecordGain.connect(mix)
 
       processor = ctx.createScriptProcessor(4096, 2, 2)
       const silent = ctx.createGain()
@@ -124,12 +146,31 @@ export function useKaraokeRecorder() {
       musicSrc.connect(ctx.destination)
       playerStore.setRecordingDuck(true)
 
-      encoder = new Mp3Encoder(2, ctx.sampleRate, 128)
+      encoder = new Mp3Encoder(2, ctx.sampleRate, MP3_BITRATE_KBPS)
       mp3Chunks = []
+      limiterGain = 1
       processor.onaudioprocess = (e) => {
         const ch = e.inputBuffer.numberOfChannels
-        const l = floatToInt16(e.inputBuffer.getChannelData(0))
-        const r = floatToInt16(ch > 1 ? e.inputBuffer.getChannelData(1) : e.inputBuffer.getChannelData(0))
+        const left = e.inputBuffer.getChannelData(0)
+        const right = ch > 1 ? e.inputBuffer.getChannelData(1) : left
+
+        // Linked-stereo, block-lookahead safety limiter. The mix previously went straight
+        // through floatToInt16(), which hard-clipped every sample outside [-1, 1]. Find the
+        // loudest sample in both channels first, then apply one gain to the whole block so
+        // stereo placement is preserved and no sample reaches the encoder above the ceiling.
+        let peak = 0
+        for (let i = 0; i < left.length; i++) {
+          peak = Math.max(peak, Math.abs(left[i]), Math.abs(right[i]))
+        }
+        const requiredGain = peak > LIMITER_CEILING ? LIMITER_CEILING / peak : 1
+        if (requiredGain < limiterGain) {
+          limiterGain = requiredGain
+        } else {
+          limiterGain = Math.min(requiredGain, limiterGain + (1 - limiterGain) * LIMITER_RELEASE_PER_BLOCK)
+        }
+
+        const l = floatToInt16(left, limiterGain)
+        const r = floatToInt16(right, limiterGain)
         const out = encoder!.encodeBuffer(l, r)
         if (out.length > 0) mp3Chunks.push(new Uint8Array(out))
       }
