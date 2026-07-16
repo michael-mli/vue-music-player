@@ -12,6 +12,9 @@ function getAudioContextCtor(): AnyAudioContext | null {
 }
 
 const CLIP_SECONDS = 3
+const METER_INTERVAL_MS = 100
+const METER_FFT_SIZE = 512
+const METER_DECAY = 0.6
 
 export function useMicTest() {
   const testing = ref(false)
@@ -31,7 +34,7 @@ export function useMicTest() {
   let ctx: AudioContext | null = null
   let stream: MediaStream | null = null
   let analyser: AnalyserNode | null = null
-  let rafId: number | null = null
+  let meterTimer: number | null = null
   let recorder: MediaRecorder | null = null
   let countdownTimer: number | null = null
   let startGeneration = 0
@@ -47,11 +50,12 @@ export function useMicTest() {
         const v = Math.abs(data[i] - 128) / 128
         if (v > peak) peak = v
       }
-      // A little smoothing so the bar decays instead of flickering
-      level.value = Math.max(peak, level.value * 0.85)
-      rafId = requestAnimationFrame(tick)
+      // A little smoothing so the bar decays instead of flickering. Updating at a modest
+      // fixed cadence is plenty for a level meter and avoids doing analyser work every frame.
+      level.value = Math.max(peak, level.value * METER_DECAY)
     }
-    rafId = requestAnimationFrame(tick)
+    tick()
+    meterTimer = window.setInterval(tick, METER_INTERVAL_MS)
   }
 
   async function start() {
@@ -75,7 +79,7 @@ export function useMicTest() {
       await ctx.resume()
       if (generation !== startGeneration) return
       analyser = ctx.createAnalyser()
-      analyser.fftSize = 2048
+      analyser.fftSize = METER_FFT_SIZE
       // Analyser only — nothing is routed to the speakers
       ctx.createMediaStreamSource(stream).connect(analyser)
       testing.value = true
@@ -97,7 +101,7 @@ export function useMicTest() {
     starting.value = false
     testing.value = false
     level.value = 0
-    if (rafId) { cancelAnimationFrame(rafId); rafId = null }
+    if (meterTimer) { clearInterval(meterTimer); meterTimer = null }
     if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null }
     if (recorder && recorder.state !== 'inactive') { try { recorder.stop() } catch { /* noop */ } }
     recorder = null

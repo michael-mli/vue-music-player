@@ -35,70 +35,7 @@
         </button>
       </div>
 
-      <!-- Microphone setup for the floating karaoke recorder -->
-      <div
-        v-if="micTest.supported.value"
-        class="p-4 mb-6 rounded-lg border bg-light-card dark:bg-spotify-dark border-light-border dark:border-spotify-light"
-      >
-        <div class="flex flex-col sm:flex-row sm:items-end gap-3">
-          <label class="flex-1 text-xs text-light-text-secondary dark:text-gray-400">
-            {{ $t('karaoke.micDevice') }}
-            <select
-              :value="micDeviceId"
-              @change="onMicDeviceChange"
-              @focus="refreshMicDevices()"
-              class="mt-1 w-full px-2 py-1.5 rounded bg-white dark:bg-spotify-light border border-light-border dark:border-gray-600 focus:border-spotify-green text-light-text-primary dark:text-white text-xs [color-scheme:light] dark:[color-scheme:dark]"
-            >
-              <option value="" class="bg-white text-gray-900 dark:bg-spotify-light dark:text-white">
-                {{ $t('karaoke.micDeviceDefault') }}
-              </option>
-              <option
-                v-for="d in micDevices"
-                :key="d.deviceId"
-                :value="d.deviceId"
-                class="bg-white text-gray-900 dark:bg-spotify-light dark:text-white"
-              >{{ d.label }}</option>
-            </select>
-          </label>
-          <button
-            @click="micTest.toggle()"
-            :disabled="micTest.starting.value"
-            class="px-3 py-1.5 rounded-full text-sm font-medium transition-colors duration-200 flex-shrink-0"
-            :class="micTest.testing.value
-              ? 'bg-amber-500 text-black hover:bg-amber-400'
-              : 'bg-white/10 text-light-text-primary dark:text-white hover:bg-white/20'"
-          >{{ micTest.testing.value ? $t('karaoke.micTestStop') : $t('karaoke.micTest') }}</button>
-        </div>
-
-        <!-- Test panel: live level meter + short record/playback check -->
-        <div v-if="micTest.testing.value" class="mt-3 p-3 rounded-lg bg-black/20 border border-white/10">
-          <p class="text-xs text-light-text-secondary dark:text-gray-400 mb-2">{{ $t('karaoke.micTestHint') }}</p>
-          <div class="h-3 rounded-full bg-white/10 overflow-hidden">
-            <div
-              class="h-full rounded-full transition-[width] duration-75"
-              :class="micTest.level.value > 0.6 ? 'bg-red-500' : micTest.level.value > 0.25 ? 'bg-amber-400' : 'bg-spotify-green'"
-              :style="{ width: `${Math.min(100, Math.round(micTest.level.value * 100))}%` }"
-            ></div>
-          </div>
-          <div class="mt-3 flex items-center gap-3 flex-wrap">
-            <button
-              @click="micTest.recordClip()"
-              :disabled="micTest.clipRecording.value"
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/10 text-light-text-primary dark:text-white text-xs font-medium hover:bg-white/20 disabled:opacity-50"
-            >
-              <span class="inline-block w-2 h-2 rounded-full" :class="micTest.clipRecording.value ? 'bg-red-500 animate-pulse' : 'bg-red-500'"></span>
-              {{ micTest.clipRecording.value
-                ? $t('karaoke.micTestRecording', { seconds: micTest.clipCountdown.value })
-                : $t('karaoke.micTestRecord') }}
-            </button>
-            <audio v-if="micTest.clipUrl.value" :src="micTest.clipUrl.value" controls autoplay class="h-8 max-w-full"></audio>
-          </div>
-          <p v-if="micTest.error.value" class="mt-2 text-xs text-red-400">
-            {{ $t(`karaoke.mic_${micTest.error.value}`) }}
-          </p>
-        </div>
-
-      </div>
+      <KaraokeMicSetup />
 
       <!-- Now-singing lyrics stage -->
       <div
@@ -236,29 +173,16 @@ import { computed, ref, watch, onMounted } from 'vue'
 import { MicrophoneIcon } from '@heroicons/vue/24/outline'
 import SongCover from '@/components/UI/SongCover.vue'
 import SearchBar from '@/components/UI/SearchBar.vue'
+import KaraokeMicSetup from '@/components/UI/KaraokeMicSetup.vue'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
 import { karaokeService } from '@/services/karaokeService'
 import { lyricsService, activeLineIndex } from '@/services/lyricsService'
 import { songService } from '@/services/songService'
-import { useMicDevices } from '@/composables/useMicDevices'
-import { useMicTest } from '@/composables/useMicTest'
 import type { LyricLine, Song } from '@/types'
 
 const playerStore = usePlayerStore()
 const songsStore = useSongsStore()
-const micTest = useMicTest()
-const { devices: micDevices, selectedId: micDeviceId, select: selectMicDevice, refresh: refreshMicDevices } = useMicDevices()
-
-// Switching device restarts an active test so the new input takes effect immediately.
-async function onMicDeviceChange(e: Event) {
-  selectMicDevice((e.target as HTMLSelectElement).value)
-  if (micTest.testing.value) {
-    micTest.stop()
-    await micTest.start()
-  }
-}
-
 const manifestReady = ref(false)
 
 // Now-singing lyrics state
@@ -271,12 +195,6 @@ const lyricsBox = ref<HTMLElement>()
 const karaokeMode = computed(() => playerStore.karaokeMode)
 const karaokeAvailable = computed(() => playerStore.karaokeAvailable)
 const currentSong = computed(() => playerStore.currentSong)
-
-// Close the test audio context and its tracks when karaoke is disabled.
-watch(karaokeMode, (on) => {
-  if (on) return
-  micTest.stop()
-})
 
 const currentSongId = computed(() => playerStore.currentSong?.id)
 
@@ -325,8 +243,6 @@ watch(() => playerStore.currentTime, (t) => {
 })
 
 onMounted(async () => {
-  // Device labels show up once permission has been granted at least once
-  refreshMicDevices()
   if (songsStore.songs.length === 0) {
     await songsStore.fetchSongs()
   }
