@@ -70,37 +70,100 @@
             <div
               v-for="u in users"
               :key="u.id"
-              class="flex flex-wrap items-center gap-x-3 gap-y-2 p-2 rounded hover:bg-light-border dark:hover:bg-spotify-light"
+              class="rounded hover:bg-light-border dark:hover:bg-spotify-light"
             >
-              <UserAvatar :user="u" :size="32" />
-              <div class="flex-1 min-w-0">
-                <p class="text-sm text-light-text-primary dark:text-white truncate">
-                  {{ u.name || u.username || u.email }}
-                  <span
-                    v-if="u.kind === 'guest'"
-                    class="ml-1 text-[9px] uppercase font-bold px-1 py-0.5 rounded bg-white/10 text-gray-400 align-middle"
-                  >{{ $t('profile.guestBadge') }}</span>
-                </p>
-                <p class="text-xs text-light-text-secondary dark:text-gray-400 truncate">
-                  @{{ u.username }}{{ u.email ? ' · ' + u.email : '' }}
-                </p>
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-2 p-2">
+                <UserAvatar :user="u" :size="32" />
+                <div class="flex-1 min-w-0">
+                  <p class="text-sm text-light-text-primary dark:text-white truncate">
+                    {{ displayNameFor(u) }}
+                    <span
+                      v-if="u.kind === 'guest'"
+                      class="ml-1 text-[9px] uppercase font-bold px-1 py-0.5 rounded bg-white/10 text-gray-400 align-middle"
+                    >{{ $t('profile.guestBadge') }}</span>
+                  </p>
+                  <p class="text-xs text-light-text-secondary dark:text-gray-400 truncate">
+                    @{{ u.username }}{{ u.email ? ' · ' + u.email : '' }}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  class="p-1.5 rounded-full text-light-text-secondary dark:text-gray-300 hover:text-spotify-green hover:bg-black/5 dark:hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spotify-green"
+                  :title="$t('admin.showUserInfo', { user: displayNameFor(u) })"
+                  :aria-label="$t('admin.showUserInfo', { user: displayNameFor(u) })"
+                  :aria-expanded="expandedUserId === u.id"
+                  :aria-controls="`user-details-${u.id}`"
+                  @click="toggleUserDetails(u.id)"
+                >
+                  <InformationCircleIcon class="w-5 h-5" />
+                </button>
+                <select
+                  :value="u.role"
+                  @change="changeRole(u, ($event.target as HTMLSelectElement).value)"
+                  class="text-xs bg-white/10 border border-white/20 rounded px-2 py-1 text-light-text-primary dark:text-white"
+                >
+                  <option value="user">user</option>
+                  <option value="admin">admin</option>
+                </select>
+                <button
+                  type="button"
+                  @click="removeUser(u)"
+                  :disabled="u.id === auth.user?.id"
+                  class="p-1 text-gray-400 hover:text-red-400 disabled:opacity-30"
+                  :title="$t('admin.removeUser')"
+                >
+                  <TrashIcon class="w-4 h-4" />
+                </button>
               </div>
-              <select
-                :value="u.role"
-                @change="changeRole(u, ($event.target as HTMLSelectElement).value)"
-                class="text-xs bg-white/10 border border-white/20 rounded px-2 py-1 text-light-text-primary dark:text-white"
+
+              <div
+                v-if="expandedUserId === u.id"
+                :id="`user-details-${u.id}`"
+                class="mx-2 mb-2 mt-1 rounded-lg border border-light-border dark:border-white/10 bg-white/60 dark:bg-black/20 p-3"
               >
-                <option value="user">user</option>
-                <option value="admin">admin</option>
-              </select>
-              <button
-                @click="removeUser(u)"
-                :disabled="u.id === auth.user?.id"
-                class="p-1 text-gray-400 hover:text-red-400 disabled:opacity-30"
-                :title="$t('admin.removeUser')"
-              >
-                <TrashIcon class="w-4 h-4" />
-              </button>
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-3">
+                  <div>
+                    <p class="text-[10px] uppercase tracking-wide text-light-text-secondary dark:text-gray-400">{{ $t('admin.userId') }}</p>
+                    <p class="text-sm font-medium text-light-text-primary dark:text-gray-100">#{{ u.id }}</p>
+                  </div>
+                  <div>
+                    <p class="text-[10px] uppercase tracking-wide text-light-text-secondary dark:text-gray-400">{{ $t('admin.accountType') }}</p>
+                    <p class="text-sm font-medium text-light-text-primary dark:text-gray-100">{{ u.kind === 'google' ? 'Google' : $t('profile.guestBadge') }}</p>
+                  </div>
+                  <div>
+                    <p class="text-[10px] uppercase tracking-wide text-light-text-secondary dark:text-gray-400">{{ $t('admin.sessionCount') }}</p>
+                    <p class="text-sm font-medium text-light-text-primary dark:text-gray-100">{{ formatCount(u.session_count) }}</p>
+                  </div>
+                  <div>
+                    <p class="text-[10px] uppercase tracking-wide text-light-text-secondary dark:text-gray-400">{{ $t('admin.joined') }}</p>
+                    <p class="text-sm font-medium text-light-text-primary dark:text-gray-100">{{ formatDate(u.created_at) }}</p>
+                  </div>
+                  <div>
+                    <p class="text-[10px] uppercase tracking-wide text-light-text-secondary dark:text-gray-400">{{ $t('admin.lastLogin') }}</p>
+                    <p class="text-sm font-medium text-light-text-primary dark:text-gray-100">{{ formatDate(u.last_login) }}</p>
+                  </div>
+                  <div>
+                    <p class="text-[10px] uppercase tracking-wide text-light-text-secondary dark:text-gray-400">{{ $t('admin.lastSeen') }}</p>
+                    <p class="text-sm font-medium text-light-text-primary dark:text-gray-100">{{ formatDate(u.last_seen) }}</p>
+                  </div>
+                  <div>
+                    <p class="text-[10px] uppercase tracking-wide text-light-text-secondary dark:text-gray-400">{{ $t('admin.lastIp') }}</p>
+                    <p class="text-sm font-medium text-light-text-primary dark:text-gray-100 select-text break-all">{{ u.last_ip || '—' }}</p>
+                  </div>
+                  <div class="sm:col-span-2">
+                    <p class="text-[10px] uppercase tracking-wide text-light-text-secondary dark:text-gray-400">{{ $t('admin.device') }}</p>
+                    <p
+                      class="text-sm font-medium text-light-text-primary dark:text-gray-100 break-words"
+                      :title="u.last_user_agent || undefined"
+                    >{{ userAgentSummary(u.last_user_agent) }}</p>
+                  </div>
+                  <div v-if="u.bio" class="sm:col-span-2 lg:col-span-3">
+                    <p class="text-[10px] uppercase tracking-wide text-light-text-secondary dark:text-gray-400">{{ $t('admin.bio') }}</p>
+                    <p class="text-sm text-light-text-primary dark:text-gray-100 whitespace-pre-wrap break-words">{{ u.bio }}</p>
+                  </div>
+                </div>
+                <p class="mt-3 text-[11px] text-light-text-secondary dark:text-gray-400">{{ $t('admin.sessionCountHint') }}</p>
+              </div>
             </div>
           </div>
           <p v-if="usersError" class="text-xs text-red-400 mt-2">{{ usersError }}</p>
@@ -112,13 +175,15 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { Cog6ToothIcon, TrashIcon } from '@heroicons/vue/24/outline'
+import { useI18n } from 'vue-i18n'
+import { Cog6ToothIcon, InformationCircleIcon, TrashIcon } from '@heroicons/vue/24/outline'
 import { useAuthStore } from '@/stores/auth'
 import UserAvatar from '@/components/UI/UserAvatar.vue'
 import { adminService } from '@/services/adminService'
-import type { AuthUser } from '@/types'
+import type { AdminUser } from '@/services/adminService'
 
 const auth = useAuthStore()
+const { locale } = useI18n()
 
 const idsInput = ref('')
 const ingestRunning = ref(false)
@@ -134,8 +199,9 @@ const metaError = ref('')
 const metaLogBox = ref<HTMLElement>()
 let metaPollTimer: number | null = null
 
-const users = ref<(AuthUser & { created_at: string; last_login: string })[]>([])
+const users = ref<AdminUser[]>([])
 const usersError = ref('')
+const expandedUserId = ref<number | null>(null)
 
 const parseIdList = (input: string) =>
   [...new Set(input.split(/[\s,]+/).map((s) => parseInt(s, 10)).filter((n) => Number.isInteger(n) && n > 0))]
@@ -147,6 +213,9 @@ async function loadUsers() {
   try {
     const res = await adminService.listUsers()
     users.value = res.data
+    if (expandedUserId.value !== null && !users.value.some((u) => u.id === expandedUserId.value)) {
+      expandedUserId.value = null
+    }
   } catch (e) {
     usersError.value = (e as Error).message || 'failed to load users'
   }
@@ -214,7 +283,64 @@ async function runMetadata() {
   }
 }
 
-async function changeRole(u: AuthUser, role: string) {
+function displayNameFor(user: AdminUser) {
+  return user.name || user.username || user.email || `#${user.id}`
+}
+
+function toggleUserDetails(id: number) {
+  expandedUserId.value = expandedUserId.value === id ? null : id
+}
+
+function formatDate(value: string | null) {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat(locale.value, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(date)
+}
+
+function formatCount(value: number) {
+  const count = Number.isFinite(Number(value)) ? Number(value) : 0
+  return new Intl.NumberFormat(locale.value).format(count)
+}
+
+function userAgentSummary(value: string | null) {
+  if (!value) return '—'
+
+  const browserPatterns: [string, RegExp][] = [
+    ['Samsung Internet', /SamsungBrowser\/([\d.]+)/],
+    ['Edge', /Edg(?:A|iOS)?\/([\d.]+)/],
+    ['Firefox', /(?:Firefox|FxiOS)\/([\d.]+)/],
+    ['Chrome', /(?:Chrome|CriOS)\/([\d.]+)/],
+    ['Safari', /Version\/([\d.]+).*Safari/],
+  ]
+  const browser = browserPatterns
+    .map(([name, pattern]) => {
+      const match = value.match(pattern)
+      return match ? `${name} ${match[1]}` : ''
+    })
+    .find(Boolean)
+
+  let platform = ''
+  const android = value.match(/Android\s+([\d.]+)/)
+  if (android) {
+    const model = value.match(/Android[^;)]*;\s*([^;()]+?)(?:\s+Build\/|;|\))/)?.[1]?.trim()
+    platform = [model, `Android ${android[1]}`].filter(Boolean).join(' · ')
+  } else {
+    const ios = value.match(/(?:iPhone )?OS\s+([\d_]+)/)
+    if (/iPad/.test(value)) platform = `iPad · iPadOS ${ios?.[1]?.replace(/_/g, '.') || ''}`.trim()
+    else if (/iPhone/.test(value)) platform = `iPhone · iOS ${ios?.[1]?.replace(/_/g, '.') || ''}`.trim()
+    else if (/Windows/.test(value)) platform = 'Windows'
+    else if (/Macintosh|Mac OS X/.test(value)) platform = 'macOS'
+    else if (/Linux/.test(value)) platform = 'Linux'
+  }
+
+  return [platform, browser].filter(Boolean).join(' · ') || value
+}
+
+async function changeRole(u: AdminUser, role: string) {
   try {
     await adminService.setRole(u.id, role as 'admin' | 'user')
     await loadUsers()
@@ -224,7 +350,7 @@ async function changeRole(u: AuthUser, role: string) {
   }
 }
 
-async function removeUser(u: AuthUser) {
+async function removeUser(u: AdminUser) {
   if (!confirm(`Remove ${u.email}?`)) return
   try {
     await adminService.deleteUser(u.id)

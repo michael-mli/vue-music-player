@@ -246,6 +246,17 @@
     "runMetadata": "Build metadata",
     "running": "Running…",
     "usersTitle": "Users",
-    "removeUser": "Remove user"
+    "removeUser": "Remove user",
+    "showUserInfo": "Show details for {user}",
+    "userId": "User ID",
+    "accountType": "Account type",
+    "sessionCount": "Usage sessions",
+    "sessionCountHint": "Counts account creation, sign-ins, and restored app sessions. Exact tracking starts with this update.",
+    "joined": "Joined",
+    "lastLogin": "Last sign-in",
+    "lastSeen": "Last active",
+    "lastIp": "Last IP address",
+    "device": "Browser / device",
+    "bio": "Bio"
   }
 }

@@ -246,6 +246,17 @@
     "runMetadata": "生成元数据",
     "running": "运行中…",
     "usersTitle": "用户",
-    "removeUser": "删除用户"
+    "removeUser": "删除用户",
+    "showUserInfo": "查看 {user} 的详细资料",
+    "userId": "用户 ID",
+    "accountType": "账户类型",
+    "sessionCount": "使用次数",
+    "sessionCountHint": "统计账户创建、登录和从已保存会话打开应用；从本次更新起准确记录。",
+    "joined": "注册时间",
+    "lastLogin": "上次登录",
+    "lastSeen": "最近活动",
+    "lastIp": "最近 IP 地址",
+    "device": "浏览器 / 设备",
+    "bio": "个人简介"
   }
 }

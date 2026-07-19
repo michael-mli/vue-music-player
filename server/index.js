@@ -44,6 +44,46 @@ app.use(express.json({ limit: '300kb' }))
 app.use(cors({ origin: true }))
 
 const now = () => new Date().toISOString()
+
+function requestIp(req) {
+  const forwarded = req.headers['cf-connecting-ip']
+    || req.headers['x-real-ip']
+    || req.headers['x-forwarded-for']
+    || req.socket.remoteAddress
+  const value = Array.isArray(forwarded) ? forwarded[0] : forwarded
+  if (!value) return null
+  return String(value).split(',')[0].trim().replace(/^::ffff:/, '').slice(0, 64) || null
+}
+
+function requestUserAgent(req) {
+  const value = req.headers['user-agent']
+  if (!value) return null
+  return String(Array.isArray(value) ? value[0] : value).trim().slice(0, 500) || null
+}
+
+// A session is recorded when an identity is created, signed in, or restored on
+// app start. This is a useful usage count without pretending to be play duration.
+function recordSession(userId, req, { login = false } = {}) {
+  const timestamp = now()
+  const params = [timestamp, requestIp(req), requestUserAgent(req)]
+  if (login) {
+    db.prepare(`
+      UPDATE users
+      SET last_login = ?, last_seen = ?, last_ip = ?, last_user_agent = ?,
+          session_count = COALESCE(session_count, 0) + 1
+      WHERE id = ?
+    `).run(timestamp, ...params, userId)
+  } else {
+    db.prepare(`
+      UPDATE users
+      SET last_seen = ?, last_ip = ?, last_user_agent = ?,
+          session_count = COALESCE(session_count, 0) + 1
+      WHERE id = ?
+    `).run(...params, userId)
+  }
+  return db.prepare('SELECT * FROM users WHERE id = ?').get(userId)
+}
+
 const publicUser = (u) => ({
   id: u.id, email: u.email, username: u.username, name: u.name, picture: u.picture,
   avatar: u.avatar, bio: u.bio, role: u.role, kind: u.kind,
@@ -174,16 +214,20 @@ app.post('/api/auth/guest', (req, res) => {
   if (!JWT_SECRET) return res.status(503).json({ success: false, message: 'auth not configured' })
   const existing = optionalAuth(req)
   if (existing) {
-    const u = db.prepare('SELECT * FROM users WHERE id = ?').get(existing.sub)
-    if (u) return res.json({ success: true, data: { token: signToken(u), user: publicUser(u) } })
+    let u = db.prepare('SELECT * FROM users WHERE id = ?').get(existing.sub)
+    if (u) {
+      u = recordSession(u.id, req)
+      return res.json({ success: true, data: { token: signToken(u), user: publicUser(u) } })
+    }
   }
-  const ip = req.headers['x-real-ip'] || req.socket.remoteAddress || 'unknown'
+  const ip = requestIp(req) || 'unknown'
   if (!guestRateOk(String(ip))) return res.status(429).json({ success: false, message: 'too many guest accounts' })
   const username = generateUsername()
+  const timestamp = now()
   const info = db
     .prepare("INSERT INTO users (username, role, kind, created_at, last_login) VALUES (?, 'user', 'guest', ?, ?)")
-    .run(username, now(), now())
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid)
+    .run(username, timestamp, timestamp)
+  const user = recordSession(info.lastInsertRowid, req)
   res.json({ success: true, data: { token: signToken(user), user: publicUser(user) } })
 })
 
@@ -234,6 +278,7 @@ app.post('/api/auth/google', async (req, res) => {
         db.prepare("DELETE FROM users WHERE id = ? AND kind = 'guest'").run(guest.id)
       }
     }
+    user = recordSession(user.id, req, { login: true })
     res.json({ success: true, data: { token: signToken(user), user: publicUser(user) } })
   } catch {
     res.status(401).json({ success: false, message: 'google verification failed' })
@@ -275,8 +320,9 @@ app.patch('/api/profile', authMiddleware, (req, res) => {
 })
 
 app.get('/api/auth/me', authMiddleware, (req, res) => {
-  const u = db.prepare('SELECT * FROM users WHERE id = ?').get(req.auth.sub)
-  if (!u) return res.status(401).json({ success: false, message: 'user gone' })
+  const existing = db.prepare('SELECT id FROM users WHERE id = ?').get(req.auth.sub)
+  if (!existing) return res.status(401).json({ success: false, message: 'user gone' })
+  const u = recordSession(existing.id, req)
   res.json({ success: true, data: publicUser(u) })
 })
 
@@ -345,7 +391,12 @@ app.get('/api/admin/jobs/:jobId', authMiddleware, requireAdmin, jobStatus)
 
 // ─── Admin: user management (Phase 3) ────────────────────────────────────────
 app.get('/api/admin/users', authMiddleware, requireAdmin, (req, res) => {
-  const rows = db.prepare('SELECT id, email, username, name, picture, avatar, role, kind, created_at, last_login FROM users ORDER BY id').all()
+  const rows = db.prepare(`
+    SELECT id, email, username, name, picture, avatar, bio, role, kind,
+           created_at, last_login, last_seen, last_ip, last_user_agent, session_count
+    FROM users
+    ORDER BY id
+  `).all()
   res.json({ success: true, data: rows })
 })
 

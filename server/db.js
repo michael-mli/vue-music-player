@@ -3,9 +3,10 @@ import { DatabaseSync } from 'node:sqlite'
 import fs from 'node:fs'
 import path from 'node:path'
 
-// v2 schema: guests (kind='guest', email NULL) + profile fields. `username` is the
-// public handle — unique, case-insensitive, server-generated for guests.
-const SCHEMA_V2 = `
+// v3 schema: v2 identities/profile fields plus lightweight session activity used
+// by the admin user-details view. `session_count` counts authenticated app-session
+// starts; it is intentionally not presented as listening time.
+const SCHEMA_V3 = `
   CREATE TABLE users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT UNIQUE,
@@ -17,7 +18,11 @@ const SCHEMA_V2 = `
     role TEXT NOT NULL DEFAULT 'user',
     kind TEXT NOT NULL DEFAULT 'guest',
     created_at TEXT NOT NULL,
-    last_login TEXT
+    last_login TEXT,
+    last_seen TEXT,
+    last_ip TEXT,
+    last_user_agent TEXT,
+    session_count INTEGER NOT NULL DEFAULT 0
   );
 `
 
@@ -28,18 +33,18 @@ export function initDb(dataDir) {
 
   const hasUsers = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='users'`).get()
   if (!hasUsers) {
-    db.exec(SCHEMA_V2)
+    db.exec(SCHEMA_V3)
     return db
   }
 
-  const cols = db.prepare(`PRAGMA table_info(users)`).all().map((c) => c.name)
+  let cols = db.prepare(`PRAGMA table_info(users)`).all().map((c) => c.name)
   if (!cols.includes('username')) {
-    // v1 → v2 migration (v1 rows are all Google sign-ins). Back the file up first.
+    // v1 → v3 migration (v1 rows are all Google sign-ins). Back the file up first.
     try { fs.copyFileSync(dbPath, dbPath + '.bak-v1') } catch { /* best effort */ }
     db.exec('BEGIN')
     try {
       db.exec('ALTER TABLE users RENAME TO users_v1')
-      db.exec(SCHEMA_V2)
+      db.exec(SCHEMA_V3)
       db.exec(`
         INSERT INTO users (id, email, name, picture, role, kind, created_at, last_login)
         SELECT id, email, name, picture, role, 'google', created_at, last_login FROM users_v1
@@ -59,11 +64,41 @@ export function initDb(dataDir) {
         db.prepare('UPDATE users SET username = ? WHERE id = ?').run(candidate, row.id)
       }
       db.exec('COMMIT')
-      console.log('[db] migrated users table to v2 (guest + profile fields)')
+      console.log('[db] migrated users table to v3 (guest, profile, and activity fields)')
     } catch (e) {
       db.exec('ROLLBACK')
       throw e
     }
+    cols = db.prepare(`PRAGMA table_info(users)`).all().map((c) => c.name)
+  }
+
+  // v2 → v3 can be done with additive columns, preserving every existing row.
+  const activityColumns = [
+    ['last_seen', 'TEXT'],
+    ['last_ip', 'TEXT'],
+    ['last_user_agent', 'TEXT'],
+    ['session_count', 'INTEGER NOT NULL DEFAULT 0'],
+  ]
+  let activityMigrated = false
+  for (const [name, definition] of activityColumns) {
+    if (cols.includes(name)) continue
+    db.exec(`ALTER TABLE users ADD COLUMN ${name} ${definition}`)
+    activityMigrated = true
+  }
+
+  // Preserve the useful history we already have. Exact session tracking starts
+  // after this migration, so an account with a prior login begins at one.
+  db.exec(`
+    UPDATE users
+    SET
+      last_seen = COALESCE(last_seen, last_login, created_at),
+      session_count = CASE
+        WHEN COALESCE(session_count, 0) = 0 AND last_login IS NOT NULL THEN 1
+        ELSE COALESCE(session_count, 0)
+      END
+  `)
+  if (activityMigrated) {
+    console.log('[db] migrated users table to v3 (activity fields)')
   }
   return db
 }

@@ -5,8 +5,17 @@ import type { AuthUser } from '@/types'
 interface IngestStart { jobId: string; ids: number[] }
 interface IngestStatus { running: boolean; exitCode: number | null; ids: number[]; log: string[] }
 
+export interface AdminUser extends AuthUser {
+  created_at: string
+  last_login: string | null
+  last_seen: string | null
+  last_ip: string | null
+  last_user_agent: string | null
+  session_count: number
+}
+
 export const adminService = {
-  listUsers(): Promise<{ success: boolean; data: (AuthUser & { created_at: string; last_login: string })[] }> {
+  listUsers(): Promise<{ success: boolean; data: AdminUser[] }> {
     return api.get('/admin/users')
   },
   setRole(id: number, role: 'admin' | 'user'): Promise<{ success: boolean; data: AuthUser }> {
