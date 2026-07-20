@@ -6,9 +6,10 @@
 #   ingest.sh <id> [<id> ...]     # onboard specific song ids
 #   ingest.sh --auto              # find source songs that have no instrumental yet
 #
-# Instrumental generation prefers the GPU box (mics_cli active profile); if it's
-# unreachable it falls back to local CPU. Posters live on the shared /data mount (visible
-# to both hosts automatically); /karaoke and /synced are rsynced to mc3.
+# Instrumental generation requires the GPU box (mics_cli active profile). The script
+# exits before publishing if the GPU or any generated file is unavailable. Posters live
+# on the shared /data mount (visible to both hosts automatically); /karaoke and /synced
+# are rsynced to mc3.
 set -euo pipefail
 
 REPO=/home/mli/others/vue-music-player
@@ -18,7 +19,7 @@ KDIR=/var/www/html/others/music/karaoke
 SYNCDIR=/var/www/html/others/music/synced
 SCAN=$REPO/scripts/karaoke/karaoke_scan.csv
 PY=/home/mli/miniconda3/bin/python3
-GPU_HOST=https://mics5070wsl.micstec.com
+GPU_HOST=${GPU_HOST:-https://mics5070wsl.micstec.com}
 MC3=mc3.micsapp.com
 
 # ---- resolve ids -----------------------------------------------------------------------
@@ -37,6 +38,25 @@ IDS=$(echo "$IDS" | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -n | tr '\n' ' ')
 CSV=$(echo "$IDS" | tr ' ' ',' | sed 's/,$//')
 echo "ingesting ids: $IDS"
 
+# Fail before doing any other ingest work. The API performs the same check before it
+# creates a job; this protects direct script runs and the race where the GPU stops later.
+echo "== GPU preflight =="
+if ! code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$GPU_HOST/" 2>/dev/null); then
+  code=000
+fi
+case "$code" in
+  2??|3??) ;;
+  *)
+    echo "ERROR: GPU server unavailable (HTTP $code). Start the GPU server and retry." >&2
+    exit 1
+    ;;
+esac
+if ! command -v mics_cli >/dev/null; then
+  echo "ERROR: mics_cli is unavailable; cannot run GPU instrumental generation." >&2
+  exit 1
+fi
+echo "GPU server ready (http $code)"
+
 # ---- 1. posters (iTunes) ---------------------------------------------------------------
 echo "== posters =="
 MUSIC_DIR=$MUSIC_MOUNT "$PY" "$REPO/scripts/fetch_posters.py" --only "$CSV" || true
@@ -50,19 +70,30 @@ echo "== synced lyrics =="
 echo "== metadata =="
 bash "$REPO/scripts/metadata.sh" $IDS || true
 
-# ---- 3. instrumental (GPU preferred, CPU fallback) -------------------------------------
+# ---- 3. instrumental (GPU required) ----------------------------------------------------
 echo "== instrumental =="
-code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$GPU_HOST/" 2>/dev/null || echo 000)
-if [ "$code" != "502" ] && [ "$code" != "000" ] && command -v mics_cli >/dev/null; then
-  echo "using GPU box (http $code)"
-  mics_cli exec "cd ~/karaoke_gpu && venv/bin/python gpu_batch.py $IDS 2>&1 | grep -aE 'ok |FAIL|skip|BATCH_DONE'" --timeout 300 || true
-  for id in $IDS; do
-    mics_cli download "/home/mli/karaoke_gpu/out/link.$id.instrumental.mp3" -o "$KDIR/link.$id.instrumental.mp3" >/dev/null 2>&1 || true
-  done
-else
-  echo "GPU unreachable (http $code) — CPU fallback"
-  nice -n 19 env OMP_NUM_THREADS=3 "$PY" "$REPO/scripts/karaoke/separate.py" \
-    --music-dir "$MUSIC_MOUNT" --ids "$CSV" --out-dir "$KDIR" --bitrate 192k --max-duration 600 || true
+echo "using GPU box (http $code)"
+if ! mics_cli exec "cd ~/karaoke_gpu && venv/bin/python gpu_batch.py $IDS" --timeout 300; then
+  echo "ERROR: GPU instrumental generation failed. No karaoke files were published." >&2
+  exit 1
+fi
+
+download_failed=0
+for id in $IDS; do
+  target="$KDIR/link.$id.instrumental.mp3"
+  temp="$target.tmp.$$"
+  if mics_cli download "/home/mli/karaoke_gpu/out/link.$id.instrumental.mp3" -o "$temp" >/dev/null 2>&1 \
+      && [ -s "$temp" ]; then
+    mv "$temp" "$target"
+  else
+    rm -f "$temp"
+    echo "ERROR: GPU output for song $id could not be downloaded." >&2
+    download_failed=1
+  fi
+done
+if [ "$download_failed" -ne 0 ]; then
+  echo "ERROR: One or more GPU outputs are missing. No karaoke manifest was published." >&2
+  exit 1
 fi
 
 # ---- 4. publish + sync mc3 -------------------------------------------------------------

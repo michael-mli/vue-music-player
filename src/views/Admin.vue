@@ -15,6 +15,28 @@
         <section class="mb-10 p-4 rounded-lg bg-light-card dark:bg-spotify-dark border border-light-border dark:border-spotify-light">
           <h2 class="text-lg font-bold text-light-text-primary dark:text-white mb-1">{{ $t('admin.ingestTitle') }}</h2>
           <p class="text-sm text-light-text-secondary dark:text-gray-400 mb-3">{{ $t('admin.ingestHint') }}</p>
+          <div
+            class="flex flex-wrap items-center gap-x-2 gap-y-1 mb-3 text-xs"
+            role="status"
+            aria-live="polite"
+            data-testid="gpu-status"
+          >
+            <span
+              class="w-2 h-2 rounded-full flex-shrink-0"
+              :class="gpuChecking ? 'bg-amber-400 animate-pulse' : gpuState === 'ready' ? 'bg-spotify-green' : gpuState === 'unavailable' ? 'bg-red-400' : 'bg-gray-400'"
+              aria-hidden="true"
+            />
+            <span
+              :class="gpuState === 'unavailable' && !gpuChecking ? 'text-red-400' : 'text-light-text-secondary dark:text-gray-300'"
+            >{{ gpuStatusText }}</span>
+            <button
+              type="button"
+              class="underline underline-offset-2 text-light-text-secondary dark:text-gray-300 hover:text-spotify-green disabled:opacity-40"
+              :disabled="gpuChecking || ingestRunning"
+              data-testid="check-gpu"
+              @click="checkGpuStatus"
+            >{{ $t('admin.checkGpu') }}</button>
+          </div>
           <div class="flex flex-col sm:flex-row sm:items-center gap-2 mb-3">
             <input
               v-model="idsInput"
@@ -25,9 +47,10 @@
             />
             <button
               @click="runIngest"
-              :disabled="ingestRunning || !parsedIds.length"
+              :disabled="ingestRunning || gpuChecking || !parsedIds.length"
               class="w-full sm:w-auto flex-shrink-0 px-4 py-2 rounded-full bg-spotify-green text-black text-sm font-medium hover:bg-spotify-green/80 disabled:opacity-40"
-            >{{ ingestRunning ? $t('admin.running') : $t('admin.runIngest') }}</button>
+              data-testid="run-ingest"
+            >{{ gpuChecking ? $t('admin.gpuChecking') : ingestRunning ? $t('admin.running') : $t('admin.runIngest') }}</button>
           </div>
           <p v-if="ingestError" class="text-xs text-red-400 mb-2">{{ ingestError }}</p>
           <pre
@@ -65,14 +88,65 @@
 
         <!-- Users -->
         <section class="p-4 rounded-lg bg-light-card dark:bg-spotify-dark border border-light-border dark:border-spotify-light">
-          <h2 class="text-lg font-bold text-light-text-primary dark:text-white mb-3">{{ $t('admin.usersTitle') }} ({{ users.length }})</h2>
+          <div class="flex flex-col gap-3 mb-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <h2 class="text-lg font-bold text-light-text-primary dark:text-white">{{ $t('admin.usersTitle') }} ({{ users.length }})</h2>
+              <span v-if="purgeRunning" class="text-xs text-light-text-secondary dark:text-gray-400">{{ $t('admin.purging') }}</span>
+            </div>
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 rounded-lg border border-light-border dark:border-white/10 p-2">
+              <label class="inline-flex items-center gap-2 text-xs text-light-text-primary dark:text-gray-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  class="accent-red-500"
+                  :checked="allUsersSelected"
+                  :disabled="!selectableUsers.length || purgeRunning"
+                  data-testid="select-all-users"
+                  @change="toggleSelectAll(($event.target as HTMLInputElement).checked)"
+                />
+                <span>{{ $t('admin.selectAll') }}</span>
+                <span class="text-light-text-secondary dark:text-gray-400">({{ $t('admin.selectedCount', { count: selectedCount }) }})</span>
+              </label>
+              <div class="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  class="px-3 py-1.5 rounded-full border border-red-400 text-red-500 dark:text-red-300 text-xs font-medium hover:bg-red-500/10 disabled:opacity-40"
+                  :disabled="!selectedCount || purgeRunning"
+                  data-testid="purge-selected"
+                  @click="purgeSelectedUsers"
+                >{{ $t('admin.purgeSelected') }}</button>
+                <button
+                  type="button"
+                  class="px-3 py-1.5 rounded-full bg-red-600 text-white text-xs font-medium hover:bg-red-500 disabled:opacity-40"
+                  :disabled="!selectableUsers.length || purgeRunning"
+                  data-testid="purge-all"
+                  @click="purgeAllUsers"
+                >{{ $t('admin.purgeAll') }}</button>
+              </div>
+            </div>
+          </div>
           <div class="space-y-2">
             <div
               v-for="u in users"
               :key="u.id"
               class="rounded hover:bg-light-border dark:hover:bg-spotify-light"
+              :class="selectedUserIds.has(u.id) ? 'ring-1 ring-red-400/60 bg-red-500/5' : ''"
             >
               <div class="flex flex-wrap items-center gap-x-3 gap-y-2 p-2">
+                <label
+                  class="inline-flex items-center"
+                  :class="u.id === auth.user?.id ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'"
+                  :title="u.id === auth.user?.id ? $t('admin.currentAdminProtected') : $t('admin.selectUser', { user: displayNameFor(u) })"
+                >
+                  <span class="sr-only">{{ $t('admin.selectUser', { user: displayNameFor(u) }) }}</span>
+                  <input
+                    type="checkbox"
+                    class="accent-red-500"
+                    :checked="selectedUserIds.has(u.id)"
+                    :disabled="u.id === auth.user?.id || purgeRunning"
+                    :data-user-id="u.id"
+                    @change="toggleUserSelection(u.id, ($event.target as HTMLInputElement).checked)"
+                  />
+                </label>
                 <UserAvatar :user="u" :size="32" />
                 <div class="flex-1 min-w-0">
                   <p class="text-sm text-light-text-primary dark:text-white truncate">
@@ -166,6 +240,7 @@
               </div>
             </div>
           </div>
+          <p v-if="purgeNotice" class="text-xs text-spotify-green mt-2" role="status">{{ purgeNotice }}</p>
           <p v-if="usersError" class="text-xs text-red-400 mt-2">{{ usersError }}</p>
         </section>
       </template>
@@ -183,7 +258,7 @@ import { adminService } from '@/services/adminService'
 import type { AdminUser } from '@/services/adminService'
 
 const auth = useAuthStore()
-const { locale } = useI18n()
+const { locale, t } = useI18n()
 
 const idsInput = ref('')
 const ingestRunning = ref(false)
@@ -191,6 +266,11 @@ const ingestLog = ref<string[]>([])
 const ingestError = ref('')
 const logBox = ref<HTMLElement>()
 let pollTimer: number | null = null
+
+type GpuState = 'unknown' | 'ready' | 'unavailable'
+const gpuState = ref<GpuState>('unknown')
+const gpuChecking = ref(false)
+const gpuStatusCode = ref<number | null>(null)
 
 const metaIdsInput = ref('')
 const metaRunning = ref(false)
@@ -202,30 +282,78 @@ let metaPollTimer: number | null = null
 const users = ref<AdminUser[]>([])
 const usersError = ref('')
 const expandedUserId = ref<number | null>(null)
+const selectedUserIds = ref<Set<number>>(new Set())
+const purgeRunning = ref(false)
+const purgeNotice = ref('')
 
 const parseIdList = (input: string) =>
   [...new Set(input.split(/[\s,]+/).map((s) => parseInt(s, 10)).filter((n) => Number.isInteger(n) && n > 0))]
 
 const parsedIds = computed(() => parseIdList(idsInput.value))
 const parsedMetaIds = computed(() => parseIdList(metaIdsInput.value))
+const selectableUsers = computed(() => users.value.filter((u) => u.id !== auth.user?.id))
+const selectedCount = computed(() => selectedUserIds.value.size)
+const allUsersSelected = computed(() =>
+  selectableUsers.value.length > 0
+  && selectableUsers.value.every((u) => selectedUserIds.value.has(u.id)),
+)
+const gpuStatusText = computed(() => {
+  if (gpuChecking.value) return t('admin.gpuChecking')
+  if (gpuState.value === 'ready') return t('admin.gpuReady')
+  if (gpuState.value === 'unavailable' && gpuStatusCode.value !== null) {
+    return t('admin.gpuUnavailableStatus', { status: gpuStatusCode.value })
+  }
+  if (gpuState.value === 'unavailable') return t('admin.gpuUnavailable')
+  return t('admin.gpuNotChecked')
+})
+
+function apiErrorMessage(error: unknown, fallback: string) {
+  const apiError = error as { response?: { data?: { message?: string } }; message?: string }
+  return apiError.response?.data?.message || apiError.message || fallback
+}
 
 async function loadUsers() {
+  usersError.value = ''
   try {
     const res = await adminService.listUsers()
     users.value = res.data
+    const selectableIds = new Set(selectableUsers.value.map((u) => u.id))
+    selectedUserIds.value = new Set([...selectedUserIds.value].filter((id) => selectableIds.has(id)))
     if (expandedUserId.value !== null && !users.value.some((u) => u.id === expandedUserId.value)) {
       expandedUserId.value = null
     }
   } catch (e) {
-    usersError.value = (e as Error).message || 'failed to load users'
+    usersError.value = apiErrorMessage(e, 'failed to load users')
+  }
+}
+
+async function checkGpuStatus() {
+  if (gpuChecking.value) return gpuState.value === 'ready'
+  gpuChecking.value = true
+  try {
+    const res = await adminService.gpuStatus()
+    gpuState.value = res.data.available ? 'ready' : 'unavailable'
+    gpuStatusCode.value = res.data.status
+    return res.data.available
+  } catch {
+    gpuState.value = 'unavailable'
+    gpuStatusCode.value = null
+    return false
+  } finally {
+    gpuChecking.value = false
   }
 }
 
 async function runIngest() {
-  if (!parsedIds.value.length || ingestRunning.value) return
+  if (!parsedIds.value.length || ingestRunning.value || gpuChecking.value) return
   ingestError.value = ''
   ingestLog.value = []
   try {
+    const gpuReady = await checkGpuStatus()
+    if (!gpuReady) {
+      ingestError.value = gpuStatusText.value
+      return
+    }
     const res = await adminService.startIngest(parsedIds.value)
     if (!res.success) { ingestError.value = res.message || 'failed to start'; return }
     ingestRunning.value = true
@@ -240,15 +368,19 @@ async function runIngest() {
           ingestRunning.value = false
           if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
           ingestLog.value.push(`--- finished (exit ${s.data.exitCode}) ---`)
+          if (s.data.exitCode !== 0) {
+            ingestError.value = t('admin.ingestFailed', { code: s.data.exitCode })
+          }
           loadUsers()
         }
-      } catch {
+      } catch (e) {
         ingestRunning.value = false
+        ingestError.value = apiErrorMessage(e, t('admin.ingestStatusFailed'))
         if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
       }
     }, 2000)
   } catch (e) {
-    ingestError.value = (e as Error).message || 'ingest failed'
+    ingestError.value = apiErrorMessage(e, 'ingest failed')
   }
 }
 
@@ -289,6 +421,50 @@ function displayNameFor(user: AdminUser) {
 
 function toggleUserDetails(id: number) {
   expandedUserId.value = expandedUserId.value === id ? null : id
+}
+
+function toggleUserSelection(id: number, checked: boolean) {
+  if (id === auth.user?.id) return
+  const next = new Set(selectedUserIds.value)
+  if (checked) next.add(id)
+  else next.delete(id)
+  selectedUserIds.value = next
+}
+
+function toggleSelectAll(checked: boolean) {
+  selectedUserIds.value = checked
+    ? new Set(selectableUsers.value.map((u) => u.id))
+    : new Set()
+}
+
+async function executePurge(payload: { ids: number[] } | { all: true }) {
+  purgeRunning.value = true
+  purgeNotice.value = ''
+  usersError.value = ''
+  try {
+    const res = await adminService.purgeUsers(payload)
+    selectedUserIds.value = new Set()
+    await loadUsers()
+    purgeNotice.value = t('admin.purgedUsers', { count: res.data.count })
+  } catch (e) {
+    usersError.value = apiErrorMessage(e, t('admin.purgeFailed'))
+  } finally {
+    purgeRunning.value = false
+  }
+}
+
+async function purgeSelectedUsers() {
+  const ids = [...selectedUserIds.value]
+  if (!ids.length) return
+  if (!window.confirm(t('admin.confirmPurgeSelected', { count: ids.length }))) return
+  await executePurge({ ids })
+}
+
+async function purgeAllUsers() {
+  const count = selectableUsers.value.length
+  if (!count) return
+  if (!window.confirm(t('admin.confirmPurgeAll', { count }))) return
+  await executePurge({ all: true })
 }
 
 function formatDate(value: string | null) {
@@ -345,8 +521,9 @@ async function changeRole(u: AdminUser, role: string) {
     await adminService.setRole(u.id, role as 'admin' | 'user')
     await loadUsers()
   } catch (e) {
-    usersError.value = (e as Error).message || 'failed to change role'
+    const message = apiErrorMessage(e, 'failed to change role')
     await loadUsers()
+    usersError.value = message
   }
 }
 
@@ -356,13 +533,13 @@ async function removeUser(u: AdminUser) {
     await adminService.deleteUser(u.id)
     await loadUsers()
   } catch (e) {
-    usersError.value = (e as Error).message || 'failed to remove user'
+    usersError.value = apiErrorMessage(e, 'failed to remove user')
   }
 }
 
 onMounted(async () => {
   if (!auth.ready) await auth.fetchMe()
-  if (auth.isAdmin) await loadUsers()
+  if (auth.isAdmin) await Promise.all([loadUsers(), checkGpuStatus()])
 })
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)

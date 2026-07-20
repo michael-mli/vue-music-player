@@ -25,6 +25,7 @@ const {
   SESSION_TTL_HOURS = '168',
   REPO_DIR = '/home/mli/others/vue-music-player',
   WEB_ROOT = '/var/www/html/others/music',
+  GPU_HOST = 'https://mics5070wsl.micstec.com',
 } = process.env
 
 const configOk = Boolean(GOOGLE_CLIENT_ID && JWT_SECRET)
@@ -147,8 +148,45 @@ function authMiddleware(req, res, next) {
 }
 
 function requireAdmin(req, res, next) {
-  if (req.auth?.role !== 'admin') return res.status(403).json({ success: false, message: 'admin only' })
+  const current = req.auth
+    ? db.prepare('SELECT role FROM users WHERE id = ?').get(req.auth.sub)
+    : null
+  if (req.auth?.role !== 'admin' || current?.role !== 'admin') {
+    return res.status(403).json({ success: false, message: 'admin only' })
+  }
   next()
+}
+
+async function gpuStatus() {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 8000)
+  try {
+    const response = await fetch(`${GPU_HOST.replace(/\/+$/, '')}/`, {
+      method: 'GET',
+      redirect: 'manual',
+      signal: controller.signal,
+    })
+    await response.body?.cancel()
+    const available = response.status >= 200 && response.status < 400
+    return {
+      available,
+      status: response.status,
+      message: available
+        ? 'GPU server is ready.'
+        : `GPU server unavailable (HTTP ${response.status}). Start the GPU server and retry.`,
+      checkedAt: now(),
+    }
+  } catch (error) {
+    const timedOut = error?.name === 'AbortError'
+    return {
+      available: false,
+      status: null,
+      message: `GPU server ${timedOut ? 'check timed out' : 'is unreachable'}. Start the GPU server and retry.`,
+      checkedAt: now(),
+    }
+  } finally {
+    clearTimeout(timeout)
+  }
 }
 
 // ─── Shared-song link previews ───────────────────────────────────────────────
@@ -368,10 +406,18 @@ function jobStatus(req, res) {
   res.json({ success: true, data: { running: job.running, exitCode: job.exitCode, ids: job.ids, log: job.log } })
 }
 
-app.post('/api/admin/ingest', authMiddleware, requireAdmin, (req, res) => {
+app.get('/api/admin/gpu-status', authMiddleware, requireAdmin, async (req, res) => {
+  res.json({ success: true, data: await gpuStatus() })
+})
+
+app.post('/api/admin/ingest', authMiddleware, requireAdmin, async (req, res) => {
   const ids = parseIds(req.body, 200)
   if (!ids) return res.status(400).json({ success: false, message: 'too many ids (max 200)' })
   if (!ids.length) return res.status(400).json({ success: false, message: 'provide 1..N numeric song ids' })
+  const gpu = await gpuStatus()
+  if (!gpu.available) {
+    return res.status(503).json({ success: false, message: gpu.message, data: { gpu } })
+  }
   const jobId = startJob('ingest', ['scripts/karaoke/ingest.sh', ...ids.map(String)], ids, req.auth.email)
   res.json({ success: true, data: { jobId, ids } })
 })
@@ -398,6 +444,43 @@ app.get('/api/admin/users', authMiddleware, requireAdmin, (req, res) => {
     ORDER BY id
   `).all()
   res.json({ success: true, data: rows })
+})
+
+app.post('/api/admin/users/purge', authMiddleware, requireAdmin, (req, res) => {
+  const selfId = Number(req.auth.sub)
+  let ids
+
+  if (req.body?.all === true) {
+    ids = db.prepare('SELECT id FROM users WHERE id != ? ORDER BY id').all(selfId).map((row) => row.id)
+  } else {
+    ids = parseIds(req.body, 1000)
+    if (!ids) return res.status(400).json({ success: false, message: 'too many ids (max 1000)' })
+    if (!ids.length) return res.status(400).json({ success: false, message: 'select at least one user' })
+    ids = ids.filter((id) => id !== selfId)
+  }
+
+  const purged = []
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    const remove = db.prepare('DELETE FROM users WHERE id = ? AND id != ?')
+    for (const id of ids) {
+      const result = remove.run(id, selfId)
+      if (result.changes) purged.push(id)
+    }
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+
+  res.json({
+    success: true,
+    data: {
+      ids: purged,
+      count: purged.length,
+      protectedUserId: selfId,
+    },
+  })
 })
 
 app.patch('/api/admin/users/:id', authMiddleware, requireAdmin, (req, res) => {
