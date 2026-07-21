@@ -190,6 +190,7 @@ export const useSongsStore = defineStore('songs', () => {
     try {
       const response = await categoryService.list()
       categories.value = response.data.categories
+      const lockedSongIds = new Set(response.data.lockedSongIds)
       categoryAssignments.clear()
       for (const assignment of response.data.assignments) {
         const ids = categoryAssignments.get(assignment.songId) || []
@@ -199,6 +200,7 @@ export const useSongsStore = defineStore('songs', () => {
       songs.value = songs.value.map((song) => ({
         ...song,
         categoryIds: categoryAssignments.get(song.id) || [],
+        profileLocked: lockedSongIds.has(song.id),
       }))
       if (category.value !== 'all' && !categories.value.some((item) => item.slug === category.value)) {
         setCategory('all')

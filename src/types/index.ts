@@ -12,6 +12,7 @@ export interface Song {
   genre?: string
   language?: string
   categoryIds?: number[]
+  profileLocked?: boolean
 }
 
 /** Per-song metadata built offline by scripts/build_metadata.py → /data/metadata.json */
@@ -40,11 +41,13 @@ export interface SongCategory {
 export interface CategoryAssignment {
   songId: number
   categoryId: number
+  source: 'auto' | 'manual'
 }
 
 export interface CategoryData {
   categories: SongCategory[]
   assignments: CategoryAssignment[]
+  lockedSongIds: number[]
 }
 
 /** A single time-stamped lyric line (parsed from LRC). `time` is seconds from start. */

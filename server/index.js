@@ -385,11 +385,13 @@ function categoryData() {
     songCount: row.song_count,
   }))
   const assignments = db.prepare(`
-    SELECT song_id, category_id
+    SELECT song_id, category_id, source
     FROM song_categories
     ORDER BY song_id, category_id
-  `).all().map((row) => ({ songId: row.song_id, categoryId: row.category_id }))
-  return { categories, assignments }
+  `).all().map((row) => ({ songId: row.song_id, categoryId: row.category_id, source: row.source }))
+  const lockedSongIds = db.prepare('SELECT song_id FROM song_profile_locks ORDER BY song_id')
+    .all().map((row) => row.song_id)
+  return { categories, assignments, lockedSongIds }
 }
 
 // Public so every listener can browse the admin-curated tags.
@@ -457,15 +459,20 @@ app.put('/api/admin/songs/:id/categories', authMiddleware, requireAdmin, (req, r
     }
   }
 
-  db.exec('BEGIN')
+  db.exec('BEGIN IMMEDIATE')
   try {
     db.prepare('DELETE FROM song_categories WHERE song_id = ?').run(songId)
     const insert = db.prepare(`
-      INSERT INTO song_categories (song_id, category_id, tagged_by, created_at)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO song_categories (song_id, category_id, tagged_by, source, created_at)
+      VALUES (?, ?, ?, 'manual', ?)
     `)
     const timestamp = now()
     for (const categoryId of categoryIds) insert.run(songId, categoryId, req.auth.sub, timestamp)
+    db.prepare(`
+      INSERT INTO song_profile_locks (song_id, locked_by, locked_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(song_id) DO UPDATE SET locked_by = excluded.locked_by, locked_at = excluded.locked_at
+    `).run(songId, req.auth.sub, timestamp)
     db.exec('COMMIT')
   } catch (error) {
     db.exec('ROLLBACK')
@@ -478,6 +485,7 @@ app.put('/api/admin/songs/:id/categories', authMiddleware, requireAdmin, (req, r
 // In-memory job registry (ephemeral; restart clears history).
 const jobs = new Map()
 let jobSeq = 0
+let categoryProfileJobId = null
 
 // Validate request ids — only positive integers, capped, deduped. No shell strings.
 function parseIds(body, max) {
@@ -489,12 +497,12 @@ function parseIds(body, max) {
 
 // Spawn a repo script and stream its output into the job log.
 // Args are passed as an array (no shell) → the ids can't inject shell.
-function startJob(kind, argv, ids, email) {
+function startJob(kind, argv, ids, email, extraEnv = {}) {
   const jobId = `job-${++jobSeq}`
   const job = { id: jobId, kind, ids, running: true, log: [], startedAt: now(), exitCode: null, by: email }
   jobs.set(jobId, job)
 
-  const child = spawn('bash', argv, { cwd: REPO_DIR, env: process.env })
+  const child = spawn('bash', argv, { cwd: REPO_DIR, env: { ...process.env, ...extraEnv } })
   const push = (buf) => {
     for (const line of buf.toString().split(/\r?\n/)) {
       if (line) { job.log.push(line); if (job.log.length > 2000) job.log.shift() }
@@ -502,16 +510,59 @@ function startJob(kind, argv, ids, email) {
   }
   child.stdout.on('data', push)
   child.stderr.on('data', push)
-  child.on('close', (code) => { job.running = false; job.exitCode = code })
-  child.on('error', (e) => { job.running = false; job.exitCode = -1; job.log.push(`spawn error: ${e.message}`) })
+  child.on('close', (code) => { job.running = false; job.exitCode = code; job.finishedAt = now() })
+  child.on('error', (e) => {
+    job.running = false; job.exitCode = -1; job.finishedAt = now(); job.log.push(`spawn error: ${e.message}`)
+  })
   return jobId
+}
+
+function publicJob(job) {
+  if (!job) return null
+  return {
+    id: job.id, kind: job.kind, running: job.running, exitCode: job.exitCode,
+    ids: job.ids, log: job.log, startedAt: job.startedAt, finishedAt: job.finishedAt || null,
+  }
 }
 
 function jobStatus(req, res) {
   const job = jobs.get(req.params.jobId)
   if (!job) return res.status(404).json({ success: false, message: 'no such job' })
-  res.json({ success: true, data: { running: job.running, exitCode: job.exitCode, ids: job.ids, log: job.log } })
+  res.json({ success: true, data: publicJob(job) })
 }
+
+function startCategoryProfile(by = 'system') {
+  const current = categoryProfileJobId ? jobs.get(categoryProfileJobId) : null
+  if (current?.running) return current.id
+  categoryProfileJobId = startJob(
+    'category-profile',
+    ['scripts/profile_categories.sh'],
+    [],
+    by,
+    {
+      CATEGORY_DB_PATH: path.join(DATA_DIR, 'auth.db'),
+      CATEGORY_METADATA_PATH: path.join(WEB_ROOT, 'metadata.json'),
+      CATEGORY_CACHE_PATH: path.join(DATA_DIR, 'artist_gender_cache.json'),
+    },
+  )
+  return categoryProfileJobId
+}
+
+app.get('/api/admin/categories/profile', authMiddleware, requireAdmin, (req, res) => {
+  const job = categoryProfileJobId ? jobs.get(categoryProfileJobId) : null
+  res.json({ success: true, data: publicJob(job) })
+})
+
+app.post('/api/admin/categories/profile', authMiddleware, requireAdmin, (req, res) => {
+  const current = categoryProfileJobId ? jobs.get(categoryProfileJobId) : null
+  const alreadyRunning = Boolean(current?.running)
+  const jobId = startCategoryProfile(req.auth.email || `user:${req.auth.sub}`)
+  res.status(alreadyRunning ? 200 : 202).json({
+    success: true,
+    data: publicJob(jobs.get(jobId)),
+    message: alreadyRunning ? 'category profiling is already running' : 'category profiling started',
+  })
+})
 
 app.get('/api/admin/gpu-status', authMiddleware, requireAdmin, async (req, res) => {
   res.json({ success: true, data: await gpuStatus() })
@@ -618,4 +669,13 @@ app.delete('/api/admin/users/:id', authMiddleware, requireAdmin, (req, res) => {
   res.json({ success: true, data: { id } })
 })
 
-app.listen(Number(PORT), '127.0.0.1', () => console.log(`[auth] listening on 127.0.0.1:${PORT}`))
+app.listen(Number(PORT), '127.0.0.1', () => {
+  console.log(`[auth] listening on 127.0.0.1:${PORT}`)
+  const initialProfile = setTimeout(() => startCategoryProfile('system:startup'), 3000)
+  initialProfile.unref()
+  const profileSchedule = setInterval(
+    () => startCategoryProfile('system:schedule'),
+    6 * 60 * 60 * 1000,
+  )
+  profileSchedule.unref()
+})

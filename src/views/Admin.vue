@@ -91,6 +91,31 @@
           <h2 class="text-lg font-bold text-light-text-primary dark:text-white mb-1">{{ $t('admin.categoriesTitle') }}</h2>
           <p class="text-sm text-light-text-secondary dark:text-gray-400 mb-4">{{ $t('admin.categoriesHint') }}</p>
 
+          <div class="mb-4 rounded-lg border border-light-border dark:border-white/10 p-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div class="flex items-center gap-2 text-sm">
+                <span
+                  class="w-2 h-2 rounded-full"
+                  :class="profileRunning ? 'bg-amber-400 animate-pulse' : profileExitCode === 0 ? 'bg-spotify-green' : profileExitCode === null ? 'bg-gray-400' : 'bg-red-400'"
+                  aria-hidden="true"
+                />
+                <span class="text-light-text-primary dark:text-gray-200">{{ profileStatusText }}</span>
+              </div>
+              <button
+                type="button"
+                :disabled="profileRunning"
+                class="px-3 py-1.5 rounded-full border border-spotify-green text-spotify-green text-xs font-medium hover:bg-spotify-green/10 disabled:opacity-40"
+                @click="runCategoryProfile"
+              >{{ profileRunning ? $t('admin.profilingRunning') : $t('admin.runProfiling') }}</button>
+            </div>
+            <p class="mt-2 text-xs text-light-text-secondary dark:text-gray-400">{{ $t('admin.profilingHint') }}</p>
+            <pre
+              v-if="profileLog.length"
+              class="mt-2 text-xs bg-black/40 text-gray-200 rounded p-2 max-h-40 overflow-y-auto whitespace-pre-wrap"
+            >{{ profileLog.slice(-25).join('\n') }}</pre>
+            <p v-if="profileError" class="text-xs text-red-400 mt-2">{{ profileError }}</p>
+          </div>
+
           <form class="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2" @submit.prevent="createCategory">
             <input
               v-model="newCategoryNameEn"
@@ -376,6 +401,11 @@ const newCategoryNameEn = ref('')
 const newCategoryNameZh = ref('')
 const categoryCreating = ref(false)
 const categorySaving = ref(false)
+const profileRunning = ref(false)
+const profileExitCode = ref<number | null>(null)
+const profileLog = ref<string[]>([])
+const profileError = ref('')
+let profilePollTimer: number | null = null
 const categoryError = ref('')
 const categoryNotice = ref('')
 const songQuery = ref('')
@@ -411,6 +441,12 @@ const songMatches = computed(() => {
       || String(song.id).includes(query)
     ))
     .slice(0, 20)
+})
+const profileStatusText = computed(() => {
+  if (profileRunning.value) return t('admin.profilingRunning')
+  if (profileExitCode.value === 0) return t('admin.profilingComplete')
+  if (profileExitCode.value !== null) return t('admin.profilingFailed', { code: profileExitCode.value })
+  return t('admin.profilingNotRun')
 })
 const selectableUsers = computed(() => users.value.filter((u) => u.id !== auth.user?.id))
 const selectedCount = computed(() => selectedUserIds.value.size)
@@ -538,6 +574,46 @@ async function runMetadata() {
 
 function categoryName(category: SongCategory) {
   return locale.value.startsWith('zh') ? category.nameZh : category.nameEn
+}
+
+function applyProfileJob(job: import('@/services/adminService').CategoryProfileJob | null) {
+  profileRunning.value = Boolean(job?.running)
+  profileExitCode.value = job?.exitCode ?? null
+  profileLog.value = job?.log || []
+}
+
+function scheduleProfilePoll() {
+  if (profilePollTimer) window.clearTimeout(profilePollTimer)
+  profilePollTimer = window.setTimeout(refreshCategoryProfile, 2000)
+}
+
+async function refreshCategoryProfile() {
+  const wasRunning = profileRunning.value
+  try {
+    const response = await adminService.categoryProfileStatus()
+    applyProfileJob(response.data)
+    if (profileRunning.value) {
+      scheduleProfilePoll()
+    } else if (wasRunning) {
+      await songsStore.loadCategories()
+    }
+  } catch (error) {
+    profileError.value = apiErrorMessage(error, t('admin.profilingStatusFailed'))
+    if (profileRunning.value) scheduleProfilePoll()
+  }
+}
+
+async function runCategoryProfile() {
+  if (profileRunning.value) return
+  profileError.value = ''
+  profileLog.value = []
+  try {
+    const response = await adminService.startCategoryProfile()
+    applyProfileJob(response.data)
+    if (profileRunning.value) scheduleProfilePoll()
+  } catch (error) {
+    profileError.value = apiErrorMessage(error, t('admin.profilingStartFailed'))
+  }
 }
 
 async function loadCategoryData() {
@@ -735,10 +811,11 @@ async function removeUser(u: AdminUser) {
 
 onMounted(async () => {
   if (!auth.ready) await auth.fetchMe()
-  if (auth.isAdmin) await Promise.all([loadUsers(), checkGpuStatus(), loadCategoryData()])
+  if (auth.isAdmin) await Promise.all([loadUsers(), checkGpuStatus(), loadCategoryData(), refreshCategoryProfile()])
 })
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
   if (metaPollTimer) clearInterval(metaPollTimer)
+  if (profilePollTimer) window.clearTimeout(profilePollTimer)
 })
 </script>

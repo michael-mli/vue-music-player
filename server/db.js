@@ -50,6 +50,7 @@ function initCategorySchema(db) {
       song_id INTEGER NOT NULL,
       category_id INTEGER NOT NULL,
       tagged_by INTEGER,
+      source TEXT NOT NULL DEFAULT 'manual',
       created_at TEXT NOT NULL,
       PRIMARY KEY (song_id, category_id),
       FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE,
@@ -57,7 +58,17 @@ function initCategorySchema(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_song_categories_category
       ON song_categories(category_id, song_id);
+    CREATE TABLE IF NOT EXISTS song_profile_locks (
+      song_id INTEGER PRIMARY KEY,
+      locked_by INTEGER,
+      locked_at TEXT NOT NULL,
+      FOREIGN KEY (locked_by) REFERENCES users(id) ON DELETE SET NULL
+    );
   `)
+  const tagColumns = db.prepare('PRAGMA table_info(song_categories)').all().map((column) => column.name)
+  if (!tagColumns.includes('source')) {
+    db.exec("ALTER TABLE song_categories ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'")
+  }
   const insert = db.prepare(`
     INSERT OR IGNORE INTO categories (slug, name_en, name_zh, is_default, created_at)
     VALUES (?, ?, ?, 1, ?)

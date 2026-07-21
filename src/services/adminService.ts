@@ -5,6 +5,16 @@ import type { APIResponse, AuthUser, CategoryData, SongCategory } from '@/types'
 interface IngestStart { jobId: string; ids: number[] }
 interface IngestStatus { running: boolean; exitCode: number | null; ids: number[]; log: string[] }
 
+export interface CategoryProfileJob {
+  id: string
+  kind: 'category-profile'
+  running: boolean
+  exitCode: number | null
+  log: string[]
+  startedAt: string
+  finishedAt: string | null
+}
+
 export interface GpuStatus {
   available: boolean
   status: number | null
@@ -36,6 +46,12 @@ export const adminService = {
   },
   setSongCategories(songId: number, categoryIds: number[]): Promise<APIResponse<{ songId: number; categoryIds: number[] }>> {
     return api.put(`/admin/songs/${songId}/categories`, { categoryIds })
+  },
+  categoryProfileStatus(): Promise<APIResponse<CategoryProfileJob | null>> {
+    return api.get('/admin/categories/profile')
+  },
+  startCategoryProfile(): Promise<APIResponse<CategoryProfileJob>> {
+    return api.post('/admin/categories/profile')
   },
   listUsers(): Promise<{ success: boolean; data: AdminUser[] }> {
     return api.get('/admin/users')
