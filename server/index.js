@@ -367,6 +367,113 @@ app.get('/api/auth/me', authMiddleware, (req, res) => {
 // Stateless JWT — logout is client-side (drop the token). Endpoint kept for symmetry.
 app.post('/api/auth/logout', (req, res) => res.json({ success: true, data: {} }))
 
+// ─── Song categories/tags ──────────────────────────────────────────────────
+function categoryData() {
+  const categories = db.prepare(`
+    SELECT c.id, c.slug, c.name_en, c.name_zh, c.is_default,
+           COUNT(sc.song_id) AS song_count
+    FROM categories c
+    LEFT JOIN song_categories sc ON sc.category_id = c.id
+    GROUP BY c.id
+    ORDER BY c.is_default DESC, c.id
+  `).all().map((row) => ({
+    id: row.id,
+    slug: row.slug,
+    nameEn: row.name_en,
+    nameZh: row.name_zh,
+    isDefault: Boolean(row.is_default),
+    songCount: row.song_count,
+  }))
+  const assignments = db.prepare(`
+    SELECT song_id, category_id
+    FROM song_categories
+    ORDER BY song_id, category_id
+  `).all().map((row) => ({ songId: row.song_id, categoryId: row.category_id }))
+  return { categories, assignments }
+}
+
+// Public so every listener can browse the admin-curated tags.
+app.get('/api/categories', (req, res) => {
+  res.json({ success: true, data: categoryData() })
+})
+
+function categorySlug(name) {
+  return String(name)
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 50)
+}
+
+app.post('/api/admin/categories', authMiddleware, requireAdmin, (req, res) => {
+  const nameEn = typeof req.body?.nameEn === 'string' ? req.body.nameEn.trim() : ''
+  const nameZh = typeof req.body?.nameZh === 'string' ? req.body.nameZh.trim() : ''
+  if (!nameEn || !nameZh || nameEn.length > 60 || nameZh.length > 60) {
+    return res.status(400).json({ success: false, message: 'English and Chinese names are required (max 60 characters)' })
+  }
+  const baseSlug = categorySlug(nameEn)
+  if (!baseSlug) return res.status(400).json({ success: false, message: 'English name must contain letters or numbers' })
+
+  let slug = baseSlug
+  let suffix = 2
+  while (db.prepare('SELECT 1 FROM categories WHERE slug = ?').get(slug)) {
+    slug = `${baseSlug}-${suffix++}`
+  }
+  const timestamp = now()
+  const info = db.prepare(`
+    INSERT INTO categories (slug, name_en, name_zh, is_default, created_at)
+    VALUES (?, ?, ?, 0, ?)
+  `).run(slug, nameEn, nameZh, timestamp)
+  const category = db.prepare('SELECT * FROM categories WHERE id = ?').get(info.lastInsertRowid)
+  res.status(201).json({
+    success: true,
+    data: {
+      id: category.id,
+      slug: category.slug,
+      nameEn: category.name_en,
+      nameZh: category.name_zh,
+      isDefault: false,
+      songCount: 0,
+    },
+  })
+})
+
+app.put('/api/admin/songs/:id/categories', authMiddleware, requireAdmin, (req, res) => {
+  const songId = Number(req.params.id)
+  const raw = Array.isArray(req.body?.categoryIds) ? req.body.categoryIds : null
+  if (!Number.isInteger(songId) || songId <= 0 || songId >= 100000 || raw === null) {
+    return res.status(400).json({ success: false, message: 'valid song id and categoryIds are required' })
+  }
+  const categoryIds = [...new Set(raw.map(Number))]
+  if (categoryIds.length > 50 || categoryIds.some((id) => !Number.isInteger(id) || id <= 0)) {
+    return res.status(400).json({ success: false, message: 'categoryIds must contain valid category ids' })
+  }
+  if (categoryIds.length) {
+    const placeholders = categoryIds.map(() => '?').join(',')
+    const existing = db.prepare(`SELECT id FROM categories WHERE id IN (${placeholders})`).all(...categoryIds)
+    if (existing.length !== categoryIds.length) {
+      return res.status(400).json({ success: false, message: 'one or more categories do not exist' })
+    }
+  }
+
+  db.exec('BEGIN')
+  try {
+    db.prepare('DELETE FROM song_categories WHERE song_id = ?').run(songId)
+    const insert = db.prepare(`
+      INSERT INTO song_categories (song_id, category_id, tagged_by, created_at)
+      VALUES (?, ?, ?, ?)
+    `)
+    const timestamp = now()
+    for (const categoryId of categoryIds) insert.run(songId, categoryId, req.auth.sub, timestamp)
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+  res.json({ success: true, data: { songId, categoryIds } })
+})
+
 // ─── Admin: batch jobs (ingest Phase 2, metadata) ───────────────────────────
 // In-memory job registry (ephemeral; restart clears history).
 const jobs = new Map()

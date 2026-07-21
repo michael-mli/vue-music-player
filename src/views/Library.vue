@@ -17,13 +17,13 @@
         </button>
         <button
           v-for="cat in visibleCategories"
-          :key="cat.key"
-          @click="selectCategory(cat.key)"
+          :key="cat.id"
+          @click="selectCategory(cat.slug)"
           class="relative overflow-hidden rounded-lg p-3 text-left text-white bg-gradient-to-br transition-transform duration-150 hover:scale-105"
-          :class="[gradientFor(cat.key), selectedCategory === cat.key ? 'ring-2 ring-spotify-green ring-offset-2 ring-offset-light-bg dark:ring-offset-spotify-black' : 'opacity-90']"
+          :class="[gradientFor(cat.slug), selectedCategory === cat.slug ? 'ring-2 ring-spotify-green ring-offset-2 ring-offset-light-bg dark:ring-offset-spotify-black' : 'opacity-90']"
         >
-          <p class="font-bold text-sm break-words">{{ cat.key === '__none__' ? $t('library.uncategorized') : cat.key }}</p>
-          <p class="text-xs text-white/80 mt-1">{{ $t('library.totalSongs', { count: cat.count }) }}</p>
+          <p class="font-bold text-sm break-words">{{ categoryName(cat) }}</p>
+          <p class="text-xs text-white/80 mt-1">{{ $t('library.totalSongs', { count: cat.songCount }) }}</p>
         </button>
         <button
           v-if="categories.length > COLLAPSED_CATEGORY_COUNT"
@@ -203,6 +203,7 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { HeartIcon, EllipsisHorizontalIcon } from '@heroicons/vue/24/outline'
 import SongCover from '@/components/UI/SongCover.vue'
 import SearchBar from '@/components/UI/SearchBar.vue'
@@ -216,6 +217,7 @@ import type { Song } from '@/types'
 const playerStore = usePlayerStore()
 const songsStore = useSongsStore()
 const playlistsStore = usePlaylistsStore()
+const { locale } = useI18n()
 
 // Modal state
 const showAddToPlaylistModal = ref(false)
@@ -240,20 +242,23 @@ const filteredCount = computed(() => songsStore.libraryFilteredSongs.length)
 const COLLAPSED_CATEGORY_COUNT = 10
 const categoriesExpanded = ref(false)
 const categories = computed(() => songsStore.categories)
-// Only show the card grid once metadata provides real genres
-const hasCategories = computed(() => categories.value.some(c => c.key !== '__none__'))
+const hasCategories = computed(() => categories.value.length > 0)
 const selectedCategory = computed(() => songsStore.category)
 const visibleCategories = computed(() => {
   if (categoriesExpanded.value) return categories.value
   const shown = categories.value.slice(0, COLLAPSED_CATEGORY_COUNT)
   // keep the selected category visible even when collapsed
-  const selected = categories.value.find(c => c.key === selectedCategory.value)
+  const selected = categories.value.find(c => c.slug === selectedCategory.value)
   if (selected && !shown.includes(selected)) shown[shown.length - 1] = selected
   return shown
 })
 
 function selectCategory(key: string) {
   songsStore.setCategory(key)
+}
+
+function categoryName(category: { nameEn: string; nameZh: string }) {
+  return locale.value.startsWith('zh') ? category.nameZh : category.nameEn
 }
 
 // Deterministic card gradient per category name
@@ -270,7 +275,6 @@ const CARD_GRADIENTS = [
   'from-blue-500 to-violet-700',
 ]
 function gradientFor(name: string): string {
-  if (name === '__none__') return 'from-gray-500 to-gray-700'
   let hash = 0
   for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0
   return CARD_GRADIENTS[hash % CARD_GRADIENTS.length]

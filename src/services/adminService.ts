@@ -1,6 +1,6 @@
 // Admin API calls (auth token is attached by the api.ts interceptor).
 import api from '@/services/api'
-import type { AuthUser } from '@/types'
+import type { APIResponse, AuthUser, CategoryData, SongCategory } from '@/types'
 
 interface IngestStart { jobId: string; ids: number[] }
 interface IngestStatus { running: boolean; exitCode: number | null; ids: number[]; log: string[] }
@@ -28,6 +28,15 @@ export interface AdminUser extends AuthUser {
 }
 
 export const adminService = {
+  listCategories(): Promise<APIResponse<CategoryData>> {
+    return api.get('/categories')
+  },
+  createCategory(payload: { nameEn: string; nameZh: string }): Promise<APIResponse<SongCategory>> {
+    return api.post('/admin/categories', payload)
+  },
+  setSongCategories(songId: number, categoryIds: number[]): Promise<APIResponse<{ songId: number; categoryIds: number[] }>> {
+    return api.put(`/admin/songs/${songId}/categories`, { categoryIds })
+  },
   listUsers(): Promise<{ success: boolean; data: AdminUser[] }> {
     return api.get('/admin/users')
   },

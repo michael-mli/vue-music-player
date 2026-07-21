@@ -11,6 +11,7 @@ export interface Song {
   year?: number
   genre?: string
   language?: string
+  categoryIds?: number[]
 }
 
 /** Per-song metadata built offline by scripts/build_metadata.py → /data/metadata.json */
@@ -26,6 +27,25 @@ export interface SongMeta {
 
 /** Which metadata field the quick search filters on. */
 export type SearchScope = 'all' | 'title' | 'artist' | 'album' | 'year' | 'genre'
+
+export interface SongCategory {
+  id: number
+  slug: string
+  nameEn: string
+  nameZh: string
+  isDefault: boolean
+  songCount: number
+}
+
+export interface CategoryAssignment {
+  songId: number
+  categoryId: number
+}
+
+export interface CategoryData {
+  categories: SongCategory[]
+  assignments: CategoryAssignment[]
+}
 
 /** A single time-stamped lyric line (parsed from LRC). `time` is seconds from start. */
 export interface LyricLine {

@@ -86,6 +86,96 @@
           >{{ metaLog.join('\n') }}</pre>
         </section>
 
+        <!-- Categories -->
+        <section class="mb-10 p-4 rounded-lg bg-light-card dark:bg-spotify-dark border border-light-border dark:border-spotify-light">
+          <h2 class="text-lg font-bold text-light-text-primary dark:text-white mb-1">{{ $t('admin.categoriesTitle') }}</h2>
+          <p class="text-sm text-light-text-secondary dark:text-gray-400 mb-4">{{ $t('admin.categoriesHint') }}</p>
+
+          <form class="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2" @submit.prevent="createCategory">
+            <input
+              v-model="newCategoryNameEn"
+              :placeholder="$t('admin.categoryNameEn')"
+              maxlength="60"
+              class="min-w-0 px-3 py-2 rounded bg-white/10 border border-white/20 focus:border-spotify-green text-light-text-primary dark:text-white text-sm"
+            />
+            <input
+              v-model="newCategoryNameZh"
+              :placeholder="$t('admin.categoryNameZh')"
+              maxlength="60"
+              class="min-w-0 px-3 py-2 rounded bg-white/10 border border-white/20 focus:border-spotify-green text-light-text-primary dark:text-white text-sm"
+            />
+            <button
+              type="submit"
+              :disabled="categoryCreating || !newCategoryNameEn.trim() || !newCategoryNameZh.trim()"
+              class="px-4 py-2 rounded-full bg-spotify-green text-black text-sm font-medium hover:bg-spotify-green/80 disabled:opacity-40"
+            >{{ categoryCreating ? $t('admin.creatingCategory') : $t('admin.createCategory') }}</button>
+          </form>
+
+          <div class="flex flex-wrap gap-2 mt-3 mb-6">
+            <span
+              v-for="category in categories"
+              :key="category.id"
+              class="inline-flex items-center gap-1.5 rounded-full bg-black/5 dark:bg-white/10 px-2.5 py-1 text-xs text-light-text-primary dark:text-gray-200"
+            >
+              {{ categoryName(category) }}
+              <span class="text-light-text-secondary dark:text-gray-400">{{ category.songCount }}</span>
+            </span>
+          </div>
+
+          <div class="border-t border-light-border dark:border-white/10 pt-4">
+            <label class="block text-sm font-medium text-light-text-primary dark:text-white mb-1" for="category-song-search">
+              {{ $t('admin.findSong') }}
+            </label>
+            <input
+              id="category-song-search"
+              v-model="songQuery"
+              type="search"
+              :placeholder="$t('admin.findSongPlaceholder')"
+              class="w-full px-3 py-2 rounded bg-white/10 border border-white/20 focus:border-spotify-green text-light-text-primary dark:text-white text-sm"
+              @input="clearSelectedSong"
+            />
+            <div v-if="songQuery.trim() && !selectedSong" class="mt-2 max-h-52 overflow-y-auto rounded border border-light-border dark:border-white/10">
+              <button
+                v-for="song in songMatches"
+                :key="song.id"
+                type="button"
+                class="block w-full px-3 py-2 text-left text-sm text-light-text-primary dark:text-white hover:bg-light-border dark:hover:bg-white/10"
+                @click="selectSong(song)"
+              >
+                <span class="text-light-text-secondary dark:text-gray-400">#{{ song.id }}</span>
+                {{ song.title }}
+              </button>
+              <p v-if="!songMatches.length" class="px-3 py-2 text-sm text-light-text-secondary dark:text-gray-400">
+                {{ $t('admin.songNotFound') }}
+              </p>
+            </div>
+
+            <div v-if="selectedSong" class="mt-4 rounded-lg border border-light-border dark:border-white/10 p-3">
+              <p class="font-medium text-light-text-primary dark:text-white">#{{ selectedSong.id }} · {{ selectedSong.title }}</p>
+              <p class="text-xs text-light-text-secondary dark:text-gray-400 mt-1 mb-3">{{ $t('admin.selectSongCategories') }}</p>
+              <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                <label v-for="category in categories" :key="category.id" class="flex items-center gap-2 text-sm text-light-text-primary dark:text-gray-200 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    class="accent-spotify-green"
+                    :checked="selectedCategoryIds.has(category.id)"
+                    @change="toggleSongCategory(category.id, ($event.target as HTMLInputElement).checked)"
+                  />
+                  <span>{{ categoryName(category) }}</span>
+                </label>
+              </div>
+              <button
+                type="button"
+                :disabled="categorySaving"
+                class="mt-4 px-4 py-2 rounded-full bg-spotify-green text-black text-sm font-medium hover:bg-spotify-green/80 disabled:opacity-40"
+                @click="saveSongCategories"
+              >{{ categorySaving ? $t('admin.savingCategories') : $t('admin.saveCategories') }}</button>
+            </div>
+          </div>
+          <p v-if="categoryNotice" class="text-xs text-spotify-green mt-3" role="status">{{ categoryNotice }}</p>
+          <p v-if="categoryError" class="text-xs text-red-400 mt-3">{{ categoryError }}</p>
+        </section>
+
         <!-- Users -->
         <section class="p-4 rounded-lg bg-light-card dark:bg-spotify-dark border border-light-border dark:border-spotify-light">
           <div class="flex flex-col gap-3 mb-3">
@@ -253,11 +343,14 @@ import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Cog6ToothIcon, InformationCircleIcon, TrashIcon } from '@heroicons/vue/24/outline'
 import { useAuthStore } from '@/stores/auth'
+import { useSongsStore } from '@/stores/songs'
 import UserAvatar from '@/components/UI/UserAvatar.vue'
 import { adminService } from '@/services/adminService'
 import type { AdminUser } from '@/services/adminService'
+import type { Song, SongCategory } from '@/types'
 
 const auth = useAuthStore()
+const songsStore = useSongsStore()
 const { locale, t } = useI18n()
 
 const idsInput = ref('')
@@ -279,6 +372,17 @@ const metaError = ref('')
 const metaLogBox = ref<HTMLElement>()
 let metaPollTimer: number | null = null
 
+const newCategoryNameEn = ref('')
+const newCategoryNameZh = ref('')
+const categoryCreating = ref(false)
+const categorySaving = ref(false)
+const categoryError = ref('')
+const categoryNotice = ref('')
+const songQuery = ref('')
+const selectedSongId = ref<number | null>(null)
+const selectedCategoryIds = ref<Set<number>>(new Set())
+const categories = computed(() => songsStore.categories)
+
 const users = ref<AdminUser[]>([])
 const usersError = ref('')
 const expandedUserId = ref<number | null>(null)
@@ -291,6 +395,23 @@ const parseIdList = (input: string) =>
 
 const parsedIds = computed(() => parseIdList(idsInput.value))
 const parsedMetaIds = computed(() => parseIdList(metaIdsInput.value))
+const selectedSong = computed(() =>
+  selectedSongId.value === null
+    ? null
+    : songsStore.songs.find((song) => song.id === selectedSongId.value) || null,
+)
+const songMatches = computed(() => {
+  const query = songQuery.value.trim().toLowerCase()
+  if (!query) return []
+  const numericId = Number(query)
+  return songsStore.songs
+    .filter((song) => (
+      (Number.isInteger(numericId) && song.id === numericId)
+      || song.title.toLowerCase().includes(query)
+      || String(song.id).includes(query)
+    ))
+    .slice(0, 20)
+})
 const selectableUsers = computed(() => users.value.filter((u) => u.id !== auth.user?.id))
 const selectedCount = computed(() => selectedUserIds.value.size)
 const allUsersSelected = computed(() =>
@@ -412,6 +533,81 @@ async function runMetadata() {
     }, 2000)
   } catch (e) {
     metaError.value = (e as Error).message || 'metadata build failed'
+  }
+}
+
+function categoryName(category: SongCategory) {
+  return locale.value.startsWith('zh') ? category.nameZh : category.nameEn
+}
+
+async function loadCategoryData() {
+  categoryError.value = ''
+  try {
+    if (!songsStore.songs.length) await songsStore.fetchSongs()
+    else await songsStore.loadCategories()
+  } catch (error) {
+    categoryError.value = apiErrorMessage(error, t('admin.categoriesLoadFailed'))
+  }
+}
+
+async function createCategory() {
+  const nameEn = newCategoryNameEn.value.trim()
+  const nameZh = newCategoryNameZh.value.trim()
+  if (!nameEn || !nameZh || categoryCreating.value) return
+  categoryCreating.value = true
+  categoryError.value = ''
+  categoryNotice.value = ''
+  try {
+    await adminService.createCategory({ nameEn, nameZh })
+    newCategoryNameEn.value = ''
+    newCategoryNameZh.value = ''
+    await songsStore.loadCategories()
+    categoryNotice.value = t('admin.categoryCreated')
+  } catch (error) {
+    categoryError.value = apiErrorMessage(error, t('admin.categoryCreateFailed'))
+  } finally {
+    categoryCreating.value = false
+  }
+}
+
+function clearSelectedSong() {
+  selectedSongId.value = null
+  selectedCategoryIds.value = new Set()
+  categoryNotice.value = ''
+}
+
+function selectSong(song: Song) {
+  selectedSongId.value = song.id
+  songQuery.value = `#${song.id} · ${song.title}`
+  selectedCategoryIds.value = new Set(song.categoryIds || [])
+  categoryNotice.value = ''
+  categoryError.value = ''
+}
+
+function toggleSongCategory(categoryId: number, checked: boolean) {
+  const next = new Set(selectedCategoryIds.value)
+  if (checked) next.add(categoryId)
+  else next.delete(categoryId)
+  selectedCategoryIds.value = next
+}
+
+async function saveSongCategories() {
+  if (!selectedSong.value || categorySaving.value) return
+  categorySaving.value = true
+  categoryError.value = ''
+  categoryNotice.value = ''
+  try {
+    const songId = selectedSong.value.id
+    await adminService.setSongCategories(songId, [...selectedCategoryIds.value])
+    await songsStore.loadCategories()
+    selectedCategoryIds.value = new Set(
+      songsStore.songs.find((song) => song.id === songId)?.categoryIds || [],
+    )
+    categoryNotice.value = t('admin.categoriesSaved')
+  } catch (error) {
+    categoryError.value = apiErrorMessage(error, t('admin.categoriesSaveFailed'))
+  } finally {
+    categorySaving.value = false
   }
 }
 
@@ -539,7 +735,7 @@ async function removeUser(u: AdminUser) {
 
 onMounted(async () => {
   if (!auth.ready) await auth.fetchMe()
-  if (auth.isAdmin) await Promise.all([loadUsers(), checkGpuStatus()])
+  if (auth.isAdmin) await Promise.all([loadUsers(), checkGpuStatus(), loadCategoryData()])
 })
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)

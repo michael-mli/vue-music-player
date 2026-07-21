@@ -26,6 +26,46 @@ const SCHEMA_V3 = `
   );
 `
 
+const DEFAULT_CATEGORIES = [
+  ['chinese', 'Chinese', '中文'],
+  ['other-language', 'Other language', '其他语言'],
+  ['male-singer', 'Male singer', '男歌手'],
+  ['female-singer', 'Female singer', '女歌手'],
+  ['pop', 'Pop', '流行'],
+  ['rock-and-roll', 'Rock & Roll', '摇滚'],
+]
+
+function initCategorySchema(db) {
+  db.exec(`
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE IF NOT EXISTS categories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      slug TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      name_en TEXT NOT NULL,
+      name_zh TEXT NOT NULL,
+      is_default INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS song_categories (
+      song_id INTEGER NOT NULL,
+      category_id INTEGER NOT NULL,
+      tagged_by INTEGER,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (song_id, category_id),
+      FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE,
+      FOREIGN KEY (tagged_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_song_categories_category
+      ON song_categories(category_id, song_id);
+  `)
+  const insert = db.prepare(`
+    INSERT OR IGNORE INTO categories (slug, name_en, name_zh, is_default, created_at)
+    VALUES (?, ?, ?, 1, ?)
+  `)
+  const timestamp = new Date().toISOString()
+  for (const category of DEFAULT_CATEGORIES) insert.run(...category, timestamp)
+}
+
 export function initDb(dataDir) {
   fs.mkdirSync(dataDir, { recursive: true })
   const dbPath = path.join(dataDir, 'auth.db')
@@ -34,6 +74,7 @@ export function initDb(dataDir) {
   const hasUsers = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='users'`).get()
   if (!hasUsers) {
     db.exec(SCHEMA_V3)
+    initCategorySchema(db)
     return db
   }
 
@@ -100,5 +141,6 @@ export function initDb(dataDir) {
   if (activityMigrated) {
     console.log('[db] migrated users table to v3 (activity fields)')
   }
+  initCategorySchema(db)
   return db
 }

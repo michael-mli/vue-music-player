@@ -1,8 +1,9 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Song, SearchScope } from '@/types'
+import type { Song, SearchScope, SongCategory } from '@/types'
 import { songService } from '@/services/songService'
 import { metadataService } from '@/services/metadataService'
+import { categoryService } from '@/services/categoryService'
 import config from '@/config'
 import { stripHtmlTags } from '@/utils/htmlSanitizer'
 
@@ -49,28 +50,16 @@ export const useSongsStore = defineStore('songs', () => {
 
   const quickFilteredSongs = computed(() => applyQuickFilter(songs.value))
 
-  // Library category (genre) filter — combines with the quick filter, Library page only.
-  // 'all' = everything, '__none__' = songs without a genre.
+  // Admin-curated categories are independent from free-form ID3 genre metadata.
+  // A song can carry any number of category ids.
   const category = ref<string>('all')
-
-  const categories = computed(() => {
-    const counts = new Map<string, number>()
-    let uncategorized = 0
-    for (const song of songs.value) {
-      if (song.genre) counts.set(song.genre, (counts.get(song.genre) || 0) + 1)
-      else uncategorized++
-    }
-    const list = [...counts.entries()]
-      .map(([key, count]) => ({ key, count }))
-      .sort((a, b) => b.count - a.count)
-    if (uncategorized > 0) list.push({ key: '__none__', count: uncategorized })
-    return list
-  })
+  const categories = ref<SongCategory[]>([])
+  const categoryAssignments = new Map<number, number[]>()
 
   function matchesCategory(song: Song): boolean {
     if (category.value === 'all') return true
-    if (category.value === '__none__') return !song.genre
-    return song.genre === category.value
+    const selected = categories.value.find((item) => item.slug === category.value)
+    return Boolean(selected && song.categoryIds?.includes(selected.id))
   }
 
   function setCategory(key: string) {
@@ -159,6 +148,7 @@ export const useSongsStore = defineStore('songs', () => {
 
       // Merge offline-built metadata (artist/album/year/genre) — non-fatal if absent
       await loadMetadata()
+      await loadCategories()
     } catch (err) {
       error.value = 'Failed to load songs'
       console.error('Error fetching songs:', err)
@@ -194,6 +184,29 @@ export const useSongsStore = defineStore('songs', () => {
         title: song.title.startsWith('Song ') && m.title ? m.title : song.title
       }
     })
+  }
+
+  async function loadCategories() {
+    try {
+      const response = await categoryService.list()
+      categories.value = response.data.categories
+      categoryAssignments.clear()
+      for (const assignment of response.data.assignments) {
+        const ids = categoryAssignments.get(assignment.songId) || []
+        ids.push(assignment.categoryId)
+        categoryAssignments.set(assignment.songId, ids)
+      }
+      songs.value = songs.value.map((song) => ({
+        ...song,
+        categoryIds: categoryAssignments.get(song.id) || [],
+      }))
+      if (category.value !== 'all' && !categories.value.some((item) => item.slug === category.value)) {
+        setCategory('all')
+      }
+    } catch (error) {
+      console.warn('Could not load song categories:', error)
+      categories.value = []
+    }
   }
 
   // Fetch uncached song titles in the background, updating songs in-place as they arrive.
@@ -476,6 +489,7 @@ export const useSongsStore = defineStore('songs', () => {
     // Actions
     fetchSongs,
     loadMetadata,
+    loadCategories,
     setQuickQuery,
     setQuickScope,
     setCategory,
