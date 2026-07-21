@@ -7,13 +7,13 @@
       
       <div class="mb-4">
         <p class="text-gray-400 dark:text-gray-400 text-light-text-secondary text-sm mb-2">
-          Adding "{{ song?.title }}" to playlist:
+          {{ $t('playlist.addSongPrompt', { title: song?.title }) }}
         </p>
       </div>
       
       <div v-if="playlists.length === 0" class="text-center py-8">
         <p class="text-gray-400 dark:text-gray-400 text-light-text-secondary mb-4">
-          No playlists available
+          {{ $t('playlist.noPlaylists') }}
         </p>
         <button 
           @click="$emit('create-playlist')"
@@ -38,9 +38,9 @@
             ]"
           >
             <div>
-              <p class="font-medium">{{ playlist.name }}</p>
+              <p class="font-medium">{{ playlist.name || $t('playlist.defaultName') }}</p>
               <p class="text-sm text-gray-400 dark:text-gray-400 text-light-text-secondary">
-                {{ playlist.songs.length }} songs
+                {{ $t('playlist.songCount', { count: playlist.songs.length }) }}
               </p>
             </div>
             <CheckIcon 

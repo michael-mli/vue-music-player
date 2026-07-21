@@ -60,6 +60,7 @@ export interface Playlist {
   id: string
   name: string
   songs: number[]
+  isDefault: boolean
   createdAt: Date
   updatedAt: Date
 }

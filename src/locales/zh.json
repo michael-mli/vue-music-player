@@ -82,10 +82,21 @@
   "playlist": {
     "create": "创建播放列表",
     "name": "播放列表名称",
+    "defaultName": "我的播放列表",
+    "defaultBadge": "默认",
+    "rename": "重命名",
     "addToPlaylist": "添加到播放列表",
+    "addSongPrompt": "将“{title}”添加到：",
     "removeFromPlaylist": "从播放列表移除",
     "deletePlaylist": "删除播放列表",
-    "emptyPlaylist": "播放列表为空"
+    "deleteConfirm": "确定删除“{name}”吗？此操作无法撤销。",
+    "emptyPlaylist": "播放列表为空",
+    "noPlaylists": "暂无播放列表",
+    "notFound": "未找到播放列表",
+    "songCount": "{count} 首歌曲",
+    "syncedToAccount": "已同步到您的账户",
+    "savedOnDevice": "已保存在此设备",
+    "syncError": "播放列表同步失败，请重试。"
   },
   "lyrics": {
     "title": "歌词",

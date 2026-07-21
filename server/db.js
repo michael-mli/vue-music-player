@@ -77,6 +77,40 @@ function initCategorySchema(db) {
   for (const category of DEFAULT_CATEGORIES) insert.run(...category, timestamp)
 }
 
+function initPlaylistSchema(db) {
+  db.exec(`
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE IF NOT EXISTS playlists (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      name TEXT NOT NULL DEFAULT '',
+      is_default INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_playlists_user
+      ON playlists(user_id, created_at, id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_playlists_one_default
+      ON playlists(user_id) WHERE is_default = 1;
+    CREATE TABLE IF NOT EXISTS playlist_songs (
+      playlist_id INTEGER NOT NULL,
+      song_id INTEGER NOT NULL,
+      position INTEGER NOT NULL,
+      added_at TEXT NOT NULL,
+      PRIMARY KEY (playlist_id, song_id),
+      FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_playlist_songs_order
+      ON playlist_songs(playlist_id, position);
+  `)
+}
+
+function initApplicationSchema(db) {
+  initCategorySchema(db)
+  initPlaylistSchema(db)
+}
+
 export function initDb(dataDir) {
   fs.mkdirSync(dataDir, { recursive: true })
   const dbPath = path.join(dataDir, 'auth.db')
@@ -85,7 +119,7 @@ export function initDb(dataDir) {
   const hasUsers = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='users'`).get()
   if (!hasUsers) {
     db.exec(SCHEMA_V3)
-    initCategorySchema(db)
+    initApplicationSchema(db)
     return db
   }
 
@@ -152,6 +186,6 @@ export function initDb(dataDir) {
   if (activityMigrated) {
     console.log('[db] migrated users table to v3 (activity fields)')
   }
-  initCategorySchema(db)
+  initApplicationSchema(db)
   return db
 }

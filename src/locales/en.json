@@ -82,10 +82,21 @@
   "playlist": {
     "create": "Create Playlist",
     "name": "Playlist Name",
+    "defaultName": "My Playlist",
+    "defaultBadge": "Default",
+    "rename": "Rename",
     "addToPlaylist": "Add to Playlist",
+    "addSongPrompt": "Add “{title}” to:",
     "removeFromPlaylist": "Remove from Playlist",
     "deletePlaylist": "Delete Playlist",
-    "emptyPlaylist": "This playlist is empty"
+    "deleteConfirm": "Delete “{name}”? This cannot be undone.",
+    "emptyPlaylist": "This playlist is empty",
+    "noPlaylists": "No playlists available",
+    "notFound": "Playlist not found",
+    "songCount": "{count} songs",
+    "syncedToAccount": "Synced to your account",
+    "savedOnDevice": "Saved on this device",
+    "syncError": "The playlist could not be synchronized. Please try again."
   },
   "lyrics": {
     "title": "Lyrics",

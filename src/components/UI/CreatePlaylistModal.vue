@@ -10,7 +10,8 @@
           </label>
           <input 
             v-model="playlistName"
-            type="text" 
+            type="text"
+            maxlength="80"
             class="w-full px-3 py-2 bg-spotify-light text-white rounded border border-gray-600 focus:border-spotify-green focus:outline-none"
             :placeholder="$t('playlist.name')"
             required

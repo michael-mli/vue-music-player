@@ -63,6 +63,8 @@
           <button 
             @click="showCreatePlaylist = true"
             class="p-1 rounded hover:bg-light-border dark:hover:bg-spotify-light transition-colors duration-200"
+            :title="$t('playlist.create')"
+            :aria-label="$t('playlist.create')"
           >
             <PlusIcon class="w-4 h-4 text-gray-400" />
           </button>
@@ -75,7 +77,7 @@
               @click="emit('close-mobile')"
               class="block px-4 py-2 text-sm text-light-text-secondary dark:text-gray-300 hover:text-light-text-primary dark:hover:text-white hover:bg-light-border dark:hover:bg-spotify-light rounded-md transition-colors duration-200"
             >
-              {{ playlist.name }}
+              {{ playlist.name || $t('playlist.defaultName') }}
             </RouterLink>
           </li>
         </ul>

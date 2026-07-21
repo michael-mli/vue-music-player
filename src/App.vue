@@ -123,6 +123,7 @@ import { MusicalNoteIcon } from '@heroicons/vue/24/outline'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
 import { usePlaylistsStore } from '@/stores/playlists'
+import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
 import { releaseAllMicStreams } from '@/composables/useMicDevices'
 
@@ -144,6 +145,7 @@ import DebugPanel from '@/components/Debug/DebugPanel.vue'
 const playerStore = usePlayerStore()
 const songsStore = useSongsStore()
 const playlistsStore = usePlaylistsStore()
+const authStore = useAuthStore()
 const route = useRoute()
 
 // Reactive state
@@ -163,16 +165,39 @@ const selectedSongFromPlayer = ref<any>(null)
 // Auto-visualizer activation state
 const inactivityTimer = ref<number | null>(null)
 const INACTIVITY_TIMEOUT = 15 * 1000 // 15 seconds
+let playlistsInitialized = false
+
+function refreshPlaylistsOnResume() {
+  if (playlistsInitialized) playlistsStore.fetchPlaylists()
+}
+
+function refreshPlaylistsWhenVisible() {
+  if (document.visibilityState === 'visible') refreshPlaylistsOnResume()
+}
+
+watch(
+  () => `${authStore.user?.id || ''}:${authStore.user?.kind || ''}`,
+  () => {
+    if (playlistsInitialized) playlistsStore.fetchPlaylists()
+  },
+)
 
 onMounted(async () => {
   // Initialize audio
   playerStore.initializeAudio()
-  
+
+  // Resolve guest vs registered identity before selecting playlist storage.
+  await authStore.ensureIdentity()
+
   // Load initial data (songs list returns instantly with cached titles)
   await Promise.all([
     songsStore.fetchSongs(),
     playlistsStore.fetchPlaylists()
   ])
+  playlistsInitialized = true
+  window.addEventListener('focus', refreshPlaylistsOnResume)
+  window.addEventListener('online', refreshPlaylistsOnResume)
+  document.addEventListener('visibilitychange', refreshPlaylistsWhenVisible)
 
   // Fetch any uncached titles in the background (shows progress overlay on first use)
   await songsStore.fetchUncachedTitles()
@@ -195,6 +220,9 @@ onMounted(async () => {
 onUnmounted(() => {
   clearInactivityTimer()
   cleanupActivityListeners()
+  window.removeEventListener('focus', refreshPlaylistsOnResume)
+  window.removeEventListener('online', refreshPlaylistsOnResume)
+  document.removeEventListener('visibilitychange', refreshPlaylistsWhenVisible)
 })
 
 function isDirectSongAccess(): boolean {

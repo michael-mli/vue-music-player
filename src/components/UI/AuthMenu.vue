@@ -36,16 +36,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import UserAvatar from './UserAvatar.vue'
 import ProfileModal from './ProfileModal.vue'
 
 const auth = useAuthStore()
 const showProfile = ref(false)
-
-onMounted(async () => {
-  // Restore a stored session, else become a system-assigned guest identity
-  await auth.ensureIdentity()
-})
 </script>

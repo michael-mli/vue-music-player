@@ -367,6 +367,177 @@ app.get('/api/auth/me', authMiddleware, (req, res) => {
 // Stateless JWT — logout is client-side (drop the token). Endpoint kept for symmetry.
 app.post('/api/auth/logout', (req, res) => res.json({ success: true, data: {} }))
 
+// ─── Registered-user playlists ─────────────────────────────────────────────
+// Guest identities intentionally never reach these routes: their playlists stay
+// on the current device. Google accounts use SQLite as the authoritative copy.
+function requireRegistered(req, res, next) {
+  const user = db.prepare('SELECT id, kind FROM users WHERE id = ?').get(req.auth.sub)
+  if (!user) return res.status(401).json({ success: false, message: 'user gone' })
+  if (user.kind !== 'google') {
+    return res.status(403).json({ success: false, message: 'registered account required' })
+  }
+  req.registeredUser = user
+  next()
+}
+
+function parsePlaylistId(value) {
+  const id = Number(value)
+  return Number.isInteger(id) && id > 0 ? id : null
+}
+
+function normalizeSongIds(value) {
+  if (!Array.isArray(value) || value.length > 5000) return null
+  const ids = [...new Set(value.map(Number))]
+  if (ids.some((id) => !Number.isInteger(id) || id <= 0 || id >= 100000)) return null
+  return ids
+}
+
+function ensureDefaultPlaylist(userId) {
+  let playlist = db.prepare(
+    'SELECT id FROM playlists WHERE user_id = ? AND is_default = 1',
+  ).get(userId)
+  if (!playlist) {
+    const timestamp = now()
+    const info = db.prepare(`
+      INSERT INTO playlists (user_id, name, is_default, created_at, updated_at)
+      VALUES (?, '', 1, ?, ?)
+    `).run(userId, timestamp, timestamp)
+    playlist = { id: info.lastInsertRowid }
+  }
+  return playlist.id
+}
+
+function playlistData(userId, playlistId) {
+  const row = db.prepare(`
+    SELECT id, name, is_default, created_at, updated_at
+    FROM playlists
+    WHERE id = ? AND user_id = ?
+  `).get(playlistId, userId)
+  if (!row) return null
+  const songs = db.prepare(`
+    SELECT song_id
+    FROM playlist_songs
+    WHERE playlist_id = ?
+    ORDER BY position, song_id
+  `).all(row.id).map((item) => item.song_id)
+  return {
+    id: String(row.id),
+    name: row.name,
+    songs,
+    isDefault: Boolean(row.is_default),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function allPlaylistData(userId) {
+  return db.prepare(`
+    SELECT id
+    FROM playlists
+    WHERE user_id = ?
+    ORDER BY is_default DESC, created_at, id
+  `).all(userId).map((row) => playlistData(userId, row.id))
+}
+
+app.get('/api/playlists', authMiddleware, requireRegistered, (req, res) => {
+  ensureDefaultPlaylist(req.registeredUser.id)
+  res.json({ success: true, data: allPlaylistData(req.registeredUser.id) })
+})
+
+app.post('/api/playlists', authMiddleware, requireRegistered, (req, res) => {
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : ''
+  const songs = req.body?.songs === undefined ? [] : normalizeSongIds(req.body.songs)
+  if (!name || name.length > 80) {
+    return res.status(400).json({ success: false, message: 'playlist name is required (max 80 characters)' })
+  }
+  if (!songs) return res.status(400).json({ success: false, message: 'songs must be valid song ids' })
+
+  const timestamp = now()
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    const info = db.prepare(`
+      INSERT INTO playlists (user_id, name, is_default, created_at, updated_at)
+      VALUES (?, ?, 0, ?, ?)
+    `).run(req.registeredUser.id, name, timestamp, timestamp)
+    const insertSong = db.prepare(`
+      INSERT INTO playlist_songs (playlist_id, song_id, position, added_at)
+      VALUES (?, ?, ?, ?)
+    `)
+    songs.forEach((songId, position) => insertSong.run(info.lastInsertRowid, songId, position, timestamp))
+    db.exec('COMMIT')
+    res.status(201).json({
+      success: true,
+      data: playlistData(req.registeredUser.id, info.lastInsertRowid),
+    })
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+})
+
+app.put('/api/playlists/:id', authMiddleware, requireRegistered, (req, res) => {
+  const playlistId = parsePlaylistId(req.params.id)
+  if (!playlistId) return res.status(400).json({ success: false, message: 'invalid playlist id' })
+  const current = playlistData(req.registeredUser.id, playlistId)
+  if (!current) return res.status(404).json({ success: false, message: 'playlist not found' })
+
+  const hasName = Object.prototype.hasOwnProperty.call(req.body || {}, 'name')
+  const hasSongs = Object.prototype.hasOwnProperty.call(req.body || {}, 'songs')
+  if (!hasName && !hasSongs) {
+    return res.status(400).json({ success: false, message: 'name or songs is required' })
+  }
+  const name = hasName && typeof req.body.name === 'string' ? req.body.name.trim() : null
+  const songs = hasSongs ? normalizeSongIds(req.body.songs) : null
+  if (hasName && (!name || name.length > 80)) {
+    return res.status(400).json({ success: false, message: 'playlist name is required (max 80 characters)' })
+  }
+  if (hasSongs && !songs) {
+    return res.status(400).json({ success: false, message: 'songs must be valid song ids' })
+  }
+
+  const timestamp = now()
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    if (hasName) {
+      db.prepare('UPDATE playlists SET name = ?, updated_at = ? WHERE id = ? AND user_id = ?')
+        .run(name, timestamp, playlistId, req.registeredUser.id)
+    } else {
+      db.prepare('UPDATE playlists SET updated_at = ? WHERE id = ? AND user_id = ?')
+        .run(timestamp, playlistId, req.registeredUser.id)
+    }
+    if (hasSongs) {
+      db.prepare('DELETE FROM playlist_songs WHERE playlist_id = ?').run(playlistId)
+      const insertSong = db.prepare(`
+        INSERT INTO playlist_songs (playlist_id, song_id, position, added_at)
+        VALUES (?, ?, ?, ?)
+      `)
+      songs.forEach((songId, position) => insertSong.run(playlistId, songId, position, timestamp))
+    }
+    db.exec('COMMIT')
+    res.json({ success: true, data: playlistData(req.registeredUser.id, playlistId) })
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+})
+
+app.delete('/api/playlists/:id', authMiddleware, requireRegistered, (req, res) => {
+  const playlistId = parsePlaylistId(req.params.id)
+  if (!playlistId) return res.status(400).json({ success: false, message: 'invalid playlist id' })
+  const playlist = db.prepare(`
+    SELECT id, is_default
+    FROM playlists
+    WHERE id = ? AND user_id = ?
+  `).get(playlistId, req.registeredUser.id)
+  if (!playlist) return res.status(404).json({ success: false, message: 'playlist not found' })
+  if (playlist.is_default) {
+    return res.status(409).json({ success: false, message: 'the default playlist cannot be deleted' })
+  }
+  db.prepare('DELETE FROM playlists WHERE id = ? AND user_id = ?')
+    .run(playlistId, req.registeredUser.id)
+  res.json({ success: true, data: { id: String(playlistId) } })
+})
+
 // ─── Song categories/tags ──────────────────────────────────────────────────
 function categoryData() {
   const categories = db.prepare(`

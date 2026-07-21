@@ -1,171 +1,165 @@
 import api from './api'
 import type { Playlist, APIResponse } from '@/types'
-import config from '@/config'
 
 const PLAYLISTS_STORAGE_KEY = 'mics-music-playlists'
 
-// Helper functions for localStorage
-function getStoredPlaylists(): Playlist[] {
-  try {
-    const stored = localStorage.getItem(PLAYLISTS_STORAGE_KEY)
-    if (stored) {
-      const playlists = JSON.parse(stored)
-      // Convert date strings back to Date objects
-      return playlists.map((p: any) => ({
-        ...p,
-        createdAt: new Date(p.createdAt),
-        updatedAt: new Date(p.updatedAt)
-      }))
-    }
-  } catch (error) {
-    console.error('Error reading playlists from localStorage:', error)
+const LEGACY_SAMPLE_PLAYLISTS = [
+  { id: '1', name: 'My Favorites', songs: [1, 5, 10, 15, 20] },
+  { id: '2', name: 'Rock Classics', songs: [2, 7, 12, 18, 25] },
+  { id: '3', name: 'Chill Vibes', songs: [3, 8, 13, 22, 30] },
+]
+
+function defaultPlaylist(): Playlist {
+  const timestamp = new Date()
+  return {
+    id: 'local-default',
+    name: '',
+    songs: [],
+    isDefault: true,
+    createdAt: timestamp,
+    updatedAt: timestamp,
   }
-  return []
 }
 
-function savePlaylistsToStorage(playlists: Playlist[]): void {
+function asDate(value: unknown): Date {
+  const date = new Date(typeof value === 'string' || value instanceof Date ? value : Date.now())
+  return Number.isNaN(date.getTime()) ? new Date() : date
+}
+
+function normalizePlaylist(value: Partial<Playlist> & Record<string, unknown>): Playlist {
+  return {
+    id: String(value.id),
+    name: typeof value.name === 'string' ? value.name : '',
+    songs: Array.isArray(value.songs)
+      ? [...new Set(value.songs.map(Number).filter((id) => Number.isInteger(id) && id > 0))]
+      : [],
+    isDefault: value.isDefault === true,
+    createdAt: asDate(value.createdAt),
+    updatedAt: asDate(value.updatedAt),
+  }
+}
+
+function isLegacySample(playlist: Playlist): boolean {
+  return LEGACY_SAMPLE_PLAYLISTS.some((sample) =>
+    playlist.id === sample.id
+    && playlist.name === sample.name
+    && playlist.songs.length === sample.songs.length
+    && playlist.songs.every((songId, index) => songId === sample.songs[index]),
+  )
+}
+
+function saveLocalPlaylists(playlists: Playlist[]): void {
   try {
     localStorage.setItem(PLAYLISTS_STORAGE_KEY, JSON.stringify(playlists))
   } catch (error) {
-    console.error('Error saving playlists to localStorage:', error)
+    console.error('Error saving local playlists:', error)
   }
 }
 
-function initializeDefaultPlaylists(): void {
-  const existing = getStoredPlaylists()
-  if (existing.length === 0) {
-    // Create default playlists on first run
-    const defaultPlaylists: Playlist[] = [
-      {
-        id: '1',
-        name: 'My Favorites',
-        songs: [1, 5, 10, 15, 20],
-        createdAt: new Date('2024-01-01'),
-        updatedAt: new Date('2024-01-15')
-      },
-      {
-        id: '2',
-        name: 'Rock Classics',
-        songs: [2, 7, 12, 18, 25],
-        createdAt: new Date('2024-01-05'),
-        updatedAt: new Date('2024-01-10')
-      },
-      {
-        id: '3',
-        name: 'Chill Vibes',
-        songs: [3, 8, 13, 22, 30],
-        createdAt: new Date('2024-01-10'),
-        updatedAt: new Date('2024-01-20')
-      }
-    ]
-    savePlaylistsToStorage(defaultPlaylists)
+function getLocalPlaylists(): Playlist[] {
+  let playlists: Playlist[] = []
+  try {
+    const stored = localStorage.getItem(PLAYLISTS_STORAGE_KEY)
+    const parsed = stored ? JSON.parse(stored) : []
+    if (Array.isArray(parsed)) playlists = parsed.map(normalizePlaylist)
+  } catch (error) {
+    console.error('Error reading local playlists:', error)
   }
+
+  // Remove only the exact sample lists shipped by the old mock implementation.
+  // Any renamed or otherwise edited user list is preserved.
+  playlists = playlists.filter((playlist) => !isLegacySample(playlist))
+
+  const defaultIndex = playlists.findIndex((playlist) => playlist.isDefault)
+  if (defaultIndex < 0) {
+    playlists.unshift(defaultPlaylist())
+  } else {
+    playlists = playlists.map((playlist, index) => ({
+      ...playlist,
+      isDefault: index === defaultIndex,
+    }))
+  }
+
+  saveLocalPlaylists(playlists)
+  return playlists
+}
+
+function localId(): string {
+  return typeof crypto?.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `local-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function remotePlaylistResponse(response: APIResponse<Playlist>): APIResponse<Playlist> {
+  return { ...response, data: normalizePlaylist(response.data as Playlist & Record<string, unknown>) }
 }
 
 export const playlistService = {
-  async getPlaylists(): Promise<APIResponse<Playlist[]>> {
-    if (config.enableMockData) {
-      // Initialize default playlists if none exist
-      initializeDefaultPlaylists()
-      // In mock mode, use localStorage
-      const playlists = getStoredPlaylists()
-      return {
-        success: true,
-        data: playlists
-      }
-    }
-    return api.get('/playlists')
-  },
-
-  async createPlaylist(playlist: Omit<Playlist, 'id' | 'createdAt' | 'updatedAt'>): Promise<APIResponse<Playlist>> {
-    if (config.enableMockData) {
-      // In mock mode, create playlist in localStorage
-      const playlists = getStoredPlaylists()
-      const newPlaylist: Playlist = {
-        ...playlist,
-        id: Date.now().toString(), // Simple ID generation
-        createdAt: new Date(),
-        updatedAt: new Date()
-      }
-      playlists.push(newPlaylist)
-      savePlaylistsToStorage(playlists)
-      
-      return {
-        success: true,
-        data: newPlaylist
-      }
-    }
-    return api.post('/playlists', playlist)
-  },
-
-  async updatePlaylist(id: string, updates: Partial<Playlist>): Promise<APIResponse<Playlist>> {
-    if (config.enableMockData) {
-      // In mock mode, update playlist in localStorage
-      const playlists = getStoredPlaylists()
-      const index = playlists.findIndex(p => p.id === id)
-      if (index !== -1) {
-        playlists[index] = {
-          ...playlists[index],
-          ...updates,
-          updatedAt: new Date()
-        }
-        savePlaylistsToStorage(playlists)
-        return {
-          success: true,
-          data: playlists[index]
-        }
-      }
-      throw new Error('Playlist not found')
-    }
-    return api.put(`/playlists/${id}`, updates)
-  },
-
-  async deletePlaylist(id: string): Promise<APIResponse<void>> {
-    if (config.enableMockData) {
-      // In mock mode, delete playlist from localStorage
-      const playlists = getStoredPlaylists()
-      const filteredPlaylists = playlists.filter(p => p.id !== id)
-      savePlaylistsToStorage(filteredPlaylists)
-      
-      return {
-        success: true,
-        data: undefined
-      }
-    }
-    return api.delete(`/playlists/${id}`)
-  },
-
-  // Mock data for development
-  async getMockPlaylists(): Promise<APIResponse<Playlist[]>> {
-    const mockPlaylists: Playlist[] = [
-      {
-        id: '1',
-        name: 'My Favorites',
-        songs: [1, 5, 10, 15, 20],
-        createdAt: new Date('2024-01-01'),
-        updatedAt: new Date('2024-01-15')
-      },
-      {
-        id: '2',
-        name: 'Rock Classics',
-        songs: [2, 7, 12, 18, 25],
-        createdAt: new Date('2024-01-05'),
-        updatedAt: new Date('2024-01-10')
-      },
-      {
-        id: '3',
-        name: 'Chill Vibes',
-        songs: [3, 8, 13, 22, 30],
-        createdAt: new Date('2024-01-10'),
-        updatedAt: new Date('2024-01-20')
-      }
-    ]
-
-    await new Promise(resolve => setTimeout(resolve, 300))
-    
+  async getPlaylists(registered: boolean): Promise<APIResponse<Playlist[]>> {
+    if (!registered) return { success: true, data: getLocalPlaylists() }
+    const response = await api.get<never, APIResponse<Playlist[]>>('/playlists')
     return {
-      success: true,
-      data: mockPlaylists
+      ...response,
+      data: response.data.map((playlist) =>
+        normalizePlaylist(playlist as Playlist & Record<string, unknown>)),
     }
-  }
+  },
+
+  async createPlaylist(
+    playlist: Pick<Playlist, 'name' | 'songs'>,
+    registered: boolean,
+  ): Promise<APIResponse<Playlist>> {
+    if (registered) {
+      const response = await api.post<never, APIResponse<Playlist>>('/playlists', playlist)
+      return remotePlaylistResponse(response)
+    }
+
+    const playlists = getLocalPlaylists()
+    const timestamp = new Date()
+    const created: Playlist = {
+      id: localId(),
+      name: playlist.name,
+      songs: [...playlist.songs],
+      isDefault: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }
+    playlists.push(created)
+    saveLocalPlaylists(playlists)
+    return { success: true, data: created }
+  },
+
+  async updatePlaylist(
+    id: string,
+    updates: Partial<Pick<Playlist, 'name' | 'songs'>>,
+    registered: boolean,
+  ): Promise<APIResponse<Playlist>> {
+    if (registered) {
+      const response = await api.put<never, APIResponse<Playlist>>(`/playlists/${id}`, updates)
+      return remotePlaylistResponse(response)
+    }
+
+    const playlists = getLocalPlaylists()
+    const index = playlists.findIndex((playlist) => playlist.id === id)
+    if (index < 0) throw new Error('Playlist not found')
+    playlists[index] = {
+      ...playlists[index],
+      ...(updates.name !== undefined ? { name: updates.name } : {}),
+      ...(updates.songs !== undefined ? { songs: [...updates.songs] } : {}),
+      updatedAt: new Date(),
+    }
+    saveLocalPlaylists(playlists)
+    return { success: true, data: playlists[index] }
+  },
+
+  async deletePlaylist(id: string, registered: boolean): Promise<APIResponse<void>> {
+    if (registered) return api.delete(`/playlists/${id}`)
+
+    const playlists = getLocalPlaylists()
+    const target = playlists.find((playlist) => playlist.id === id)
+    if (!target) throw new Error('Playlist not found')
+    if (target.isDefault) throw new Error('The default playlist cannot be deleted')
+    saveLocalPlaylists(playlists.filter((playlist) => playlist.id !== id))
+    return { success: true, data: undefined }
+  },
 }
