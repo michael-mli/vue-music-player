@@ -41,6 +41,14 @@
               <h1 class="text-3xl font-bold text-light-text-primary dark:text-white break-words min-w-0">
                 {{ playlistLabel }}
               </h1>
+              <button
+                class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-spotify-green text-black transition-colors hover:bg-green-400"
+                :title="$t('playlist.addSongs')"
+                :aria-label="$t('playlist.addSongs')"
+                @click="showAddSongs = true"
+              >
+                <PlusIcon class="w-5 h-5" />
+              </button>
               <Menu as="div" class="relative flex-shrink-0">
                 <MenuButton
                   class="p-2 rounded-full text-light-text-secondary dark:text-gray-400 hover:text-light-text-primary dark:hover:text-white hover:bg-light-border dark:hover:bg-white/10 transition-colors"
@@ -214,6 +222,13 @@
       </div>
     </Dialog>
   </TransitionRoot>
+
+  <AddSongsToPlaylistModal
+    v-if="showAddSongs && playlist"
+    :playlist="playlist"
+    @close="showAddSongs = false"
+    @added="showAddSongs = false"
+  />
 </template>
 
 <script setup lang="ts">
@@ -237,11 +252,13 @@ import {
   DevicePhoneMobileIcon,
   EllipsisHorizontalIcon,
   PencilSquareIcon,
+  PlusIcon,
   TrashIcon,
   XMarkIcon,
 } from '@heroicons/vue/24/outline'
 import SongCover from '@/components/UI/SongCover.vue'
 import SearchBar from '@/components/UI/SearchBar.vue'
+import AddSongsToPlaylistModal from '@/components/UI/AddSongsToPlaylistModal.vue'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
 import { usePlaylistsStore } from '@/stores/playlists'
@@ -263,6 +280,7 @@ const playlistName = ref('')
 const nameInput = ref<HTMLInputElement>()
 const showDeleteDialog = ref(false)
 const deletingPlaylist = ref(false)
+const showAddSongs = ref(false)
 
 const playlist = computed(() => playlistsStore.getPlaylistById(props.id))
 const playlistLabel = computed(() => playlist.value?.name || t('playlist.defaultName'))
