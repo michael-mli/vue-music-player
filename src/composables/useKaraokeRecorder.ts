@@ -25,11 +25,12 @@ function getAudioContextCtor(): AnyAudioContext | null {
 }
 
 // Keep music and voice separate until the last mix so vocal processing never changes what
-// the singer hears. Measurements from real Android/Bluetooth recordings put an unprocessed
-// vocal several dB too far forward, so the vocal is levelled independently before mixing.
+// the singer hears. Real recordings show that device mic levels vary widely, so the vocal
+// is levelled independently before mixing.
 const RECORD_MUSIC_GAIN = 0.72
-const RECORD_VOICE_GAIN = 0.62
+const RECORD_VOICE_GAIN = 0.8
 const VOICE_REVERB_GAIN = 0.055
+const VOICE_DELAY_GAIN = 0.018
 const LIMITER_CEILING = 0.8 // about -1.9 dBFS, leaving room for MP3 inter-sample peaks
 const LIMITER_RELEASE_PER_BLOCK = 0.08
 const MP3_BITRATE_KBPS = 192
@@ -59,6 +60,17 @@ function makeVocalRoomImpulse(context: AudioContext): AudioBuffer {
     }
   }
   return impulse
+}
+
+/** Very gentle tape-like rounding for vocal peaks, blended in parallel below. */
+function makeVocalSaturationCurve(): Float32Array {
+  const curve = new Float32Array(2048)
+  const drive = 1.35
+  for (let i = 0; i < curve.length; i++) {
+    const sample = (i / (curve.length - 1)) * 2 - 1
+    curve[i] = Math.tanh(drive * sample) / drive
+  }
+  return curve
 }
 
 function floatToInt16(buf: Float32Array, gain = 1): Int16Array {
@@ -172,11 +184,26 @@ export function useKaraokeRecorder() {
       voiceHarshness.frequency.value = 6500
       voiceHarshness.gain.value = -1.5
       const voiceCompressor = ctx.createDynamicsCompressor()
-      voiceCompressor.threshold.value = -20
+      voiceCompressor.threshold.value = -23
       voiceCompressor.knee.value = 18
-      voiceCompressor.ratio.value = 2.8
-      voiceCompressor.attack.value = 0.012
-      voiceCompressor.release.value = 0.25
+      voiceCompressor.ratio.value = 3.2
+      voiceCompressor.attack.value = 0.01
+      voiceCompressor.release.value = 0.2
+      // A slower second stage evens out phrases after the first compressor catches peaks.
+      const voiceLeveler = ctx.createDynamicsCompressor()
+      voiceLeveler.threshold.value = -28
+      voiceLeveler.knee.value = 24
+      voiceLeveler.ratio.value = 1.7
+      voiceLeveler.attack.value = 0.045
+      voiceLeveler.release.value = 0.38
+      const voiceWarmth = ctx.createWaveShaper()
+      voiceWarmth.curve = makeVocalSaturationCurve()
+      voiceWarmth.oversample = '4x'
+      const voiceWarmthDry = ctx.createGain()
+      voiceWarmthDry.gain.value = 0.88
+      const voiceWarmthWet = ctx.createGain()
+      voiceWarmthWet.gain.value = 0.12
+      const voiceToneMix = ctx.createGain()
       const voiceRecordGain = ctx.createGain()
       voiceRecordGain.gain.value = RECORD_VOICE_GAIN
 
@@ -194,6 +221,26 @@ export function useKaraokeRecorder() {
       const reverbGain = ctx.createGain()
       reverbGain.gain.value = VOICE_REVERB_GAIN
 
+      // Quiet, filtered left/right slap delays add studio width without an audible echo.
+      const delayHighpass = ctx.createBiquadFilter()
+      delayHighpass.type = 'highpass'
+      delayHighpass.frequency.value = 260
+      const delayLowpass = ctx.createBiquadFilter()
+      delayLowpass.type = 'lowpass'
+      delayLowpass.frequency.value = 4200
+      const delayLeft = ctx.createDelay(0.2)
+      delayLeft.delayTime.value = 0.068
+      const delayRight = ctx.createDelay(0.2)
+      delayRight.delayTime.value = 0.091
+      const delayPanLeft = ctx.createStereoPanner()
+      delayPanLeft.pan.value = -0.45
+      const delayPanRight = ctx.createStereoPanner()
+      delayPanRight.pan.value = 0.45
+      const delayGainLeft = ctx.createGain()
+      delayGainLeft.gain.value = VOICE_DELAY_GAIN
+      const delayGainRight = ctx.createGain()
+      delayGainRight.gain.value = VOICE_DELAY_GAIN
+
       const mix = ctx.createGain()
       // Gentle shared dynamics makes both sources move together before peak limiting.
       const mixGlue = ctx.createDynamicsCompressor()
@@ -208,7 +255,13 @@ export function useKaraokeRecorder() {
       voiceHighpass.connect(voiceBody)
       voiceBody.connect(voiceHarshness)
       voiceHarshness.connect(voiceCompressor)
-      voiceCompressor.connect(voiceRecordGain)
+      voiceCompressor.connect(voiceLeveler)
+      voiceLeveler.connect(voiceWarmthDry)
+      voiceWarmthDry.connect(voiceToneMix)
+      voiceLeveler.connect(voiceWarmth)
+      voiceWarmth.connect(voiceWarmthWet)
+      voiceWarmthWet.connect(voiceToneMix)
+      voiceToneMix.connect(voiceRecordGain)
       voiceRecordGain.connect(mix)
       voiceRecordGain.connect(reverbPreDelay)
       reverbPreDelay.connect(voiceReverb)
@@ -216,6 +269,16 @@ export function useKaraokeRecorder() {
       reverbHighpass.connect(reverbLowpass)
       reverbLowpass.connect(reverbGain)
       reverbGain.connect(mix)
+      voiceRecordGain.connect(delayHighpass)
+      delayHighpass.connect(delayLowpass)
+      delayLowpass.connect(delayLeft)
+      delayLowpass.connect(delayRight)
+      delayLeft.connect(delayPanLeft)
+      delayPanLeft.connect(delayGainLeft)
+      delayGainLeft.connect(mix)
+      delayRight.connect(delayPanRight)
+      delayPanRight.connect(delayGainRight)
+      delayGainRight.connect(mix)
 
       processor = ctx.createScriptProcessor(4096, 2, 2)
       const silent = ctx.createGain()
