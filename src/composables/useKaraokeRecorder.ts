@@ -29,14 +29,14 @@ function getAudioContextCtor(): AnyAudioContext | null {
 // vocal several dB too far forward, so the vocal is levelled independently before mixing.
 const RECORD_MUSIC_GAIN = 0.72
 const RECORD_VOICE_GAIN = 0.62
-const VOICE_REVERB_GAIN = 0.1
+const VOICE_REVERB_GAIN = 0.055
 const LIMITER_CEILING = 0.8 // about -1.9 dBFS, leaving room for MP3 inter-sample peaks
 const LIMITER_RELEASE_PER_BLOCK = 0.08
 const MP3_BITRATE_KBPS = 192
 
-/** Deterministic, short stereo room used to place a dry headset mic into the music. */
+/** Deterministic, compact stereo room used to place a dry headset mic into the music. */
 function makeVocalRoomImpulse(context: AudioContext): AudioBuffer {
-  const seconds = 0.9
+  const seconds = 0.42
   const length = Math.max(1, Math.round(context.sampleRate * seconds))
   const impulse = context.createBuffer(2, length, context.sampleRate)
 
@@ -55,7 +55,7 @@ function makeVocalRoomImpulse(context: AudioContext): AudioBuffer {
     state ^= channel === 0 ? 0x13579b : 0x2468ac
     for (let i = 0; i < length; i++) {
       const progress = i / length
-      data[i] = noise() * Math.pow(1 - progress, 3.5)
+      data[i] = noise() * (Math.pow(1 - progress, 6) + 0.18 * Math.pow(1 - progress, 2.5))
     }
   }
   return impulse
@@ -164,37 +164,44 @@ export function useKaraokeRecorder() {
       voiceHighpass.Q.value = 0.707
       const voiceBody = ctx.createBiquadFilter()
       voiceBody.type = 'peaking'
-      voiceBody.frequency.value = 180
+      voiceBody.frequency.value = 220
       voiceBody.Q.value = 0.8
-      voiceBody.gain.value = -2.5
+      voiceBody.gain.value = -1.5
       const voiceHarshness = ctx.createBiquadFilter()
       voiceHarshness.type = 'highshelf'
-      voiceHarshness.frequency.value = 4000
-      voiceHarshness.gain.value = -4
+      voiceHarshness.frequency.value = 6500
+      voiceHarshness.gain.value = -1.5
       const voiceCompressor = ctx.createDynamicsCompressor()
-      voiceCompressor.threshold.value = -22
-      voiceCompressor.knee.value = 12
-      voiceCompressor.ratio.value = 3.5
-      voiceCompressor.attack.value = 0.006
-      voiceCompressor.release.value = 0.18
+      voiceCompressor.threshold.value = -20
+      voiceCompressor.knee.value = 18
+      voiceCompressor.ratio.value = 2.8
+      voiceCompressor.attack.value = 0.012
+      voiceCompressor.release.value = 0.25
       const voiceRecordGain = ctx.createGain()
       voiceRecordGain.gain.value = RECORD_VOICE_GAIN
 
       const reverbPreDelay = ctx.createDelay(0.1)
-      reverbPreDelay.delayTime.value = 0.025
+      reverbPreDelay.delayTime.value = 0.014
       const voiceReverb = ctx.createConvolver()
       voiceReverb.normalize = true
       voiceReverb.buffer = makeVocalRoomImpulse(ctx)
       const reverbHighpass = ctx.createBiquadFilter()
       reverbHighpass.type = 'highpass'
-      reverbHighpass.frequency.value = 180
+      reverbHighpass.frequency.value = 220
       const reverbLowpass = ctx.createBiquadFilter()
       reverbLowpass.type = 'lowpass'
-      reverbLowpass.frequency.value = 6000
+      reverbLowpass.frequency.value = 5200
       const reverbGain = ctx.createGain()
       reverbGain.gain.value = VOICE_REVERB_GAIN
 
       const mix = ctx.createGain()
+      // Gentle shared dynamics makes both sources move together before peak limiting.
+      const mixGlue = ctx.createDynamicsCompressor()
+      mixGlue.threshold.value = -10
+      mixGlue.knee.value = 20
+      mixGlue.ratio.value = 1.6
+      mixGlue.attack.value = 0.025
+      mixGlue.release.value = 0.25
       musicSrc.connect(musicRecordGain)
       musicRecordGain.connect(mix)
       micSrc.connect(voiceHighpass)
@@ -213,7 +220,8 @@ export function useKaraokeRecorder() {
       processor = ctx.createScriptProcessor(4096, 2, 2)
       const silent = ctx.createGain()
       silent.gain.value = 0
-      mix.connect(processor)
+      mix.connect(mixGlue)
+      mixGlue.connect(processor)
       processor.connect(silent)
       silent.connect(ctx.destination)
 
