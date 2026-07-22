@@ -51,7 +51,7 @@ def lrclib_search(title, retries=2):
     last = None
     for attempt in range(retries):
         try:
-            with urllib.request.urlopen(req, timeout=8) as r:
+            with urllib.request.urlopen(req, timeout=15) as r:
                 return json.loads(r.read().decode("utf-8"))
         except Exception as e:  # noqa: BLE001
             last = e
