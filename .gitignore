@@ -54,7 +54,7 @@ tmp/
 temp/
 data
 metadata.json
-karaoke
+/karaoke
 synced
 music
 public/

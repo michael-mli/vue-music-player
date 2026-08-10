@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import express from 'express'
 import cors from 'cors'
 import jwt from 'jsonwebtoken'
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { OAuth2Client } from 'google-auth-library'
 import { initDb } from './db.js'
 
@@ -25,7 +25,7 @@ const {
   SESSION_TTL_HOURS = '168',
   REPO_DIR = '/home/mli/others/vue-music-player',
   WEB_ROOT = '/var/www/html/others/music',
-  GPU_HOST = 'https://mics5070wsl.micstec.com',
+  GPU_POOL_PYTHON = '/home/mli/miniconda3/bin/python3',
 } = process.env
 
 const configOk = Boolean(GOOGLE_CLIENT_ID && JWT_SECRET)
@@ -158,35 +158,38 @@ function requireAdmin(req, res, next) {
 }
 
 async function gpuStatus() {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 8000)
-  try {
-    const response = await fetch(`${GPU_HOST.replace(/\/+$/, '')}/`, {
-      method: 'GET',
-      redirect: 'manual',
-      signal: controller.signal,
-    })
-    await response.body?.cancel()
-    const available = response.status >= 200 && response.status < 400
-    return {
-      available,
-      status: response.status,
-      message: available
-        ? 'GPU server is ready.'
-        : `GPU server unavailable (HTTP ${response.status}). Start the GPU server and retry.`,
-      checkedAt: now(),
-    }
-  } catch (error) {
-    const timedOut = error?.name === 'AbortError'
-    return {
-      available: false,
-      status: null,
-      message: `GPU server ${timedOut ? 'check timed out' : 'is unreachable'}. Start the GPU server and retry.`,
-      checkedAt: now(),
-    }
-  } finally {
-    clearTimeout(timeout)
-  }
+  const poolScript = path.join(REPO_DIR, 'scripts/karaoke/gpu_pool.py')
+  return new Promise((resolve) => {
+    execFile(
+      GPU_POOL_PYTHON,
+      [poolScript, 'status', '--json'],
+      { timeout: 30000 },
+      (error, stdout, stderr) => {
+        try {
+          if (error && !stdout) throw error
+          const workers = JSON.parse(stdout || '[]')
+          const ready = workers.filter((worker) => worker.ready)
+          resolve({
+            available: ready.length > 0,
+            status: ready.length > 0 ? 200 : null,
+            message: ready.length > 0
+              ? `${ready.length} GPU worker${ready.length === 1 ? '' : 's'} ready.`
+              : 'No GPU workers are ready. Start or provision a configured tunnel worker and retry.',
+            workers,
+            checkedAt: now(),
+          })
+        } catch (statusError) {
+          resolve({
+            available: false,
+            status: null,
+            message: `GPU pool check failed: ${statusError.message || stderr.trim()}`,
+            workers: [],
+            checkedAt: now(),
+          })
+        }
+      },
+    )
+  })
 }
 
 // ─── Shared-song link previews ───────────────────────────────────────────────

@@ -1,0 +1,9 @@
+{
+  "servers": [
+    "ssh-mics3080wsl.micstec.com",
+    "ssh-5070.micstec.com",
+    "ssh-mics4060wsl.micstec.com",
+    "ssh-mics3060pc.micstec.com",
+    "ssh-mics1060.micstec.com"
+  ]
+}

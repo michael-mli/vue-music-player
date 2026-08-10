@@ -15,9 +15,24 @@ fi
 MANIFEST="$MUSIC_DIR/karaoke_manifest.json"
 GENERATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-# Collect ids, numerically sorted.
+# Collect ids for files with a valid audio stream. This prevents an HTML/login response
+# saved with an .mp3 extension from being advertised as karaoke-ready.
+if ! command -v ffprobe >/dev/null 2>&1; then
+  echo "ERROR: ffprobe is required to build a validated karaoke manifest." >&2
+  exit 1
+fi
+
 ids="$(
-  find "$MUSIC_DIR" -maxdepth 1 -name 'link.*.instrumental.mp3' -printf '%f\n' 2>/dev/null \
+  find "$MUSIC_DIR" -maxdepth 1 -type f -name 'link.*.instrumental.mp3' -print0 2>/dev/null \
+    | xargs -0 -r -n1 -P "${KARAOKE_VALIDATE_JOBS:-8}" bash -c '
+        path="$1"
+        if ffprobe -v error -select_streams a:0 -show_entries stream=codec_type \
+            -of default=noprint_wrappers=1:nokey=1 "$path" 2>/dev/null | grep -qx audio; then
+          basename "$path"
+        else
+          echo "Skipping invalid karaoke asset: $path" >&2
+        fi
+      ' _ \
     | sed -E 's/^link\.([0-9]+)\.instrumental\.mp3$/\1/' \
     | sort -n
 )"
