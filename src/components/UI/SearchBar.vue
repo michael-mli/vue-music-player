@@ -60,7 +60,7 @@ defineProps<{ placeholder?: string }>()
 const songsStore = useSongsStore()
 const inputEl = ref<HTMLInputElement>()
 
-const scopes: SearchScope[] = ['all', 'title', 'artist', 'album', 'year', 'genre']
+const scopes: SearchScope[] = ['all', 'title', 'artist', 'album', 'year', 'genre', 'lyrics']
 
 function onInput(e: Event) {
   songsStore.setQuickQuery((e.target as HTMLInputElement).value)

@@ -6,6 +6,7 @@ import { metadataService } from '@/services/metadataService'
 import { categoryService } from '@/services/categoryService'
 import config from '@/config'
 import { stripHtmlTags } from '@/utils/htmlSanitizer'
+import { normalizeForSearch } from '@/utils/chineseSearch'
 
 export const useSongsStore = defineStore('songs', () => {
   // State
@@ -23,6 +24,10 @@ export const useSongsStore = defineStore('songs', () => {
   const searchResults = ref<Song[]>([])
   const isSearching = ref(false)
 
+  // Background lyrics preload for quick search; true while it's still running.
+  const lyricsPreloading = ref(false)
+  let lyricsPreloadStarted = false
+
   // Quick filter — instant, client-side, shared by the per-page search bar.
   // Scope narrows matching to one metadata field ('all' = title + id + all metadata).
   const quickQuery = ref('')
@@ -38,8 +43,10 @@ export const useSongsStore = defineStore('songs', () => {
     if ((scope === 'all' || scope === 'album') && song.album) haystack.push(song.album)
     if ((scope === 'all' || scope === 'year') && song.year) haystack.push(String(song.year))
     if ((scope === 'all' || scope === 'genre') && song.genre) haystack.push(song.genre)
+    if ((scope === 'all' || scope === 'lyrics') && song.lyrics) haystack.push(stripHtmlTags(song.lyrics))
     const text = haystack.join(' ').toLowerCase()
-    return q.split(/\s+/).every(word => text.includes(word))
+    const normalizedText = normalizeForSearch(text)
+    return q.split(/\s+/).every(word => text.includes(word) || normalizedText.includes(normalizeForSearch(word)))
   }
 
   /** Filter any song list with the current quick query/scope (for playlist/karaoke views). */
@@ -96,11 +103,13 @@ export const useSongsStore = defineStore('songs', () => {
       return searchResults.value
     }
     
-    // Fallback to basic title search
+    // Fallback to basic title search (variant-aware: simplified/traditional both match)
     const query = searchQuery.value.toLowerCase()
-    return songs.value.filter(song => 
-      song.title.toLowerCase().includes(query)
-    )
+    const normalizedQuery = normalizeForSearch(query)
+    return songs.value.filter(song => {
+      const title = song.title.toLowerCase()
+      return title.includes(query) || normalizeForSearch(title).includes(normalizedQuery)
+    })
   })
 
   const paginatedSongs = computed(() => {
@@ -149,6 +158,9 @@ export const useSongsStore = defineStore('songs', () => {
       // Merge offline-built metadata (artist/album/year/genre) — non-fatal if absent
       await loadMetadata()
       await loadCategories()
+      // Warm the lyrics cache in the background so quick search (header/Library/Home)
+      // can match lyrics content, not just title/metadata.
+      void preloadLyrics()
     } catch (err) {
       error.value = 'Failed to load songs'
       console.error('Error fetching songs:', err)
@@ -233,6 +245,42 @@ export const useSongsStore = defineStore('songs', () => {
     }
   }
 
+  // Preload lyrics for the whole library in the background (small batches) so the
+  // quick search (header / Library / Home) can match lyrics, not just titles and
+  // metadata. The /search page reuses the same in-memory cache, so once this has run
+  // (or run once before) its per-song fetches short-circuit too.
+  async function preloadLyrics() {
+    if (lyricsPreloadStarted) return
+    lyricsPreloadStarted = true
+    lyricsPreloading.value = true
+    try {
+      const CHUNK = 12
+      for (let i = 0; i < songs.value.length; i += CHUNK) {
+        const batch = songs.value.slice(i, i + CHUNK)
+        await Promise.all(batch.map(async (song) => {
+          if (song.lyrics) return
+          try {
+            const response = await songService.getMockLyrics(song.id)
+            if (response.success && response.data) {
+              const index = songs.value.findIndex(s => s.id === song.id)
+              if (index !== -1 && !songs.value[index].lyrics) {
+                songs.value[index] = { ...songs.value[index], lyrics: response.data }
+              }
+            }
+          } catch (error) {
+            // Leave the song cacheable-less — a later /search or playback fetch can retry
+          }
+        }))
+        // Yield to keep the UI responsive while the library is large
+        if (i + CHUNK < songs.value.length) {
+          await new Promise(resolve => setTimeout(resolve, 10))
+        }
+      }
+    } finally {
+      lyricsPreloading.value = false
+    }
+  }
+
   async function getSongById(id: number): Promise<Song | undefined> {
     let song = songs.value.find(s => s.id === id)
     
@@ -295,13 +343,20 @@ export const useSongsStore = defineStore('songs', () => {
     try {
       const queryLower = query.toLowerCase().trim()
       const queryWords = queryLower.split(/\s+/).filter(word => word.length > 0)
+      // Pre-normalize query words once so every song/lyrics comparison reuses them
+      const normalizedQueryWords = queryWords.map(normalizeForSearch)
       const matchingSongs: Song[] = []
       
       // Helper function to check if text matches all query words
       const matchesAllWords = (text: string) => {
         // Strip HTML tags for search purposes but keep the content
         const strippedText = stripHtmlTags(text).toLowerCase()
-        return queryWords.every(word => strippedText.includes(word))
+        // Match on the raw text or on the Chinese-variant-normalized form so a
+        // simplified query finds traditional titles/lyrics and vice versa
+        const normalizedText = normalizeForSearch(strippedText)
+        return queryWords.every((word, i) =>
+          strippedText.includes(word) || normalizedText.includes(normalizedQueryWords[i])
+        )
       }
       
       // First pass: Get all title matches (fast)
@@ -329,26 +384,29 @@ export const useSongsStore = defineStore('songs', () => {
         // Process batch in parallel
         const batchPromises = batch.map(async (song) => {
           try {
+            // Prefer the freshest copy — the background lyrics preload may have
+            // populated lyrics after the first-pass snapshot was taken.
+            const current = songs.value.find(s => s.id === song.id) || song
             // Check if lyrics already loaded and cached
-            if (song.lyrics) {
-              if (matchesAllWords(song.lyrics)) {
-                return { ...song, matchType: 'lyrics' as const }
+            if (current.lyrics) {
+              if (matchesAllWords(current.lyrics)) {
+                return { ...current, matchType: 'lyrics' as const }
               }
               return null
             }
             
             // Load lyrics
-            const lyricsResponse = await songService.getMockLyrics(song.id)
+            const lyricsResponse = await songService.getMockLyrics(current.id)
             if (lyricsResponse.success) {
               // Always cache the lyrics for future searches
-              const songIndex = songs.value.findIndex(s => s.id === song.id)
+              const songIndex = songs.value.findIndex(s => s.id === current.id)
               if (songIndex !== -1) {
                 songs.value[songIndex] = { ...songs.value[songIndex], lyrics: lyricsResponse.data }
               }
               
               // Check if it matches our search
               if (matchesAllWords(lyricsResponse.data)) {
-                return { ...song, lyrics: lyricsResponse.data, matchType: 'lyrics' as const }
+                return { ...current, lyrics: lyricsResponse.data, matchType: 'lyrics' as const }
               }
             }
             return null
@@ -473,6 +531,7 @@ export const useSongsStore = defineStore('songs', () => {
     searchResults,
     isSearching,
     titleLoadingProgress,
+    lyricsPreloading,
     quickQuery,
     quickScope,
     category,
@@ -498,6 +557,7 @@ export const useSongsStore = defineStore('songs', () => {
     clearQuickFilter,
     applyQuickFilter,
     fetchUncachedTitles,
+    preloadLyrics,
     getSongById,
     getSongLyrics,
     searchSongs,

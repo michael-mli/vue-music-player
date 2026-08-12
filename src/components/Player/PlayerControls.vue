@@ -267,7 +267,7 @@
           @click="wakeLock.toggle()"
           :class="[
             'p-1 rounded-full transition-colors duration-200',
-            wakeLock.enabled.value ? 'text-spotify-green' : 'text-gray-400 hover:text-white'
+            wakeLock.active.value ? 'text-spotify-green' : 'text-gray-400 hover:text-white'
           ]"
           :title="wakeLock.enabled.value ? $t('player.keepAwakeOn') : $t('player.keepAwakeOff')"
         >
@@ -572,7 +572,7 @@
         @click="wakeLock.toggle()"
         :class="[
           'p-2 rounded-full transition-colors duration-200 mr-2',
-          wakeLock.enabled.value ? 'text-spotify-green' : 'text-gray-400 hover:text-white'
+          wakeLock.active.value ? 'text-spotify-green' : 'text-gray-400 hover:text-white'
         ]"
         :title="wakeLock.enabled.value ? $t('player.keepAwakeOn') : $t('player.keepAwakeOff')"
       >
@@ -612,7 +612,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { 
   PlayIcon, 
   PauseIcon, 
@@ -666,6 +666,8 @@ const repeat = computed(() => playerStore.repeat)
 const karaokeMode = computed(() => playerStore.karaokeMode)
 const karaokeAvailable = computed(() => playerStore.karaokeAvailable)
 const wakeLock = useWakeLock()
+// Auto-keep-screen-on: hold the wake lock while audio is actually playing.
+watch(isPlaying, (playing) => wakeLock.setAuto(playing), { immediate: true })
 const canPlayNext = computed(() => playerStore.canPlayNext)
 const canPlayPrevious = computed(() => playerStore.canPlayPrevious)
 const sleepTimer = computed(() => playerStore.sleepTimer)

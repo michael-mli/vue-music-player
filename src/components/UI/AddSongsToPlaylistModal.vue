@@ -148,6 +148,7 @@ import {
 import SongCover from './SongCover.vue'
 import { usePlaylistsStore } from '@/stores/playlists'
 import { useSongsStore } from '@/stores/songs'
+import { normalizeForSearch } from '@/utils/chineseSearch'
 import type { Playlist } from '@/types'
 
 const props = defineProps<{
@@ -172,9 +173,13 @@ const availableSongs = computed(() =>
 const matchingSongs = computed(() => {
   const words = query.value.trim().toLowerCase().split(/\s+/).filter(Boolean)
   if (!words.length) return availableSongs.value
+  const normalizedWords = words.map(normalizeForSearch)
   return availableSongs.value.filter((song) => {
     const text = [song.title, song.artist, song.album, song.id].filter(Boolean).join(' ').toLowerCase()
-    return words.every((word) => text.includes(word))
+    const normalizedText = normalizeForSearch(text)
+    return words.every(
+      (word, i) => text.includes(word) || normalizedText.includes(normalizedWords[i]),
+    )
   })
 })
 const visibleSongs = computed(() => matchingSongs.value.slice(0, 200))

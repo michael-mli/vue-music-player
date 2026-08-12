@@ -22,7 +22,8 @@
       "artist": "Artist",
       "album": "Album",
       "year": "Year",
-      "genre": "Genre"
+      "genre": "Genre",
+      "lyrics": "Lyrics"
     }
   },
   "navigation": {
@@ -63,8 +64,8 @@
     "songRangeSave": "Save",
     "karaoke": "Karaoke (instrumental)",
     "karaokeUnavailable": "No instrumental for this song",
-    "keepAwakeOn": "Keep screen on: ON",
-    "keepAwakeOff": "Keep screen on"
+    "keepAwakeOn": "Always keep screen on: ON",
+    "keepAwakeOff": "Keep screen on while playing"
   },
   "library": {
     "songs": "Songs",

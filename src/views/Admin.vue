@@ -371,6 +371,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useSongsStore } from '@/stores/songs'
 import UserAvatar from '@/components/UI/UserAvatar.vue'
 import { adminService } from '@/services/adminService'
+import { normalizeForSearch } from '@/utils/chineseSearch'
 import type { AdminUser } from '@/services/adminService'
 import type { Song, SongCategory } from '@/types'
 
@@ -434,10 +435,12 @@ const songMatches = computed(() => {
   const query = songQuery.value.trim().toLowerCase()
   if (!query) return []
   const numericId = Number(query)
+  const normalizedQuery = normalizeForSearch(query)
   return songsStore.songs
     .filter((song) => (
       (Number.isInteger(numericId) && song.id === numericId)
       || song.title.toLowerCase().includes(query)
+      || normalizeForSearch(song.title).includes(normalizedQuery)
       || String(song.id).includes(query)
     ))
     .slice(0, 20)

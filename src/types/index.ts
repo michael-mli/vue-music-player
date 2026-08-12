@@ -27,7 +27,7 @@ export interface SongMeta {
 }
 
 /** Which metadata field the quick search filters on. */
-export type SearchScope = 'all' | 'title' | 'artist' | 'album' | 'year' | 'genre'
+export type SearchScope = 'all' | 'title' | 'artist' | 'album' | 'year' | 'genre' | 'lyrics'
 
 export interface SongCategory {
   id: number

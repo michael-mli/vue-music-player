@@ -2,8 +2,12 @@
  * Screen Wake Lock — keep the device screen on (so the phone doesn't dim/sleep during
  * playback or karaoke). Uses the Screen Wake Lock API (Android Chrome, iOS Safari 16.4+).
  *
+ * Two drivers:
+ *  - `setAuto(true)` — external signal ("music is playing") acquires the lock automatically.
+ *  - `enabled`       — persisted manual override that keeps the screen on even when paused.
+ *
  * The OS auto-releases the lock when the tab is hidden (backgrounded), so we re-acquire it
- * on visibilitychange while the user has it enabled. Preference is persisted.
+ * on visibilitychange while the screen should stay awake.
  */
 import { ref, onUnmounted } from 'vue'
 
@@ -17,23 +21,38 @@ const STORAGE_KEY = 'keep-screen-awake'
 
 export function useWakeLock() {
   const supported = ref(typeof navigator !== 'undefined' && 'wakeLock' in navigator)
-  const enabled = ref(localStorage.getItem(STORAGE_KEY) === 'true') // user's intent
+  const enabled = ref(localStorage.getItem(STORAGE_KEY) === 'true') // manual override
+  const auto = ref(false) // external signal: audio is playing
   const active = ref(false) // whether a lock is actually held right now
 
   let sentinel: WakeLockSentinelLike | null = null
+  let pending = false
+
+  function shouldHold() {
+    return supported.value && (enabled.value || auto.value)
+  }
 
   async function acquire() {
-    if (!supported.value || sentinel) return
+    if (!shouldHold() || sentinel || pending) return
+    pending = true
     try {
-      sentinel = (await navigator.wakeLock.request('screen')) as unknown as WakeLockSentinelLike
+      const handle = (await navigator.wakeLock.request('screen')) as unknown as WakeLockSentinelLike
+      // Preference may have changed while the request was in flight.
+      if (!shouldHold()) {
+        handle.release().catch(() => {})
+        return
+      }
+      sentinel = handle
       active.value = true
-      sentinel!.addEventListener('release', () => {
+      handle.addEventListener('release', () => {
         active.value = false
         sentinel = null
       })
     } catch {
       active.value = false
       sentinel = null
+    } finally {
+      pending = false
     }
   }
 
@@ -45,36 +64,32 @@ export function useWakeLock() {
     }
   }
 
+  async function sync() {
+    if (shouldHold()) await acquire()
+    else await release()
+  }
+
   function onVisibility() {
-    if (enabled.value && document.visibilityState === 'visible' && !sentinel) {
-      acquire()
-    }
+    if (!shouldHold()) return
+    if (document.visibilityState === 'visible' && !sentinel && !pending) void acquire()
   }
 
-  async function enable() {
-    enabled.value = true
-    localStorage.setItem(STORAGE_KEY, 'true')
-    document.addEventListener('visibilitychange', onVisibility)
-    await acquire()
-  }
-
-  async function disable() {
-    enabled.value = false
-    localStorage.setItem(STORAGE_KEY, 'false')
-    document.removeEventListener('visibilitychange', onVisibility)
-    await release()
+  function setAuto(v: boolean) {
+    if (auto.value === v) return
+    auto.value = v
+    void sync()
   }
 
   async function toggle() {
-    if (enabled.value) await disable()
-    else await enable()
+    enabled.value = !enabled.value
+    localStorage.setItem(STORAGE_KEY, String(enabled.value))
+    await sync()
   }
 
-  // Restore preference on mount.
-  if (enabled.value && supported.value) {
+  if (supported.value) {
     document.addEventListener('visibilitychange', onVisibility)
-    // Acquiring requires a document that's visible; safe to attempt.
-    acquire()
+    // Restore the user's previous override on mount.
+    void acquire()
   }
 
   onUnmounted(() => {
@@ -82,5 +97,5 @@ export function useWakeLock() {
     release()
   })
 
-  return { supported, enabled, active, toggle, enable, disable }
+  return { supported, enabled, auto, active, setAuto, toggle }
 }
