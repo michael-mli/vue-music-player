@@ -271,7 +271,7 @@
           ]"
           :title="wakeLock.enabled.value ? $t('player.keepAwakeOn') : $t('player.keepAwakeOff')"
         >
-          <SunIcon class="w-4 h-4" />
+          <LightBulbIcon class="w-4 h-4" />
         </button>
 
         <button
@@ -576,7 +576,7 @@
         ]"
         :title="wakeLock.enabled.value ? $t('player.keepAwakeOn') : $t('player.keepAwakeOff')"
       >
-        <SunIcon class="w-5 h-5" />
+        <LightBulbIcon class="w-5 h-5" />
       </button>
 
       <button
@@ -631,7 +631,7 @@ import {
   SparklesIcon,
   AdjustmentsHorizontalIcon,
   MicrophoneIcon,
-  SunIcon
+  LightBulbIcon
 } from '@heroicons/vue/24/outline'
 import { useWakeLock } from '@/composables/useWakeLock'
 import { usePlayerStore } from '@/stores/player'
