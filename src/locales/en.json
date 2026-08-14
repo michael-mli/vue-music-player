@@ -213,6 +213,7 @@
     "loadingLibrary": "Loading music library...",
     "searchingSong": "Searching for song...",
     "nowPlaying": "Now Playing",
+    "clickToPlay": "Click to Play",
     "songId": "Song ID",
     "goToLibrary": "Go to Library",
     "goToHome": "Go to Home",

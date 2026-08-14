@@ -14,7 +14,7 @@
         </div>
       </div>
 
-      <!-- Song found and playing -->
+      <!-- Song found and loaded -->
       <div v-else-if="currentSong" class="text-center">
         <!-- Quick toggles at page top (also present in the bottom player bar) -->
         <div class="flex justify-center gap-2 sm:gap-3 mb-6 flex-wrap">
@@ -52,8 +52,22 @@
           </button>
         </div>
 
-        <h1 class="text-3xl font-bold text-light-text-primary dark:text-white mb-2">
-          {{ t('music.nowPlaying') }}
+        <h1 class="mb-2">
+          <span
+            v-if="playerStore.isPlaying"
+            class="text-3xl font-bold text-light-text-primary dark:text-white"
+          >
+            {{ t('music.nowPlaying') }}
+          </span>
+          <button
+            v-else
+            type="button"
+            @click="playerStore.play()"
+            class="inline-flex items-center gap-2 rounded-full bg-spotify-green px-5 py-2.5 text-xl font-bold text-black transition-colors hover:bg-spotify-green/80 focus:outline-none focus:ring-2 focus:ring-spotify-green focus:ring-offset-2 focus:ring-offset-light-bg dark:focus:ring-offset-spotify-black"
+          >
+            <PlayIcon class="h-6 w-6" />
+            {{ t('music.clickToPlay') }}
+          </button>
         </h1>
 
         <!-- Note the sender attached to the share link -->
@@ -138,6 +152,7 @@ import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { MicrophoneIcon, DocumentTextIcon, SparklesIcon } from '@heroicons/vue/24/outline'
+import { PlayIcon } from '@heroicons/vue/24/solid'
 import SongCover from '@/components/UI/SongCover.vue'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'

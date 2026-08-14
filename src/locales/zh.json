@@ -213,6 +213,7 @@
     "loadingLibrary": "正在加载音乐库...",
     "searchingSong": "正在搜索歌曲...",
     "nowPlaying": "正在播放",
+    "clickToPlay": "点击播放",
     "songId": "歌曲 ID",
     "goToLibrary": "前往音乐库",
     "goToHome": "前往首页",

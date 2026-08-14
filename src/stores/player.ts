@@ -375,11 +375,13 @@ export const usePlayerStore = defineStore('player', () => {
           updateMediaSession()
         } catch (e2) {
           debugLogger.error('PLAYER', `play() retry after AbortError FAILED: ${String(e2)}`)
+          isPlaying.value = false
         }
         return
       }
       debugLogger.error('PLAYER', `play() error: ${String(error)}`)
       console.error('Failed to play audio:', error)
+      isPlaying.value = false
       if (error instanceof Error && error.name === 'NotAllowedError') {
         debugLogger.warn('PLAYER', 'play(): NotAllowedError — retrying in 500ms')
         await new Promise(resolve => setTimeout(resolve, 500))
