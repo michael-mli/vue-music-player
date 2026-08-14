@@ -9,6 +9,26 @@
         >{{ $t('lyrics.synced') }}</span>
       </h2>
       <div class="flex items-center gap-2">
+        <!-- Manual/synced lyric mode toggle (only meaningful when the song has sync data) -->
+        <div
+          v-if="hasSynced"
+          class="flex rounded-full bg-light-bg dark:bg-spotify-black border border-light-border dark:border-spotify-light p-0.5 text-[11px] font-medium flex-shrink-0"
+        >
+          <button
+            @click="setLyricsMode('auto')"
+            class="px-2 py-1 rounded-full transition-colors duration-200"
+            :class="lyricsMode === 'auto'
+              ? 'bg-spotify-green text-black'
+              : 'text-light-text-secondary dark:text-gray-400 hover:text-light-text-primary dark:hover:text-white'"
+          >{{ $t('lyrics.synced') }}</button>
+          <button
+            @click="setLyricsMode('manual')"
+            class="px-2 py-1 rounded-full transition-colors duration-200"
+            :class="lyricsMode === 'manual'
+              ? 'bg-spotify-green text-black'
+              : 'text-light-text-secondary dark:text-gray-400 hover:text-light-text-primary dark:hover:text-white'"
+          >{{ $t('lyrics.manual') }}</button>
+        </div>
         <!-- Auto-scroll toggle -->
         <button 
           @click="toggleAutoScroll"
@@ -41,8 +61,9 @@
         {{ $t('lyrics.loading') }}
       </div>
 
-      <!-- Synced (karaoke-style) lyrics: line-by-line with active highlight + click-to-seek -->
-      <div v-else-if="syncedLines && syncedLines.length" class="synced-lyrics space-y-2">
+      <!-- Synced (karaoke-style) lyrics: line-by-line with active highlight + click-to-seek.
+           Hidden when the user picks the manual/original lyric view. -->
+      <div v-else-if="lyricsMode === 'auto' && hasSynced" class="synced-lyrics space-y-2">
         <p
           v-for="(line, i) in syncedLines"
           :key="i"
@@ -89,6 +110,7 @@ import ImageModal from '@/components/UI/ImageModal.vue'
 import { processLyricsContent } from '@/utils/htmlSanitizer'
 import { lyricsService, activeLineIndex } from '@/services/lyricsService'
 import { songService } from '@/services/songService'
+import { useLyricsMode } from '@/composables/useLyricsMode'
 import type { LyricLine } from '@/types'
 
 // Define emits
@@ -99,6 +121,9 @@ defineEmits<{
 const playerStore = usePlayerStore()
 const songsStore = useSongsStore()
 
+// Shared manual/synced lyric display mode (persisted, mirrored in Karaoke.vue).
+const { mode: lyricsMode, setMode: setLyricsMode } = useLyricsMode()
+
 const lyrics = ref('')
 const loading = ref(false)
 const scrollContainer = ref<HTMLElement>()
@@ -107,6 +132,8 @@ const scrollContainer = ref<HTMLElement>()
 // of the plain-text view, and highlight the active line driven by playback time.
 const syncedLines = ref<LyricLine[] | null>(null)
 const activeIndex = ref(-1)
+// Whether the current song actually has synced lyrics to switch between.
+const hasSynced = computed(() => !!syncedLines.value && syncedLines.value.length > 0)
 
 // Auto-scroll state
 const autoScroll = ref(localStorage.getItem('lyrics-auto-scroll') !== 'false')
@@ -151,7 +178,7 @@ function onUserScroll() {
 // Drive synced-line highlighting / fall back to proportional auto-scroll for plain lyrics.
 watch(() => playerStore.currentTime, (t) => {
   // Synced mode: highlight the active line and keep it centered.
-  if (syncedLines.value && syncedLines.value.length) {
+  if (lyricsMode.value === 'auto' && syncedLines.value && syncedLines.value.length) {
     // Small lookahead so the highlight lands on the line as it's sung, not just after.
     const idx = activeLineIndex(syncedLines.value, t + 0.2)
     if (idx !== activeIndex.value) {

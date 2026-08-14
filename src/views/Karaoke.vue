@@ -48,9 +48,29 @@
           </div>
           <div class="min-w-0">
             <p class="text-lg font-bold text-light-text-primary dark:text-white truncate">{{ currentSong.title }}</p>
-            <p class="text-xs text-light-text-secondary dark:text-gray-400">
+            <p class="mt-1 text-xs text-light-text-secondary dark:text-gray-400 flex items-center gap-2">
               <span v-if="syncedLines.length" class="text-spotify-green">♪ {{ $t('lyrics.synced') }}</span>
               <span v-else>{{ karaokeMode && karaokeAvailable ? $t('karaoke.modeOn') : '' }}</span>
+              <!-- Manual/synced lyric mode toggle (only meaningful when the song has sync data) -->
+              <span
+                v-if="syncedLines.length"
+                class="inline-flex rounded-full bg-light-bg dark:bg-spotify-black border border-light-border dark:border-spotify-light p-0.5 text-[11px] font-medium"
+              >
+                <button
+                  @click="setLyricsMode('auto')"
+                  class="px-2 py-0.5 rounded-full transition-colors duration-200"
+                  :class="lyricsMode === 'auto'
+                    ? 'bg-spotify-green text-black'
+                    : 'text-light-text-secondary dark:text-gray-400 hover:text-light-text-primary dark:hover:text-white'"
+                >{{ $t('lyrics.synced') }}</button>
+                <button
+                  @click="setLyricsMode('manual')"
+                  class="px-2 py-0.5 rounded-full transition-colors duration-200"
+                  :class="lyricsMode === 'manual'
+                    ? 'bg-spotify-green text-black'
+                    : 'text-light-text-secondary dark:text-gray-400 hover:text-light-text-primary dark:hover:text-white'"
+                >{{ $t('lyrics.manual') }}</button>
+              </span>
             </p>
           </div>
 
@@ -72,9 +92,10 @@
           </div>
         </div>
 
-        <!-- Synced lyrics: line-by-line highlight, click to seek -->
+        <!-- Synced lyrics: line-by-line highlight, click to seek. Hidden when the user
+           picks the manual/original lyric view. -->
         <div
-          v-if="syncedLines.length"
+          v-if="lyricsMode === 'auto' && syncedLines.length"
           ref="lyricsBox"
           class="h-56 overflow-y-auto spotify-scrollbar text-center space-y-3 py-12"
         >
@@ -179,6 +200,7 @@ import { useSongsStore } from '@/stores/songs'
 import { karaokeService } from '@/services/karaokeService'
 import { lyricsService, activeLineIndex } from '@/services/lyricsService'
 import { songService } from '@/services/songService'
+import { useLyricsMode } from '@/composables/useLyricsMode'
 import type { LyricLine, Song } from '@/types'
 
 const playerStore = usePlayerStore()
@@ -195,6 +217,9 @@ const lyricsBox = ref<HTMLElement>()
 const karaokeMode = computed(() => playerStore.karaokeMode)
 const karaokeAvailable = computed(() => playerStore.karaokeAvailable)
 const currentSong = computed(() => playerStore.currentSong)
+
+// Shared manual/synced lyric display mode (persisted, mirrored in LyricsPanel.vue).
+const { mode: lyricsMode, setMode: setLyricsMode } = useLyricsMode()
 
 const currentSongId = computed(() => playerStore.currentSong?.id)
 
@@ -233,7 +258,7 @@ watch(currentSong, async (song) => {
 
 // Highlight + center the active synced line as playback advances.
 watch(() => playerStore.currentTime, (t) => {
-  if (!syncedLines.value.length) return
+  if (lyricsMode.value !== 'auto' || !syncedLines.value.length) return
   const idx = activeLineIndex(syncedLines.value, t + 0.2)
   if (idx !== activeIndex.value) {
     activeIndex.value = idx

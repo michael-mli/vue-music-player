@@ -116,7 +116,8 @@
     "loading": "正在加载歌词...",
     "scrollOn": "自动滚动已开启",
     "scrollOff": "自动滚动已关闭",
-    "synced": "已同步"
+    "synced": "已同步",
+    "manual": "原歌词"
   },
   "karaoke": {
     "subtitle": "跟着唱——人声已移除，歌词同步显示。",
