@@ -11,6 +11,10 @@ Usage:
       --out-dir /var/www/html/others/music/synced [--scan karaoke_scan.csv] [--ids 1,2,3 | --all]
 """
 import argparse, os, re, sys, time, json, urllib.parse, urllib.request
+from pathlib import Path
+import shutil
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from music_library import library
 
 LRCLIB = "https://lrclib.net"
 UA = "Mozilla/5.0 (karaoke-lyrics-cache)"
@@ -78,6 +82,7 @@ def collect_ids(args):
             if m:
                 ids.append(int(m.group(1)))
         ids.sort()
+        ids = sorted(set(ids) | set(library.imported))
     return ids
 
 
@@ -102,6 +107,26 @@ def main():
     found = notitle = nomatch = errors = skipped = 0
     for sid in ids:
         outp = os.path.join(args.out_dir, f"link.{sid}.lrc")
+        if sid in library.imported:
+            if library.imported[sid].get('lyrics_mode') == 'manual':
+                skipped += 1
+                print(f'skip {sid} preserving manual, non-synced lyrics', flush=True)
+                continue
+            # Dig has exact-version lyrics already. Never substitute LRCLIB's
+            # closest title match, including on a forced ingestion run.
+            source = library.import_root / 'synced' / f'link.{sid}.lrc'
+            if not source.is_file():
+                errors += 1
+                print(f'ERR {sid} imported synced lyrics missing', flush=True)
+            elif Path(outp).is_file() and Path(outp).read_bytes() == source.read_bytes():
+                skipped += 1
+            else:
+                temp = outp + '.tmp'
+                shutil.copyfile(source, temp)
+                os.replace(temp, outp)
+                found += 1
+                print(f'ok {sid} preserved imported synced lyrics', flush=True)
+            continue
         if os.path.exists(outp) and not args.force:
             skipped += 1
             continue

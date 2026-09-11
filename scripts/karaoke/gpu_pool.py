@@ -9,11 +9,15 @@ import json
 import os
 import re
 import shutil
+import shlex
 import subprocess
 import sys
 import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from music_library import library
 
 HERE = Path(__file__).resolve().parent
 SERVERS_FILE = Path(os.environ.get("KARAOKE_GPU_SERVERS_FILE", HERE / "gpu-servers.json"))
@@ -188,7 +192,14 @@ def assignments(ids: list[int], workers: list[WorkerStatus]) -> dict[str, list[i
 
 
 def run_remote_job(host: str, ids: list[int]) -> tuple[str, int, str]:
-    command = f"cd {REMOTE_DIR} && {REMOTE_PYTHON} gpu_worker.py {' '.join(map(str, ids))}"
+    imported_ids = ','.join(str(sid) for sid in ids if sid in library.imported)
+    environment = {
+        'KARAOKE_IMPORTED_IDS': imported_ids,
+        'KARAOKE_SOURCE_URL': os.environ.get('KARAOKE_SOURCE_URL', 'https://music.micstec.com/data'),
+        'KARAOKE_IMPORT_URL': os.environ.get('KARAOKE_IMPORT_URL', 'https://music.micstec.com/api/dig/files'),
+    }
+    assignments = ' '.join(f'{key}={shlex.quote(value)}' for key, value in environment.items())
+    command = f"cd {REMOTE_DIR} && {assignments} {REMOTE_PYTHON} gpu_worker.py {' '.join(map(str, ids))}"
     result = subprocess.run(
         [*ssh_base(), host, command], capture_output=True, text=True, timeout=JOB_TIMEOUT
     )

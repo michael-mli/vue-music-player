@@ -17,6 +17,8 @@ from demucs.audio import AudioFile
 from demucs.pretrained import get_model
 
 URL_BASE = os.environ.get("KARAOKE_SOURCE_URL", "https://music.micstec.com/data").rstrip("/")
+IMPORT_URL = os.environ.get("KARAOKE_IMPORT_URL", "https://music.micstec.com/api/dig/files").rstrip("/")
+IMPORTED_IDS = {int(value) for value in os.environ.get('KARAOKE_IMPORTED_IDS', '').split(',') if value.isdigit()}
 OUT_DIR = Path(os.environ.get("KARAOKE_GPU_OUT", "~/karaoke_gpu/out")).expanduser()
 MAX_DURATION = int(os.environ.get("KARAOKE_MAX_DURATION", "600"))
 OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -88,10 +90,11 @@ def main() -> int:
         source = Path(tempfile.gettempdir()) / f"karaoke-src-{song_id}-{os.getpid()}.mp3"
         wave_path = source.with_suffix(".wav")
         try:
+            base = IMPORT_URL if song_id in IMPORTED_IDS else URL_BASE
             subprocess.run(
                 [
                     "curl", "-sfL", "--retry", "3", "--retry-delay", "2", "--max-time", "120",
-                    "-A", "Mozilla/5.0", "-o", str(source), f"{URL_BASE}/link.{song_id}.mp3",
+                    "-A", "Mozilla/5.0", "-o", str(source), f"{base}/link.{song_id}.mp3",
                 ],
                 check=True,
             )

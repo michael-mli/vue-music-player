@@ -25,6 +25,7 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+from music_library import library
 
 MUSIC_DIR = os.environ.get("MUSIC_DIR", "/mnt/yteatalk/music")
 LYRICS_DIR = os.path.join(MUSIC_DIR, "lyrics")
@@ -48,7 +49,7 @@ except ImportError:
 
 def read_title(song_id: int) -> str | None:
     """Song title = first line of the lyrics file (same rule as fetch_posters.py)."""
-    path = os.path.join(LYRICS_DIR, f"link.{song_id}.mp3.l")
+    path = library.lyrics(song_id)
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             first = f.readline().strip()
@@ -93,7 +94,7 @@ def id3_meta(song_id: int) -> dict:
     """Read what we can from the file's ID3 tags. Empty dict if no file/tags/mutagen."""
     if not HAVE_MUTAGEN:
         return {}
-    path = os.path.join(MUSIC_DIR, f"link.{song_id}.mp3")
+    path = library.audio(song_id)
     meta: dict = {}
     try:
         audio = MP3(path)
@@ -163,6 +164,14 @@ def itunes_meta(title: str) -> dict:
 
 def build_one(song_id: int, use_itunes: bool) -> dict | None:
     """Merge sources for one song. Returns None when nothing at all was found."""
+    imported = library.imported.get(song_id)
+    if imported:
+        # Preserve metadata for the selected recording; a title-only iTunes
+        # lookup can otherwise replace it with a different artist/version.
+        meta = {key: imported[key] for key in ('title', 'artist', 'album', 'duration') if imported[key]}
+        meta['language'] = detect_language(meta.get('title', ''), meta.get('artist', ''))
+        meta['source'] = 'dig'
+        return meta
     title = read_title(song_id)
     id3 = id3_meta(song_id)
     itunes = {}
@@ -232,7 +241,7 @@ def main() -> int:
     if args.only:
         ids = [int(x) for x in args.only.split(",") if x.strip()]
     else:
-        ids = list(range(1, args.max + 1))
+        ids = sorted(set(range(1, args.max + 1)) | set(library.imported))
 
     miss_log = os.path.join(os.path.dirname(args.out) or ".", "metadata_misses.log")
     total = len(ids)

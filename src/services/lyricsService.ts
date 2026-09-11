@@ -8,7 +8,7 @@
  * sync. Successful results are cached in memory for the session. When neither has synced lyrics, callers
  * fall back to the plain-text lyrics. See KARAOKE.md.
  */
-import config, { getSyncedLyricsUrl } from '@/config'
+import config, { getSyncedLyricsUrl, hasManualLyrics } from '@/config'
 import { songService } from '@/services/songService'
 import type { LyricLine, Song } from '@/types'
 
@@ -19,6 +19,8 @@ const LRCLIB_MAX_ATTEMPTS = 2
 /** Parse standard LRC text ("[mm:ss.xx] words") into sorted, de-duplicated lyric lines. */
 export function parseLrc(lrc: string): LyricLine[] {
   const lines: LyricLine[] = []
+  // LRC offset is in milliseconds; positive values display lyrics earlier.
+  const offset = Number(lrc.match(/\[offset:([+-]?\d+)\]/i)?.[1] || 0) / 1000
   const timeTag = /\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?\]/g
 
   for (const raw of lrc.split(/\r?\n/)) {
@@ -26,17 +28,23 @@ export function parseLrc(lrc: string): LyricLine[] {
     const tags: number[] = []
     let m: RegExpExecArray | null
     let lastIndex = 0
+    let firstTextIndex = 0
+    let inlineTiming = false
     while ((m = timeTag.exec(raw)) !== null) {
       const min = parseInt(m[1], 10)
       const sec = parseInt(m[2], 10)
       const fracStr = m[3] ?? '0'
       const frac = parseInt(fracStr, 10) / Math.pow(10, fracStr.length)
-      tags.push(min * 60 + sec + frac)
+      tags.push(Math.max(0, min * 60 + sec + frac - offset))
+      if (lastIndex && raw.slice(lastIndex, m.index).trim()) inlineTiming = true
+      if (!firstTextIndex) firstTextIndex = timeTag.lastIndex
       lastIndex = timeTag.lastIndex
     }
     if (!tags.length) continue
-    const text = raw.slice(lastIndex).trim()
-    for (const time of tags) lines.push({ time, text })
+    // Some sources embed word timestamps inside a sentence. Display the full
+    // sentence at its first timestamp; leading repeated tags still repeat it.
+    const text = raw.slice(firstTextIndex).replace(timeTag, '').replace(/<\d{1,2}:\d{2}(?:\.\d+)?>/g, '').trim()
+    for (const time of inlineTiming ? tags.slice(0, 1) : tags) lines.push({ time, text })
   }
 
   lines.sort((a, b) => a.time - b.time)
@@ -71,6 +79,7 @@ class LyricsService {
    * LRCLIB fallback match when the server cache misses.
    */
   async getSyncedLyrics(song: Song, duration?: number): Promise<LyricLine[] | null> {
+    if (song.lyricsMode === 'manual' || hasManualLyrics(song.id)) return null
     const cached = this.mem.get(song.id)
     if (cached) return cached
 

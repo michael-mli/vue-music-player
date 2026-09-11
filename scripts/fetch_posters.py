@@ -23,6 +23,7 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+from music_library import library
 
 MUSIC_DIR = os.environ.get("MUSIC_DIR", "/mnt/yteatalk/music")
 LYRICS_DIR = os.path.join(MUSIC_DIR, "lyrics")
@@ -38,7 +39,7 @@ UA = "Mozilla/5.0 (poster-fetch; +music-player)"
 
 
 def read_title(song_id: int) -> str | None:
-    path = os.path.join(LYRICS_DIR, f"link.{song_id}.mp3.l")
+    path = library.lyrics(song_id)
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             first = f.readline().strip()
@@ -117,14 +118,15 @@ def main() -> int:
     if args.only:
         ids = [int(x) for x in args.only.split(",") if x.strip()]
     else:
-        ids = list(range(args.start, args.max + 1))
+        ids = sorted(set(range(args.start, args.max + 1)) | {sid for sid in library.imported if sid >= args.start})
 
     total = len(ids)
     got = skipped = no_title = no_art = fail = 0
     miss = open(MISS_LOG, "a", encoding="utf-8")
 
     for n, sid in enumerate(ids, 1):
-        dest = os.path.join(POSTER_DIR, f"link.{sid}.jpg")
+        dest = str(library.poster(sid))
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
         if not args.force and os.path.exists(dest) and os.path.getsize(dest) >= MIN_VALID_BYTES:
             skipped += 1
             continue
@@ -135,7 +137,8 @@ def main() -> int:
             miss.write(f"{sid}\tNO_TITLE\n"); miss.flush()
             continue
 
-        url = itunes_artwork(title)
+        artist = library.imported.get(sid, {}).get('artist', '')
+        url = itunes_artwork(f'{title} {artist}'.strip())
         if not url:
             no_art += 1
             miss.write(f"{sid}\tNO_ART\t{title}\n"); miss.flush()

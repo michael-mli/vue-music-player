@@ -105,6 +105,8 @@ const pageTitle = computed(() => {
       return t('navigation.home')
     case 'Search':
       return t('navigation.search')
+    case 'DigSong':
+      return t('dig.title')
     case 'Library':
       return t('navigation.library')
     case 'Karaoke':

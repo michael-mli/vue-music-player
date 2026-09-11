@@ -16,6 +16,12 @@ OUT=$WEB_ROOT/metadata.json
 PY=/home/mli/miniconda3/bin/python3
 MC3=mc3.micsapp.com
 
+# Protect read/merge/write against a concurrent manual metadata job.
+LOCK_DIR=${DATA_DIR:-/var/www/html/others/music/_auth}
+mkdir -p "$LOCK_DIR"
+exec 8>"$LOCK_DIR/metadata.lock"
+flock 8
+
 if [ $# -eq 0 ] || [ "${1:-}" = "--auto" ]; then
   echo "building metadata for all songs missing it ..."
   MUSIC_DIR=$MUSIC_MOUNT "$PY" "$REPO/scripts/build_metadata.py" --out "$OUT"
@@ -26,7 +32,7 @@ else
   MUSIC_DIR=$MUSIC_MOUNT "$PY" "$REPO/scripts/build_metadata.py" --out "$OUT" --only "$CSV" --force
 fi
 
-# Publish to mc3 (same pattern as ingest.sh; non-fatal if unreachable)
-rsync -a "$OUT" "$MC3:$OUT" 2>/dev/null || echo "warn: metadata rsync to mc3 failed"
+# Propagate publication failures so automatic ingestion can retry them.
+rsync -a "$OUT" "$MC3:$OUT"
 
 echo "== metadata done =="

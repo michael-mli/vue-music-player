@@ -10,6 +10,10 @@ import jwt from 'jsonwebtoken'
 import { execFile, spawn } from 'node:child_process'
 import { OAuth2Client } from 'google-auth-library'
 import { initDb } from './db.js'
+import { createDigProvider } from './dig-provider.js'
+import { createDigLibrary } from './dig-library.js'
+import { registerDigRoutes } from './dig-routes.js'
+import { createDigIngestionWorker } from './dig-ingestion.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // override:true so a restart always reflects the current .env.server (pm2 may carry a
@@ -156,6 +160,23 @@ function requireAdmin(req, res, next) {
   }
   next()
 }
+
+registerDigRoutes(app, {
+  authMiddleware,
+  db,
+  provider: createDigProvider({ baseUrl: process.env.DIG_SOURCE_URL }),
+  onImported: (songId) => queueAutoIngest(songId),
+  library: createDigLibrary({
+    db,
+    root: process.env.DIG_MUSIC_DIR || path.join(DATA_DIR, 'music'),
+    legacyRoots: [process.env.MUSIC_DIR || path.join(WEB_ROOT, 'data'), WEB_ROOT],
+    countPaths: [
+      path.join(process.env.MUSIC_DIR || path.join(WEB_ROOT, 'data'), 'song_number.txt'),
+      path.join(WEB_ROOT, 'song_number.txt'),
+      path.join(process.env.DIG_MUSIC_DIR || path.join(DATA_DIR, 'music'), 'song_number.txt'),
+    ],
+  }),
+})
 
 async function gpuStatus() {
   const poolScript = path.join(REPO_DIR, 'scripts/karaoke/gpu_pool.py')
@@ -671,7 +692,7 @@ function parseIds(body, max) {
 
 // Spawn a repo script and stream its output into the job log.
 // Args are passed as an array (no shell) → the ids can't inject shell.
-function startJob(kind, argv, ids, email, extraEnv = {}) {
+function startJob(kind, argv, ids, email, extraEnv = {}, onFinished = () => {}) {
   const jobId = `job-${++jobSeq}`
   const job = { id: jobId, kind, ids, running: true, log: [], startedAt: now(), exitCode: null, by: email }
   jobs.set(jobId, job)
@@ -684,12 +705,34 @@ function startJob(kind, argv, ids, email, extraEnv = {}) {
   }
   child.stdout.on('data', push)
   child.stderr.on('data', push)
-  child.on('close', (code) => { job.running = false; job.exitCode = code; job.finishedAt = now() })
+  child.on('close', (code) => {
+    if (!job.running) return
+    job.running = false; job.exitCode = code; job.finishedAt = now()
+    onFinished(code, job)
+  })
   child.on('error', (e) => {
     job.running = false; job.exitCode = -1; job.finishedAt = now(); job.log.push(`spawn error: ${e.message}`)
+    onFinished(-1, job)
   })
   return jobId
 }
+
+const digIngestionWorker = createDigIngestionWorker({
+  db,
+  run: (id) => new Promise((resolve, reject) => {
+    startJob('ingest', ['scripts/karaoke/ingest.sh', String(id)], [id], 'automatic Dig song import', {}, (code, job) => {
+      console.log(`[dig ingestion] song ${id}: ${code === 0 ? 'complete' : 'retry scheduled'} (${job.id})`)
+      if (code === 0) resolve()
+      else reject(new Error(`Ingestion exited ${code}; ${job.log.slice(-5).join('\n')}`))
+    })
+  }),
+})
+digIngestionWorker.start()
+
+app.get('/api/admin/dig-ingestion', authMiddleware, requireAdmin, (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store')
+  res.json({ success: true, data: db.prepare('SELECT * FROM dig_ingestion ORDER BY updated_at DESC LIMIT 100').all() })
+})
 
 function publicJob(job) {
   if (!job) return null
@@ -703,6 +746,77 @@ function jobStatus(req, res) {
   const job = jobs.get(req.params.jobId)
   if (!job) return res.status(404).json({ success: false, message: 'no such job' })
   res.json({ success: true, data: publicJob(job) })
+}
+
+// ─── Auto-ingest for Dig imports ─────────────────────────────────────────────
+// A fresh "Add to library" import automatically runs the karaoke ingest
+// pipeline (poster + synced lyrics + metadata + instrumental) so admins don't
+// repeat it by hand. Runs serialize with manual ingests through the shared job
+// registry (ingest.sh's own flock serializes across restarts too).
+const autoIngestQueue = []
+const autoIngestAttempts = new Map()
+const AUTO_INGEST_MAX_ATTEMPTS = 3
+let autoIngestActive = false
+let autoIngestRetryTimer = null
+
+function queueAutoIngest(songId) {
+  if (!autoIngestQueue.includes(songId)) autoIngestQueue.push(songId)
+  void pumpAutoIngest()
+}
+
+function scheduleAutoIngestRetry() {
+  if (autoIngestRetryTimer || !autoIngestQueue.length) return
+  autoIngestRetryTimer = setTimeout(() => {
+    autoIngestRetryTimer = null
+    void pumpAutoIngest()
+  }, 60000)
+}
+
+async function pumpAutoIngest() {
+  if (autoIngestActive || !autoIngestQueue.length) return
+  if ([...jobs.values()].some((job) => job.running && (job.kind === 'ingest' || job.kind === 'ingest-auto'))) {
+    scheduleAutoIngestRetry()
+    return
+  }
+  let gpu
+  try {
+    gpu = await gpuStatus()
+  } catch {
+    gpu = { available: false, message: 'GPU pool check failed' }
+  }
+  if (autoIngestActive || !autoIngestQueue.length) return
+  if (!gpu.available) {
+    console.log(`[ingest-auto] GPU unavailable (${gpu.message || 'not ready'}) — ${autoIngestQueue.length} song(s) waiting`)
+    scheduleAutoIngestRetry()
+    return
+  }
+  autoIngestActive = true
+  const ids = autoIngestQueue.splice(0, autoIngestQueue.length)
+  const jobId = startJob('ingest-auto', ['scripts/karaoke/ingest.sh', ...ids.map(String)], ids, 'system:auto-ingest')
+  console.log(`[ingest-auto] started job ${jobId} for ids ${ids.join(',')}`)
+  const timer = setInterval(() => {
+    const job = jobs.get(jobId)
+    if (job && job.running) return
+    clearInterval(timer)
+    autoIngestActive = false
+    if (job && job.exitCode === 0) {
+      console.log(`[ingest-auto] job ${jobId} done for ids ${ids.join(',')}`)
+      for (const id of ids) autoIngestAttempts.delete(id)
+    } else {
+      console.error(`[ingest-auto] job ${jobId} failed (exit ${job?.exitCode}) for ids ${ids.join(',')}`)
+      for (const id of ids) {
+        const attempts = (autoIngestAttempts.get(id) || 0) + 1
+        if (attempts < AUTO_INGEST_MAX_ATTEMPTS && !autoIngestQueue.includes(id)) {
+          autoIngestAttempts.set(id, attempts)
+          autoIngestQueue.push(id)
+        } else {
+          autoIngestAttempts.delete(id)
+          console.error(`[ingest-auto] giving up on id ${id} after ${attempts} attempts — run it from the Admin page`)
+        }
+      }
+    }
+    void pumpAutoIngest()
+  }, 5000)
 }
 
 function startCategoryProfile(by = 'system') {
@@ -852,4 +966,7 @@ app.listen(Number(PORT), '127.0.0.1', () => {
     6 * 60 * 60 * 1000,
   )
   profileSchedule.unref()
+  // Backstop for auto-ingests deferred while the GPU pool was down.
+  const autoIngestSweep = setInterval(() => { void pumpAutoIngest() }, 15 * 60 * 1000)
+  autoIngestSweep.unref()
 })

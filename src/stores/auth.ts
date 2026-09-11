@@ -53,7 +53,12 @@ export const useAuthStore = defineStore('auth', () => {
   function setToken(t: string | null) {
     token.value = t
     if (t) localStorage.setItem(TOKEN_KEY, t)
-    else localStorage.removeItem(TOKEN_KEY)
+    else {
+      localStorage.removeItem(TOKEN_KEY)
+      // No token ⇒ no user; keeps the UI and stored state in sync everywhere
+      // this is called (login expiry, the /api 401 interceptor, logout).
+      user.value = null
+    }
   }
 
   /**
@@ -79,9 +84,14 @@ export const useAuthStore = defineStore('auth', () => {
         headers: { Authorization: `Bearer ${token.value}` },
       })
       user.value = res.data?.data ?? null
-    } catch {
-      setToken(null)
-      user.value = null
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 401) {
+        // Definitive: the stored token is invalid/expired — drop it.
+        setToken(null)
+      }
+      // Network/server errors (or a backend restart) keep the token in place so
+      // the session can be restored — or the guest identity re-issued
+      // idempotently — on the next visit instead of silently being forgotten.
     } finally {
       ready.value = true
     }
@@ -151,5 +161,6 @@ export const useAuthStore = defineStore('auth', () => {
     user, token, ready,
     isAuthenticated, isRegistered, isAdmin, loginEnabled, displayName,
     loginWithGoogle, fetchMe, ensureIdentity, createGuest, updateProfile, logout, renderGoogleButton,
+    setToken,
   }
 })

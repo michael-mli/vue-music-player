@@ -107,7 +107,8 @@ import { XMarkIcon, ArrowsUpDownIcon } from '@heroicons/vue/24/outline'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
 import ImageModal from '@/components/UI/ImageModal.vue'
-import { processLyricsContent } from '@/utils/htmlSanitizer'
+import { escapeHtml, processLyricsContent } from '@/utils/htmlSanitizer'
+import { hasManualLyrics } from '@/config'
 import { lyricsService, activeLineIndex } from '@/services/lyricsService'
 import { songService } from '@/services/songService'
 import { useLyricsMode } from '@/composables/useLyricsMode'
@@ -153,6 +154,9 @@ const imageModal = reactive({
 // Process lyrics to handle HTML tags safely
 const processedLyrics = computed(() => {
   if (!lyrics.value) return ''
+  if (currentSong.value && (currentSong.value.lyricsMode === 'manual' || hasManualLyrics(currentSong.value.id))) {
+    return escapeHtml(lyrics.value)
+  }
   return processLyricsContent(lyrics.value)
 })
 

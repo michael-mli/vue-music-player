@@ -1,7 +1,10 @@
 <template>
   <div class="library-view h-full overflow-y-auto spotify-scrollbar">
     <div class="p-4 sm:p-6">
-      <h1 class="text-3xl font-bold text-light-text-primary dark:text-white mb-4">{{ $t('navigation.library') }}</h1>
+      <div class="flex items-center justify-between gap-3 mb-4">
+        <h1 class="text-3xl font-bold text-light-text-primary dark:text-white">{{ $t('navigation.library') }}</h1>
+        <RouterLink to="/dig" class="flex-shrink-0 px-4 py-2 rounded-full bg-spotify-green text-black font-semibold text-sm hover:bg-green-400">{{ $t('dig.title') }}</RouterLink>
+      </div>
 
       <SearchBar class="mb-4" />
 

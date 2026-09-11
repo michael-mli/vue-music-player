@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import Home from '@/views/Home.vue'
 import Search from '@/views/Search.vue'
 import Library from '@/views/Library.vue'
+import DigSong from '@/views/DigSong.vue'
 import Karaoke from '@/views/Karaoke.vue'
 import Admin from '@/views/Admin.vue'
 import Playlist from '@/views/Playlist.vue'
@@ -19,6 +20,11 @@ const router = createRouter({
       path: '/search',
       name: 'Search',
       component: Search
+    },
+    {
+      path: '/dig',
+      name: 'DigSong',
+      component: DigSong
     },
     {
       path: '/library',

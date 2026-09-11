@@ -4,6 +4,7 @@ export interface Song {
   filename: string
   duration?: number
   lyrics?: string
+  lyricsMode?: 'synced' | 'manual'
   isFavorite: boolean
   matchType?: 'title' | 'lyrics'
   artist?: string

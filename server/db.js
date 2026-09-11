@@ -115,6 +115,9 @@ export function initDb(dataDir) {
   fs.mkdirSync(dataDir, { recursive: true })
   const dbPath = path.join(dataDir, 'auth.db')
   const db = new DatabaseSync(dbPath)
+  // Background jobs (category profiling, dig imports) write while requests read.
+  // Wait instead of failing immediately with SQLITE_BUSY ("database is locked").
+  db.exec('PRAGMA busy_timeout = 5000')
 
   const hasUsers = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='users'`).get()
   if (!hasUsers) {

@@ -1,6 +1,7 @@
 import axios from 'axios'
 import type { APIResponse } from '@/types'
 import config from '@/config'
+import { useAuthStore } from '@/stores/auth'
 
 const api = axios.create({
   baseURL: config.apiBaseUrl,
@@ -32,9 +33,10 @@ api.interceptors.response.use(
   },
   (error) => {
     if (error.response?.status === 401) {
-      // Handle unauthorized access
-      localStorage.removeItem('auth_token')
-      window.location.href = '/login'
+      // The stored token is no longer valid. Invalidate it through the auth
+      // store (clears token + user together) instead of wiping localStorage
+      // directly or redirecting to a non-existent /login page.
+      useAuthStore().setToken(null)
     }
     return Promise.reject(error)
   }

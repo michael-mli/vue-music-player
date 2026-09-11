@@ -95,10 +95,23 @@ const config: AppConfig = {
   googleClientId: import.meta.env.VITE_GOOGLE_CLIENT_ID || defaultConfig.googleClientId,
 }
 
-/**
- * Get full URL for a music file
- */
+// Register imports before playback so all existing ID-based media callers agree.
+const importedSongIds = new Set<number>()
+const manualLyricsIds = new Set<number>()
+export function hasManualLyrics(id: number): boolean { return manualLyricsIds.has(id) }
+export function registerImportedSongIds(ids: number[], manualIds: number[] = []) {
+  for (const id of ids) importedSongIds.add(id)
+  for (const id of manualIds) manualLyricsIds.add(id)
+}
+function importedMediaUrl(filename: string, folder = ''): string | null {
+  const id = Number(filename.match(/^link\.(\d+)\./)?.[1])
+  return importedSongIds.has(id) ? getApiUrl(`/dig/files/${folder}${filename}`) : null
+}
+
+/** Get full URL for a music file, including imported songs. */
 export function getMusicUrl(filename: string): string {
+  const imported = importedMediaUrl(filename)
+  if (imported) return imported
   const baseUrl = config.musicBaseUrl
   const separator = baseUrl && !baseUrl.endsWith('/') ? '/' : ''
   return `${baseUrl}${separator}${filename}`
@@ -136,6 +149,8 @@ export function getKaraokeManifestUrl(): string {
  * scripts/karaoke/fetch_synced_lyrics.py so the browser never calls the LRCLIB API.
  */
 export function getSyncedLyricsUrl(songId: number): string {
+  const imported = importedMediaUrl(`link.${songId}.lrc`, 'synced/')
+  if (imported) return imported
   const baseUrl = config.syncedLyricsBaseUrl
   const separator = baseUrl && !baseUrl.endsWith('/') ? '/' : ''
   return `${baseUrl}${separator}link.${songId}.lrc`
@@ -145,6 +160,8 @@ export function getSyncedLyricsUrl(songId: number): string {
  * Get full URL for a lyrics file
  */
 export function getLyricsUrl(filename: string): string {
+  const imported = importedMediaUrl(filename, 'lyrics/')
+  if (imported) return imported
   const baseUrl = config.lyricsBaseUrl
   const separator = baseUrl && !baseUrl.endsWith('/') ? '/' : ''
   return `${baseUrl}${separator}${filename}`
@@ -159,6 +176,7 @@ export const DEFAULT_POSTER_URL = '/poster-default.svg'
  * swaps in DEFAULT_POSTER_URL.
  */
 export function getPosterUrl(songId: number): string {
+  if (importedSongIds.has(songId)) return getApiUrl(`/dig/poster/${songId}`)
   const baseUrl = config.posterBaseUrl
   const separator = baseUrl && !baseUrl.endsWith('/') ? '/' : ''
   return `${baseUrl}${separator}link.${songId}.jpg`

@@ -22,13 +22,19 @@ PY=/home/mli/miniconda3/bin/python3
 GPU_POOL=$REPO/scripts/karaoke/gpu_pool.py
 MC3=mc3.micsapp.com
 
+# Automatic and manual ingestion share outputs; serialize across restarts too.
+LOCK_DIR=${DATA_DIR:-/var/www/html/others/music/_auth}
+mkdir -p "$LOCK_DIR"
+exec 9>"$LOCK_DIR/ingest.lock"
+flock 9
+
 # ---- resolve ids -----------------------------------------------------------------------
 if [ "${1:-}" = "--auto" ]; then
-  maxid=$(cat /var/www/html/others/music/data/song_number.txt 2>/dev/null || echo 1339)
-  echo "scanning 1..$maxid for source songs missing an instrumental ..." >&2
+  echo "scanning legacy and imported songs missing an instrumental ..." >&2
+  candidates=$("$PY" "$REPO/scripts/music_library.py")
   IDS=""
-  for id in $(seq 1 "$maxid"); do
-    [ -s "$MUSIC_MOUNT/link.$id.mp3" ] && [ ! -f "$KDIR/link.$id.instrumental.mp3" ] && IDS="$IDS $id"
+  for id in $candidates; do
+    [ ! -f "$KDIR/link.$id.instrumental.mp3" ] && IDS="$IDS $id"
   done
 else
   IDS="$*"
@@ -54,7 +60,7 @@ echo "== synced lyrics =="
 
 # ---- 2b. metadata (ID3 + iTunes → data/metadata.json, powers scoped search) ------------
 echo "== metadata =="
-bash "$REPO/scripts/metadata.sh" $IDS || true
+bash "$REPO/scripts/metadata.sh" $IDS
 
 # ---- 3. instrumental (GPU required) ----------------------------------------------------
 echo "== instrumental =="
@@ -66,14 +72,14 @@ fi
 # ---- 4. publish + sync mc3 -------------------------------------------------------------
 echo "== publish =="
 bash "$REPO/scripts/karaoke/build-manifest.sh" "$KDIR"
-rsync -a "$KDIR/" "$MC3:/var/www/html/others/music/karaoke/" 2>/dev/null || echo "warn: karaoke rsync to mc3 failed"
-ssh -o ConnectTimeout=8 "$MC3" 'mkdir -p /var/www/html/others/music/synced' 2>/dev/null || true
-rsync -a "$SYNCDIR/" "$MC3:/var/www/html/others/music/synced/" 2>/dev/null || echo "warn: synced rsync to mc3 failed"
+rsync -a "$KDIR/" "$MC3:/var/www/html/others/music/karaoke/"
+ssh -o ConnectTimeout=8 "$MC3" 'mkdir -p /var/www/html/others/music/synced'
+rsync -a "$SYNCDIR/" "$MC3:/var/www/html/others/music/synced/"
 
 echo "== done =="
 for id in $IDS; do
   inst=$([ -f "$KDIR/link.$id.instrumental.mp3" ] && echo yes || echo no)
   lrc=$([ -f "$SYNCDIR/link.$id.lrc" ] && echo yes || echo no)
-  pos=$([ -f "$MUSIC_MOUNT/poster/link.$id.jpg" ] && echo yes || echo no)
+  pos=$("$PY" -c 'import sys; sys.path.insert(0, sys.argv[1]); from music_library import library; print("yes" if library.poster(int(sys.argv[2])).is_file() else "no")' "$REPO/scripts" "$id")
   printf "  id %-5s instrumental=%s synced=%s poster=%s\n" "$id" "$inst" "$lrc" "$pos"
 done

@@ -4,7 +4,8 @@ import type { Song, SearchScope, SongCategory } from '@/types'
 import { songService } from '@/services/songService'
 import { metadataService } from '@/services/metadataService'
 import { categoryService } from '@/services/categoryService'
-import config from '@/config'
+import { digService } from '@/services/digService'
+import config, { registerImportedSongIds } from '@/config'
 import { stripHtmlTags } from '@/utils/htmlSanitizer'
 import { normalizeForSearch } from '@/utils/chineseSearch'
 
@@ -157,6 +158,12 @@ export const useSongsStore = defineStore('songs', () => {
 
       // Merge offline-built metadata (artist/album/year/genre) — non-fatal if absent
       await loadMetadata()
+      try {
+        const imported = await digService.library()
+        for (const song of imported.data) addImportedSong(song)
+      } catch (error) {
+        console.warn('Could not load imported songs:', error)
+      }
       await loadCategories()
       // Warm the lyrics cache in the background so quick search (header/Library/Home)
       // can match lyrics content, not just title/metadata.
@@ -167,6 +174,18 @@ export const useSongsStore = defineStore('songs', () => {
     } finally {
       loading.value = false
     }
+  }
+
+  // Make an imported song immediately available to playback and library search.
+  function addImportedSong(song: Song) {
+    registerImportedSongIds([song.id], song.lyricsMode === 'manual' ? [song.id] : [])
+    try {
+      songService.seedTitleCache(new Map([[song.id, song.title]]))
+    } catch { /* Storage quotas must not hide a successfully imported song. */ }
+    const index = songs.value.findIndex((item) => item.id === song.id)
+    if (index < 0) songs.value.push(song)
+    else songs.value[index] = { ...songs.value[index], ...song, isFavorite: songs.value[index].isFavorite }
+    songs.value.sort((a, b) => b.id - a.id)
   }
 
   // Merge /data/metadata.json into the song list so quick search can scope by field.
@@ -549,6 +568,7 @@ export const useSongsStore = defineStore('songs', () => {
     
     // Actions
     fetchSongs,
+    addImportedSong,
     loadMetadata,
     loadCategories,
     setQuickQuery,
