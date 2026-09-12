@@ -6,6 +6,16 @@ Each result also has **Play** to listen before importing, with pause, seeking an
 
 The adapter uses go-music-dl's `/music/search` HTML song-card data and `/music/download_lrc` + `/music/download?stream=1`. Provider audio and synced lyrics use the same upstream source, song ID, and extra metadata. It does not execute upstream HTML or accept arbitrary download URLs from clients. The upstream contract was verified against [the source implementation](https://github.com/guohuiyuan/go-music-dl/blob/main/internal/web/music.go) and [search template](https://github.com/guohuiyuan/go-music-dl/blob/main/internal/web/templates/partials/song_list.html).
 
+## Playback order
+
+Imported songs follow the same playback order as legacy songs. With shuffle off, playback follows the selected queue: in the full library, IDs descend (for example, 1370 → 1369 → 1368). Filtered results and playlists retain their own order. An active song-ID range limits eligible tracks; wrapping at the end requires repeat-all.
+
+The player copies the selected queue so importing and sorting new library entries cannot shift its current position. Newly imported songs appear in the library immediately and enter the queue when playback is started from that updated list.
+
+Read-ahead caching prepares the next sequential song, but a failed preload does not skip it: playback still attempts that song's normal media URL. Shuffle can try another preload candidate. Downloads from an earlier song, queue, mode, or range cannot overwrite a newer next-song selection.
+
+The playback-order fix was deployed to music.micstec.com and mc3.micsapp.com on September 12, 2026. Both sites served the new frontend bundle, and deployed HTML, service worker, and JavaScript checksums matched the build. This fix requires only a frontend deployment.
+
 ## Storage and IDs
 
 The deployed `/data` music mount is read-only. New assets therefore live in `DIG_MUSIC_DIR` (defaults to `DATA_DIR/music`) and are served by the existing API backend. For a library ending at ID 1339, the next import creates:
@@ -68,6 +78,8 @@ Set `DIG_SOURCE_URL=http://127.0.0.1:3130/music` in `.env.server`, then run `pm2
 To administer platform cookies, tunnel the private service through SSH (`ssh -L 3130:127.0.0.1:3130 <music-server>`) and open `http://127.0.0.1:3130/music` locally. Leave port 3130 bound to loopback.
 
 ## Verification
+
+Run `node --test scripts/player-order.test.mjs` for playback-order regressions: 1370 → 1369 after a failed preload, imports during playback, stale downloads after mode/queue changes, custom playlist order, and range/repeat boundaries. The tests run the player store with mocked browser audio and caching; they do not stream production songs.
 
 Run `npm test --prefix server` for provider, ID allocation, concurrency, rollback, audio conversion, and HTTP integration checks. Run `npm run build` for TypeScript and the production frontend build. Tests use a temporary library and a synthetic audio tone; they do not alter the production library.
 

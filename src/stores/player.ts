@@ -26,6 +26,7 @@ export const usePlayerStore = defineStore('player', () => {
   // background auto-advance work in an installed PWA (which blocks background network
   // fetches): the next track must already be in cache, not fetched at end-of-song.
   const nextUpIndex = ref(-1)
+  let readAheadGeneration = 0
   const audioElement = ref<HTMLAudioElement | null>(null)
   // Object URL of the in-memory blob currently driving playback (if the track was played
   // from cache). Revoked when the next track loads so blobs don't leak.
@@ -211,6 +212,8 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   async function playSongFromHistory(song: Song) {
+    const generation = ++readAheadGeneration
+    nextUpIndex.value = -1
     debugLogger.info('PLAYER', `playSongFromHistory #${song.id} "${song.title}"`)
     // This function plays a song from history without adding it to history again
     isTransitioning.value = true
@@ -259,7 +262,7 @@ export const usePlayerStore = defineStore('player', () => {
       }
 
       // Trigger read-ahead caching for upcoming songs
-      await triggerReadAheadCache()
+      if (generation === readAheadGeneration) await triggerReadAheadCache()
     } else {
       isTransitioning.value = false
       debugLogger.error('PLAYER', 'playSongFromHistory: audioElement is null!')
@@ -267,10 +270,14 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   async function playSong(song: Song, songQueue?: Song[], index?: number) {
+    const generation = ++readAheadGeneration
+    nextUpIndex.value = -1
     debugLogger.info('PLAYER', `playSong #${song.id} "${song.title}"`)
     if (songQueue) {
-      queue.value = songQueue
-      currentIndex.value = index || 0
+      // Dig imports insert and sort the library in place. Keep queue positions stable.
+      queue.value = [...songQueue]
+      currentIndex.value = index !== undefined && songQueue[index]?.id === song.id
+        ? index : songQueue.findIndex(item => item.id === song.id)
     }
 
     // Add current song to history before switching to new song
@@ -341,7 +348,7 @@ export const usePlayerStore = defineStore('player', () => {
       }
 
       // Trigger read-ahead caching for upcoming songs
-      await triggerReadAheadCache()
+      if (generation === readAheadGeneration) await triggerReadAheadCache()
     } else {
       isTransitioning.value = false
       debugLogger.error('PLAYER', 'playSong: audioElement is null!')
@@ -435,35 +442,18 @@ export const usePlayerStore = defineStore('player', () => {
       return eligibleIndices[Math.floor(Math.random() * eligibleIndices.length)]
     }
 
-    let nextIndex = currentIndex.value + 1
-    if (nextIndex >= queue.value.length) {
-      if (repeat.value === 'all') nextIndex = 0
-      else return -1
-    }
-
-    // In sequential mode with range active, skip songs outside the range
-    if (isSongRangeActive.value) {
-      const startIndex = nextIndex
-      let checked = 0
-      while (!isSongInRange(queue.value[nextIndex]) && checked < queue.value.length) {
-        nextIndex = (nextIndex + 1) % queue.value.length
-        checked++
-        if (nextIndex === startIndex) return -1
-      }
-      if (!isSongInRange(queue.value[nextIndex])) return -1
-    }
-
-    return nextIndex
+    return nextIndexCandidates(1)[0] ?? -1
   }
 
   async function nextSong() {
     debugLogger.info('PLAYER', `nextSong called — currentIndex=${currentIndex.value} shuffle=${shuffle.value} canNext=${canPlayNext.value}`, snapAudio())
 
-    // Prefer the song we already decided on and preloaded when the current track started;
-    // only re-pick if that's stale/unset (queue changed, etc.).
-    let nextIndex = nextUpIndex.value
+    // Sequential playback follows the queue even if the next download failed.
+    // Shuffle reuses its preloaded selection for reliable background playback.
+    let nextIndex = shuffle.value ? nextUpIndex.value : pickNextIndex()
+    ++readAheadGeneration
     nextUpIndex.value = -1
-    if (nextIndex < 0 || nextIndex >= queue.value.length) {
+    if (nextIndex < 0 || nextIndex >= queue.value.length || !isSongInRange(queue.value[nextIndex])) {
       nextIndex = pickNextIndex()
     }
 
@@ -1176,18 +1166,29 @@ export const usePlayerStore = defineStore('player', () => {
   /**
    * Decides the next song now and preloads it so it's already buffered when the current
    * track ends — required for background auto-advance in an installed PWA, which blocks
-   * background network fetches. Crucially it VALIDATES each candidate by preloading and
-   * skips any that fail (corrupt/unsupported files): a bad next song would error at
-   * end-of-song and, in the background, the fallback isn't cached, so playback dies until
-   * the app is refocused. We pick the first candidate that actually buffers.
+   * background network fetches. Shuffle can try another candidate after a failed download.
+   * Sequential mode keeps the next queue entry: a preload failure doesn't prove that
+   * streaming playback will fail and must not silently skip a song.
    */
   async function triggerReadAheadCache() {
+    const generation = ++readAheadGeneration
+    const activeQueue = queue.value
+    const activeSong = currentSong.value
+    const activeIndex = currentIndex.value
+    const shuffleMode = shuffle.value
+    const repeatMode = repeat.value
+    const rangeMin = songRangeMin.value
+    const rangeMax = songRangeMax.value
+    const isCurrent = () => generation === readAheadGeneration &&
+      queue.value === activeQueue && currentSong.value === activeSong &&
+      currentIndex.value === activeIndex && shuffle.value === shuffleMode &&
+      repeat.value === repeatMode && songRangeMin.value === rangeMin && songRangeMax.value === rangeMax
     if (queue.value.length === 0 || currentIndex.value < 0) {
       nextUpIndex.value = -1
       return
     }
 
-    const candidates = nextIndexCandidates(8)
+    const candidates = nextIndexCandidates(shuffleMode ? 8 : 1)
     if (candidates.length === 0) { nextUpIndex.value = -1; return }
     nextUpIndex.value = candidates[0] // tentative until one validates
 
@@ -1200,13 +1201,19 @@ export const usePlayerStore = defineStore('player', () => {
       } catch (error) {
         console.warn('Error during song preloading:', error)
       }
+      // A previous song/mode's download may finish after the new selection is ready.
+      if (!isCurrent()) return
       if (audioCacheService.isPlayable(song.id)) {
         nextUpIndex.value = idx
         const cached = audioCacheService.isCached(song.id)
         debugLogger.info('PLAYER', `read-ahead: next #${song.id} "${song.title}" ${cached ? 'cached in memory' : 'too large — will stream'}`)
         return
       }
-      debugLogger.warn('PLAYER', `read-ahead: #${song.id} "${song.title}" unreachable/broken — skipping`)
+      if (!shuffleMode) {
+        debugLogger.warn('PLAYER', `read-ahead: #${song.id} unavailable in cache — keeping queue order for streaming`)
+        return
+      }
+      debugLogger.warn('PLAYER', `read-ahead: #${song.id} "${song.title}" unavailable in cache — trying another shuffle candidate`)
     }
     debugLogger.warn('PLAYER', 'read-ahead: no playable candidate found')
   }
@@ -1431,6 +1438,7 @@ export const usePlayerStore = defineStore('player', () => {
     songRangeMin.value = min
     songRangeMax.value = max
     saveSongRange()
+    if (currentSong.value) void triggerReadAheadCache()
     console.log(`Song range set: ${min} - ${max}`)
   }
 
@@ -1438,6 +1446,7 @@ export const usePlayerStore = defineStore('player', () => {
     songRangeMin.value = 0
     songRangeMax.value = 0
     saveSongRange()
+    if (currentSong.value) void triggerReadAheadCache()
     console.log('Song range cleared')
   }
 
