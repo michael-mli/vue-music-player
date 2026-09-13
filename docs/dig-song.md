@@ -31,6 +31,25 @@ Manual legacy writers (including the old `addsong` script outside the backend) m
 
 Offline ingestion resolves published imports through `scripts/music_library.py`, using the same database and writable store as the backend. GPU batches use `/api/dig/files/link.{id}.mp3` for imported songs and `/data/link.{id}.mp3` for legacy songs. Override these public worker URLs with `KARAOKE_IMPORT_URL` and `KARAOKE_SOURCE_URL` if needed. Metadata retains the selected recording's title/artist/album/duration; synced lyrics are copied byte-for-byte from the import, including offsets, even on forced runs. Imported posters live in the writable store and are served through `/api/dig/poster/{id}`. `ingest.sh --auto` includes both libraries. Instrumentals and the manifest keep their existing IDs, paths and mc3 publication flow.
 
+## Reusing existing covers
+
+Poster ingestion checks the existing library before querying iTunes. Both legacy and published Dig songs can supply a cover. Exact normalized titles are preferred; otherwise recognized version labels such as `(Live)`, `(女生版)`, `(DJ)`, and `(Cover Artist)` are removed before comparing the full remaining title. Spaced artist suffixes in legacy lyric headers and Chinese title brackets are handled too. Matching is not fuzzy or based on substrings.
+
+Among matching donors, the same artist is preferred; for a base-title match, an unqualified title is then preferred over another version. The fallback may reuse artwork from another recording or artist with the same title. It does not change the song's title, artist, album, or audio. Existing valid covers are preserved. Pillow decodes candidate JPEGs before they are copied, and complete files are published atomically to the target song's legacy/import poster directory. Each copy records its donor in `poster/_reuse.jsonl` beside the target.
+
+The existing `scripts/karaoke/ingest.sh` poster step uses this automatically for future manual and Dig ingestion. Its host Python environment needs Pillow (listed in `scripts/karaoke/requirements.txt`). No frontend deployment or backend restart is needed when that worker already runs scripts from this checkout.
+
+To preview or backfill the whole published library without external artwork requests:
+
+```sh
+python3 scripts/fetch_posters.py --reuse-only --dry-run --report /tmp/cover-plan.json
+python3 scripts/fetch_posters.py --reuse-only --report /tmp/cover-repairs.json
+```
+
+Use `--only 1370,1372` to limit target songs; donors still come from the whole library. `--metadata PATH` overrides the title/artist index (default: `$WEB_ROOT/metadata.json`, or `/var/www/html/others/music/metadata.json`). Imported DB titles take precedence; lyric first lines fill gaps. Reports include copied/planned donor IDs, unmatched songs, and errors. Without `--reuse-only`, unmatched songs continue through the iTunes lookup. `--force` attempts an iTunes refresh first.
+
+The September 12, 2026 backfill scanned 1,382 songs and reused 14 covers, reducing missing covers from 54 to 40. All 28 repaired image URLs across both music sites matched their donor checksums. See the [repair report](cover-reuse-2026-09-12.json) for donors and remaining misses.
+
 ## Manual lyrics when synced lyrics are missing
 
 The first import attempt checks for synchronized lyrics. If it fails with `NO_SYNCED_LYRICS`, Dig song displays a lyrics form for that result. The song title is automatically saved as the first line. The user can paste plain text and select **Add with these lyrics**, or leave it blank and select **Add using title only**. Blank input shows a warning and proceeds with just the title as non-synced lyrics; canceling still adds nothing. Manual text is limited to 20,000 characters and validated on the server. The retry sends `manualLyrics` with the same user-owned result key; unsolicited overrides before the missing-lyrics prompt are rejected.
@@ -78,6 +97,8 @@ Set `DIG_SOURCE_URL=http://127.0.0.1:3130/music` in `.env.server`, then run `pm2
 To administer platform cookies, tunnel the private service through SSH (`ssh -L 3130:127.0.0.1:3130 <music-server>`) and open `http://127.0.0.1:3130/music` locally. Leave port 3130 bound to loopback.
 
 ## Verification
+
+Run `python3 -m unittest discover -s scripts -p 'test_poster_reuse.py'` for title/version matching, donor preference, JPEG validation, mixed-library copying, preservation of existing covers, dry runs, and ingestion fallback.
 
 Run `node --test scripts/player-order.test.mjs` for playback-order regressions: 1370 → 1369 after a failed preload, imports during playback, stale downloads after mode/queue changes, custom playlist order, and range/repeat boundaries. The tests run the player store with mocked browser audio and caching; they do not stream production songs.
 

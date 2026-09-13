@@ -1,20 +1,18 @@
 #!/usr/bin/env python3
 """
-Fetch song cover posters from the iTunes Search API.
+Reuse same-title library covers, then fetch missing posters from the iTunes Search API.
 
-For each song id (1..MAX), the title is the first line of its lyrics file
-(<MUSIC>/lyrics/link.{id}.mp3.l). We query the iTunes Search API by title,
-download the album artwork (upscaled to 600x600) and save it as
-<MUSIC>/poster/link.{id}.jpg.
+For each published legacy or Dig song, keep valid existing artwork, then reuse a
+same-title library poster before querying iTunes. Copies use the song's resolved
+legacy/import poster directory. --force still attempts an iTunes refresh first.
 
-Songs with no usable title or no search result are skipped — the app falls
-back to a bundled default poster for those.
-
-Resumable: existing non-trivial poster files are skipped. Misses are logged
-to <MUSIC>/poster/_misses.log so a later pass can retry them.
+Use --reuse-only for an offline backfill, --dry-run to preview matches without
+writing posters, and --report PATH to save donor IDs and remaining misses.
+Requires Pillow (already installed in the ingestion Python environment).
 
 Usage:
   python3 scripts/fetch_posters.py [--max N] [--force] [--start ID] [--only ID[,ID...]]
+  python3 scripts/fetch_posters.py --reuse-only --dry-run --report /tmp/cover-plan.json
 """
 import argparse
 import json
@@ -24,11 +22,8 @@ import time
 import urllib.parse
 import urllib.request
 from music_library import library
-
-MUSIC_DIR = os.environ.get("MUSIC_DIR", "/mnt/yteatalk/music")
-LYRICS_DIR = os.path.join(MUSIC_DIR, "lyrics")
-POSTER_DIR = os.path.join(MUSIC_DIR, "poster")
-MISS_LOG = os.path.join(POSTER_DIR, "_misses.log")
+from poster_reuse import PosterIndex, valid_poster
+from pathlib import Path
 
 ITUNES_URL = "https://itunes.apple.com/search"
 MIN_VALID_BYTES = 1500          # smaller than this = not a real image
@@ -39,6 +34,9 @@ UA = "Mozilla/5.0 (poster-fetch; +music-player)"
 
 
 def read_title(song_id: int) -> str | None:
+    imported_title = library.imported.get(song_id, {}).get('title')
+    if imported_title:
+        return imported_title
     path = library.lyrics(song_id)
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -94,71 +92,86 @@ def download(url: str, dest: str) -> bool:
     tmp = dest + ".tmp"
     with open(tmp, "wb") as f:
         f.write(blob)
+    if not valid_poster(Path(tmp)):
+        os.unlink(tmp)
+        return False
     os.replace(tmp, dest)
     return True
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--max", type=int, default=None, help="highest song id (default: read song_number.txt)")
+    ap.add_argument("--max", type=int, default=None, help="highest song id (default: all published songs)")
     ap.add_argument("--start", type=int, default=1)
     ap.add_argument("--force", action="store_true", help="re-download even if poster exists")
     ap.add_argument("--only", type=str, default=None, help="comma-separated ids to fetch")
+    ap.add_argument("--reuse-only", action="store_true", help="reuse library covers only; no external requests")
+    ap.add_argument("--dry-run", action="store_true", help="report reusable covers without writing covers or making requests")
+    ap.add_argument("--report", help="write a JSON summary including donor IDs and unmatched songs")
+    ap.add_argument("--metadata", default=os.path.join(os.environ.get('WEB_ROOT', '/var/www/html/others/music'), 'metadata.json'))
     args = ap.parse_args()
 
-    os.makedirs(POSTER_DIR, exist_ok=True)
-
-    if args.max is None:
-        try:
-            with open(os.path.join(MUSIC_DIR, "song_number.txt")) as f:
-                args.max = int(f.read().strip())
-        except OSError:
-            args.max = 1283
-
+    ids = library.ids()
     if args.only:
-        ids = [int(x) for x in args.only.split(",") if x.strip()]
+        requested = {int(x) for x in args.only.split(',') if x.strip()}
+        ids = [sid for sid in ids if sid in requested]
     else:
-        ids = sorted(set(range(args.start, args.max + 1)) | {sid for sid in library.imported if sid >= args.start})
+        ids = [sid for sid in ids if sid >= args.start and (args.max is None or sid <= args.max)]
+    index = PosterIndex(library, args.metadata)
+    report = {'total': len(ids), 'existing': 0, 'downloaded': 0, 'reused': [], 'unmatched': [], 'errors': [], 'dry_run': args.dry_run}
 
-    total = len(ids)
-    got = skipped = no_title = no_art = fail = 0
-    miss = open(MISS_LOG, "a", encoding="utf-8")
+    def log(sid, name, line):
+        folder = library.poster(sid).parent
+        folder.mkdir(parents=True, exist_ok=True)
+        with (folder / name).open('a', encoding='utf-8') as handle:
+            handle.write(line + '\n')
 
     for n, sid in enumerate(ids, 1):
-        dest = str(library.poster(sid))
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        if not args.force and os.path.exists(dest) and os.path.getsize(dest) >= MIN_VALID_BYTES:
-            skipped += 1
+        dest = library.poster(sid)
+        if valid_poster(dest) and (not args.force or args.dry_run or args.reuse_only):
+            report['existing'] += 1
             continue
-
-        title = read_title(sid)
+        record = index.record(sid)
+        match = index.find(sid)
+        if match and (not args.force or args.dry_run or args.reuse_only):
+            try:
+                if args.dry_run or index.copy(match):
+                    report['reused'].append(match)
+                    print(f"{'WOULD REUSE' if args.dry_run else 'REUSED'} #{sid} {record['title']} <- #{match['donor_id']} {match['donor_title']}", flush=True)
+                    if not args.dry_run:
+                        log(sid, '_reuse.jsonl', json.dumps(match, ensure_ascii=False))
+                continue
+            except (OSError, ValueError) as error:
+                report['errors'].append({'id': sid, 'error': str(error)})
+                print(f"REUSE FAILED #{sid}: {error}", flush=True)
+        if args.reuse_only or args.dry_run:
+            report['unmatched'].append(record)
+            continue
+        title = record['title']
         if not title:
-            no_title += 1
-            miss.write(f"{sid}\tNO_TITLE\n"); miss.flush()
+            report['unmatched'].append(record)
+            log(sid, '_misses.log', f"{sid}\tNO_TITLE")
             continue
-
-        artist = library.imported.get(sid, {}).get('artist', '')
-        url = itunes_artwork(f'{title} {artist}'.strip())
-        if not url:
-            no_art += 1
-            miss.write(f"{sid}\tNO_ART\t{title}\n"); miss.flush()
-            time.sleep(SLEEP_OK)
-            continue
-
-        if download(url, dest):
-            got += 1
-            if got % 25 == 0 or n == total:
-                print(f"[{n}/{total}] got={got} skip={skipped} noTitle={no_title} "
-                      f"noArt={no_art} fail={fail}  last: #{sid} {title}", flush=True)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        url = itunes_artwork(f"{title} {record['artist']}".strip())
+        if url and download(url, str(dest)):
+            report['downloaded'] += 1
+            index.valid_donor.cache_clear()
+            index.add(sid)
+            print(f"[{n}/{len(ids)}] DOWNLOADED #{sid} {title}", flush=True)
+        elif match and index.copy(match):
+            report['reused'].append(match)
+            log(sid, '_reuse.jsonl', json.dumps(match, ensure_ascii=False))
         else:
-            fail += 1
-            miss.write(f"{sid}\tDL_FAIL\t{title}\t{url}\n"); miss.flush()
+            report['unmatched'].append(record)
+            log(sid, '_misses.log', f"{sid}\t{'DL_FAIL' if url else 'NO_ART'}\t{title}")
         time.sleep(SLEEP_OK)
 
-    miss.close()
-    print(f"DONE total={total} got={got} skipped={skipped} "
-          f"noTitle={no_title} noArt={no_art} fail={fail}", flush=True)
-    return 0
+    if args.report:
+        Path(args.report).write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
+    print(f"DONE total={len(ids)} existing={report['existing']} reused={len(report['reused'])} "
+          f"downloaded={report['downloaded']} unmatched={len(report['unmatched'])} errors={len(report['errors'])}", flush=True)
+    return 1 if report['errors'] else 0
 
 
 if __name__ == "__main__":

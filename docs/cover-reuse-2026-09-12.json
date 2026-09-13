@@ -1,0 +1,510 @@
+{
+  "total": 1382,
+  "existing": 1328,
+  "downloaded": 0,
+  "reused": [
+    {
+      "id": 851,
+      "title": "把悲伤留给自己(女生版)",
+      "artist": "",
+      "donor_id": 567,
+      "donor_title": "把悲伤留给自己",
+      "donor_artist": "Bobby Chen",
+      "match": "base-title"
+    },
+    {
+      "id": 922,
+      "title": "不仅仅是喜欢(男女合唱）",
+      "artist": "",
+      "donor_id": 752,
+      "donor_title": "不仅仅是喜欢",
+      "donor_artist": "Quan Xiao",
+      "match": "base-title"
+    },
+    {
+      "id": 937,
+      "title": "《无地自容》 (女生版)",
+      "artist": "",
+      "donor_id": 934,
+      "donor_title": "《无地自容》",
+      "donor_artist": "Black Panther",
+      "match": "base-title"
+    },
+    {
+      "id": 1052,
+      "title": "东方之珠(刘德华，那英)",
+      "artist": "刘德华",
+      "donor_id": 711,
+      "donor_title": "东方之珠",
+      "donor_artist": "流淌的歌声",
+      "match": "base-title"
+    },
+    {
+      "id": 1133,
+      "title": "有一点动心(Live) - 彩虹妹妹&糖果少年&大象哥哥",
+      "artist": "kuwo",
+      "donor_id": 539,
+      "donor_title": "有一点动心",
+      "donor_artist": "刘嘉玲&张信哲",
+      "match": "base-title"
+    },
+    {
+      "id": 1162,
+      "title": "奉献(Live) - 毛不易",
+      "artist": "",
+      "donor_id": 658,
+      "donor_title": "奉献",
+      "donor_artist": "Julie Su",
+      "match": "base-title"
+    },
+    {
+      "id": 1174,
+      "title": "冬天里的一把火 - 王菊",
+      "artist": "",
+      "donor_id": 198,
+      "donor_title": "冬天里的一把火",
+      "donor_artist": "Kris Phillips",
+      "match": "base-title"
+    },
+    {
+      "id": 1362,
+      "title": "只要有你（国风DJ）",
+      "artist": "山河DJ",
+      "donor_id": 1350,
+      "donor_title": "只要有你",
+      "donor_artist": "Na Ying & 孙楠",
+      "match": "base-title"
+    },
+    {
+      "id": 1372,
+      "title": "诺言",
+      "artist": "杜红生",
+      "donor_id": 546,
+      "donor_title": "诺言",
+      "donor_artist": "李翊君",
+      "match": "exact-title"
+    },
+    {
+      "id": 1376,
+      "title": "水手 (雷鬼版)",
+      "artist": "白兰的",
+      "donor_id": 205,
+      "donor_title": "水手",
+      "donor_artist": "Zhihua Zheng",
+      "match": "base-title"
+    },
+    {
+      "id": 1378,
+      "title": "一生何求 (Cover 陈百强)",
+      "artist": "大头针",
+      "donor_id": 297,
+      "donor_title": "一生何求",
+      "donor_artist": "Danny Chan",
+      "match": "base-title"
+    },
+    {
+      "id": 1380,
+      "title": "第一次 (女生版)",
+      "artist": "YOYO爱唱歌",
+      "donor_id": 293,
+      "donor_title": "第一次",
+      "donor_artist": "Michael Wong",
+      "match": "base-title"
+    },
+    {
+      "id": 1381,
+      "title": "朋友别哭 (烟嗓男声版)",
+      "artist": "盛星云",
+      "donor_id": 139,
+      "donor_title": "朋友别哭",
+      "donor_artist": "David Lui",
+      "match": "base-title"
+    },
+    {
+      "id": 1383,
+      "title": "遗留在岁月的曾经",
+      "artist": "陈伟",
+      "donor_id": 1348,
+      "donor_title": "遗留在岁月的曾经",
+      "donor_artist": "草原兄弟",
+      "match": "exact-title"
+    }
+  ],
+  "unmatched": [
+    {
+      "id": 31,
+      "title": "未知-韩国歌曲",
+      "artist": "Winds"
+    },
+    {
+      "id": 159,
+      "title": "相声-迷信",
+      "artist": ""
+    },
+    {
+      "id": 280,
+      "title": "绿岛小夜曲",
+      "artist": ""
+    },
+    {
+      "id": 439,
+      "title": "《恰听烟雨寒》",
+      "artist": ""
+    },
+    {
+      "id": 445,
+      "title": "孤独的人是可耻的歌词 - 张楚",
+      "artist": "张楚"
+    },
+    {
+      "id": 613,
+      "title": "结尾 - 孙露",
+      "artist": ""
+    },
+    {
+      "id": 632,
+      "title": "巴山湖水",
+      "artist": ""
+    },
+    {
+      "id": 723,
+      "title": "为什么我的真换来我的疼",
+      "artist": "高胜美"
+    },
+    {
+      "id": 763,
+      "title": "累了就靠着我",
+      "artist": ""
+    },
+    {
+      "id": 807,
+      "title": "寂寞让我如此美丽",
+      "artist": ""
+    },
+    {
+      "id": 868,
+      "title": "蜜糖城堡 - 黑崎子",
+      "artist": ""
+    },
+    {
+      "id": 874,
+      "title": "最炫信天游",
+      "artist": ""
+    },
+    {
+      "id": 892,
+      "title": "血疑主题歌-日语",
+      "artist": "山口百惠"
+    },
+    {
+      "id": 919,
+      "title": "再别康桥 - 魏新雨",
+      "artist": ""
+    },
+    {
+      "id": 1024,
+      "title": "友谊之光国语版",
+      "artist": ""
+    },
+    {
+      "id": 1026,
+      "title": "友谊之光(合唱版-粤语)",
+      "artist": ""
+    },
+    {
+      "id": 1038,
+      "title": "仰望星空 - 创造101女孩",
+      "artist": ""
+    },
+    {
+      "id": 1070,
+      "title": "同样的记忆 - Kassy",
+      "artist": "kuwo"
+    },
+    {
+      "id": 1088,
+      "title": "2018脑瓜疼",
+      "artist": "kuwo"
+    },
+    {
+      "id": 1109,
+      "title": "沙漠骆驼 - 潇公子",
+      "artist": "kuwo"
+    },
+    {
+      "id": 1130,
+      "title": "让梦冬眠(Live) - 爱丽丝娃娃&加个好友吧",
+      "artist": "kuwo"
+    },
+    {
+      "id": 1131,
+      "title": "心如刀割(Live) - 爱丽丝娃娃",
+      "artist": "kuwo"
+    },
+    {
+      "id": 1149,
+      "title": "一起筑的梦 - 印子月/조혜선 (赵慧仙)",
+      "artist": "kuwo"
+    },
+    {
+      "id": 1175,
+      "title": "万八美金",
+      "artist": ""
+    },
+    {
+      "id": 1176,
+      "title": "情非得己(流星花园主题曲)",
+      "artist": ""
+    },
+    {
+      "id": 1178,
+      "title": "别知己(& 阿呷拉古 & 曲比阿且)",
+      "artist": ""
+    },
+    {
+      "id": 1187,
+      "title": "",
+      "artist": ""
+    },
+    {
+      "id": 1189,
+      "title": "方季惟精选",
+      "artist": "周冰倩"
+    },
+    {
+      "id": 1198,
+      "title": "2020流行曲38首",
+      "artist": "#2020?????100??"
+    },
+    {
+      "id": 1200,
+      "title": "冯媞莫",
+      "artist": ""
+    },
+    {
+      "id": 1209,
+      "title": "8,9十年代老歌",
+      "artist": ""
+    },
+    {
+      "id": 1215,
+      "title": "阿悠悠12首精选",
+      "artist": ""
+    },
+    {
+      "id": 1257,
+      "title": "你是落在我世界里的一束光",
+      "artist": ""
+    },
+    {
+      "id": 1262,
+      "title": "远离这个城市",
+      "artist": ""
+    },
+    {
+      "id": 1300,
+      "title": "芙蓉湖的早晨光",
+      "artist": "sleekxylophone219"
+    },
+    {
+      "id": 1343,
+      "title": "你不妨问问自己",
+      "artist": "QE量子灰烬"
+    },
+    {
+      "id": 1365,
+      "title": "烟火 (深情版)",
+      "artist": "林栖"
+    },
+    {
+      "id": 1368,
+      "title": "爱到极致是放手",
+      "artist": "米宝"
+    },
+    {
+      "id": 1370,
+      "title": "孤城(微醺女声版)",
+      "artist": "微醺女王Zve"
+    },
+    {
+      "id": 1382,
+      "title": "你有没有真的爱过我 (深情女声)",
+      "artist": "拖鞋pd、DJ铁柱、SC"
+    }
+  ],
+  "errors": [],
+  "dry_run": false,
+  "verified_urls": [
+    {
+      "id": 851,
+      "host": "music.micstec.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 851,
+      "host": "mc3.micsapp.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 922,
+      "host": "music.micstec.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 922,
+      "host": "mc3.micsapp.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 937,
+      "host": "music.micstec.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 937,
+      "host": "mc3.micsapp.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 1052,
+      "host": "music.micstec.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 1052,
+      "host": "mc3.micsapp.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 1133,
+      "host": "music.micstec.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 1133,
+      "host": "mc3.micsapp.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 1162,
+      "host": "music.micstec.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 1162,
+      "host": "mc3.micsapp.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 1174,
+      "host": "music.micstec.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 1174,
+      "host": "mc3.micsapp.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 1362,
+      "host": "music.micstec.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 1362,
+      "host": "mc3.micsapp.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 1372,
+      "host": "music.micstec.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 1372,
+      "host": "mc3.micsapp.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 1376,
+      "host": "music.micstec.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 1376,
+      "host": "mc3.micsapp.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 1378,
+      "host": "music.micstec.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 1378,
+      "host": "mc3.micsapp.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 1380,
+      "host": "music.micstec.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 1380,
+      "host": "mc3.micsapp.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 1381,
+      "host": "music.micstec.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 1381,
+      "host": "mc3.micsapp.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 1383,
+      "host": "music.micstec.com",
+      "matches": true,
+      "error": ""
+    },
+    {
+      "id": 1383,
+      "host": "mc3.micsapp.com",
+      "matches": true,
+      "error": ""
+    }
+  ],
+  "date": "2026-09-12 America/Toronto",
+  "missing_before": 54,
+  "missing_after": 40
+}

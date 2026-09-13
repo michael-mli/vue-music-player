@@ -49,7 +49,7 @@ echo "ingesting ids: $IDS"
 echo "== GPU preflight =="
 "$PY" "$GPU_POOL" status --require-ready
 
-# ---- 1. posters (iTunes) ---------------------------------------------------------------
+# ---- 1. posters (same-title library reuse, then iTunes) ---------------------------------------------------------------
 echo "== posters =="
 MUSIC_DIR=$MUSIC_MOUNT "$PY" "$REPO/scripts/fetch_posters.py" --only "$CSV" || true
 

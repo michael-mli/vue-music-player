@@ -10,3 +10,6 @@ demucs>=4.0.1
 soundfile>=0.12
 # torch / torchaudio are intentionally not pinned here — install the build (CPU or CUDA)
 # that matches your machine, per the comments above.
+
+# Host-side poster validation and same-title cover reuse during ingest.sh.
+Pillow>=10.0
