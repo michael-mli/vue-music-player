@@ -35,14 +35,12 @@
         </button>
       </div>
 
-      <KaraokeMicSetup />
-
       <!-- Now-singing lyrics stage -->
       <div
         v-if="currentSong"
         class="mb-8 rounded-xl bg-gradient-to-b from-light-card to-light-bg dark:from-spotify-dark dark:to-spotify-black border border-light-border dark:border-spotify-light p-5"
       >
-        <div class="flex items-center gap-3 mb-4">
+        <div class="flex flex-wrap items-center gap-3 mb-4">
           <div class="w-12 h-12 rounded overflow-hidden flex-shrink-0 bg-light-border dark:bg-spotify-light">
             <SongCover :song-id="currentSong.id" :alt="currentSong.title" />
           </div>
@@ -92,24 +90,11 @@
           </div>
         </div>
 
-        <!-- Synced lyrics: line-by-line highlight, click to seek. Hidden when the user
-           picks the manual/original lyric view. -->
-        <div
+        <KaraokeGuide
           v-if="lyricsMode === 'auto' && syncedLines.length"
-          ref="lyricsBox"
-          class="h-56 overflow-y-auto spotify-scrollbar text-center space-y-3 py-12"
-        >
-          <p
-            v-for="(line, i) in syncedLines"
-            :key="i"
-            :data-kline="i"
-            @click="playerStore.seek(line.time)"
-            class="cursor-pointer transition-all duration-200"
-            :class="i === activeIndex
-              ? 'text-spotify-green font-bold text-2xl'
-              : 'text-light-text-secondary dark:text-gray-500 text-lg hover:text-light-text-primary dark:hover:text-gray-300'"
-          >{{ line.text || '♪' }}</p>
-        </div>
+          :key="currentSong.id"
+          :lines="syncedLines"
+        />
 
         <!-- Plain lyrics fallback -->
         <div
@@ -129,6 +114,8 @@
           class="mt-4 pt-4 border-t border-light-border dark:border-spotify-light text-xs text-light-text-secondary dark:text-gray-400"
         >{{ $t('karaoke.recordHint') }} →</p>
       </div>
+
+      <KaraokeMicSetup />
 
       <!-- Loading -->
       <div v-if="!manifestReady" class="text-center text-light-text-secondary dark:text-gray-400 py-12">
@@ -153,9 +140,16 @@
         <div v-if="visibleSongs.length === 0" class="text-center text-light-text-secondary dark:text-gray-400 py-8">
           {{ $t('search.noResults') }}
         </div>
+        <nav v-if="totalPages > 1" class="flex items-center justify-between gap-3 mb-4" :aria-label="$t('karaoke.songPages')">
+          <button @click="songPage--" :disabled="songPage === 1"
+            class="px-3 py-2 rounded-lg bg-light-border dark:bg-spotify-light disabled:opacity-40">{{ $t('player.previous') }}</button>
+          <span class="text-sm text-light-text-secondary dark:text-gray-400">{{ $t('karaoke.songPage', { page: songPage, total: totalPages }) }}</span>
+          <button @click="songPage++" :disabled="songPage === totalPages"
+            class="px-3 py-2 rounded-lg bg-light-border dark:bg-spotify-light disabled:opacity-40">{{ $t('player.next') }}</button>
+        </nav>
         <div class="space-y-2">
           <div
-            v-for="(song, index) in visibleSongs"
+            v-for="(song, index) in paginatedSongs"
             :key="song.id"
             @click="sing(song, index)"
             class="flex items-center p-3 rounded-lg hover:bg-light-border dark:hover:bg-spotify-light cursor-pointer group transition-colors duration-200"
@@ -195,10 +189,11 @@ import { MicrophoneIcon } from '@heroicons/vue/24/outline'
 import SongCover from '@/components/UI/SongCover.vue'
 import SearchBar from '@/components/UI/SearchBar.vue'
 import KaraokeMicSetup from '@/components/UI/KaraokeMicSetup.vue'
+import KaraokeGuide from '@/components/Lyrics/KaraokeGuide.vue'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
 import { karaokeService } from '@/services/karaokeService'
-import { lyricsService, activeLineIndex } from '@/services/lyricsService'
+import { lyricsService } from '@/services/lyricsService'
 import { songService } from '@/services/songService'
 import { useLyricsMode } from '@/composables/useLyricsMode'
 import type { LyricLine, Song } from '@/types'
@@ -210,9 +205,7 @@ const manifestReady = ref(false)
 // Now-singing lyrics state
 const syncedLines = ref<LyricLine[]>([])
 const plainLyrics = ref('')
-const activeIndex = ref(-1)
 const lyricsLoading = ref(false)
-const lyricsBox = ref<HTMLElement>()
 
 const karaokeMode = computed(() => playerStore.karaokeMode)
 const karaokeAvailable = computed(() => playerStore.karaokeAvailable)
@@ -230,12 +223,20 @@ const availableSongs = computed<Song[]>(() => {
 
 // Karaoke-ready songs narrowed by the quick search bar
 const visibleSongs = computed<Song[]>(() => songsStore.applyQuickFilter(availableSongs.value))
+// Keep catalog rendering bounded; playback still queues every matching song.
+const SONGS_PER_PAGE = 50
+const songPage = ref(1)
+const totalPages = computed(() => Math.max(1, Math.ceil(visibleSongs.value.length / SONGS_PER_PAGE)))
+const paginatedSongs = computed(() => visibleSongs.value.slice(
+  (songPage.value - 1) * SONGS_PER_PAGE, songPage.value * SONGS_PER_PAGE,
+))
+watch(() => [songsStore.quickQuery, songsStore.quickScope], () => { songPage.value = 1 })
+watch(totalPages, (total) => { songPage.value = Math.min(songPage.value, total) })
 
 // Load lyrics (synced + plain fallback) for whatever song is currently playing.
 watch(currentSong, async (song) => {
   syncedLines.value = []
   plainLyrics.value = ''
-  activeIndex.value = -1
   if (!song) return
   lyricsLoading.value = true
   const reqId = song.id
@@ -244,28 +245,16 @@ watch(currentSong, async (song) => {
       ? playerStore.duration
       : songService.getCachedDuration(song.id)
     const [lines, plain] = await Promise.all([
-      lyricsService.getSyncedLyrics(song, duration),
+      lyricsService.getSyncedLyrics(song, duration).catch(() => null),
       songsStore.getSongLyrics(song.id).catch(() => ''),
     ])
     if (playerStore.currentSong?.id !== reqId) return
     syncedLines.value = lines ?? []
     plainLyrics.value = plain ?? ''
-    if (lines) activeIndex.value = activeLineIndex(lines, playerStore.currentTime)
   } finally {
     if (playerStore.currentSong?.id === reqId) lyricsLoading.value = false
   }
 }, { immediate: true })
-
-// Highlight + center the active synced line as playback advances.
-watch(() => playerStore.currentTime, (t) => {
-  if (lyricsMode.value !== 'auto' || !syncedLines.value.length) return
-  const idx = activeLineIndex(syncedLines.value, t + 0.2)
-  if (idx !== activeIndex.value) {
-    activeIndex.value = idx
-    const el = lyricsBox.value?.querySelector(`[data-kline="${idx}"]`) as HTMLElement | null
-    if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' })
-  }
-})
 
 onMounted(async () => {
   if (songsStore.songs.length === 0) {
@@ -285,7 +274,7 @@ onMounted(async () => {
 
 async function sing(song: Song, index: number) {
   playerStore.setKaraokeMode(true) // ensure the instrumental loads from the start
-  await playerStore.playSong(song, visibleSongs.value, index)
+  await playerStore.playSong(song, visibleSongs.value, (songPage.value - 1) * SONGS_PER_PAGE + index)
 }
 
 // Switch the currently-playing song between instrumental (karaoke) and original (vocals),

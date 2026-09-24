@@ -139,7 +139,14 @@ export const useSongsStore = defineStore('songs', () => {
 
 
   // Actions
-  async function fetchSongs() {
+  let songsRequest: Promise<void> | null = null
+  function fetchSongs(): Promise<void> {
+    // App and the active route can mount together; share their initial load.
+    if (!songsRequest) songsRequest = loadSongs().finally(() => { songsRequest = null })
+    return songsRequest
+  }
+
+  async function loadSongs() {
     try {
       loading.value = true
       error.value = null
@@ -283,7 +290,9 @@ export const useSongsStore = defineStore('songs', () => {
             if (response.success && response.data) {
               const index = songs.value.findIndex(s => s.id === song.id)
               if (index !== -1 && !songs.value[index].lyrics) {
-                songs.value[index] = { ...songs.value[index], lyrics: response.data }
+                // Preserve array entries so background preloading does not invalidate
+                // every catalog filter and re-render every song row for each response.
+                songs.value[index].lyrics = response.data
               }
             }
           } catch (error) {

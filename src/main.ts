@@ -40,7 +40,8 @@ app.mount('#app')
 // Register service worker
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js')
+    // A new URL per build bypasses stale CDN copies of the service worker.
+    navigator.serviceWorker.register(`/sw.js?v=${encodeURIComponent(__APP_BUILD_TIME__)}`, { updateViaCache: 'none' })
       .then((registration) => {
         console.log('SW registered: ', registration)
       })

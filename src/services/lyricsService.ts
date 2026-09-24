@@ -11,62 +11,12 @@
 import config, { getSyncedLyricsUrl, hasManualLyrics } from '@/config'
 import { songService } from '@/services/songService'
 import type { LyricLine, Song } from '@/types'
+import { parseLrc } from '@/utils/lyricsTiming'
+export { parseLrc, activeLineIndex } from '@/utils/lyricsTiming'
 
 const LRCLIB_TIMEOUT_MS = 10_000
 const LRCLIB_RETRY_DELAY_MS = 800
 const LRCLIB_MAX_ATTEMPTS = 2
-
-/** Parse standard LRC text ("[mm:ss.xx] words") into sorted, de-duplicated lyric lines. */
-export function parseLrc(lrc: string): LyricLine[] {
-  const lines: LyricLine[] = []
-  // LRC offset is in milliseconds; positive values display lyrics earlier.
-  const offset = Number(lrc.match(/\[offset:([+-]?\d+)\]/i)?.[1] || 0) / 1000
-  const timeTag = /\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?\]/g
-
-  for (const raw of lrc.split(/\r?\n/)) {
-    timeTag.lastIndex = 0
-    const tags: number[] = []
-    let m: RegExpExecArray | null
-    let lastIndex = 0
-    let firstTextIndex = 0
-    let inlineTiming = false
-    while ((m = timeTag.exec(raw)) !== null) {
-      const min = parseInt(m[1], 10)
-      const sec = parseInt(m[2], 10)
-      const fracStr = m[3] ?? '0'
-      const frac = parseInt(fracStr, 10) / Math.pow(10, fracStr.length)
-      tags.push(Math.max(0, min * 60 + sec + frac - offset))
-      if (lastIndex && raw.slice(lastIndex, m.index).trim()) inlineTiming = true
-      if (!firstTextIndex) firstTextIndex = timeTag.lastIndex
-      lastIndex = timeTag.lastIndex
-    }
-    if (!tags.length) continue
-    // Some sources embed word timestamps inside a sentence. Display the full
-    // sentence at its first timestamp; leading repeated tags still repeat it.
-    const text = raw.slice(firstTextIndex).replace(timeTag, '').replace(/<\d{1,2}:\d{2}(?:\.\d+)?>/g, '').trim()
-    for (const time of inlineTiming ? tags.slice(0, 1) : tags) lines.push({ time, text })
-  }
-
-  lines.sort((a, b) => a.time - b.time)
-  return lines
-}
-
-/** Find the index of the active line for a given playback time (binary search). -1 if before first. */
-export function activeLineIndex(lines: LyricLine[], currentTime: number): number {
-  let lo = 0
-  let hi = lines.length - 1
-  let result = -1
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1
-    if (lines[mid].time <= currentTime) {
-      result = mid
-      lo = mid + 1
-    } else {
-      hi = mid - 1
-    }
-  }
-  return result
-}
 
 class LyricsService {
   // Cache successful lyrics only; transient failures must remain retryable.

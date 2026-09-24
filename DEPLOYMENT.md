@@ -220,6 +220,21 @@ npm run build -- --mode production --env-file .env.custom
 ```
 
 This configuration system ensures your MP3 files are properly accessible regardless of your deployment architecture!
+
+## Service worker updates
+
+`src/main.ts` is the sole service worker registration entrypoint. It registers
+`/sw.js?v=<build-time>` with `updateViaCache: 'none'`; VitePWA's injected registration
+is disabled. The versioned URL avoids old CDN copies of `/sw.js` pinning clients to
+an earlier build.
+
+Both production nginx music sites exclude `/sw.js` and legacy `/registerSW.js`
+from the immutable static-asset cache using exact locations with
+`Cache-Control: no-cache, no-store, must-revalidate`. Keep these exceptions when
+replacing nginx configuration. Hashed assets may retain their long cache lifetime.
+When migrating from an already cached, unversioned worker, a hard refresh may be
+needed once to load the new registration code.
+
 ## Shared-song link previews (nginx)
 
 Chat apps read raw HTML without running JS, so `/music?song=N` previews need server-side

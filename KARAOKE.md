@@ -104,7 +104,9 @@ rate will be **modest**. This is best-effort enrichment, not a guarantee.
 ### Rendering & fallback (`LyricsPanel.vue`)
 
 ```
-if synced lyrics available:
+if synced lyrics available and automatic lyrics selected and karaoke mode on:
+    render KaraokeGuide with current phrase, previous line, and upcoming lyrics
+else if synced lyrics available and automatic lyrics selected:
     render line-by-line; highlight the active line (binary-search currentTime);
     auto-center the active line; click a line → player.seek(line.time)
 else:
@@ -113,6 +115,33 @@ else:
 
 The active-line lookup is a binary search over the sorted `time` array on each
 `currentTime` tick — cheap, no per-line watchers.
+
+The Karaoke page also uses `KaraokeGuide` while listening to the original vocals.
+The guide provides an entry countdown during the intro and explicitly timed breaks,
+a line progress bar, replay with a two-second lead-in, next-line seeking, a song
+timeline, and an expandable full lyric list. Its fullscreen button opens a larger
+stage on supported browsers; playback controls remain available there.
+
+Enhanced LRC word timestamps (`<mm:ss.xx>` or inline `[mm:ss.xx]`) are preserved
+and used for word highlighting. Standard LRC uses line progress only. Breaks
+require blank timed lines or explicit vocal end markers; long intervals alone do
+not imply silence. Manual lyrics remain available through the existing toggle.
+
+Run `npm run test:lyrics` to verify parsing, countdowns, seeking, and end states.
+
+**Timing adjustment:** Open **Adjust lyric timing** in the singing guide or regular
+synced-lyrics panel. Choose the **First sung line**, then enter its actual playback
+time in **Singing starts at (seconds)** (for example, `25.5`), or tap **Starts now**
+when you hear that line begin. The app calculates the correction automatically.
+Blank lines and common credits are skipped by default; the selector lets users
+choose the right line when a source includes other introductory text. Both the
+chosen line and correction are saved per song in this browser.
+
+**Fine-tune offset** retains the **Earlier** / **Later** buttons (0.5-second steps)
+and direct offset field. Positive offsets delay lyrics; negative offsets advance
+them. Reset restores the source timing. Timing applies to line and word cues,
+countdowns, and lyric seek/replay targets, including while paused. Both lyric views
+share the settings. The audio and original LRC files are unchanged.
 
 ---
 
@@ -149,7 +178,8 @@ the app behaves exactly as before.
 ## Non-goals / future
 
 - **Live (in-browser) vocal removal** — not feasible; separation is offline only.
-- **Word-level (syllable) highlighting** — needs enhanced LRC (YRC/QRC); LRCLIB is line-level.
+- **Generating word timestamps** — the guide uses enhanced LRC when provided;
+  it does not estimate syllable timings for line-only lyrics or parse YRC/QRC.
 - **Scoring / pitch detection** — out of scope.
 - **Caching instrumentals in the service worker** — the PWA audio cache currently targets
   originals; extending it to instrumentals is a follow-up.

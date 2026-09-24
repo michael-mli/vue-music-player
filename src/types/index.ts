@@ -55,6 +55,16 @@ export interface CategoryData {
 export interface LyricLine {
   time: number
   text: string
+  /** Real word/segment timestamps from enhanced LRC, when supplied by the source. */
+  words?: LyricWord[]
+  /** Explicit end marker from enhanced LRC. Standard LRC only supplies starts. */
+  endTime?: number
+}
+
+export interface LyricWord {
+  time: number
+  text: string
+  endTime?: number
 }
 
 export interface Playlist {

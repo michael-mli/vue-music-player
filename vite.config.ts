@@ -40,6 +40,8 @@ export default defineConfig({
     }),
     VitePWA({
       registerType: 'autoUpdate',
+      // main.ts registers a versioned worker URL; avoid a second, unversioned registration.
+      injectRegister: false,
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'icons/*.png', 'icons/*.svg'],
       manifest: {
         name: "Mic的音乐播放器",
