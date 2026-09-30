@@ -1,6 +1,6 @@
 // Materialize one turn per singer per round while retaining each singer's request order.
 export function orderQueue(entries) {
-  const ready = entries.filter((entry) => entry.state === 'queued')
+  const ready = entries.filter((entry) => entry.state === 'queued' && entry.singerAccepted !== false)
   const priority = ready.filter((entry) => entry.priorityApproved)
   const regular = ready.filter((entry) => !entry.priorityApproved)
   const singers = new Map()
@@ -19,5 +19,7 @@ export function orderQueue(entries) {
       }
     }
   }
-  return [...priority, ...fair, ...entries.filter((entry) => entry.state === 'held')]
+  return [...priority, ...fair,
+    ...entries.filter((entry) => entry.state === 'queued' && entry.singerAccepted === false),
+    ...entries.filter((entry) => entry.state === 'held')]
 }

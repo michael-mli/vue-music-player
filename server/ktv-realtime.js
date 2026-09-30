@@ -18,7 +18,7 @@ function sameHostOrigin(req, origin) {
   return origin === `https://${req.headers.host}` || origin === `http://${req.headers.host}`
 }
 
-export function createKtvRealtime({ getSnapshot, allowedOrigins = [] }) {
+export function createKtvRealtime({ getSnapshot, allowedOrigins = [], clock }) {
   const tickets = new Map()
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024, perMessageDeflate: false })
   let heartbeat
@@ -75,6 +75,30 @@ export function createKtvRealtime({ getSnapshot, allowedOrigins = [] }) {
     }
   }
 
+  function replyClock(ws, message, receivedMs) {
+    if (message.protocolVersion !== 1) {
+      ws.send(JSON.stringify({ protocolVersion: 1, type: 'error', code: 'PROTOCOL_UNSUPPORTED' }))
+      return
+    }
+    if (typeof message.probeId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(message.probeId) ||
+      !Number.isFinite(message.clientSendMs) || message.clientSendMs < 0) {
+      ws.close(4400, 'Invalid clock probe'); return
+    }
+    if (ws.probeWindowMs === undefined || receivedMs - ws.probeWindowMs >= 10_000) {
+      ws.probeWindowMs = receivedMs; ws.probeCount = 0
+    }
+    if (++ws.probeCount > 20) { ws.close(4429, 'Too many clock probes'); return }
+    try {
+      if (getSnapshot(ws.roomId, ws.principal).self.admission !== 'admitted') {
+        ws.send(JSON.stringify({ protocolVersion: 1, type: 'error', code: 'NOT_ADMITTED' })); return
+      }
+      if (ws.bufferedAmount > 256 * 1024) { ws.terminate(); return }
+      ws.send(JSON.stringify({ protocolVersion: 1, type: 'clock.reply', roomId: ws.roomId,
+        probeId: message.probeId, clockId: clock.id, clientSendMs: message.clientSendMs,
+        serverReceiveMs: receivedMs, serverSendMs: clock.nowMs() }))
+    } catch (error) { ws.close(error.status === 410 ? 4410 : 4403, 'Room access ended') }
+  }
+
   function attach(server) {
     server.on('upgrade', (req, socket, head) => {
       let pathname
@@ -99,9 +123,15 @@ export function createKtvRealtime({ getSnapshot, allowedOrigins = [] }) {
       ws.on('close', () => clearTimeout(authTimeout))
       ws.on('error', () => {})
       ws.on('message', (raw, isBinary) => {
-        if (isBinary || ws.roomId) { ws.close(4400, 'Unexpected message'); return }
+        const receivedMs = clock.nowMs()
+        if (isBinary) { ws.close(4400, 'Unexpected message'); return }
         let message
         try { message = JSON.parse(raw.toString()) } catch { ws.close(4400, 'Invalid message'); return }
+        if (ws.roomId) {
+          if (message?.type === 'clock.probe') replyClock(ws, message, receivedMs)
+          else ws.close(4400, 'Unexpected message')
+          return
+        }
         if (message?.type !== 'authenticate') { ws.close(4400, 'Authenticate first'); return }
         const claim = takeTicket(message.ticket)
         if (!claim) { ws.close(4401, 'Invalid ticket'); return }

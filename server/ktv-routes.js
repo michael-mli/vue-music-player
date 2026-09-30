@@ -1,6 +1,9 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID } from 'node:crypto'
 import { orderQueue } from './ktv-queue.js'
 import { createKtvRealtime } from './ktv-realtime.js'
+import { createKtvClock } from './ktv-clock.js'
+import { RoomError, fail } from './ktv-errors.js'
+import { invalidateReadiness, readinessSnapshot, recoverReadiness } from './ktv-readiness.js'
 
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 const ROOM_LIFETIME_MS = 12 * 60 * 60 * 1000
@@ -10,16 +13,6 @@ const MAX_SINGER_REQUESTS = 3
 const PAIR_LIFETIME_MS = 2 * 60 * 1000
 // The original browser plus two grants make three devices per member.
 const MAX_DEVICE_GRANTS = 2
-
-class RoomError extends Error {
-  constructor(status, code, message) {
-    super(message)
-    this.status = status
-    this.code = code
-  }
-}
-
-function fail(status, code, message) { throw new RoomError(status, code, message) }
 
 function requireText(value, label, limit) {
   if (typeof value !== 'string') fail(400, 'INVALID_INPUT', `${label} is required`)
@@ -154,8 +147,11 @@ function queueSnapshot(db, roomId) {
       singerMemberId: row.singer_member_id, singerName: row.singer_name,
       state: row.state, priorityRequested: Boolean(row.priority_requested),
       priorityApproved: Boolean(row.priority_approved),
+      singerAccepted: Boolean(row.accepted_at),
     }))
-  return orderQueue(entries)
+  const ordered = orderQueue(entries)
+  const offered = db.prepare('SELECT entry_id FROM ktv_readiness WHERE room_id = ?').get(roomId)?.entry_id
+  return offered ? [...ordered.filter((entry) => entry.id === offered), ...ordered.filter((entry) => entry.id !== offered)] : ordered
 }
 
 function event(db, roomId, userId, action, subjectId = null) {
@@ -183,7 +179,7 @@ function addInvite(db, roomId, expiresAt, key) {
   throw new Error('Could not allocate invitation code')
 }
 
-function snapshot(db, roomId, userId, key) {
+function snapshot(db, roomId, userId, key, clock) {
   const room = activeRoom(db, roomId)
   const self = currentMember(db, roomId, userId)
   if (!self || self.admission === 'removed' || self.blocked_at) {
@@ -195,6 +191,7 @@ function snapshot(db, roomId, userId, key) {
       locked: Boolean(room.locked), revision: room.revision, expiresAt: room.expires_at,
     },
     self: publicMember(self),
+    clock: { clockId: clock.id, serverNowMs: clock.nowMs() },
   }
   if (self.admission !== 'admitted') return result
 
@@ -210,6 +207,7 @@ function snapshot(db, roomId, userId, key) {
       .map((row) => ({ ...publicMember(row), blocked: Boolean(row.blocked_at) }))
   }
   result.queue = queueSnapshot(db, roomId)
+  result.readiness = readinessSnapshot(db, roomId, clock)
   if (self.role === 'host') {
     const invite = db.prepare(`SELECT * FROM ktv_invitations WHERE room_id = ? AND revoked_at IS NULL
       ORDER BY rowid DESC LIMIT 1`).get(roomId)
@@ -218,13 +216,13 @@ function snapshot(db, roomId, userId, key) {
   return result
 }
 
-function grantSnapshot(db, roomId, grantId, key) {
+function grantSnapshot(db, roomId, grantId, key, clock) {
   const grant = db.prepare(`SELECT g.*, m.user_id, m.admission FROM ktv_device_grants g
     JOIN ktv_members m ON m.id = g.member_id WHERE g.id = ? AND g.room_id = ?`).get(grantId, roomId)
   if (!grant || grant.revoked_at || Date.parse(grant.expires_at) <= Date.now() || grant.admission !== 'admitted') {
     fail(403, 'DEVICE_REVOKED', 'Device access is unavailable')
   }
-  const result = snapshot(db, roomId, grant.user_id, key)
+  const result = snapshot(db, roomId, grant.user_id, key, clock)
   if (grant.scope === 'display') {
     delete result.invitationCode
     delete result.excludedMembers
@@ -236,6 +234,8 @@ function grantSnapshot(db, roomId, grantId, key) {
 }
 
 export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSong, allowedOrigins }) {
+  const clock = createKtvClock()
+  recoverReadiness(db, clock)
   const key = createHash('sha256').update('ktv-invitation-v1\0').update(secret).digest()
   const pairKey = createHash('sha256').update('ktv-pairing-v1\0').update(secret).digest()
   const grantKey = createHash('sha256').update('ktv-grant-v1\0').update(secret).digest()
@@ -243,9 +243,10 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
   const redeemHits = new Map()
   const realtime = createKtvRealtime({
     getSnapshot: (roomId, principal) => principal.kind === 'device'
-      ? grantSnapshot(db, roomId, principal.grantId, key)
-      : snapshot(db, roomId, principal.userId, key),
+      ? grantSnapshot(db, roomId, principal.grantId, key, clock)
+      : snapshot(db, roomId, principal.userId, key, clock),
     allowedOrigins,
+    clock,
   })
 
   function handler(work, changed = false) {
@@ -299,8 +300,8 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
 
   function viewerSnapshot(req) {
     return req.ktvGrant
-      ? grantSnapshot(db, req.params.id, req.ktvGrant.id, key)
-      : snapshot(db, req.params.id, user(req).id, key)
+      ? grantSnapshot(db, req.params.id, req.ktvGrant.id, key, clock)
+      : snapshot(db, req.params.id, user(req).id, key, clock)
   }
 
   app.post('/api/ktv/rooms', authMiddleware, handler((req) => {
@@ -322,7 +323,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
       )
       addInvite(db, roomId, expiresAt, key)
       event(db, roomId, actor.id, 'room.created')
-      return snapshot(db, roomId, actor.id, key)
+      return snapshot(db, roomId, actor.id, key, clock)
     })
   }, true))
 
@@ -341,7 +342,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
     const room = activeRoom(db, invite.room_id)
     const existing = currentMember(db, room.id, actor.id)
     if (existing?.admission === 'admitted' || existing?.admission === 'pending') {
-      return snapshot(db, room.id, actor.id, key)
+      return snapshot(db, room.id, actor.id, key, clock)
     }
     if (existing?.blocked_at) fail(403, 'ROOM_BLOCKED', 'You are blocked from this room')
     if (existing) fail(403, 'NOT_ADMITTED', 'Ask a host or co-host to restore your room access')
@@ -360,7 +361,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
       )
       bump(db, room.id)
       event(db, room.id, actor.id, 'member.joined')
-      return snapshot(db, room.id, actor.id, key)
+      return snapshot(db, room.id, actor.id, key, clock)
     })
   }, true))
 
@@ -519,6 +520,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
           db.prepare(`UPDATE ktv_members SET admission = ?, blocked_at = ?, cohost_at = NULL,
             updated_at = ? WHERE id = ?`).run(nextState, action === 'block' ? now : null, now, target.id)
           if (action !== 'approve' && action !== 'unblock') {
+            invalidateReadiness(db, req.params.id, clock, { memberId: target.id })
             db.prepare(`UPDATE ktv_queue_entries SET state = 'held', updated_at = ?
               WHERE room_id = ? AND singer_member_id = ? AND state = 'queued'`)
               .run(now, req.params.id, target.id)
@@ -603,11 +605,17 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
     return transaction(db, () => {
       activeRoom(db, req.params.id)
       const member = admittedMember(db, req.params.id, actor.id)
-      applyCommand(db, req.params.id, member.id, id, ['queue.request', songId, title, requestNext], () => {
+      const singerId = req.body?.singerMemberId ?? member.id
+      const payload = ['queue.request', songId, title, requestNext]
+      if (req.body?.singerMemberId !== undefined) payload.push(singerId)
+      applyCommand(db, req.params.id, member.id, id, payload, () => {
+        if (typeof singerId !== 'string') fail(400, 'INVALID_SINGER', 'Choose an admitted singer')
+        const singer = db.prepare('SELECT * FROM ktv_members WHERE room_id = ? AND id = ?').get(req.params.id, singerId)
+        if (!singer || singer.admission !== 'admitted') fail(409, 'INVALID_SINGER', 'Singer is not admitted to the room')
         if (!isKaraokeSong?.(songId)) fail(409, 'SONG_UNAVAILABLE', 'Karaoke backing is unavailable for this song')
         const pending = db.prepare(`SELECT COUNT(*) AS total FROM ktv_queue_entries
-          WHERE room_id = ? AND singer_member_id = ? AND state = 'queued'`).get(req.params.id, member.id).total
-        if (pending >= MAX_SINGER_REQUESTS) fail(409, 'SINGER_QUEUE_FULL', 'You already have three pending songs')
+          WHERE room_id = ? AND singer_member_id = ? AND state = 'queued'`).get(req.params.id, singerId).total
+        if (pending >= MAX_SINGER_REQUESTS) fail(409, 'SINGER_QUEUE_FULL', 'Singer already has three pending songs')
         const total = db.prepare(`SELECT COUNT(*) AS total FROM ktv_queue_entries
           WHERE room_id = ? AND state IN ('queued', 'held')`).get(req.params.id).total
         if (total >= MAX_QUEUE) fail(409, 'QUEUE_FULL', 'Room queue is full')
@@ -615,9 +623,9 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
         const entryId = randomUUID()
         db.prepare(`INSERT INTO ktv_queue_entries
           (id, room_id, song_id, title, requester_member_id, singer_member_id,
-           priority_requested, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-            entryId, req.params.id, songId, title, member.id, member.id,
-            Number(requestNext), now, now,
+           accepted_at, priority_requested, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+            entryId, req.params.id, songId, title, member.id, singerId,
+            singerId === member.id ? now : null, Number(requestNext), now, now,
           )
         bump(db, req.params.id)
         event(db, req.params.id, actor.id, 'queue.requested', entryId)
@@ -637,6 +645,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
           .get(req.params.id, req.params.entryId)
         if (!entry || !['queued', 'held'].includes(entry.state)) fail(409, 'INVALID_QUEUE_STATE', 'Song is not queued')
         if (!isModerator(member) && entry.requester_member_id !== member.id) fail(403, 'FORBIDDEN', 'Cannot remove this song')
+        invalidateReadiness(db, req.params.id, clock, { entryId: entry.id })
         db.prepare("UPDATE ktv_queue_entries SET state = 'cancelled', updated_at = ? WHERE id = ?")
           .run(new Date().toISOString(), entry.id)
         bump(db, req.params.id)
@@ -666,6 +675,120 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
       return viewerSnapshot(req)
     })
   }, true))
+
+  for (const action of ['accept', 'decline']) {
+    app.post(`/api/ktv/rooms/:id/queue/:entryId/${action}`, roomAccess(true), handler((req) => {
+      const actor = user(req)
+      const id = commandId(req)
+      return transaction(db, () => {
+        activeRoom(db, req.params.id)
+        const member = admittedMember(db, req.params.id, actor.id)
+        applyCommand(db, req.params.id, member.id, id, ['queue.' + action, req.params.entryId], () => {
+          const entry = db.prepare('SELECT * FROM ktv_queue_entries WHERE room_id = ? AND id = ?')
+            .get(req.params.id, req.params.entryId)
+          if (!entry || entry.state !== 'queued') fail(409, 'INVALID_QUEUE_STATE', 'Song is not queued')
+          if (entry.singer_member_id !== member.id) fail(403, 'FORBIDDEN', 'Only the nominated singer can respond')
+          if (action === 'accept' && entry.accepted_at) return
+          const now = new Date().toISOString()
+          if (action === 'accept') {
+            db.prepare('UPDATE ktv_queue_entries SET accepted_at = ?, updated_at = ? WHERE id = ?').run(now, now, entry.id)
+          } else {
+            invalidateReadiness(db, req.params.id, clock, { entryId: entry.id })
+            db.prepare("UPDATE ktv_queue_entries SET state = 'cancelled', updated_at = ? WHERE id = ?").run(now, entry.id)
+          }
+          bump(db, req.params.id)
+          event(db, req.params.id, actor.id, `queue.singer_${action}`, entry.id)
+        })
+        return viewerSnapshot(req)
+      })
+    }, true))
+  }
+
+  function checkClock(req) {
+    if (req.body?.clockId !== clock.id) fail(409, 'STALE_CLOCK', 'Room timing changed. Refresh and try again')
+  }
+  function checkRevision(req, room) {
+    if (!Number.isSafeInteger(req.body?.baseRevision) || req.body.baseRevision < 1) {
+      fail(400, 'INVALID_REVISION', 'A room revision is required')
+    }
+    if (req.body.baseRevision !== room.revision) fail(409, 'REVISION_CONFLICT', 'Room changed. Review it and try again')
+  }
+  function currentTurn(req) {
+    checkClock(req)
+    const turn = db.prepare('SELECT * FROM ktv_readiness WHERE room_id = ?').get(req.params.id)
+    if (!turn || turn.state === 'idle' || req.body?.performanceId !== turn.performance_id ||
+      req.body?.generation !== turn.generation || turn.clock_id !== clock.id) {
+      fail(409, 'STALE_GENERATION', 'Singer invitation changed. Review it and try again')
+    }
+    return turn
+  }
+
+  app.post('/api/ktv/rooms/:id/readiness/offer', roomAccess(true), handler((req) => {
+    const actor = user(req)
+    const id = commandId(req)
+    const { entryId, clockId, baseRevision } = req.body || {}
+    return transaction(db, () => {
+      const room = activeRoom(db, req.params.id)
+      const member = admittedMember(db, room.id, actor.id)
+      applyCommand(db, room.id, member.id, id, ['readiness.offer', entryId, clockId, baseRevision], () => {
+        moderatorMember(db, room.id, actor.id)
+        checkClock(req); checkRevision(req, room)
+        const entry = typeof entryId === 'string' && db.prepare(`SELECT q.*, m.admission FROM ktv_queue_entries q
+          JOIN ktv_members m ON m.id = q.singer_member_id WHERE q.room_id = ? AND q.id = ?`).get(room.id, entryId)
+        if (!entry || entry.state !== 'queued' || !entry.accepted_at || entry.admission !== 'admitted') {
+          fail(409, 'SINGER_NOT_ACCEPTED', 'Choose a queued song accepted by its singer')
+        }
+        const now = new Date().toISOString()
+        db.prepare(`INSERT INTO ktv_readiness (room_id, entry_id, performance_id, generation, clock_id, state, updated_at)
+          VALUES (?, ?, ?, 1, ?, 'awaiting-singer', ?) ON CONFLICT(room_id) DO UPDATE SET
+          entry_id = excluded.entry_id, performance_id = excluded.performance_id,
+          generation = ktv_readiness.generation + 1, clock_id = excluded.clock_id,
+          state = 'awaiting-singer', ready_at = NULL, updated_at = excluded.updated_at`)
+          .run(room.id, entry.id, randomUUID(), clock.id, now)
+        bump(db, room.id)
+        event(db, room.id, actor.id, 'readiness.offered', entry.id)
+      })
+      return viewerSnapshot(req)
+    })
+  }, true))
+
+  for (const action of ['respond', 'cancel']) {
+    app.post(`/api/ktv/rooms/:id/readiness/${action}`, roomAccess(true), handler((req) => {
+      const actor = user(req)
+      const id = commandId(req)
+      const { performanceId, generation, clockId, baseRevision, ready } = req.body || {}
+      if (action === 'respond' && typeof ready !== 'boolean') fail(400, 'INVALID_INPUT', 'Singer readiness is required')
+      return transaction(db, () => {
+        const room = activeRoom(db, req.params.id)
+        const member = admittedMember(db, room.id, actor.id)
+        const payload = ['readiness.' + action, performanceId, generation, clockId, baseRevision]
+        if (action === 'respond') payload.push(ready)
+        applyCommand(db, room.id, member.id, id, payload, () => {
+          const turn = currentTurn(req)
+          const entry = db.prepare('SELECT * FROM ktv_queue_entries WHERE id = ? AND room_id = ?').get(turn.entry_id, room.id)
+          if (action === 'cancel') moderatorMember(db, room.id, actor.id)
+          else if (entry?.singer_member_id !== member.id) fail(403, 'FORBIDDEN', 'Only the selected singer can confirm readiness')
+          checkRevision(req, room)
+          if (action === 'respond' && (turn.state !== 'awaiting-singer' || entry.state !== 'queued' || !entry.accepted_at)) {
+            fail(409, 'INVALID_READINESS', 'Singer invitation is no longer waiting')
+          }
+          const now = new Date().toISOString()
+          if (action === 'respond' && ready) {
+            db.prepare("UPDATE ktv_readiness SET state = 'ready', ready_at = ?, updated_at = ? WHERE room_id = ?")
+              .run(now, now, room.id)
+          } else {
+            invalidateReadiness(db, room.id, clock)
+            if (action === 'respond') {
+              db.prepare("UPDATE ktv_queue_entries SET state = 'cancelled', updated_at = ? WHERE id = ?").run(now, entry.id)
+            }
+          }
+          bump(db, room.id)
+          event(db, room.id, actor.id, action === 'cancel' ? 'readiness.cancelled' : ready ? 'readiness.confirmed' : 'readiness.declined', entry.id)
+        })
+        return viewerSnapshot(req)
+      })
+    }, true))
+  }
 
   app.post('/api/ktv/rooms/:id/invitations/rotate', roomAccess(true), handler((req) => {
     const actor = user(req)
@@ -704,6 +827,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
       const room = activeRoom(db, req.params.id)
       hostMember(db, room.id, actor.id)
       const now = new Date().toISOString()
+      invalidateReadiness(db, room.id, clock)
       db.prepare("UPDATE ktv_rooms SET status = 'closed', closed_at = ?, revision = revision + 1 WHERE id = ?")
         .run(now, room.id)
       db.prepare('UPDATE ktv_invitations SET revoked_at = ? WHERE room_id = ? AND revoked_at IS NULL')

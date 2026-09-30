@@ -25,6 +25,12 @@
         <p class="mt-2 text-xs" :class="liveConnected ? 'text-spotify-green' : 'text-gray-400'" role="status">
           {{ liveConnected ? $t('party.liveConnected') : $t('party.reconnecting') }}
         </p>
+        <details v-if="party.self.admission === 'admitted'" class="mt-2 text-xs text-gray-400">
+          <summary class="cursor-pointer">{{ $t('party.connectionDetails') }}</summary>
+          <p class="mt-2" role="status">{{ !liveConnected ? $t('party.clockOffline') : clockEstimate?.status === 'healthy' ? $t('party.clockHealthy') : clockEstimate?.status === 'uncertain' || clockEstimate?.status === 'stale' ? $t('party.clockUncertain') : $t('party.clockCollecting') }}</p>
+          <p v-if="clockEstimate" class="mt-1">{{ $t('party.clockMetrics', { delay: Math.round(clockEstimate.roundTripMs), uncertainty: Math.ceil(clockEstimate.uncertaintyMs) }) }}</p>
+          <p class="mt-1">{{ $t('party.clockHint') }}</p>
+        </details>
 
         <p v-if="error" role="alert" class="mt-5 rounded-lg bg-red-500/10 p-3 text-sm text-red-300">{{ error }}</p>
         <div v-if="party.self.admission === 'pending'" class="mt-8 rounded-2xl border border-yellow-500/20 bg-yellow-500/10 p-8 text-center">
@@ -41,7 +47,11 @@
         <template v-else-if="stage">
           <div class="mt-8 flex min-h-[50vh] flex-col items-center justify-center rounded-3xl border border-white/10 bg-gradient-to-b from-emerald-900/30 to-black/30 px-6 text-center">
             <p class="text-sm uppercase tracking-[0.25em] text-spotify-green">{{ $t('party.stage') }}</p>
-            <h2 class="mt-5 text-3xl font-bold sm:text-5xl">{{ $t('party.stageReady') }}</h2>
+            <h2 class="mt-5 text-3xl font-bold sm:text-5xl">{{ party.readiness?.entryId ? party.readiness.title : $t('party.stageReady') }}</h2>
+            <template v-if="party.readiness?.entryId">
+              <p class="mt-3 text-xl">{{ party.readiness.singerName }}</p>
+              <p class="mt-3 text-spotify-green">{{ party.readiness.state === 'ready' ? $t('party.singerReady') : $t('party.awaitingSinger') }}</p>
+            </template>
             <p class="mt-4 max-w-xl text-gray-300">{{ $t('party.stageWaiting') }}</p>
             <div v-if="party.queue?.length" class="mt-8 w-full max-w-xl text-left">
               <h3 class="mb-3 text-sm font-semibold uppercase tracking-wider text-spotify-green">{{ $t('party.upNext') }}</h3>
@@ -50,6 +60,7 @@
                   <span class="font-semibold">{{ index + 1 }}. {{ entry.title }}</span>
                   <span class="ml-2 text-sm text-gray-300">{{ entry.singerName }}</span>
                   <span v-if="entry.state === 'held'" class="ml-2 text-xs text-yellow-300">{{ $t('party.held') }}</span>
+                  <span v-else-if="!entry.singerAccepted" class="ml-2 text-xs text-yellow-300">{{ $t('party.awaitingAcceptance') }}</span>
                 </li>
               </ol>
             </div>
@@ -106,9 +117,29 @@
                 </ul>
               </section>
 
+              <section v-if="party.readiness?.entryId" class="rounded-2xl border border-spotify-green/30 bg-emerald-900/10 p-5">
+                <h2 class="text-lg font-semibold">{{ $t('party.singerInvitation') }}</h2>
+                <p class="mt-3 text-xl font-semibold">{{ party.readiness.title }}</p>
+                <p class="mt-1 text-sm text-gray-300">{{ $t('party.singer') }}: {{ party.readiness.singerName }}</p>
+                <p class="mt-3 text-sm text-spotify-green" role="status">{{ party.readiness.state === 'ready' ? $t('party.singerReady') : $t('party.awaitingSinger') }}</p>
+                <p class="mt-2 text-xs text-gray-400">{{ $t('party.readinessHint') }}</p>
+                <div class="mt-4 flex flex-wrap gap-3">
+                  <template v-if="party.readiness.singerMemberId === party.self.id && party.readiness.state === 'awaiting-singer'">
+                    <button type="button" :disabled="busy" class="rounded-full bg-spotify-green px-4 py-2 text-sm font-semibold text-black disabled:opacity-50" @click="respondReady(true)">{{ $t('party.confirmReady') }}</button>
+                    <button type="button" :disabled="busy" class="rounded-full border border-white/25 px-4 py-2 text-sm disabled:opacity-50" @click="respondReady(false)">{{ $t('party.declineTurn') }}</button>
+                  </template>
+                  <button v-if="isModerator" type="button" :disabled="busy" class="text-sm text-gray-300 underline disabled:opacity-50" @click="cancelReadiness">{{ $t('party.cancelInvitation') }}</button>
+                </div>
+              </section>
+
               <section class="rounded-2xl border border-white/10 bg-white/5 p-5">
                 <h2 class="text-lg font-semibold">{{ $t('party.songsAndQueue') }}</h2>
                 <p class="mt-2 text-sm text-gray-400">{{ $t('party.queuePlanning') }}</p>
+                <label class="mt-4 block text-sm font-medium" for="party-song-singer">{{ $t('party.chooseSinger') }}</label>
+                <select id="party-song-singer" v-model="selectedSingerId" class="mt-2 w-full rounded-lg border border-white/20 bg-[#182020] px-3 py-2">
+                  <option v-for="member in admittedMembers" :key="member.id" :value="member.id">{{ memberLabel(member) }}{{ member.id === party.self.id ? ` (${$t('party.you')})` : '' }}</option>
+                </select>
+                <p class="mt-2 text-xs text-gray-400">{{ $t('party.nominationHint') }}</p>
                 <label class="mt-5 block text-sm font-medium" for="party-song-search">{{ $t('party.searchSongs') }}</label>
                 <input id="party-song-search" v-model="songSearch" type="search" :placeholder="$t('party.searchSongs')"
                   class="mt-2 w-full rounded-lg border border-white/20 bg-black/20 px-3 py-2 outline-none focus:border-spotify-green" />
@@ -133,10 +164,17 @@
                         <p class="font-medium">{{ index + 1 }}. {{ entry.title }}</p>
                         <p class="mt-1 text-xs text-gray-400">{{ $t('party.singer') }}: {{ entry.singerName }} · {{ $t('party.requestedBy') }}: {{ entry.requesterName }}</p>
                         <p v-if="entry.state === 'held'" class="mt-1 text-xs text-yellow-300">{{ $t('party.held') }}</p>
+                        <p v-else-if="!entry.singerAccepted" class="mt-1 text-xs text-yellow-300">{{ $t('party.awaitingAcceptance') }}</p>
                         <p v-else-if="entry.priorityApproved" class="mt-1 text-xs text-spotify-green">{{ $t('party.nextApproved') }}</p>
                         <p v-else-if="entry.priorityRequested" class="mt-1 text-xs text-yellow-300">{{ $t('party.nextPending') }}</p>
+                        <p v-if="party.readiness?.entryId === entry.id" class="mt-1 text-xs text-spotify-green">{{ $t('party.selectedTurn') }}</p>
                       </div>
                       <div class="flex shrink-0 flex-col items-end gap-2 text-xs">
+                        <template v-if="entry.state === 'queued' && entry.singerMemberId === party.self.id && entry.requesterMemberId !== party.self.id">
+                          <button v-if="!entry.singerAccepted" type="button" :disabled="busy" class="text-spotify-green disabled:opacity-50" @click="acceptSong(entry.id)">{{ $t('party.acceptNomination') }}</button>
+                          <button type="button" :disabled="busy" class="text-gray-300 disabled:opacity-50" @click="declineSong(entry.id)">{{ $t('party.declineNomination') }}</button>
+                        </template>
+                        <button v-if="isModerator && entry.state === 'queued' && entry.singerAccepted && party.readiness?.entryId !== entry.id" type="button" :disabled="busy" class="text-spotify-green disabled:opacity-50" @click="offerSinger(entry.id)">{{ $t('party.inviteSinger') }}</button>
                         <button v-if="isModerator && entry.priorityRequested && !entry.priorityApproved && entry.state === 'queued'" type="button" :disabled="busy" class="text-spotify-green disabled:opacity-50" @click="approveNext(entry.id)">{{ $t('party.approveNext') }}</button>
                         <button v-if="isModerator || entry.requesterMemberId === party.self.id" type="button" :disabled="busy" class="text-red-300 disabled:opacity-50" @click="cancelSong(entry.id)">{{ $t('party.removeSong') }}</button>
                       </div>
@@ -219,11 +257,12 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { partyApi, type PartyDeviceSummary, type PartyMember, type PartyPairing, type PartySnapshot } from '@/services/partyApi'
+import { partyApi, type PartyDeviceSummary, type PartyMember, type PartyPairing, type PartySnapshot, type PartyTurnCommand } from '@/services/partyApi'
 import { subscribeParty } from '@/services/partyRealtime'
 import { useSongsStore } from '@/stores/songs'
 import { karaokeService } from '@/services/karaokeService'
 import type { Song } from '@/types'
+import type { PartyClockEstimate } from '@/utils/partyClock'
 
 const props = withDefaults(defineProps<{ stage?: boolean }>(), { stage: false })
 const route = useRoute()
@@ -236,6 +275,8 @@ const busy = ref(false)
 const copied = ref(false)
 const error = ref('')
 const liveConnected = ref(false)
+const clockEstimate = ref<PartyClockEstimate | null>(null)
+const selectedSingerId = ref('')
 const isHost = computed(() => party.value?.self.admission === 'admitted' && party.value.self.role === 'host' && party.value.deviceScope !== 'display')
 const isModerator = computed(() => party.value?.self.admission === 'admitted' &&
   ['host', 'cohost'].includes(party.value.self.role) && party.value.deviceScope !== 'display')
@@ -268,6 +309,9 @@ let realtimeEnded = false
 function applySnapshot(next: PartySnapshot) {
   if (next.room.id !== roomId.value) return
   if (!party.value || next.room.revision >= party.value.room.revision) party.value = next
+  if (!party.value?.members?.some(member => member.id === selectedSingerId.value && member.admission === 'admitted')) {
+    selectedSingerId.value = party.value?.self.id || ''
+  }
   if (next.deviceScope === 'display' && !props.stage) void router.replace(`/party/${roomId.value}/stage`)
   if (!props.stage && !next.deviceScope && next.self.admission === 'admitted') void loadDevices()
 }
@@ -309,7 +353,8 @@ function startRealtime() {
   realtimeEnded = false
   stopRealtime = subscribeParty(roomId.value, applySnapshot,
     (connected) => { liveConnected.value = connected },
-    () => { realtimeEnded = true; void refresh() })
+    () => { realtimeEnded = true; void refresh() },
+    (estimate) => { clockEstimate.value = estimate })
 }
 
 async function loadCatalog() {
@@ -408,7 +453,30 @@ function transferHost(member: PartyMember) {
 }
 function rotateCode() { void act(() => partyApi.rotate(roomId.value)) }
 function requestSong(song: Song, requestNext: boolean) {
-  void act(() => partyApi.requestSong(roomId.value, song.id, song.title, requestNext, crypto.randomUUID()))
+  void act(() => partyApi.requestSong(roomId.value, song.id, song.title, requestNext, crypto.randomUUID(), selectedSingerId.value))
+}
+function acceptSong(entryId: string) { void act(() => partyApi.acceptSong(roomId.value, entryId, crypto.randomUUID())) }
+function declineSong(entryId: string) {
+  if (window.confirm(t('party.confirmDeclineNomination'))) void act(() => partyApi.declineSong(roomId.value, entryId, crypto.randomUUID()))
+}
+function offerSinger(entryId: string) {
+  if (!party.value || (party.value.readiness?.entryId && !window.confirm(t('party.confirmReplaceInvitation')))) return
+  void act(() => partyApi.offerSinger(roomId.value, entryId, crypto.randomUUID(), party.value!.clock.clockId, party.value!.room.revision))
+}
+function turnCommand(): PartyTurnCommand | null {
+  const current = party.value?.readiness
+  if (!party.value || !current?.performanceId) return null
+  return { commandId: crypto.randomUUID(), clockId: current.clockId, baseRevision: party.value.room.revision,
+    performanceId: current.performanceId, generation: current.generation }
+}
+function respondReady(ready: boolean) {
+  if (!ready && !window.confirm(t('party.confirmDeclineTurn'))) return
+  const command = turnCommand()
+  if (command) void act(() => partyApi.respondReady(roomId.value, command, ready))
+}
+function cancelReadiness() {
+  const command = turnCommand()
+  if (command && window.confirm(t('party.confirmCancelInvitation'))) void act(() => partyApi.cancelReadiness(roomId.value, command))
 }
 function cancelSong(entryId: string) {
   void act(() => partyApi.cancelSong(roomId.value, entryId, crypto.randomUUID()))

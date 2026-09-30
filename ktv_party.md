@@ -3,8 +3,9 @@
 Created: 2026-09-29
 
 Status: Incremental implementation. Rooms, live queue planning, device pairing,
-and room moderation are implemented; synchronized playback and streaming remain
-planned. See the progress tracker for deployment evidence and remaining work.
+moderation, singer nomination/readiness, and clock negotiation are implemented;
+synchronized audio and streaming remain planned. See the progress tracker for
+deployment evidence and remaining work.
 
 Progress tracker: [ktv_party_implement.md](ktv_party_implement.md)
 
@@ -95,6 +96,9 @@ Queue and People, with a separate settings panel.
   the current song or silently moves itself to the front.
 - Store requester and singer separately. A singer must accept a nomination by
   another member before becoming ready; host assignment follows the same readiness step.
+  The implemented queue puts unaccepted nominations after eligible songs. Own
+  requests are accepted automatically, while nominations count toward the nominated
+  singer's three-song cap. Declining a nomination cancels that unique queue entry.
 - Default fairness: one song per eligible singer per round, ordered by first
   pending request, with each singer's requests in their own submission order.
   New singers join the end of the current unserved round. A completed, skipped,
@@ -396,6 +400,58 @@ jitter, fresh authentication, a full snapshot, and new clock samples.
 Errors include `NOT_ADMITTED`, `ROOM_LOCKED`, `ROOM_CLOSED`, `FORBIDDEN`,
 `REVISION_CONFLICT`, `QUEUE_LIMIT`, `ASSET_UNAVAILABLE`, `STALE_GENERATION`,
 `DEVICE_NOT_READY`, `LEASE_EXPIRED`, and `PROTOCOL_UNSUPPORTED`.
+
+### 8.3 Implemented clock and singer readiness contracts
+
+HTTP and socket snapshots include `clock: {clockId, serverNowMs}`. The UUID clock
+ID identifies one service epoch; `serverNowMs` is monotonic milliseconds since
+that service's clock origin. It is independent of wall time. HTTP snapshot time
+alone is not a calibration sample. Admitted sockets can send:
+
+```json
+{"protocolVersion":1,"type":"clock.probe","probeId":"random-uuid","clientSendMs":1234.5}
+```
+
+The `clock.reply` echoes `probeId` and `clientSendMs` and contains `roomId`,
+`clockId`, `serverReceiveMs`, and `serverSendMs`. Authorization is rechecked for
+each probe; pending/declined guests cannot probe. Each socket allows 20 probes per
+10 seconds, with a 1 KiB message cap. Probe traffic does not change room revision.
+
+The browser sends eight initial samples 300 ms apart, then one every 10 seconds.
+It matches replies to outstanding probes and captures receive time with
+`performance.now()`. The estimator keeps at most 24 samples from the last minute,
+prefers samples with low network round trip, and uses their median offset.
+Uncertainty includes half the selected median round trip plus offset dispersion.
+Three samples and estimated uncertainty at most 50 ms label the room clock healthy;
+estimates become stale after 30 seconds without a reply. These are clock health
+thresholds, not measured acoustic alignment. New connections/epochs and foreground
+recovery collect fresh samples. HTTP polling does not report a healthy audio clock.
+
+Singer readiness has a separate durable `ktv_readiness` row for each room. Its
+states are `idle`, `awaiting-singer`, and `ready`. It carries a selected `entryId`,
+UUID `performanceId`, monotonically increasing `generation`, and `clockId`.
+The UI's ready state confirms the person; asset decoding, stage/audio readiness,
+leases, and the playback timeline remain later work.
+
+| POST under `/api/ktv/rooms/:id` | Behavior |
+| --- | --- |
+| `/queue` with optional `singerMemberId` | Nominate an admitted singer, or default to self |
+| `/queue/:entryId/accept` or `/decline` | Only that singer can accept or decline; `commandId` required |
+| `/readiness/offer` | Host/co-host selects an eligible accepted entry; requires `entryId`, `clockId`, `baseRevision`, `commandId` |
+| `/readiness/respond` | Selected singer confirms `ready: true` or declines the turn; requires current performance/generation/clock, revision and command ID |
+| `/readiness/cancel` | Host/co-host cancels the invitation, preserving the queued song; requires current performance/generation/clock, revision and command ID |
+
+The selected entry stays at the front of the materialized queue while awaiting
+confirmation or ready. Replacing or cancelling it, declining the turn, cancelling
+the queue entry, or removing its singer invalidates the generation. Commands with
+a stale epoch, generation, or room revision fail without changing the selection.
+Receipts commit with state/revision/audit changes; identical retries return the
+current authorized snapshot and never reconfirm an obsolete turn.
+
+Startup preserves eligible selection but replaces the performance ID, increments
+generation and room revision, and requires the singer to confirm again under the
+new clock. It never restores ready automatically or starts audio. Additive
+`accepted_at` metadata backfills prior self-requests as accepted.
 
 ## 9. Playback state and synchronized audio
 

@@ -20,12 +20,34 @@ export interface PartySnapshot {
     expiresAt: string
   }
   self: PartyMember
+  clock: { clockId: string; serverNowMs: number }
+  readiness?: PartyReadiness
   members?: PartyMember[]
   excludedMembers?: (PartyMember & { blocked: boolean })[]
   queue?: PartyQueueEntry[]
   invitationCode?: string | null
   deviceScope?: 'display' | 'controller'
   deviceId?: string
+}
+
+export interface PartyReadiness {
+  state: 'idle' | 'awaiting-singer' | 'ready'
+  clockId: string
+  generation: number
+  performanceId: string | null
+  entryId: string | null
+  songId: number | null
+  title: string | null
+  singerMemberId: string | null
+  singerName: string | null
+}
+
+export interface PartyTurnCommand {
+  commandId: string
+  clockId: string
+  baseRevision: number
+  performanceId: string
+  generation: number
 }
 
 export interface PartyQueueEntry {
@@ -39,6 +61,7 @@ export interface PartyQueueEntry {
   state: 'queued' | 'held'
   priorityRequested: boolean
   priorityApproved: boolean
+  singerAccepted: boolean
 }
 
 export interface PartyRoomSummary {
@@ -125,12 +148,22 @@ export const partyApi = {
     call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/settings`, changes),
   close: (roomId: string) =>
     call<{ id: string; status: 'closed' }>('post', `/rooms/${encodeURIComponent(roomId)}/close`),
-  requestSong: (roomId: string, songId: number, title: string, requestNext: boolean, commandId: string) =>
-    call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/queue`, { songId, title, requestNext, commandId }, true),
+  requestSong: (roomId: string, songId: number, title: string, requestNext: boolean, commandId: string, singerMemberId: string) =>
+    call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/queue`, { songId, title, requestNext, commandId, singerMemberId }, true),
   cancelSong: (roomId: string, entryId: string, commandId: string) =>
     call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/queue/${encodeURIComponent(entryId)}/cancel`, { commandId }, true),
   approveNext: (roomId: string, entryId: string, commandId: string) =>
     call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/queue/${encodeURIComponent(entryId)}/approve-next`, { commandId }, true),
+  acceptSong: (roomId: string, entryId: string, commandId: string) =>
+    call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/queue/${encodeURIComponent(entryId)}/accept`, { commandId }, true),
+  declineSong: (roomId: string, entryId: string, commandId: string) =>
+    call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/queue/${encodeURIComponent(entryId)}/decline`, { commandId }, true),
+  offerSinger: (roomId: string, entryId: string, commandId: string, clockId: string, baseRevision: number) =>
+    call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/readiness/offer`, { entryId, commandId, clockId, baseRevision }, true),
+  respondReady: (roomId: string, command: PartyTurnCommand, ready: boolean) =>
+    call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/readiness/respond`, { ...command, ready }, true),
+  cancelReadiness: (roomId: string, command: PartyTurnCommand) =>
+    call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/readiness/cancel`, { ...command }, true),
   createPairing: (roomId: string, scope: 'display' | 'controller') =>
     call<PartyPairing>('post', `/rooms/${encodeURIComponent(roomId)}/pairings`, { scope }, false, true),
   devices: (roomId: string) =>

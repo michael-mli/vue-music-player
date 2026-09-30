@@ -72,6 +72,16 @@ async function openSocket(url, origin, ticket) {
   return { ws, first }
 }
 
+function nextPacket(ws, type) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => { cleanup(); reject(new Error(`packet timeout: ${type}`)) }, 3000)
+    function cleanup() { clearTimeout(timeout); ws.off('message', receive); ws.off('close', closed) }
+    function receive(raw) { const message = JSON.parse(raw.toString()); if (message.type === type) { cleanup(); resolve(message) } }
+    function closed(code) { cleanup(); reject(new Error(`socket closed ${code}`)) }
+    ws.on('message', receive); ws.once('close', closed)
+  })
+}
+
 test('invited guests enter names, retain random IDs, and wait for host approval', async (t) => {
   const { db, request } = await setup(t)
   const created = await request('POST', '/rooms', 1, { name: 'Friday songs', displayName: 'Host' })
@@ -540,12 +550,15 @@ test('existing membership tables migrate additively and retain co-host and block
   const root = `/rooms/${created.room.id}`
   const member = (await request('POST', '/join', 2, { code: created.invitationCode, displayName: 'Alex' })).body.data.self.id
   const other = (await request('POST', '/join', 3, { code: created.invitationCode, displayName: 'Sam' })).body.data.self.id
+  const queued = (await request('POST', `${root}/queue`, 2, { songId: 1, title: 'Legacy self request',
+    requestNext: false, commandId: randomUUID() })).body.data.queue[0]
   // Recreate the pre-moderation table shape while preserving existing rows/FKs.
-  db.exec('ALTER TABLE ktv_members DROP COLUMN cohost_at; ALTER TABLE ktv_members DROP COLUMN blocked_at')
+  db.exec('ALTER TABLE ktv_members DROP COLUMN cohost_at; ALTER TABLE ktv_members DROP COLUMN blocked_at; ALTER TABLE ktv_queue_entries DROP COLUMN accepted_at')
   const dataDir = path.dirname(db.prepare('PRAGMA database_list').all()[0].file)
   let reopened = initDb(dataDir)
   reopened.close()
   assert.equal((await request('GET', root, 2)).body.data.self.id, member)
+  assert.equal((await request('GET', root, 2)).body.data.queue.find(entry => entry.id === queued.id).singerAccepted, true)
   await request('POST', `${root}/members/${member}/role`, 1, { role: 'cohost', commandId: randomUUID() })
   await request('POST', `${root}/members/${other}/block`, 1, { commandId: randomUUID() })
   reopened = initDb(dataDir)
@@ -554,4 +567,186 @@ test('existing membership tables migrate additively and retain co-host and block
   assert.ok(reopened.prepare('SELECT blocked_at FROM ktv_members WHERE id = ?').get(other).blocked_at)
   assert.equal(reopened.prepare('PRAGMA foreign_key_check').all().length, 0)
   assert.equal(reopened.prepare('SELECT COUNT(*) total FROM users').get().total, 4)
+})
+
+test('room clock probes recheck admission, use a monotonic epoch, validate protocol and bound traffic', async (t) => {
+  const { request, socketUrl, origin } = await setup(t)
+  const created = (await request('POST', '/rooms', 1, { name: 'Clock room', displayName: 'Host' })).body.data
+  const root = `/rooms/${created.room.id}`
+  const member = (await request('POST', '/join', 2, { code: created.invitationCode, displayName: 'Singer' })).body.data.self.id
+  const host = await openSocket(socketUrl, origin, (await request('POST', `${root}/socket-ticket`, 1, {})).body.data.ticket)
+  await host.first
+  const pending = await openSocket(socketUrl, origin, (await request('POST', `${root}/socket-ticket`, 2, {})).body.data.ticket)
+  await pending.first
+  const probe = { protocolVersion: 1, type: 'clock.probe', probeId: randomUUID(), clientSendMs: 123 }
+  const waitingError = nextPacket(pending.ws, 'error')
+  pending.ws.send(JSON.stringify(probe))
+  assert.equal((await waitingError).code, 'NOT_ADMITTED')
+  const replyPromise = nextPacket(host.ws, 'clock.reply')
+  host.ws.send(JSON.stringify(probe))
+  const reply = await replyPromise
+  assert.equal(reply.probeId, probe.probeId)
+  assert.equal(reply.clientSendMs, 123)
+  assert.equal(reply.clockId, created.clock.clockId)
+  assert.ok(reply.serverReceiveMs >= 0 && reply.serverSendMs >= reply.serverReceiveMs)
+  assert.ok(reply.serverSendMs < Date.now() / 1000)
+  assert.equal(reply.data, undefined)
+  const versionError = nextPacket(host.ws, 'error')
+  host.ws.send(JSON.stringify({ ...probe, protocolVersion: 2 }))
+  assert.equal((await versionError).code, 'PROTOCOL_UNSUPPORTED')
+  const admitted = nextSnapshot(pending.ws)
+  await request('POST', `${root}/members/${member}/approve`, 1)
+  await admitted
+  const admittedProbe = nextPacket(pending.ws, 'clock.reply')
+  pending.ws.send(JSON.stringify({ ...probe, probeId: randomUUID() }))
+  assert.equal((await admittedProbe).clockId, reply.clockId)
+  const limited = new Promise((resolve) => host.ws.once('close', resolve))
+  for (let i = 0; i < 20; i++) host.ws.send(JSON.stringify({ ...probe, probeId: randomUUID() }))
+  assert.equal(await limited, 4429)
+  pending.ws.close()
+})
+
+test('nominated singers accept songs and readiness rejects stale turns, wrong actors, and stale revisions', async (t) => {
+  const { request } = await setup(t)
+  const created = (await request('POST', '/rooms', 1, { name: 'Singer readiness', displayName: 'Host', approvalRequired: false })).body.data
+  const root = `/rooms/${created.room.id}`
+  const singer = (await request('POST', '/join', 2, { code: created.invitationCode, displayName: 'Singer' })).body.data.self.id
+  await request('POST', '/join', 3, { code: created.invitationCode, displayName: 'Other singer' })
+  const nominated = (await request('POST', `${root}/queue`, 1, {
+    songId: 1, title: 'Nominated song', requestNext: false, singerMemberId: singer, commandId: randomUUID(),
+  })).body.data.queue[0]
+  assert.equal(nominated.singerAccepted, false)
+  const own = (await request('POST', `${root}/queue`, 3, { songId: 2, title: 'Own song', requestNext: false, commandId: randomUUID() })).body.data
+  assert.equal(own.queue[0].songId, 2)
+  async function offer(entryId, actor = 1, revision) {
+    const view = (await request('GET', root, actor)).body.data
+    return request('POST', `${root}/readiness/offer`, actor, {
+      entryId, commandId: randomUUID(), clockId: view.clock.clockId, baseRevision: revision ?? view.room.revision,
+    })
+  }
+  assert.equal((await offer(nominated.id)).body.code, 'SINGER_NOT_ACCEPTED')
+  assert.equal(await request('POST', `${root}/queue/${nominated.id}/accept`, 1, { commandId: randomUUID() }).then(r => r.status), 403)
+  assert.equal(await request('POST', `${root}/queue/${nominated.id}/accept`, 3, { commandId: randomUUID() }).then(r => r.status), 403)
+  const acceptId = randomUUID()
+  const accepted = await request('POST', `${root}/queue/${nominated.id}/accept`, 2, { commandId: acceptId })
+  assert.equal(accepted.status, 200)
+  assert.equal(accepted.body.data.queue.find(entry => entry.id === nominated.id).singerAccepted, true)
+  assert.equal((await request('POST', `${root}/queue/${nominated.id}/accept`, 2, { commandId: acceptId })).body.data.room.revision, accepted.body.data.room.revision)
+  assert.equal((await offer(nominated.id, 3)).status, 403)
+  assert.equal((await offer(nominated.id, 1, 1)).body.code, 'REVISION_CONFLICT')
+  const offered = (await offer(nominated.id)).body.data
+  assert.equal(offered.readiness.state, 'awaiting-singer')
+  assert.equal(offered.queue[0].id, nominated.id)
+  const confirm = { ...offered.readiness, commandId: randomUUID(), baseRevision: offered.room.revision, ready: true }
+  assert.equal(await request('POST', `${root}/readiness/respond`, 1, confirm).then(r => r.status), 403)
+  const ready = await request('POST', `${root}/readiness/respond`, 2, confirm)
+  assert.equal(ready.status, 200)
+  assert.equal(ready.body.data.readiness.state, 'ready')
+  assert.equal((await request('POST', `${root}/readiness/respond`, 2, confirm)).body.data.room.revision, ready.body.data.room.revision)
+  const otherEntry = ready.body.data.queue.find(entry => entry.songId === 2).id
+  const replaced = (await offer(otherEntry)).body.data
+  assert.ok(replaced.readiness.generation > offered.readiness.generation)
+  assert.notEqual(replaced.readiness.performanceId, offered.readiness.performanceId)
+  const stale = await request('POST', `${root}/readiness/respond`, 2, { ...confirm, commandId: randomUUID() })
+  assert.equal(stale.body.code, 'STALE_GENERATION')
+  await request('POST', `${root}/queue/${otherEntry}/cancel`, 3, { commandId: randomUUID() })
+  assert.equal((await request('GET', root, 1)).body.data.readiness.state, 'idle')
+  const reoffered = (await offer(nominated.id)).body.data
+  await request('POST', `${root}/members/${singer}/remove`, 1)
+  const removed = (await request('GET', root, 1)).body.data
+  assert.equal(removed.readiness.state, 'idle')
+  assert.ok(removed.readiness.generation > reoffered.readiness.generation)
+  assert.equal(removed.queue[0].state, 'held')
+})
+
+test('paired controllers can confirm their singer and displays stay read-only; declining ends only that turn', async (t) => {
+  const { request } = await setup(t)
+  const created = (await request('POST', '/rooms', 1, { name: 'Ready devices', displayName: 'Host', approvalRequired: false })).body.data
+  const root = `/rooms/${created.room.id}`
+  const singer = (await request('POST', '/join', 2, { code: created.invitationCode, displayName: 'Singer' })).body.data.self.id
+  const devices = {}
+  for (const scope of ['controller', 'display']) {
+    const code = (await request('POST', `${root}/pairings`, 2, { scope })).body.data.code
+    devices[scope] = { device: (await request('POST', '/pairings/redeem', 4, { code })).body.data.credential }
+  }
+  const queued = (await request('POST', `${root}/queue`, 2, { songId: 1, title: 'Song', requestNext: false, commandId: randomUUID() })).body.data
+  const offered = (await request('POST', `${root}/readiness/offer`, 1, { entryId: queued.queue[0].id,
+    clockId: queued.clock.clockId, baseRevision: queued.room.revision, commandId: randomUUID() })).body.data
+  const payload = { ...offered.readiness, baseRevision: offered.room.revision, commandId: randomUUID(), ready: true }
+  assert.equal(await request('POST', `${root}/readiness/respond`, devices.display, payload).then(r => r.status), 403)
+  const confirmed = await request('POST', `${root}/readiness/respond`, devices.controller, payload)
+  assert.equal(confirmed.status, 200)
+  assert.equal(confirmed.body.data.readiness.singerMemberId, singer)
+  const cancelled = (await request('POST', `${root}/readiness/cancel`, 1, { ...confirmed.body.data.readiness,
+    baseRevision: confirmed.body.data.room.revision, commandId: randomUUID() })).body.data
+  assert.equal(cancelled.readiness.state, 'idle')
+  assert.equal(cancelled.queue.length, 1)
+  const reoffered = (await request('POST', `${root}/readiness/offer`, 1, { entryId: cancelled.queue[0].id,
+    clockId: cancelled.clock.clockId, baseRevision: cancelled.room.revision, commandId: randomUUID() })).body.data
+  const declined = (await request('POST', `${root}/readiness/respond`, devices.controller, { ...reoffered.readiness,
+    baseRevision: reoffered.room.revision, commandId: randomUUID(), ready: false })).body.data
+  assert.equal(declined.readiness.state, 'idle')
+  assert.equal(declined.queue.length, 0)
+})
+
+test('a fresh service clock requires singer confirmation again and invalidates pre-restart readiness', async (t) => {
+  const { db, request } = await setup(t)
+  const created = (await request('POST', '/rooms', 1, { name: 'Restart readiness', displayName: 'Host', approvalRequired: false })).body.data
+  const root = `/rooms/${created.room.id}`
+  await request('POST', '/join', 2, { code: created.invitationCode, displayName: 'Singer' })
+  const queued = (await request('POST', `${root}/queue`, 2, { songId: 1, title: 'Restart song', requestNext: false, commandId: randomUUID() })).body.data
+  const offered = (await request('POST', `${root}/readiness/offer`, 1, { entryId: queued.queue[0].id,
+    commandId: randomUUID(), clockId: queued.clock.clockId, baseRevision: queued.room.revision })).body.data
+  const oldCommand = { ...offered.readiness, commandId: randomUUID(), ready: true, baseRevision: offered.room.revision }
+  const ready = (await request('POST', `${root}/readiness/respond`, 2, oldCommand)).body.data
+  const app = express()
+  app.use(express.json())
+  const realtime = registerKtvRoutes(app, { db, secret: 'test-only-secret', isKaraokeSong: () => true,
+    authMiddleware: (req, _res, next) => { req.auth = { sub: Number(req.headers['x-test-user']) }; next() } })
+  const server = app.listen(0, '127.0.0.1')
+  realtime.attach(server)
+  await new Promise(resolve => server.once('listening', resolve))
+  t.after(async () => { realtime.close(); await new Promise(resolve => server.close(resolve)) })
+  const url = `http://127.0.0.1:${server.address().port}/api/ktv${root}`
+  const recovered = (await fetch(url, { headers: { 'X-Test-User': '2' } }).then(response => response.json())).data
+  assert.notEqual(recovered.clock.clockId, ready.clock.clockId)
+  assert.equal(recovered.readiness.state, 'awaiting-singer')
+  assert.ok(recovered.readiness.generation > ready.readiness.generation)
+  assert.notEqual(recovered.readiness.performanceId, ready.readiness.performanceId)
+  assert.ok(recovered.room.revision > ready.room.revision)
+  const stale = await fetch(url + '/readiness/respond', { method: 'POST', headers: { 'X-Test-User': '2', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...oldCommand, commandId: randomUUID() }) })
+  assert.equal((await stale.json()).code, 'STALE_CLOCK')
+  const replay = await fetch(url + '/readiness/respond', { method: 'POST', headers: { 'X-Test-User': '2', 'Content-Type': 'application/json' },
+    body: JSON.stringify(oldCommand) })
+  assert.equal(replay.status, 200)
+  assert.equal((await replay.json()).data.readiness.state, 'awaiting-singer')
+  const fresh = await fetch(url + '/readiness/respond', { method: 'POST', headers: { 'X-Test-User': '2', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...recovered.readiness, baseRevision: recovered.room.revision, ready: true, commandId: randomUUID() }) })
+  assert.equal(fresh.status, 200)
+  assert.equal((await fresh.json()).data.readiness.state, 'ready')
+})
+
+test('nominations respect the recipient cap and cannot assign pending or unknown singers', async (t) => {
+  const { request } = await setup(t)
+  const created = (await request('POST', '/rooms', 1, { name: 'Nominations', displayName: 'Host' })).body.data
+  const root = `/rooms/${created.room.id}`
+  const singer = (await request('POST', '/join', 2, { code: created.invitationCode, displayName: 'Singer' })).body.data.self.id
+  const pending = (await request('POST', '/join', 3, { code: created.invitationCode, displayName: 'Pending' })).body.data.self.id
+  await request('POST', `${root}/members/${singer}/approve`, 1)
+  async function nominate(memberId) {
+    return request('POST', `${root}/queue`, 1, { songId: 1, title: 'Nomination', requestNext: false,
+      singerMemberId: memberId, commandId: randomUUID() })
+  }
+  assert.equal((await nominate(pending)).body.code, 'INVALID_SINGER')
+  assert.equal((await nominate(randomUUID())).body.code, 'INVALID_SINGER')
+  let first
+  for (let i = 0; i < 3; i++) {
+    const added = await nominate(singer)
+    assert.equal(added.status, 200)
+    first ??= added.body.data.queue[0].id
+  }
+  assert.equal((await nominate(singer)).body.code, 'SINGER_QUEUE_FULL')
+  assert.equal(await request('POST', `${root}/queue/${first}/decline`, 2, { commandId: randomUUID() }).then(r => r.status), 200)
+  assert.equal((await nominate(singer)).status, 200)
 })
