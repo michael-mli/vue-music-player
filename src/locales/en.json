@@ -120,6 +120,8 @@
     "waitingTitle": "Waiting for host approval",
     "waitingHint": "The host will let you in soon.",
     "refreshesAutomatically": "This page checks for approval automatically.",
+    "liveConnected": "Live room updates connected",
+    "reconnecting": "Reconnecting room updates…",
     "openStage": "Open stage screen",
     "openControls": "Room controls",
     "stage": "Shared stage",

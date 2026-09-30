@@ -44,6 +44,11 @@ export interface PartyRoomSummary {
   admission: 'pending' | 'admitted'
 }
 
+export interface PartySocketTicket {
+  ticket: string
+  expiresAt: string
+}
+
 async function call<T>(method: 'get' | 'post', path: string, body?: Record<string, unknown>, retryOnNetworkError = false): Promise<T> {
   const auth = useAuthStore()
   await auth.ensureIdentity()
@@ -73,6 +78,7 @@ async function call<T>(method: 'get' | 'post', path: string, body?: Record<strin
 export const partyApi = {
   list: () => call<PartyRoomSummary[]>('get', '/rooms'),
   get: (id: string) => call<PartySnapshot>('get', `/rooms/${encodeURIComponent(id)}`),
+  socketTicket: (id: string) => call<PartySocketTicket>('post', `/rooms/${encodeURIComponent(id)}/socket-ticket`, {}),
   create: (name: string, displayName: string, approvalRequired: boolean) =>
     call<PartySnapshot>('post', '/rooms', { name, displayName, approvalRequired }),
   join: (code: string, displayName: string) =>

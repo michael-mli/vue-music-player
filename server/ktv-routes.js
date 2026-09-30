@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID } from 'node:crypto'
 import { orderQueue } from './ktv-queue.js'
+import { createKtvRealtime } from './ktv-realtime.js'
 
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 const ROOM_LIFETIME_MS = 12 * 60 * 60 * 1000
@@ -186,14 +187,22 @@ function snapshot(db, roomId, userId, key) {
   return result
 }
 
-export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSong }) {
+export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSong, allowedOrigins }) {
   const key = createHash('sha256').update('ktv-invitation-v1\0').update(secret).digest()
   const joinHits = new Map()
+  const realtime = createKtvRealtime({
+    getSnapshot: (roomId, userId) => snapshot(db, roomId, userId, key),
+    allowedOrigins,
+  })
 
-  function handler(work) {
+  function handler(work, changed = false) {
     return (req, res) => {
       res.set('Cache-Control', 'no-store')
-      try { res.json({ success: true, data: work(req) }) }
+      try {
+        const data = work(req)
+        res.json({ success: true, data })
+        if (changed) realtime.broadcast(data.room?.id || data.id || req.params.id)
+      }
       catch (error) {
         if (!(error instanceof RoomError)) console.error('[ktv]', error)
         res.status(error.status || 500).json({
@@ -235,7 +244,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
       event(db, roomId, actor.id, 'room.created')
       return snapshot(db, roomId, actor.id, key)
     })
-  }))
+  }, true))
 
   app.post('/api/ktv/join', authMiddleware, handler((req) => {
     const actor = user(req)
@@ -272,7 +281,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
       event(db, room.id, actor.id, 'member.joined')
       return snapshot(db, room.id, actor.id, key)
     })
-  }))
+  }, true))
 
   app.get('/api/ktv/rooms', authMiddleware, handler((req) => {
     const actor = user(req)
@@ -286,6 +295,12 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
 
   app.get('/api/ktv/rooms/:id', authMiddleware, handler((req) => {
     return snapshot(db, req.params.id, user(req).id, key)
+  }))
+
+  app.post('/api/ktv/rooms/:id/socket-ticket', authMiddleware, handler((req) => {
+    const actor = user(req)
+    snapshot(db, req.params.id, actor.id, key)
+    return realtime.issueTicket(req.params.id, actor.id)
   }))
 
   function changeMember(action, nextState) {
@@ -312,7 +327,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
         event(db, req.params.id, actor.id, `member.${action}`, target.id)
         return snapshot(db, req.params.id, actor.id, key)
       })
-    }))
+    }, true))
   }
   changeMember('approve', 'admitted')
   changeMember('remove', 'removed')
@@ -349,7 +364,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
       })
       return snapshot(db, req.params.id, actor.id, key)
     })
-  }))
+  }, true))
 
   app.post('/api/ktv/rooms/:id/queue/:entryId/cancel', authMiddleware, handler((req) => {
     const actor = user(req)
@@ -369,7 +384,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
       })
       return snapshot(db, req.params.id, actor.id, key)
     })
-  }))
+  }, true))
 
   app.post('/api/ktv/rooms/:id/queue/:entryId/approve-next', authMiddleware, handler((req) => {
     const actor = user(req)
@@ -390,7 +405,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
       })
       return snapshot(db, req.params.id, actor.id, key)
     })
-  }))
+  }, true))
 
   app.post('/api/ktv/rooms/:id/invitations/rotate', authMiddleware, handler((req) => {
     const actor = user(req)
@@ -404,7 +419,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
       event(db, room.id, actor.id, 'invitation.rotated')
       return snapshot(db, room.id, actor.id, key)
     })
-  }))
+  }, true))
 
   app.post('/api/ktv/rooms/:id/settings', authMiddleware, handler((req) => {
     const actor = user(req)
@@ -421,7 +436,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
       event(db, room.id, actor.id, 'room.settings')
       return snapshot(db, room.id, actor.id, key)
     })
-  }))
+  }, true))
 
   app.post('/api/ktv/rooms/:id/close', authMiddleware, handler((req) => {
     const actor = user(req)
@@ -436,5 +451,6 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
       event(db, room.id, actor.id, 'room.closed')
       return { id: room.id, status: 'closed' }
     })
-  }))
+  }, true))
+  return realtime
 }

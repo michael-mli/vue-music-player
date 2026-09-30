@@ -163,8 +163,9 @@ function requireAdmin(req, res, next) {
 }
 
 const karaokeManifestPath = process.env.KARAOKE_MANIFEST_PATH || path.join(WEB_ROOT, 'karaoke', 'karaoke_manifest.json')
-registerKtvRoutes(app, {
+const ktvRealtime = registerKtvRoutes(app, {
   db, authMiddleware, secret: JWT_SECRET || 'unconfigured-development-secret',
+  allowedOrigins: (process.env.KTV_ALLOWED_ORIGINS || '').split(',').map((origin) => origin.trim()).filter(Boolean),
   isKaraokeSong: (songId) => {
     try {
       const manifest = JSON.parse(fs.readFileSync(karaokeManifestPath, 'utf8'))
@@ -969,7 +970,7 @@ app.delete('/api/admin/users/:id', authMiddleware, requireAdmin, (req, res) => {
   res.json({ success: true, data: { id } })
 })
 
-app.listen(Number(PORT), '127.0.0.1', () => {
+const httpServer = app.listen(Number(PORT), '127.0.0.1', () => {
   console.log(`[auth] listening on 127.0.0.1:${PORT}`)
   const initialProfile = setTimeout(() => startCategoryProfile('system:startup'), 3000)
   initialProfile.unref()
@@ -982,3 +983,4 @@ app.listen(Number(PORT), '127.0.0.1', () => {
   const autoIngestSweep = setInterval(() => { void pumpAutoIngest() }, 15 * 60 * 1000)
   autoIngestSweep.unref()
 })
+ktvRealtime.attach(httpServer)

@@ -120,6 +120,8 @@
     "waitingTitle": "等待房主批准",
     "waitingHint": "房主批准后即可进入。",
     "refreshesAutomatically": "此页面会自动查询审批状态。",
+    "liveConnected": "房间实时更新已连接",
+    "reconnecting": "正在重新连接房间更新…",
     "openStage": "打开公共屏幕",
     "openControls": "房间控制",
     "stage": "公共舞台",

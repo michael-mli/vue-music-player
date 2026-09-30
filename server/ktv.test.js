@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import express from 'express'
+import WebSocket from 'ws'
 import { initDb } from './db.js'
 import { registerKtvRoutes } from './ktv-routes.js'
 
@@ -23,11 +24,13 @@ async function setup(t) {
     req.auth = { sub: id }
     next()
   }
-  registerKtvRoutes(app, { db, authMiddleware, secret: 'test-only-secret', isKaraokeSong: (id) => id <= 10 })
+  const realtime = registerKtvRoutes(app, { db, authMiddleware, secret: 'test-only-secret', isKaraokeSong: (id) => id <= 10 })
   const server = app.listen(0, '127.0.0.1')
+  realtime.attach(server)
   await new Promise((resolve) => server.once('listening', resolve))
   const base = `http://127.0.0.1:${server.address().port}/api/ktv`
   t.after(async () => {
+    realtime.close()
     await new Promise((resolve) => server.close(resolve))
     db.close()
     fs.rmSync(dir, { recursive: true, force: true })
@@ -40,7 +43,31 @@ async function setup(t) {
     })
     return { status: response.status, body: await response.json(), headers: response.headers }
   }
-  return { db, request }
+  return { db, request, socketUrl: `ws://127.0.0.1:${server.address().port}/api/ktv/ws`, origin: `http://127.0.0.1:${server.address().port}` }
+}
+
+function nextSnapshot(ws) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => { cleanup(); reject(new Error('snapshot timeout')) }, 3000)
+    function cleanup() { clearTimeout(timeout); ws.off('message', onMessage); ws.off('close', onClose) }
+    function onMessage(raw) {
+      const message = JSON.parse(raw.toString())
+      if (message.type !== 'snapshot') return
+      cleanup()
+      resolve(message.data)
+    }
+    function onClose(code) { cleanup(); reject(new Error(`socket closed ${code}`)) }
+    ws.on('message', onMessage)
+    ws.on('close', onClose)
+  })
+}
+
+async function openSocket(url, origin, ticket) {
+  const ws = new WebSocket(url, { origin })
+  await new Promise((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject) })
+  const first = nextSnapshot(ws)
+  ws.send(JSON.stringify({ type: 'authenticate', ticket }))
+  return { ws, first }
 }
 
 test('invited guests enter names, retain random IDs, and wait for host approval', async (t) => {
@@ -199,4 +226,74 @@ test('simultaneous same-song requests create distinct durable entries', async (t
   t.after(() => reopened.close())
   assert.equal(reopened.prepare('SELECT COUNT(*) AS total FROM ktv_queue_entries WHERE room_id = ?').get(room.id).total, 2)
   assert.equal(reopened.prepare('SELECT COUNT(*) AS total FROM ktv_command_receipts WHERE room_id = ?').get(room.id).total, 2)
+})
+
+test('room sockets use one-use tickets, redact pending views, broadcast changes and revoke removal', async (t) => {
+  const { request, socketUrl, origin } = await setup(t)
+  const created = await request('POST', '/rooms', 1, { name: 'Live room', displayName: 'Host' })
+  const { room, invitationCode } = created.body.data
+  const joined = await request('POST', '/join', 2, { code: invitationCode, displayName: 'Alex' })
+  const memberId = joined.body.data.self.id
+  assert.equal(await request('POST', `/rooms/${room.id}/socket-ticket`, 4, {}).then((r) => r.status), 403)
+  const hostTicket = (await request('POST', `/rooms/${room.id}/socket-ticket`, 1, {})).body.data.ticket
+  const guestTicket = (await request('POST', `/rooms/${room.id}/socket-ticket`, 2, {})).body.data.ticket
+  const host = await openSocket(socketUrl, origin, hostTicket)
+  let guest = await openSocket(socketUrl, origin, guestTicket)
+  assert.equal((await host.first).invitationCode, invitationCode)
+  const pending = await guest.first
+  assert.equal(pending.self.admission, 'pending')
+  assert.equal(pending.members, undefined)
+  assert.equal(pending.queue, undefined)
+  const reused = new WebSocket(socketUrl, { origin })
+  await new Promise((resolve, reject) => { reused.once('open', resolve); reused.once('error', reject) })
+  const denied = new Promise((resolve) => reused.once('close', resolve))
+  reused.send(JSON.stringify({ type: 'authenticate', ticket: guestTicket }))
+  assert.equal(await denied, 4401)
+
+  const hostApproval = nextSnapshot(host.ws)
+  const guestApproval = nextSnapshot(guest.ws)
+  const approved = await request('POST', `/rooms/${room.id}/members/${memberId}/approve`, 1, {})
+  assert.equal(approved.status, 200)
+  assert.equal((await hostApproval).members.length, 2)
+  assert.equal((await guestApproval).self.admission, 'admitted')
+
+  guest.ws.terminate()
+  const reconnectTicket = (await request('POST', `/rooms/${room.id}/socket-ticket`, 2, {})).body.data.ticket
+  guest = await openSocket(socketUrl, origin, reconnectTicket)
+  assert.equal((await guest.first).members.length, 2)
+
+  const hostQueue = nextSnapshot(host.ws)
+  const guestQueue = nextSnapshot(guest.ws)
+  const song = await request('POST', `/rooms/${room.id}/queue`, 2, {
+    songId: 1, title: 'Live song', requestNext: false, commandId: randomUUID(),
+  })
+  assert.equal(song.status, 200)
+  assert.equal((await hostQueue).queue[0].title, 'Live song')
+  assert.equal((await guestQueue).queue[0].title, 'Live song')
+
+  const removedClose = new Promise((resolve) => guest.ws.once('close', resolve))
+  const hostRemoval = nextSnapshot(host.ws)
+  await request('POST', `/rooms/${room.id}/members/${memberId}/remove`, 1, {})
+  assert.equal(await removedClose, 4403)
+  assert.equal((await hostRemoval).members.length, 1)
+  assert.equal(await request('POST', `/rooms/${room.id}/socket-ticket`, 2, {}).then((r) => r.status), 403)
+
+  const hostClosed = new Promise((resolve) => host.ws.once('close', resolve))
+  await request('POST', `/rooms/${room.id}/close`, 1, {})
+  assert.equal(await hostClosed, 4410)
+})
+
+test('room socket rejects an untrusted browser origin before authentication', async (t) => {
+  const { socketUrl } = await setup(t)
+  const ws = new WebSocket(socketUrl, { origin: 'https://untrusted.example' })
+  ws.on('error', () => {})
+  const status = await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('upgrade timeout')), 3000)
+    ws.once('unexpected-response', (_, response) => {
+      clearTimeout(timeout)
+      response.resume()
+      resolve(response.statusCode)
+    })
+  })
+  assert.equal(status, 403)
 })

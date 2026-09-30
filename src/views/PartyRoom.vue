@@ -22,6 +22,9 @@
             </RouterLink>
           </div>
         </header>
+        <p class="mt-2 text-xs" :class="liveConnected ? 'text-spotify-green' : 'text-gray-400'" role="status">
+          {{ liveConnected ? $t('party.liveConnected') : $t('party.reconnecting') }}
+        </p>
 
         <p v-if="error" role="alert" class="mt-5 rounded-lg bg-red-500/10 p-3 text-sm text-red-300">{{ error }}</p>
         <div v-if="party.self.admission === 'pending'" class="mt-8 rounded-2xl border border-yellow-500/20 bg-yellow-500/10 p-8 text-center">
@@ -159,6 +162,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { partyApi, type PartySnapshot } from '@/services/partyApi'
+import { subscribeParty } from '@/services/partyRealtime'
 import { useSongsStore } from '@/stores/songs'
 import { karaokeService } from '@/services/karaokeService'
 import type { Song } from '@/types'
@@ -173,6 +177,7 @@ const loading = ref(true)
 const busy = ref(false)
 const copied = ref(false)
 const error = ref('')
+const liveConnected = ref(false)
 const isHost = computed(() => party.value?.self.role === 'host')
 const songsStore = useSongsStore()
 const songSearch = ref('')
@@ -184,6 +189,19 @@ const matchingSongs = computed(() => {
     `${song.title} ${song.artist || ''} ${song.id}`.toLocaleLowerCase().includes(query)).slice(0, 30)
 })
 let timer: number | undefined
+let stopRealtime: (() => void) | undefined
+
+function applySnapshot(next: PartySnapshot) {
+  if (next.room.id !== roomId.value) return
+  if (!party.value || next.room.revision >= party.value.room.revision) party.value = next
+}
+
+function startRealtime() {
+  stopRealtime?.()
+  stopRealtime = subscribeParty(roomId.value, applySnapshot,
+    (connected) => { liveConnected.value = connected },
+    () => { void refresh() })
+}
 
 async function loadCatalog() {
   catalogLoading.value = true
@@ -193,10 +211,14 @@ async function loadCatalog() {
 }
 
 async function refresh() {
+  const requestedRoom = roomId.value
   try {
-    party.value = await partyApi.get(roomId.value)
+    const next = await partyApi.get(requestedRoom)
+    if (requestedRoom !== roomId.value) return
+    applySnapshot(next)
     error.value = ''
   } catch (reason) {
+    if (requestedRoom !== roomId.value) return
     party.value = null
     error.value = String((reason as Error).message)
   } finally {
@@ -206,18 +228,19 @@ async function refresh() {
 
 onMounted(() => {
   void refresh()
+  startRealtime()
   if (!props.stage) void loadCatalog()
-  timer = window.setInterval(() => { if (!document.hidden && !busy.value) void refresh() }, 3000)
+  timer = window.setInterval(() => { if (!document.hidden && !busy.value && !liveConnected.value) void refresh() }, 3000)
 })
-onUnmounted(() => { if (timer !== undefined) window.clearInterval(timer) })
-watch(roomId, () => { party.value = null; loading.value = true; void refresh() })
+onUnmounted(() => { if (timer !== undefined) window.clearInterval(timer); stopRealtime?.() })
+watch(roomId, () => { party.value = null; loading.value = true; void refresh(); startRealtime() })
 watch(() => props.stage, (stage) => { if (!stage) void loadCatalog() })
 
 async function act(work: () => Promise<PartySnapshot>) {
   if (busy.value) return
   busy.value = true
   error.value = ''
-  try { party.value = await work() }
+  try { applySnapshot(await work()) }
   catch (reason) {
     const message = String((reason as Error).message)
     await refresh()
