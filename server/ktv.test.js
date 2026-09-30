@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import express from 'express'
 import { initDb } from './db.js'
 import { registerKtvRoutes } from './ktv-routes.js'
@@ -22,7 +23,7 @@ async function setup(t) {
     req.auth = { sub: id }
     next()
   }
-  registerKtvRoutes(app, { db, authMiddleware, secret: 'test-only-secret' })
+  registerKtvRoutes(app, { db, authMiddleware, secret: 'test-only-secret', isKaraokeSong: (id) => id <= 10 })
   const server = app.listen(0, '127.0.0.1')
   await new Promise((resolve) => server.once('listening', resolve))
   const base = `http://127.0.0.1:${server.address().port}/api/ktv`
@@ -126,4 +127,76 @@ test('room schema is additive and persists after reopening the database', async 
   t.after(() => reopened.close())
   assert.equal(reopened.prepare('SELECT name FROM ktv_rooms WHERE id = ?').get(roomId).name, 'Persisted')
   assert.equal(reopened.prepare('SELECT COUNT(*) count FROM users').get().count, 4)
+})
+
+test('queue requests survive retries, rotate singers fairly, and require host priority approval', async (t) => {
+  const { db, request } = await setup(t)
+  const created = await request('POST', '/rooms', 1, { name: 'Queue room', displayName: 'Host', approvalRequired: false })
+  const { room, invitationCode } = created.body.data
+  const alex = (await request('POST', '/join', 2, { code: invitationCode, displayName: 'Alex' })).body.data.self
+  const sam = (await request('POST', '/join', 3, { code: invitationCode, displayName: 'Sam' })).body.data.self
+  const queuePath = `/rooms/${room.id}/queue`
+  async function add(actor, songId, requestNext = false, commandId = randomUUID()) {
+    return request('POST', queuePath, actor, { songId, title: `Track ${songId}`, requestNext, commandId })
+  }
+  const commandId = randomUUID()
+  const first = await add(2, 1, false, commandId)
+  assert.equal(first.status, 200)
+  assert.equal(first.body.data.queue.length, 1)
+  const same = await add(2, 1, false, commandId)
+  assert.equal(same.status, 200)
+  assert.equal(same.body.data.queue.length, 1)
+  assert.equal(await add(2, 2, false, commandId).then((r) => r.status), 409)
+  assert.equal(await add(4, 2).then((r) => r.status), 403)
+  assert.equal(await add(2, 99).then((r) => r.status), 409)
+  const secondAlex = await add(2, 2)
+  assert.equal(secondAlex.status, 200)
+  const firstSam = await add(3, 3, true)
+  assert.equal(firstSam.status, 200)
+  const thirdAlex = await add(2, 4)
+  assert.equal(thirdAlex.status, 200)
+  assert.equal(await add(2, 5).then((r) => r.status), 409)
+  let queue = (await request('GET', `/rooms/${room.id}`, 1)).body.data.queue
+  assert.deepEqual(queue.map((entry) => entry.songId), [1, 3, 2, 4])
+  assert.equal(queue[1].priorityRequested, true)
+  assert.equal(queue[1].priorityApproved, false)
+  assert.equal(queue[1].singerMemberId, sam.id)
+  assert.equal(queue[0].singerMemberId, alex.id)
+  const priorityPath = `${queuePath}/${queue[1].id}/approve-next`
+  assert.equal(await request('POST', priorityPath, 2, { commandId: randomUUID() }).then((r) => r.status), 403)
+  const approveId = randomUUID()
+  assert.equal(await request('POST', priorityPath, 1, { commandId: approveId }).then((r) => r.status), 200)
+  assert.equal(await request('POST', priorityPath, 1, { commandId: approveId }).then((r) => r.status), 200)
+  queue = (await request('GET', `/rooms/${room.id}`, 2)).body.data.queue
+  assert.deepEqual(queue.map((entry) => entry.songId), [3, 1, 2, 4])
+  assert.equal(await request('POST', `${queuePath}/${queue[1].id}/cancel`, 3, { commandId: randomUUID() }).then((r) => r.status), 403)
+  assert.equal(await request('POST', `${queuePath}/${queue[1].id}/cancel`, 2, { commandId: randomUUID() }).then((r) => r.status), 200)
+  const left = (await request('POST', `/rooms/${room.id}/members/${sam.id}/remove`, 1)).body.data
+  assert.equal(left.queue.at(-1).songId, 3)
+  assert.equal(left.queue.at(-1).state, 'held')
+  assert.equal(await request('GET', `/rooms/${room.id}`, 3).then((r) => r.status), 403)
+  assert.equal(db.prepare("SELECT COUNT(*) AS total FROM ktv_queue_entries WHERE room_id = ? AND state = 'queued'").get(room.id).total, 2)
+})
+
+test('simultaneous same-song requests create distinct durable entries', async (t) => {
+  const { db, request } = await setup(t)
+  const created = await request('POST', '/rooms', 1, { name: 'Two singers', displayName: 'Host', approvalRequired: false })
+  const { room, invitationCode } = created.body.data
+  await request('POST', '/join', 2, { code: invitationCode, displayName: 'Alex' })
+  await request('POST', '/join', 3, { code: invitationCode, displayName: 'Sam' })
+  const queuePath = `/rooms/${room.id}/queue`
+  const [first, second] = await Promise.all([2, 3].map((actor) =>
+    request('POST', queuePath, actor, { songId: 1, title: 'Same song', requestNext: false, commandId: randomUUID() }),
+  ))
+  assert.equal(first.status, 200)
+  assert.equal(second.status, 200)
+  const queue = (await request('GET', `/rooms/${room.id}`, 1)).body.data.queue
+  assert.equal(queue.length, 2)
+  assert.notEqual(queue[0].id, queue[1].id)
+  assert.notEqual(queue[0].singerMemberId, queue[1].singerMemberId)
+  const dbPath = db.prepare('PRAGMA database_list').all()[0].file
+  const reopened = initDb(path.dirname(dbPath))
+  t.after(() => reopened.close())
+  assert.equal(reopened.prepare('SELECT COUNT(*) AS total FROM ktv_queue_entries WHERE room_id = ?').get(room.id).total, 2)
+  assert.equal(reopened.prepare('SELECT COUNT(*) AS total FROM ktv_command_receipts WHERE room_id = ?').get(room.id).total, 2)
 })

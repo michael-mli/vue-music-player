@@ -1,8 +1,11 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID } from 'node:crypto'
+import { orderQueue } from './ktv-queue.js'
 
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 const ROOM_LIFETIME_MS = 12 * 60 * 60 * 1000
 const MAX_MEMBERS = 20
+const MAX_QUEUE = 100
+const MAX_SINGER_REQUESTS = 3
 
 class RoomError extends Error {
   constructor(status, code, message) {
@@ -83,6 +86,52 @@ function hostMember(db, roomId, userId) {
   return member
 }
 
+function admittedMember(db, roomId, userId) {
+  const member = currentMember(db, roomId, userId)
+  if (!member || member.admission !== 'admitted') fail(403, 'NOT_ADMITTED', 'Room access is not available')
+  return member
+}
+
+function commandId(req) {
+  const id = req.body?.commandId
+  if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    fail(400, 'INVALID_COMMAND', 'A command ID is required')
+  }
+  return id.toLowerCase()
+}
+
+function applyCommand(db, roomId, memberId, id, payload, work) {
+  const digest = createHash('sha256').update(JSON.stringify(payload)).digest('hex')
+  const prior = db.prepare(`SELECT payload_hash FROM ktv_command_receipts
+    WHERE room_id = ? AND actor_member_id = ? AND command_id = ?`).get(roomId, memberId, id)
+  if (prior) {
+    if (prior.payload_hash !== digest) fail(409, 'COMMAND_CONFLICT', 'Command ID was already used')
+    return false
+  }
+  work()
+  db.prepare(`INSERT INTO ktv_command_receipts
+    (room_id, actor_member_id, command_id, payload_hash, created_at) VALUES (?, ?, ?, ?, ?)`).run(
+      roomId, memberId, id, digest, new Date().toISOString(),
+    )
+  return true
+}
+
+function queueSnapshot(db, roomId) {
+  const entries = db.prepare(`SELECT q.*, requester.display_name AS requester_name,
+    singer.display_name AS singer_name FROM ktv_queue_entries q
+    JOIN ktv_members requester ON requester.id = q.requester_member_id
+    JOIN ktv_members singer ON singer.id = q.singer_member_id
+    WHERE q.room_id = ? AND q.state IN ('queued', 'held') ORDER BY q.created_at, q.rowid`).all(roomId)
+    .map((row) => ({
+      id: row.id, songId: row.song_id, title: row.title,
+      requesterMemberId: row.requester_member_id, requesterName: row.requester_name,
+      singerMemberId: row.singer_member_id, singerName: row.singer_name,
+      state: row.state, priorityRequested: Boolean(row.priority_requested),
+      priorityApproved: Boolean(row.priority_approved),
+    }))
+  return orderQueue(entries)
+}
+
 function event(db, roomId, userId, action, subjectId = null) {
   db.prepare('INSERT INTO ktv_room_events (room_id, actor_user_id, action, subject_id, created_at) VALUES (?, ?, ?, ?, ?)')
     .run(roomId, userId, action, subjectId, new Date().toISOString())
@@ -128,6 +177,7 @@ function snapshot(db, roomId, userId, key) {
     ORDER BY CASE WHEN role = 'host' THEN 0 ELSE 1 END, joined_at, id`).all(roomId)
     .filter((row) => self.role === 'host' || row.admission === 'admitted')
     .map((row) => ({ id: row.id, displayName: row.display_name, role: row.role, admission: row.admission }))
+  result.queue = queueSnapshot(db, roomId)
   if (self.role === 'host') {
     const invite = db.prepare(`SELECT * FROM ktv_invitations WHERE room_id = ? AND revoked_at IS NULL
       ORDER BY rowid DESC LIMIT 1`).get(roomId)
@@ -136,7 +186,7 @@ function snapshot(db, roomId, userId, key) {
   return result
 }
 
-export function registerKtvRoutes(app, { db, authMiddleware, secret }) {
+export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSong }) {
   const key = createHash('sha256').update('ktv-invitation-v1\0').update(secret).digest()
   const joinHits = new Map()
 
@@ -253,6 +303,11 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret }) {
         }
         db.prepare('UPDATE ktv_members SET admission = ?, updated_at = ? WHERE id = ?')
           .run(nextState, new Date().toISOString(), target.id)
+        if (action === 'remove') {
+          db.prepare(`UPDATE ktv_queue_entries SET state = 'held', updated_at = ?
+            WHERE room_id = ? AND singer_member_id = ? AND state = 'queued'`)
+            .run(new Date().toISOString(), req.params.id, target.id)
+        }
         bump(db, req.params.id)
         event(db, req.params.id, actor.id, `member.${action}`, target.id)
         return snapshot(db, req.params.id, actor.id, key)
@@ -261,6 +316,81 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret }) {
   }
   changeMember('approve', 'admitted')
   changeMember('remove', 'removed')
+
+  app.post('/api/ktv/rooms/:id/queue', authMiddleware, handler((req) => {
+    const actor = user(req)
+    const id = commandId(req)
+    const songId = req.body?.songId
+    if (!Number.isSafeInteger(songId) || songId <= 0) fail(400, 'INVALID_SONG', 'Choose a valid song')
+    const title = requireText(req.body?.title, 'Song title', 160)
+    if (typeof req.body?.requestNext !== 'boolean') fail(400, 'INVALID_INPUT', 'Request type is required')
+    const requestNext = req.body.requestNext
+    return transaction(db, () => {
+      activeRoom(db, req.params.id)
+      const member = admittedMember(db, req.params.id, actor.id)
+      applyCommand(db, req.params.id, member.id, id, ['queue.request', songId, title, requestNext], () => {
+        if (!isKaraokeSong?.(songId)) fail(409, 'SONG_UNAVAILABLE', 'Karaoke backing is unavailable for this song')
+        const pending = db.prepare(`SELECT COUNT(*) AS total FROM ktv_queue_entries
+          WHERE room_id = ? AND singer_member_id = ? AND state = 'queued'`).get(req.params.id, member.id).total
+        if (pending >= MAX_SINGER_REQUESTS) fail(409, 'SINGER_QUEUE_FULL', 'You already have three pending songs')
+        const total = db.prepare(`SELECT COUNT(*) AS total FROM ktv_queue_entries
+          WHERE room_id = ? AND state IN ('queued', 'held')`).get(req.params.id).total
+        if (total >= MAX_QUEUE) fail(409, 'QUEUE_FULL', 'Room queue is full')
+        const now = new Date().toISOString()
+        const entryId = randomUUID()
+        db.prepare(`INSERT INTO ktv_queue_entries
+          (id, room_id, song_id, title, requester_member_id, singer_member_id,
+           priority_requested, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+            entryId, req.params.id, songId, title, member.id, member.id,
+            Number(requestNext), now, now,
+          )
+        bump(db, req.params.id)
+        event(db, req.params.id, actor.id, 'queue.requested', entryId)
+      })
+      return snapshot(db, req.params.id, actor.id, key)
+    })
+  }))
+
+  app.post('/api/ktv/rooms/:id/queue/:entryId/cancel', authMiddleware, handler((req) => {
+    const actor = user(req)
+    const id = commandId(req)
+    return transaction(db, () => {
+      activeRoom(db, req.params.id)
+      const member = admittedMember(db, req.params.id, actor.id)
+      applyCommand(db, req.params.id, member.id, id, ['queue.cancel', req.params.entryId], () => {
+        const entry = db.prepare('SELECT * FROM ktv_queue_entries WHERE room_id = ? AND id = ?')
+          .get(req.params.id, req.params.entryId)
+        if (!entry || !['queued', 'held'].includes(entry.state)) fail(409, 'INVALID_QUEUE_STATE', 'Song is not queued')
+        if (member.role !== 'host' && entry.requester_member_id !== member.id) fail(403, 'FORBIDDEN', 'Cannot remove this song')
+        db.prepare("UPDATE ktv_queue_entries SET state = 'cancelled', updated_at = ? WHERE id = ?")
+          .run(new Date().toISOString(), entry.id)
+        bump(db, req.params.id)
+        event(db, req.params.id, actor.id, 'queue.cancelled', entry.id)
+      })
+      return snapshot(db, req.params.id, actor.id, key)
+    })
+  }))
+
+  app.post('/api/ktv/rooms/:id/queue/:entryId/approve-next', authMiddleware, handler((req) => {
+    const actor = user(req)
+    const id = commandId(req)
+    return transaction(db, () => {
+      activeRoom(db, req.params.id)
+      const member = hostMember(db, req.params.id, actor.id)
+      applyCommand(db, req.params.id, member.id, id, ['queue.approve-next', req.params.entryId], () => {
+        const entry = db.prepare('SELECT * FROM ktv_queue_entries WHERE room_id = ? AND id = ?')
+          .get(req.params.id, req.params.entryId)
+        if (!entry || entry.state !== 'queued' || !entry.priority_requested || entry.priority_approved) {
+          fail(409, 'INVALID_QUEUE_STATE', 'Priority request cannot be approved')
+        }
+        db.prepare('UPDATE ktv_queue_entries SET priority_approved = 1, updated_at = ? WHERE id = ?')
+          .run(new Date().toISOString(), entry.id)
+        bump(db, req.params.id)
+        event(db, req.params.id, actor.id, 'queue.priority_approved', entry.id)
+      })
+      return snapshot(db, req.params.id, actor.id, key)
+    })
+  }))
 
   app.post('/api/ktv/rooms/:id/invitations/rotate', authMiddleware, handler((req) => {
     const actor = user(req)

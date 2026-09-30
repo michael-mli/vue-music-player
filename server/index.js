@@ -162,7 +162,16 @@ function requireAdmin(req, res, next) {
   next()
 }
 
-registerKtvRoutes(app, { db, authMiddleware, secret: JWT_SECRET || 'unconfigured-development-secret' })
+const karaokeManifestPath = process.env.KARAOKE_MANIFEST_PATH || path.join(WEB_ROOT, 'karaoke', 'karaoke_manifest.json')
+registerKtvRoutes(app, {
+  db, authMiddleware, secret: JWT_SECRET || 'unconfigured-development-secret',
+  isKaraokeSong: (songId) => {
+    try {
+      const manifest = JSON.parse(fs.readFileSync(karaokeManifestPath, 'utf8'))
+      return Array.isArray(manifest.ids) && manifest.ids.includes(songId)
+    } catch { return false }
+  },
+})
 
 registerDigRoutes(app, {
   authMiddleware,

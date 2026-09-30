@@ -35,6 +35,16 @@
             <p class="text-sm uppercase tracking-[0.25em] text-spotify-green">{{ $t('party.stage') }}</p>
             <h2 class="mt-5 text-3xl font-bold sm:text-5xl">{{ $t('party.stageReady') }}</h2>
             <p class="mt-4 max-w-xl text-gray-300">{{ $t('party.stageWaiting') }}</p>
+            <div v-if="party.queue?.length" class="mt-8 w-full max-w-xl text-left">
+              <h3 class="mb-3 text-sm font-semibold uppercase tracking-wider text-spotify-green">{{ $t('party.upNext') }}</h3>
+              <ol class="space-y-2">
+                <li v-for="(entry, index) in party.queue.slice(0, 5)" :key="entry.id" class="rounded-xl bg-white/10 px-4 py-3">
+                  <span class="font-semibold">{{ index + 1 }}. {{ entry.title }}</span>
+                  <span class="ml-2 text-sm text-gray-300">{{ entry.singerName }}</span>
+                  <span v-if="entry.state === 'held'" class="ml-2 text-xs text-yellow-300">{{ $t('party.held') }}</span>
+                </li>
+              </ol>
+            </div>
           </div>
           <div class="mt-5 flex flex-wrap gap-3 text-sm text-gray-300">
             <span>{{ $t('party.peopleCount', { count: party.members?.length || 0 }) }}</span>
@@ -62,7 +72,41 @@
 
               <section class="rounded-2xl border border-white/10 bg-white/5 p-5">
                 <h2 class="text-lg font-semibold">{{ $t('party.songsAndQueue') }}</h2>
-                <p class="mt-3 text-sm text-gray-400">{{ $t('party.queueComing') }}</p>
+                <p class="mt-2 text-sm text-gray-400">{{ $t('party.queuePlanning') }}</p>
+                <label class="mt-5 block text-sm font-medium" for="party-song-search">{{ $t('party.searchSongs') }}</label>
+                <input id="party-song-search" v-model="songSearch" type="search" :placeholder="$t('party.searchSongs')"
+                  class="mt-2 w-full rounded-lg border border-white/20 bg-black/20 px-3 py-2 outline-none focus:border-spotify-green" />
+                <p v-if="catalogLoading" class="mt-3 text-sm text-gray-400">{{ $t('party.loadingSongs') }}</p>
+                <p v-else-if="!karaokeService.count" class="mt-3 text-sm text-gray-400">{{ $t('party.noKaraokeSongs') }}</p>
+                <ul v-else class="mt-3 max-h-72 space-y-2 overflow-y-auto">
+                  <li v-for="song in matchingSongs" :key="song.id" class="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-black/20 p-3">
+                    <span class="min-w-0 flex-1 truncate text-sm">{{ song.title }}</span>
+                    <div class="flex gap-2 text-xs">
+                      <button type="button" :disabled="busy" class="rounded-full border border-white/25 px-3 py-1.5 hover:bg-white/10 disabled:opacity-50" @click="requestSong(song, false)">{{ $t('party.addSong') }}</button>
+                      <button type="button" :disabled="busy" class="rounded-full border border-spotify-green px-3 py-1.5 text-spotify-green hover:bg-white/10 disabled:opacity-50" @click="requestSong(song, true)">{{ $t('party.requestNext') }}</button>
+                    </div>
+                  </li>
+                </ul>
+                <p v-if="!catalogLoading && karaokeService.count && !matchingSongs.length" class="mt-3 text-sm text-gray-400">{{ $t('party.noMatchingSongs') }}</p>
+                <h3 class="mt-6 text-base font-semibold">{{ $t('party.upcomingQueue') }}</h3>
+                <p v-if="!party.queue?.length" class="mt-2 text-sm text-gray-400">{{ $t('party.emptyQueue') }}</p>
+                <ol v-else class="mt-3 space-y-2">
+                  <li v-for="(entry, index) in party.queue" :key="entry.id" class="rounded-lg bg-black/20 p-3">
+                    <div class="flex items-start justify-between gap-2">
+                      <div class="min-w-0">
+                        <p class="font-medium">{{ index + 1 }}. {{ entry.title }}</p>
+                        <p class="mt-1 text-xs text-gray-400">{{ $t('party.singer') }}: {{ entry.singerName }} · {{ $t('party.requestedBy') }}: {{ entry.requesterName }}</p>
+                        <p v-if="entry.state === 'held'" class="mt-1 text-xs text-yellow-300">{{ $t('party.held') }}</p>
+                        <p v-else-if="entry.priorityApproved" class="mt-1 text-xs text-spotify-green">{{ $t('party.nextApproved') }}</p>
+                        <p v-else-if="entry.priorityRequested" class="mt-1 text-xs text-yellow-300">{{ $t('party.nextPending') }}</p>
+                      </div>
+                      <div class="flex shrink-0 flex-col items-end gap-2 text-xs">
+                        <button v-if="isHost && entry.priorityRequested && !entry.priorityApproved && entry.state === 'queued'" type="button" :disabled="busy" class="text-spotify-green disabled:opacity-50" @click="approveNext(entry.id)">{{ $t('party.approveNext') }}</button>
+                        <button v-if="isHost || entry.requesterMemberId === party.self.id" type="button" :disabled="busy" class="text-red-300 disabled:opacity-50" @click="cancelSong(entry.id)">{{ $t('party.removeSong') }}</button>
+                      </div>
+                    </div>
+                  </li>
+                </ol>
               </section>
 
               <section v-if="isHost" class="rounded-2xl border border-white/10 bg-white/5 p-5">
@@ -115,6 +159,9 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { partyApi, type PartySnapshot } from '@/services/partyApi'
+import { useSongsStore } from '@/stores/songs'
+import { karaokeService } from '@/services/karaokeService'
+import type { Song } from '@/types'
 
 const props = withDefaults(defineProps<{ stage?: boolean }>(), { stage: false })
 const route = useRoute()
@@ -127,7 +174,23 @@ const busy = ref(false)
 const copied = ref(false)
 const error = ref('')
 const isHost = computed(() => party.value?.self.role === 'host')
+const songsStore = useSongsStore()
+const songSearch = ref('')
+const catalogLoading = ref(false)
+const matchingSongs = computed(() => {
+  const query = songSearch.value.trim().toLocaleLowerCase()
+  if (!query) return songsStore.songs.filter(song => karaokeService.isAvailable(song.id)).slice(0, 30)
+  return songsStore.songs.filter(song => karaokeService.isAvailable(song.id) &&
+    `${song.title} ${song.artist || ''} ${song.id}`.toLocaleLowerCase().includes(query)).slice(0, 30)
+})
 let timer: number | undefined
+
+async function loadCatalog() {
+  catalogLoading.value = true
+  try {
+    await Promise.all([songsStore.songs.length ? Promise.resolve() : songsStore.fetchSongs(), karaokeService.ensureLoaded()])
+  } finally { catalogLoading.value = false }
+}
 
 async function refresh() {
   try {
@@ -143,17 +206,23 @@ async function refresh() {
 
 onMounted(() => {
   void refresh()
+  if (!props.stage) void loadCatalog()
   timer = window.setInterval(() => { if (!document.hidden && !busy.value) void refresh() }, 3000)
 })
 onUnmounted(() => { if (timer !== undefined) window.clearInterval(timer) })
 watch(roomId, () => { party.value = null; loading.value = true; void refresh() })
+watch(() => props.stage, (stage) => { if (!stage) void loadCatalog() })
 
 async function act(work: () => Promise<PartySnapshot>) {
   if (busy.value) return
   busy.value = true
   error.value = ''
   try { party.value = await work() }
-  catch (reason) { error.value = String((reason as Error).message); await refresh() }
+  catch (reason) {
+    const message = String((reason as Error).message)
+    await refresh()
+    error.value = message
+  }
   finally { busy.value = false }
 }
 
@@ -162,6 +231,15 @@ function remove(memberId: string) {
   if (window.confirm(t('party.confirmRemove'))) void act(() => partyApi.remove(roomId.value, memberId))
 }
 function rotateCode() { void act(() => partyApi.rotate(roomId.value)) }
+function requestSong(song: Song, requestNext: boolean) {
+  void act(() => partyApi.requestSong(roomId.value, song.id, song.title, requestNext, crypto.randomUUID()))
+}
+function cancelSong(entryId: string) {
+  void act(() => partyApi.cancelSong(roomId.value, entryId, crypto.randomUUID()))
+}
+function approveNext(entryId: string) {
+  void act(() => partyApi.approveNext(roomId.value, entryId, crypto.randomUUID()))
+}
 function changeSetting(changes: { locked?: boolean; approvalRequired?: boolean }) {
   void act(() => partyApi.settings(roomId.value, changes))
 }

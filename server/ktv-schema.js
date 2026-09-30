@@ -47,5 +47,27 @@ export function initKtvSchema(db) {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS ktv_events_room ON ktv_room_events(room_id, id);
+    CREATE TABLE IF NOT EXISTS ktv_queue_entries (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL REFERENCES ktv_rooms(id) ON DELETE CASCADE,
+      song_id INTEGER NOT NULL CHECK (song_id > 0),
+      title TEXT NOT NULL,
+      requester_member_id TEXT NOT NULL REFERENCES ktv_members(id),
+      singer_member_id TEXT NOT NULL REFERENCES ktv_members(id),
+      state TEXT NOT NULL DEFAULT 'queued' CHECK (state IN ('queued', 'held', 'cancelled')),
+      priority_requested INTEGER NOT NULL DEFAULT 0 CHECK (priority_requested IN (0, 1)),
+      priority_approved INTEGER NOT NULL DEFAULT 0 CHECK (priority_approved IN (0, 1)),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS ktv_queue_room ON ktv_queue_entries(room_id, state, created_at, id);
+    CREATE TABLE IF NOT EXISTS ktv_command_receipts (
+      room_id TEXT NOT NULL REFERENCES ktv_rooms(id) ON DELETE CASCADE,
+      actor_member_id TEXT NOT NULL REFERENCES ktv_members(id),
+      command_id TEXT NOT NULL,
+      payload_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (room_id, actor_member_id, command_id)
+    );
   `)
 }
