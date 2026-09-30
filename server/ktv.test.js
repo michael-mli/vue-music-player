@@ -386,3 +386,172 @@ test('pairing replaces pending codes and limits a membership to three devices', 
   await request('POST', `/rooms/${roomId}/devices/${first.body.data.deviceId}/revoke`, 1, {})
   assert.equal(await request('POST', `/rooms/${roomId}/pairings`, 1, { scope: 'display' }).then((r) => r.status), 200)
 })
+
+test('co-host permissions follow the room matrix and demotion updates paired controllers', async (t) => {
+  const { request, socketUrl, origin } = await setup(t)
+  const created = (await request('POST', '/rooms', 1, { name: 'Moderated room', displayName: 'Host' })).body.data
+  const root = `/rooms/${created.room.id}`
+  const members = {}
+  for (const actor of [2, 3]) {
+    members[actor] = (await request('POST', '/join', actor, { code: created.invitationCode, displayName: `Guest ${actor}` })).body.data.self.id
+    await request('POST', `${root}/members/${members[actor]}/approve`, 1)
+    const promoted = await request('POST', `${root}/members/${members[actor]}/role`, 1, { role: 'cohost', commandId: randomUUID() })
+    assert.equal(promoted.status, 200)
+    assert.equal(promoted.body.data.members.find((member) => member.id === members[actor]).role, 'cohost')
+  }
+  members[4] = (await request('POST', '/join', 4, { code: created.invitationCode, displayName: 'New guest' })).body.data.self.id
+  const cohostView = (await request('GET', root, 2)).body.data
+  assert.equal(cohostView.self.role, 'cohost')
+  assert.equal(cohostView.members.find((member) => member.id === members[4]).admission, 'pending')
+  assert.equal(cohostView.invitationCode, undefined)
+
+  const code = (await request('POST', `${root}/pairings`, 2, { scope: 'controller' })).body.data.code
+  const device = { device: (await request('POST', '/pairings/redeem', 4, { code })).body.data.credential }
+  const displayCode = (await request('POST', `${root}/pairings`, 2, { scope: 'display' })).body.data.code
+  const display = { device: (await request('POST', '/pairings/redeem', 4, { code: displayCode })).body.data.credential }
+  const displayView = (await request('GET', root, display)).body.data
+  assert.equal(displayView.members.length, 3)
+  assert.equal(displayView.excludedMembers, undefined)
+  assert.equal(displayView.invitationCode, undefined)
+
+  assert.equal(await request('POST', `${root}/members/${members[4]}/approve`, device, { commandId: randomUUID() }).then((r) => r.status), 200)
+  const song = (await request('POST', `${root}/queue`, 4, {
+    songId: 1, title: 'Guest song', requestNext: true, commandId: randomUUID(),
+  })).body.data.queue[0]
+  assert.equal(await request('POST', `${root}/queue/${song.id}/approve-next`, device, { commandId: randomUUID() }).then((r) => r.status), 200)
+  assert.equal(await request('POST', `${root}/queue/${song.id}/cancel`, 2, { commandId: randomUUID() }).then((r) => r.status), 200)
+  assert.equal(await request('POST', `${root}/settings`, device, { locked: true }).then((r) => r.status), 200)
+  assert.equal(await request('POST', `${root}/settings`, 4, { locked: false }).then((r) => r.status), 403)
+  assert.equal(await request('POST', `${root}/members/${members[3]}/remove`, 2).then((r) => r.status), 403)
+  assert.equal(await request('POST', `${root}/members/${members[3]}/block`, device, { commandId: randomUUID() }).then((r) => r.status), 403)
+  assert.equal(await request('POST', `${root}/members/${members[4]}/role`, 2, { role: 'cohost', commandId: randomUUID() }).then((r) => r.status), 403)
+  assert.equal(await request('POST', `${root}/members/${members[4]}/transfer-host`, device, { commandId: randomUUID() }).then((r) => r.status), 403)
+  assert.equal(await request('POST', `${root}/invitations/rotate`, 2).then((r) => r.status), 403)
+  assert.equal(await request('POST', `${root}/close`, device).then((r) => r.status), 403)
+
+  const ticket = (await request('POST', `${root}/socket-ticket`, device, {})).body.data.ticket
+  const connected = await openSocket(socketUrl, origin, ticket)
+  assert.equal((await connected.first).self.role, 'cohost')
+  const demoted = nextSnapshot(connected.ws)
+  await request('POST', `${root}/members/${members[2]}/role`, 1, { role: 'member', commandId: randomUUID() })
+  assert.equal((await demoted).self.role, 'member')
+  assert.equal(await request('POST', `${root}/settings`, device, { locked: false }).then((r) => r.status), 403)
+  assert.equal(await request('POST', `${root}/members/${members[4]}/remove`, device).then((r) => r.status), 403)
+  connected.ws.close()
+})
+
+test('rejection, block, unblock, and restore preserve identity without reviving old grants or tickets', async (t) => {
+  const { db, request, socketUrl, origin } = await setup(t)
+  const created = (await request('POST', '/rooms', 1, { name: 'Access lifecycle', displayName: 'Host' })).body.data
+  const root = `/rooms/${created.room.id}`
+  const joined = (await request('POST', '/join', 2, { code: created.invitationCode, displayName: 'Alex' })).body.data
+  const memberId = joined.self.id
+  const memberPath = `${root}/members/${memberId}`
+  const rejectId = randomUUID()
+  const rejected = await request('POST', `${memberPath}/reject`, 1, { commandId: rejectId })
+  assert.equal(rejected.status, 200)
+  assert.equal(rejected.body.data.excludedMembers[0].admission, 'rejected')
+  assert.equal((await request('POST', `${memberPath}/reject`, 1, { commandId: rejectId })).body.data.room.revision, rejected.body.data.room.revision)
+  const declinedView = (await request('GET', root, 2)).body.data
+  assert.equal(declinedView.self.admission, 'rejected')
+  assert.equal(declinedView.members, undefined)
+  assert.equal(declinedView.queue, undefined)
+  assert.equal(declinedView.excludedMembers, undefined)
+  assert.equal(await request('POST', `${root}/settings`, 2, { locked: true }).then((r) => r.status), 403)
+  await request('POST', `${memberPath}/approve`, 1, { commandId: randomUUID() })
+  const originalTicket = (await request('POST', `${root}/socket-ticket`, 2, {})).body.data.ticket
+  const code = (await request('POST', `${root}/pairings`, 2, { scope: 'display' })).body.data.code
+  const device = { device: (await request('POST', '/pairings/redeem', 4, { code })).body.data.credential }
+  const deviceTicket = (await request('POST', `${root}/socket-ticket`, device, {})).body.data.ticket
+  const liveTicket = (await request('POST', `${root}/socket-ticket`, device, {})).body.data.ticket
+  const connected = await openSocket(socketUrl, origin, liveTicket)
+  await connected.first
+  const disconnected = new Promise((resolve) => connected.ws.once('close', resolve))
+  const blocked = await request('POST', `${memberPath}/block`, 1, { commandId: randomUUID() })
+  assert.equal(blocked.status, 200)
+  assert.equal(blocked.body.data.excludedMembers[0].blocked, true)
+  assert.equal(await disconnected, 4403)
+  assert.equal(await request('GET', root, 2).then((r) => r.status), 403)
+  assert.equal(await request('GET', root, device).then((r) => r.status), 403)
+  assert.equal((await request('POST', '/join', 2, { code: created.invitationCode, displayName: 'Alex' })).body.code, 'ROOM_BLOCKED')
+  assert.equal(await request('POST', `${memberPath}/approve`, 1, { commandId: randomUUID() }).then((r) => r.status), 409)
+  await request('POST', `${memberPath}/unblock`, 1, { commandId: randomUUID() })
+  assert.equal(await request('GET', root, 2).then((r) => r.status), 403)
+  const restored = await request('POST', `${memberPath}/approve`, 1, { commandId: randomUUID() })
+  assert.equal(restored.status, 200)
+  assert.equal((await request('GET', root, 2)).body.data.self.id, memberId)
+  assert.equal(await request('GET', root, device).then((r) => r.status), 403)
+  for (const ticket of [originalTicket, deviceTicket]) {
+    const ws = new WebSocket(socketUrl, { origin })
+    await new Promise((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject) })
+    const denied = new Promise((resolve) => ws.once('close', resolve))
+    ws.send(JSON.stringify({ type: 'authenticate', ticket }))
+    assert.equal(await denied, 4401)
+  }
+  assert.equal(db.prepare('SELECT COUNT(*) total FROM ktv_members WHERE room_id = ?').get(created.room.id).total, 2)
+})
+
+test('host transfer rolls back failures, updates sockets and paired controls, and survives retries and races', async (t) => {
+  const { db, request, socketUrl, origin } = await setup(t)
+  const created = (await request('POST', '/rooms', 1, { name: 'Host transfer', displayName: 'Host', approvalRequired: false })).body.data
+  const root = `/rooms/${created.room.id}`
+  const next = (await request('POST', '/join', 2, { code: created.invitationCode, displayName: 'Next host' })).body.data.self.id
+  const third = (await request('POST', '/join', 3, { code: created.invitationCode, displayName: 'Third' })).body.data.self.id
+  const code = (await request('POST', `${root}/pairings`, 1, { scope: 'controller' })).body.data.code
+  const device = { device: (await request('POST', '/pairings/redeem', 4, { code })).body.data.credential }
+  const ticket = (await request('POST', `${root}/socket-ticket`, device, {})).body.data.ticket
+  const oldHost = await openSocket(socketUrl, origin, ticket)
+  assert.equal((await oldHost.first).invitationCode, created.invitationCode)
+  const nextTicket = (await request('POST', `${root}/socket-ticket`, 2, {})).body.data.ticket
+  const newHost = await openSocket(socketUrl, origin, nextTicket)
+  await newHost.first
+  const transferId = randomUUID()
+  db.exec(`CREATE TRIGGER fail_transfer BEFORE UPDATE OF role ON ktv_members
+    WHEN NEW.role = 'host' BEGIN SELECT RAISE(ABORT, 'test transfer failure'); END`)
+  assert.equal(await request('POST', `${root}/members/${next}/transfer-host`, device, { commandId: transferId }).then((r) => r.status), 500)
+  assert.equal(db.prepare("SELECT id FROM ktv_members WHERE room_id = ? AND role = 'host'").get(created.room.id).id, created.self.id)
+  assert.equal(db.prepare('SELECT 1 FROM ktv_command_receipts WHERE command_id = ?').get(transferId), undefined)
+  db.exec('DROP TRIGGER fail_transfer')
+  const oldUpdate = nextSnapshot(oldHost.ws)
+  const newUpdate = nextSnapshot(newHost.ws)
+  const transferred = await request('POST', `${root}/members/${next}/transfer-host`, device, { commandId: transferId })
+  assert.equal(transferred.status, 200)
+  assert.equal(transferred.body.data.self.role, 'member')
+  assert.equal(transferred.body.data.invitationCode, undefined)
+  assert.equal((await oldUpdate).self.role, 'member')
+  assert.equal((await newUpdate).invitationCode, created.invitationCode)
+  assert.equal(await request('POST', `${root}/settings`, device, { locked: true }).then((r) => r.status), 403)
+  assert.equal(await request('POST', `${root}/close`, 1).then((r) => r.status), 403)
+  const replay = await request('POST', `${root}/members/${next}/transfer-host`, 1, { commandId: transferId })
+  assert.equal(replay.status, 200)
+  assert.equal(replay.body.data.room.revision, transferred.body.data.room.revision)
+  assert.equal(await request('POST', `${root}/members/${third}/transfer-host`, 1, { commandId: transferId }).then((r) => r.status), 409)
+  const raced = await Promise.all([created.self.id, third].map((memberId) =>
+    request('POST', `${root}/members/${memberId}/transfer-host`, 2, { commandId: randomUUID() })))
+  assert.deepEqual(raced.map((result) => result.status).sort(), [200, 403])
+  assert.equal(db.prepare("SELECT COUNT(*) total FROM ktv_members WHERE room_id = ? AND role = 'host'").get(created.room.id).total, 1)
+  oldHost.ws.close()
+  newHost.ws.close()
+})
+
+test('existing membership tables migrate additively and retain co-host and block metadata on restart', async (t) => {
+  const { db, request } = await setup(t)
+  const created = (await request('POST', '/rooms', 1, { name: 'Migration', displayName: 'Host', approvalRequired: false })).body.data
+  const root = `/rooms/${created.room.id}`
+  const member = (await request('POST', '/join', 2, { code: created.invitationCode, displayName: 'Alex' })).body.data.self.id
+  const other = (await request('POST', '/join', 3, { code: created.invitationCode, displayName: 'Sam' })).body.data.self.id
+  // Recreate the pre-moderation table shape while preserving existing rows/FKs.
+  db.exec('ALTER TABLE ktv_members DROP COLUMN cohost_at; ALTER TABLE ktv_members DROP COLUMN blocked_at')
+  const dataDir = path.dirname(db.prepare('PRAGMA database_list').all()[0].file)
+  let reopened = initDb(dataDir)
+  reopened.close()
+  assert.equal((await request('GET', root, 2)).body.data.self.id, member)
+  await request('POST', `${root}/members/${member}/role`, 1, { role: 'cohost', commandId: randomUUID() })
+  await request('POST', `${root}/members/${other}/block`, 1, { commandId: randomUUID() })
+  reopened = initDb(dataDir)
+  t.after(() => reopened.close())
+  assert.ok(reopened.prepare('SELECT cohost_at FROM ktv_members WHERE id = ?').get(member).cohost_at)
+  assert.ok(reopened.prepare('SELECT blocked_at FROM ktv_members WHERE id = ?').get(other).blocked_at)
+  assert.equal(reopened.prepare('PRAGMA foreign_key_check').all().length, 0)
+  assert.equal(reopened.prepare('SELECT COUNT(*) total FROM users').get().total, 4)
+})

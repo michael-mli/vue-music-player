@@ -66,6 +66,15 @@ export function createKtvRealtime({ getSnapshot, allowedOrigins = [] }) {
     }
   }
 
+  function revokeMember(roomId, memberId) {
+    for (const [hash, record] of tickets) {
+      if (record.roomId === roomId && record.principal.memberId === memberId) tickets.delete(hash)
+    }
+    for (const ws of wss.clients) {
+      if (ws.roomId === roomId && ws.principal?.memberId === memberId) ws.close(4403, 'Room access ended')
+    }
+  }
+
   function attach(server) {
     server.on('upgrade', (req, socket, head) => {
       let pathname
@@ -130,5 +139,5 @@ export function createKtvRealtime({ getSnapshot, allowedOrigins = [] }) {
     wss.close()
   }
 
-  return { issueTicket, broadcast, attach, close }
+  return { issueTicket, broadcast, revokeMember, attach, close }
 }

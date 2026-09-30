@@ -19,6 +19,8 @@ export function initKtvSchema(db) {
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       display_name TEXT NOT NULL,
       role TEXT NOT NULL CHECK (role IN ('host', 'member')),
+      cohost_at TEXT,
+      blocked_at TEXT,
       admission TEXT NOT NULL CHECK (admission IN ('pending', 'admitted', 'rejected', 'removed')),
       joined_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -93,4 +95,9 @@ export function initKtvSchema(db) {
     );
     CREATE INDEX IF NOT EXISTS ktv_grants_member ON ktv_device_grants(room_id, member_id, revoked_at);
   `)
+  // Keep the original role/admission CHECKs and foreign keys intact. Co-host
+  // capability and blocking are additive metadata on the existing membership.
+  const columns = db.prepare('PRAGMA table_info(ktv_members)').all().map((column) => column.name)
+  if (!columns.includes('cohost_at')) db.exec('ALTER TABLE ktv_members ADD COLUMN cohost_at TEXT')
+  if (!columns.includes('blocked_at')) db.exec('ALTER TABLE ktv_members ADD COLUMN blocked_at TEXT')
 }

@@ -6,8 +6,8 @@ import { clearPartyDevice, getPartyDevice, type PartyDeviceGrant } from './party
 export interface PartyMember {
   id: string
   displayName: string
-  role: 'host' | 'member'
-  admission: 'pending' | 'admitted'
+  role: 'host' | 'cohost' | 'member'
+  admission: 'pending' | 'admitted' | 'rejected' | 'removed'
 }
 
 export interface PartySnapshot {
@@ -21,6 +21,7 @@ export interface PartySnapshot {
   }
   self: PartyMember
   members?: PartyMember[]
+  excludedMembers?: (PartyMember & { blocked: boolean })[]
   queue?: PartyQueueEntry[]
   invitationCode?: string | null
   deviceScope?: 'display' | 'controller'
@@ -104,10 +105,20 @@ export const partyApi = {
     call<PartySnapshot>('post', '/rooms', { name, displayName, approvalRequired }),
   join: (code: string, displayName: string) =>
     call<PartySnapshot>('post', '/join', { code, displayName }),
-  approve: (roomId: string, memberId: string) =>
-    call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/members/${encodeURIComponent(memberId)}/approve`),
-  remove: (roomId: string, memberId: string) =>
-    call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/members/${encodeURIComponent(memberId)}/remove`),
+  approve: (roomId: string, memberId: string, commandId: string) =>
+    call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/members/${encodeURIComponent(memberId)}/approve`, { commandId }, true),
+  remove: (roomId: string, memberId: string, commandId: string) =>
+    call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/members/${encodeURIComponent(memberId)}/remove`, { commandId }, true),
+  reject: (roomId: string, memberId: string, commandId: string) =>
+    call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/members/${encodeURIComponent(memberId)}/reject`, { commandId }, true),
+  block: (roomId: string, memberId: string, commandId: string) =>
+    call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/members/${encodeURIComponent(memberId)}/block`, { commandId }, true),
+  unblock: (roomId: string, memberId: string, commandId: string) =>
+    call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/members/${encodeURIComponent(memberId)}/unblock`, { commandId }, true),
+  role: (roomId: string, memberId: string, role: 'cohost' | 'member', commandId: string) =>
+    call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/members/${encodeURIComponent(memberId)}/role`, { role, commandId }, true),
+  transferHost: (roomId: string, memberId: string, commandId: string) =>
+    call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/members/${encodeURIComponent(memberId)}/transfer-host`, { commandId }, true),
   rotate: (roomId: string) =>
     call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/invitations/rotate`),
   settings: (roomId: string, changes: { locked?: boolean; approvalRequired?: boolean }) =>

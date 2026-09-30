@@ -90,6 +90,22 @@ function hostMember(db, roomId, userId) {
   return member
 }
 
+function isModerator(member) { return member.role === 'host' || Boolean(member.cohost_at) }
+
+function moderatorMember(db, roomId, userId) {
+  const member = admittedMember(db, roomId, userId)
+  if (!isModerator(member)) fail(403, 'FORBIDDEN', 'Host or co-host only')
+  return member
+}
+
+function publicMember(member) {
+  return {
+    id: member.id, displayName: member.display_name,
+    role: member.role === 'host' ? 'host' : member.cohost_at ? 'cohost' : 'member',
+    admission: member.admission,
+  }
+}
+
 function admittedMember(db, roomId, userId) {
   const member = currentMember(db, roomId, userId)
   if (!member || member.admission !== 'admitted') fail(403, 'NOT_ADMITTED', 'Room access is not available')
@@ -102,6 +118,12 @@ function commandId(req) {
     fail(400, 'INVALID_COMMAND', 'A command ID is required')
   }
   return id.toLowerCase()
+}
+
+function memberCommandId(req) {
+  // Older deployed clients send approve/remove without a command ID. Updated
+  // clients send one so a retry can safely return the committed snapshot.
+  return req.body?.commandId === undefined ? randomUUID() : commandId(req)
 }
 
 function applyCommand(db, roomId, memberId, id, payload, work) {
@@ -164,7 +186,7 @@ function addInvite(db, roomId, expiresAt, key) {
 function snapshot(db, roomId, userId, key) {
   const room = activeRoom(db, roomId)
   const self = currentMember(db, roomId, userId)
-  if (!self || ['removed', 'rejected'].includes(self.admission)) {
+  if (!self || self.admission === 'removed' || self.blocked_at) {
     fail(403, 'NOT_ADMITTED', 'Room access is not available')
   }
   const result = {
@@ -172,15 +194,21 @@ function snapshot(db, roomId, userId, key) {
       id: room.id, name: room.name, approvalRequired: Boolean(room.approval_required),
       locked: Boolean(room.locked), revision: room.revision, expiresAt: room.expires_at,
     },
-    self: { id: self.id, displayName: self.display_name, role: self.role, admission: self.admission },
+    self: publicMember(self),
   }
-  if (self.admission === 'pending') return result
+  if (self.admission !== 'admitted') return result
 
-  result.members = db.prepare(`SELECT id, display_name, role, admission FROM ktv_members
+  result.members = db.prepare(`SELECT id, display_name, role, cohost_at, admission FROM ktv_members
     WHERE room_id = ? AND admission IN ('admitted', 'pending')
     ORDER BY CASE WHEN role = 'host' THEN 0 ELSE 1 END, joined_at, id`).all(roomId)
-    .filter((row) => self.role === 'host' || row.admission === 'admitted')
-    .map((row) => ({ id: row.id, displayName: row.display_name, role: row.role, admission: row.admission }))
+    .filter((row) => isModerator(self) || row.admission === 'admitted')
+    .map(publicMember)
+  if (isModerator(self)) {
+    result.excludedMembers = db.prepare(`SELECT id, display_name, role, cohost_at, admission, blocked_at
+      FROM ktv_members WHERE room_id = ? AND admission IN ('removed', 'rejected')
+      ORDER BY updated_at DESC, id LIMIT 100`).all(roomId)
+      .map((row) => ({ ...publicMember(row), blocked: Boolean(row.blocked_at) }))
+  }
   result.queue = queueSnapshot(db, roomId)
   if (self.role === 'host') {
     const invite = db.prepare(`SELECT * FROM ktv_invitations WHERE room_id = ? AND revoked_at IS NULL
@@ -197,7 +225,11 @@ function grantSnapshot(db, roomId, grantId, key) {
     fail(403, 'DEVICE_REVOKED', 'Device access is unavailable')
   }
   const result = snapshot(db, roomId, grant.user_id, key)
-  if (grant.scope === 'display') delete result.invitationCode
+  if (grant.scope === 'display') {
+    delete result.invitationCode
+    delete result.excludedMembers
+    result.members = result.members.filter((member) => member.admission === 'admitted')
+  }
   result.deviceScope = grant.scope
   result.deviceId = grant.id
   return result
@@ -311,7 +343,8 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
     if (existing?.admission === 'admitted' || existing?.admission === 'pending') {
       return snapshot(db, room.id, actor.id, key)
     }
-    if (existing) fail(403, 'NOT_ADMITTED', 'You cannot rejoin this room')
+    if (existing?.blocked_at) fail(403, 'ROOM_BLOCKED', 'You are blocked from this room')
+    if (existing) fail(403, 'NOT_ADMITTED', 'Ask a host or co-host to restore your room access')
     if (room.locked) fail(403, 'ROOM_LOCKED', 'Room is locked')
     const name = displayName(req, actor)
     return transaction(db, () => {
@@ -453,40 +486,111 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
     })
   }, true))
 
-  function changeMember(action, nextState) {
+  function changeMember(action) {
     app.post(`/api/ktv/rooms/:id/members/:memberId/${action}`, roomAccess(true), handler((req) => {
       const actor = user(req)
-      return transaction(db, () => {
+      const id = ['approve', 'remove'].includes(action) ? memberCommandId(req) : commandId(req)
+      let revokedMemberId
+      const result = transaction(db, () => {
         activeRoom(db, req.params.id)
+        const member = admittedMember(db, req.params.id, actor.id)
+        applyCommand(db, req.params.id, member.id, id, ['member.' + action, req.params.memberId], () => {
+          moderatorMember(db, req.params.id, actor.id)
+          const target = db.prepare('SELECT * FROM ktv_members WHERE room_id = ? AND id = ?')
+            .get(req.params.id, req.params.memberId)
+          if (!target || target.role === 'host' || target.id === member.id) {
+            fail(409, 'INVALID_MEMBER_STATE', 'Member state cannot be changed')
+          }
+          if (member.role !== 'host' && target.cohost_at) fail(403, 'FORBIDDEN', 'Only the host can moderate a co-host')
+          if ((action === 'approve' && (target.blocked_at || !['pending', 'removed', 'rejected'].includes(target.admission))) ||
+              (action === 'reject' && target.admission !== 'pending') ||
+              (action === 'remove' && !['pending', 'admitted'].includes(target.admission)) ||
+              (action === 'block' && target.blocked_at) ||
+              (action === 'unblock' && !target.blocked_at)) {
+            fail(409, 'INVALID_MEMBER_STATE', 'Member state cannot be changed')
+          }
+          if (action === 'approve') {
+            const count = db.prepare(`SELECT COUNT(*) AS total FROM ktv_members
+              WHERE room_id = ? AND admission IN ('admitted', 'pending')`).get(req.params.id).total
+            if (target.admission !== 'pending' && count >= MAX_MEMBERS) fail(409, 'ROOM_FULL', 'Room is full')
+          }
+          const now = new Date().toISOString()
+          const nextState = action === 'approve' ? 'admitted' : action === 'reject' ? 'rejected' : 'removed'
+          db.prepare(`UPDATE ktv_members SET admission = ?, blocked_at = ?, cohost_at = NULL,
+            updated_at = ? WHERE id = ?`).run(nextState, action === 'block' ? now : null, now, target.id)
+          if (action !== 'approve' && action !== 'unblock') {
+            db.prepare(`UPDATE ktv_queue_entries SET state = 'held', updated_at = ?
+              WHERE room_id = ? AND singer_member_id = ? AND state = 'queued'`)
+              .run(now, req.params.id, target.id)
+            db.prepare(`UPDATE ktv_pairings SET revoked_at = ?
+              WHERE room_id = ? AND member_id = ? AND revoked_at IS NULL`).run(now, req.params.id, target.id)
+            db.prepare(`UPDATE ktv_device_grants SET revoked_at = ?
+              WHERE room_id = ? AND member_id = ? AND revoked_at IS NULL`).run(now, req.params.id, target.id)
+            revokedMemberId = target.id
+          }
+          bump(db, req.params.id)
+          event(db, req.params.id, actor.id, `member.${action}`, target.id)
+        })
+        return viewerSnapshot(req)
+      })
+      if (revokedMemberId) realtime.revokeMember(req.params.id, revokedMemberId)
+      return result
+    }, true))
+  }
+  for (const action of ['approve', 'reject', 'remove', 'block', 'unblock']) changeMember(action)
+
+  app.post('/api/ktv/rooms/:id/members/:memberId/role', roomAccess(true), handler((req) => {
+    const actor = user(req)
+    const id = commandId(req)
+    const role = req.body?.role
+    if (role !== 'cohost' && role !== 'member') fail(400, 'INVALID_ROLE', 'Choose member or co-host')
+    return transaction(db, () => {
+      activeRoom(db, req.params.id)
+      const member = admittedMember(db, req.params.id, actor.id)
+      applyCommand(db, req.params.id, member.id, id, ['member.role', req.params.memberId, role], () => {
         hostMember(db, req.params.id, actor.id)
         const target = db.prepare('SELECT * FROM ktv_members WHERE room_id = ? AND id = ?')
           .get(req.params.id, req.params.memberId)
-        if (!target || target.role === 'host' ||
-          (action === 'approve' && target.admission !== 'pending') ||
-          (action === 'remove' && !['pending', 'admitted'].includes(target.admission))) {
-          fail(409, 'INVALID_MEMBER_STATE', 'Member state cannot be changed')
+        if (!target || target.role === 'host' || target.admission !== 'admitted' || target.blocked_at) {
+          fail(409, 'INVALID_MEMBER_STATE', 'Only an admitted member can change roles')
         }
-        db.prepare('UPDATE ktv_members SET admission = ?, updated_at = ? WHERE id = ?')
-          .run(nextState, new Date().toISOString(), target.id)
-        if (action === 'remove') {
-          db.prepare(`UPDATE ktv_queue_entries SET state = 'held', updated_at = ?
-            WHERE room_id = ? AND singer_member_id = ? AND state = 'queued'`)
-            .run(new Date().toISOString(), req.params.id, target.id)
-          db.prepare(`UPDATE ktv_pairings SET revoked_at = ?
-            WHERE room_id = ? AND member_id = ? AND revoked_at IS NULL`)
-            .run(new Date().toISOString(), req.params.id, target.id)
-          db.prepare(`UPDATE ktv_device_grants SET revoked_at = ?
-            WHERE room_id = ? AND member_id = ? AND revoked_at IS NULL`)
-            .run(new Date().toISOString(), req.params.id, target.id)
-        }
+        if (Boolean(target.cohost_at) === (role === 'cohost')) return
+        const now = new Date().toISOString()
+        db.prepare('UPDATE ktv_members SET cohost_at = ?, updated_at = ? WHERE id = ?')
+          .run(role === 'cohost' ? now : null, now, target.id)
         bump(db, req.params.id)
-        event(db, req.params.id, actor.id, `member.${action}`, target.id)
-        return viewerSnapshot(req)
+        event(db, req.params.id, actor.id, `member.role.${role}`, target.id)
       })
-    }, true))
-  }
-  changeMember('approve', 'admitted')
-  changeMember('remove', 'removed')
+      return viewerSnapshot(req)
+    })
+  }, true))
+
+  app.post('/api/ktv/rooms/:id/members/:memberId/transfer-host', roomAccess(true), handler((req) => {
+    const actor = user(req)
+    const id = commandId(req)
+    return transaction(db, () => {
+      activeRoom(db, req.params.id)
+      const member = admittedMember(db, req.params.id, actor.id)
+      applyCommand(db, req.params.id, member.id, id, ['member.transfer-host', req.params.memberId], () => {
+        hostMember(db, req.params.id, actor.id)
+        const target = db.prepare('SELECT * FROM ktv_members WHERE room_id = ? AND id = ?')
+          .get(req.params.id, req.params.memberId)
+        if (!target || target.id === member.id || target.admission !== 'admitted' || target.blocked_at) {
+          fail(409, 'INVALID_MEMBER_STATE', 'Choose another admitted member as host')
+        }
+        const now = new Date().toISOString()
+        // Demote first to preserve the unique host index. Both updates, receipt,
+        // audit event and revision commit atomically before any snapshot is sent.
+        db.prepare("UPDATE ktv_members SET role = 'member', cohost_at = NULL, updated_at = ? WHERE id = ?")
+          .run(now, member.id)
+        db.prepare("UPDATE ktv_members SET role = 'host', cohost_at = NULL, updated_at = ? WHERE id = ?")
+          .run(now, target.id)
+        bump(db, req.params.id)
+        event(db, req.params.id, actor.id, 'room.host_transferred', target.id)
+      })
+      return viewerSnapshot(req)
+    })
+  }, true))
 
   app.post('/api/ktv/rooms/:id/queue', roomAccess(true), handler((req) => {
     const actor = user(req)
@@ -532,7 +636,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
         const entry = db.prepare('SELECT * FROM ktv_queue_entries WHERE room_id = ? AND id = ?')
           .get(req.params.id, req.params.entryId)
         if (!entry || !['queued', 'held'].includes(entry.state)) fail(409, 'INVALID_QUEUE_STATE', 'Song is not queued')
-        if (member.role !== 'host' && entry.requester_member_id !== member.id) fail(403, 'FORBIDDEN', 'Cannot remove this song')
+        if (!isModerator(member) && entry.requester_member_id !== member.id) fail(403, 'FORBIDDEN', 'Cannot remove this song')
         db.prepare("UPDATE ktv_queue_entries SET state = 'cancelled', updated_at = ? WHERE id = ?")
           .run(new Date().toISOString(), entry.id)
         bump(db, req.params.id)
@@ -547,7 +651,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
     const id = commandId(req)
     return transaction(db, () => {
       activeRoom(db, req.params.id)
-      const member = hostMember(db, req.params.id, actor.id)
+      const member = moderatorMember(db, req.params.id, actor.id)
       applyCommand(db, req.params.id, member.id, id, ['queue.approve-next', req.params.entryId], () => {
         const entry = db.prepare('SELECT * FROM ktv_queue_entries WHERE room_id = ? AND id = ?')
           .get(req.params.id, req.params.entryId)
@@ -585,7 +689,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
     }
     return transaction(db, () => {
       const room = activeRoom(db, req.params.id)
-      hostMember(db, room.id, actor.id)
+      moderatorMember(db, room.id, actor.id)
       db.prepare('UPDATE ktv_rooms SET locked = ?, approval_required = ?, revision = revision + 1 WHERE id = ?')
         .run(Number(typeof locked === 'boolean' ? locked : room.locked),
           Number(typeof approvalRequired === 'boolean' ? approvalRequired : room.approval_required), room.id)

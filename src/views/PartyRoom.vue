@@ -32,6 +32,11 @@
           <p class="mt-2 text-sm text-gray-300">{{ $t('party.waitingHint') }}</p>
           <p class="mt-4 text-xs text-gray-400">{{ $t('party.refreshesAutomatically') }}</p>
         </div>
+        <div v-else-if="party.self.admission === 'rejected'" class="mt-8 rounded-2xl border border-red-500/20 bg-red-500/10 p-8 text-center">
+          <h2 class="text-xl font-semibold">{{ $t('party.rejectedTitle') }}</h2>
+          <p class="mt-2 text-sm text-gray-300">{{ $t('party.rejectedHint') }}</p>
+          <RouterLink to="/party" class="mt-5 inline-block text-sm text-spotify-green underline">{{ $t('party.back') }}</RouterLink>
+        </div>
 
         <template v-else-if="stage">
           <div class="mt-8 flex min-h-[50vh] flex-col items-center justify-center rounded-3xl border border-white/10 bg-gradient-to-b from-emerald-900/30 to-black/30 px-6 text-center">
@@ -50,8 +55,8 @@
             </div>
           </div>
           <div class="mt-5 flex flex-wrap gap-3 text-sm text-gray-300">
-            <span>{{ $t('party.peopleCount', { count: party.members?.length || 0 }) }}</span>
-            <span v-for="member in party.members" :key="member.id">{{ member.displayName }}</span>
+            <span>{{ $t('party.peopleCount', { count: admittedMembers.length }) }}</span>
+            <span v-for="member in admittedMembers" :key="member.id">{{ member.displayName }}</span>
           </div>
         </template>
 
@@ -132,16 +137,16 @@
                         <p v-else-if="entry.priorityRequested" class="mt-1 text-xs text-yellow-300">{{ $t('party.nextPending') }}</p>
                       </div>
                       <div class="flex shrink-0 flex-col items-end gap-2 text-xs">
-                        <button v-if="isHost && entry.priorityRequested && !entry.priorityApproved && entry.state === 'queued'" type="button" :disabled="busy" class="text-spotify-green disabled:opacity-50" @click="approveNext(entry.id)">{{ $t('party.approveNext') }}</button>
-                        <button v-if="isHost || entry.requesterMemberId === party.self.id" type="button" :disabled="busy" class="text-red-300 disabled:opacity-50" @click="cancelSong(entry.id)">{{ $t('party.removeSong') }}</button>
+                        <button v-if="isModerator && entry.priorityRequested && !entry.priorityApproved && entry.state === 'queued'" type="button" :disabled="busy" class="text-spotify-green disabled:opacity-50" @click="approveNext(entry.id)">{{ $t('party.approveNext') }}</button>
+                        <button v-if="isModerator || entry.requesterMemberId === party.self.id" type="button" :disabled="busy" class="text-red-300 disabled:opacity-50" @click="cancelSong(entry.id)">{{ $t('party.removeSong') }}</button>
                       </div>
                     </div>
                   </li>
                 </ol>
               </section>
 
-              <section v-if="isHost" class="rounded-2xl border border-white/10 bg-white/5 p-5">
-                <h2 class="text-lg font-semibold">{{ $t('party.hostControls') }}</h2>
+              <section v-if="isModerator" class="rounded-2xl border border-white/10 bg-white/5 p-5">
+                <h2 class="text-lg font-semibold">{{ $t('party.roomControls') }}</h2>
                 <label class="mt-4 flex items-center gap-3 text-sm">
                   <input type="checkbox" :checked="party.room.approvalRequired" :disabled="busy"
                     class="accent-green-500" @change="changeSetting({ approvalRequired: !party?.room.approvalRequired })" />
@@ -152,7 +157,7 @@
                     class="accent-green-500" @change="changeSetting({ locked: !party?.room.locked })" />
                   {{ $t('party.lockRoom') }}
                 </label>
-                <button type="button" :disabled="busy" class="mt-6 text-sm text-red-300 underline disabled:opacity-50" @click="closeRoom">
+                <button v-if="isHost" type="button" :disabled="busy" class="mt-6 text-sm text-red-300 underline disabled:opacity-50" @click="closeRoom">
                   {{ $t('party.closeRoom') }}
                 </button>
               </section>
@@ -160,23 +165,48 @@
 
             <section class="rounded-2xl border border-white/10 bg-white/5 p-5">
               <h2 class="text-lg font-semibold">{{ $t('party.people') }}</h2>
-              <p class="mt-1 text-sm text-gray-400">{{ $t('party.peopleCount', { count: party.members?.filter(m => m.admission === 'admitted').length || 0 }) }}</p>
+              <p class="mt-1 text-sm text-gray-400">{{ $t('party.peopleCount', { count: admittedMembers.length }) }}</p>
               <ul class="mt-4 space-y-3">
                 <li v-for="member in party.members" :key="member.id" class="rounded-lg bg-black/20 p-3">
                   <div class="flex items-center justify-between gap-2">
-                    <span class="min-w-0 truncate">{{ member.displayName }}</span>
-                    <span class="text-xs text-gray-400">{{ member.admission === 'pending' ? $t('party.waiting') : member.role === 'host' ? $t('party.host') : '' }}</span>
+                    <span class="min-w-0 truncate">{{ member.displayName }}<span v-if="duplicateNames.has(member.displayName)" class="ml-1 text-xs text-gray-400">#{{ member.id.slice(0, 6) }}</span></span>
+                    <span class="text-xs text-gray-400">{{ member.admission === 'pending' ? $t('party.waiting') : member.role === 'host' ? $t('party.host') : member.role === 'cohost' ? $t('party.cohost') : '' }}</span>
                   </div>
-                  <div v-if="isHost && member.role !== 'host'" class="mt-2 flex gap-3 text-sm">
+                  <div v-if="canModerateMember(member)" class="mt-2 flex flex-wrap gap-x-3 gap-y-2 text-sm">
                     <button v-if="member.admission === 'pending'" type="button" :disabled="busy" class="text-spotify-green disabled:opacity-50" @click="approve(member.id)">
                       {{ $t('party.approve') }}
                     </button>
-                    <button type="button" :disabled="busy" class="text-red-300 disabled:opacity-50" @click="remove(member.id)">
+                    <button v-if="member.admission === 'pending'" type="button" :disabled="busy" class="text-red-300 disabled:opacity-50" @click="reject(member)">
+                      {{ $t('party.reject') }}
+                    </button>
+                    <button v-else type="button" :disabled="busy" class="text-red-300 disabled:opacity-50" @click="remove(member.id)">
                       {{ $t('party.remove') }}
                     </button>
+                    <button type="button" :disabled="busy" class="text-red-300 disabled:opacity-50" @click="block(member)">{{ $t('party.block') }}</button>
+                  </div>
+                  <div v-if="isHost && member.role !== 'host' && member.admission === 'admitted'" class="mt-3 flex flex-wrap gap-x-3 gap-y-2 text-sm">
+                    <button type="button" :disabled="busy" class="text-spotify-green disabled:opacity-50" @click="changeRole(member)">
+                      {{ member.role === 'cohost' ? $t('party.removeCohost') : $t('party.makeCohost') }}
+                    </button>
+                    <button type="button" :disabled="busy" class="text-gray-300 disabled:opacity-50" @click="transferHost(member)">{{ $t('party.transferHost') }}</button>
                   </div>
                 </li>
               </ul>
+              <template v-if="isModerator && party.excludedMembers?.length">
+                <h3 class="mt-6 font-semibold">{{ $t('party.excludedPeople') }}</h3>
+                <p class="mt-2 text-xs text-gray-400">{{ $t('party.restoreHint') }}</p>
+                <ul class="mt-3 space-y-3">
+                  <li v-for="member in party.excludedMembers" :key="member.id" class="rounded-lg bg-black/20 p-3">
+                    <p class="truncate">{{ member.displayName }}<span v-if="duplicateNames.has(member.displayName)" class="ml-1 text-xs text-gray-400">#{{ member.id.slice(0, 6) }}</span></p>
+                    <p class="mt-1 text-xs text-gray-400">{{ member.blocked ? $t('party.blocked') : member.admission === 'rejected' ? $t('party.rejected') : $t('party.removed') }}</p>
+                    <div class="mt-2 flex flex-wrap gap-3 text-sm">
+                      <button v-if="member.blocked" type="button" :disabled="busy" class="text-spotify-green disabled:opacity-50" @click="unblock(member)">{{ $t('party.unblock') }}</button>
+                      <button v-else type="button" :disabled="busy" class="text-spotify-green disabled:opacity-50" @click="approve(member.id)">{{ $t('party.restoreMember') }}</button>
+                      <button v-if="!member.blocked" type="button" :disabled="busy" class="text-red-300 disabled:opacity-50" @click="block(member)">{{ $t('party.block') }}</button>
+                    </div>
+                  </li>
+                </ul>
+              </template>
             </section>
           </div>
         </template>
@@ -189,7 +219,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { partyApi, type PartyDeviceSummary, type PartyPairing, type PartySnapshot } from '@/services/partyApi'
+import { partyApi, type PartyDeviceSummary, type PartyMember, type PartyPairing, type PartySnapshot } from '@/services/partyApi'
 import { subscribeParty } from '@/services/partyRealtime'
 import { useSongsStore } from '@/stores/songs'
 import { karaokeService } from '@/services/karaokeService'
@@ -206,7 +236,17 @@ const busy = ref(false)
 const copied = ref(false)
 const error = ref('')
 const liveConnected = ref(false)
-const isHost = computed(() => party.value?.self.role === 'host' && party.value?.deviceScope !== 'display')
+const isHost = computed(() => party.value?.self.admission === 'admitted' && party.value.self.role === 'host' && party.value.deviceScope !== 'display')
+const isModerator = computed(() => party.value?.self.admission === 'admitted' &&
+  ['host', 'cohost'].includes(party.value.self.role) && party.value.deviceScope !== 'display')
+const admittedMembers = computed(() => party.value?.members?.filter(member => member.admission === 'admitted') || [])
+const duplicateNames = computed(() => {
+  const counts = new Map<string, number>()
+  for (const member of [...(party.value?.members || []), ...(party.value?.excludedMembers || [])]) {
+    counts.set(member.displayName, (counts.get(member.displayName) || 0) + 1)
+  }
+  return new Set([...counts].filter(([, count]) => count > 1).map(([name]) => name))
+})
 const pairScope = ref<'display' | 'controller'>('display')
 const pairing = ref<PartyPairing | null>(null)
 const pairedDevices = ref<PartyDeviceSummary[]>([])
@@ -223,6 +263,7 @@ const matchingSongs = computed(() => {
 let timer: number | undefined
 let pairExpireTimer: number | undefined
 let stopRealtime: (() => void) | undefined
+let realtimeEnded = false
 
 function applySnapshot(next: PartySnapshot) {
   if (next.room.id !== roomId.value) return
@@ -265,9 +306,10 @@ async function revokeDevice(deviceId: string) {
 
 function startRealtime() {
   stopRealtime?.()
+  realtimeEnded = false
   stopRealtime = subscribeParty(roomId.value, applySnapshot,
     (connected) => { liveConnected.value = connected },
-    () => { void refresh() })
+    () => { realtimeEnded = true; void refresh() })
 }
 
 async function loadCatalog() {
@@ -284,6 +326,9 @@ async function refresh() {
     if (requestedRoom !== roomId.value) return
     applySnapshot(next)
     error.value = ''
+    // A moderator may restore a rejected/removed member while HTTP polling is
+    // active. Reacquire a ticket only after a successful authorized snapshot.
+    if (realtimeEnded) startRealtime()
   } catch (reason) {
     if (requestedRoom !== roomId.value) return
     party.value = null
@@ -324,9 +369,42 @@ async function act(work: () => Promise<PartySnapshot>) {
   finally { busy.value = false }
 }
 
-function approve(memberId: string) { void act(() => partyApi.approve(roomId.value, memberId)) }
+function canModerateMember(member: PartyMember) {
+  return isModerator.value && member.id !== party.value?.self.id && member.role !== 'host' &&
+    (isHost.value || member.role !== 'cohost')
+}
+function memberLabel(member: PartyMember) {
+  return duplicateNames.value.has(member.displayName) ? `${member.displayName} #${member.id.slice(0, 6)}` : member.displayName
+}
+function approve(memberId: string) { void act(() => partyApi.approve(roomId.value, memberId, crypto.randomUUID())) }
 function remove(memberId: string) {
-  if (window.confirm(t('party.confirmRemove'))) void act(() => partyApi.remove(roomId.value, memberId))
+  if (window.confirm(t('party.confirmRemove'))) void act(() => partyApi.remove(roomId.value, memberId, crypto.randomUUID()))
+}
+function reject(member: PartyMember) {
+  if (window.confirm(t('party.confirmReject', { name: memberLabel(member) }))) {
+    void act(() => partyApi.reject(roomId.value, member.id, crypto.randomUUID()))
+  }
+}
+function block(member: PartyMember) {
+  if (window.confirm(t('party.confirmBlock', { name: memberLabel(member) }))) {
+    void act(() => partyApi.block(roomId.value, member.id, crypto.randomUUID()))
+  }
+}
+function unblock(member: PartyMember) {
+  if (window.confirm(t('party.confirmUnblock', { name: memberLabel(member) }))) {
+    void act(() => partyApi.unblock(roomId.value, member.id, crypto.randomUUID()))
+  }
+}
+function changeRole(member: PartyMember) {
+  const role = member.role === 'cohost' ? 'member' : 'cohost'
+  if (window.confirm(t(role === 'cohost' ? 'party.confirmMakeCohost' : 'party.confirmRemoveCohost', { name: memberLabel(member) }))) {
+    void act(() => partyApi.role(roomId.value, member.id, role, crypto.randomUUID()))
+  }
+}
+function transferHost(member: PartyMember) {
+  if (window.confirm(t('party.confirmTransferHost', { name: memberLabel(member) }))) {
+    void act(() => partyApi.transferHost(roomId.value, member.id, crypto.randomUUID()))
+  }
 }
 function rotateCode() { void act(() => partyApi.rotate(roomId.value)) }
 function requestSong(song: Song, requestNext: boolean) {

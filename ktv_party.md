@@ -2,7 +2,9 @@
 
 Created: 2026-09-29
 
-Status: Proposed design; party functionality is not implemented.
+Status: Incremental implementation. Rooms, live queue planning, device pairing,
+and room moderation are implemented; synchronized playback and streaming remain
+planned. See the progress tracker for deployment evidence and remaining work.
 
 Progress tracker: [ktv_party_implement.md](ktv_party_implement.md)
 
@@ -75,7 +77,7 @@ Possessing a stage URL alone does not grant admission to the room.
 3. Invitees open the invitation directly, or enter a code on `/party/join`.
    Unregistered guests enter their display name; the app creates/restores their
    guest session and assigns a random participant ID without requiring signup.
-4. If approval is enabled, guests see a waiting view; only hosts see admission requests.
+4. If approval is enabled, guests see a waiting view; hosts and co-hosts see admission requests.
 5. Guests request songs and see who is singing now and next.
 6. The next singer confirms readiness. The stage and required singing device prepare audio.
 7. A shared countdown leads into the song. Phones can show lyrics and a private guide.
@@ -147,7 +149,7 @@ Device capabilities are separate from member roles.
 | --- | --- | --- | --- | --- |
 | See admitted room state and queue | Yes | Yes | Yes | Yes |
 | Request songs / manage own requests | Yes | Yes | Yes | No |
-| Approve/reject/remove ordinary members | No | Yes | Yes | No |
+| Approve/reject/remove/block/restore ordinary members | No | Yes | Yes | No |
 | Reorder, pause, seek, skip, assign stage | No | Yes | Yes | No |
 | Change routine room settings | No | Yes | Yes | No |
 | Change roles, remove co-host, transfer, close | No | No | Yes | No |
@@ -185,6 +187,51 @@ Removal revokes room device grants, closes room subscriptions, and revokes activ
 media publishing/subscription access. A block is tied to the known identity;
 anonymous users can obtain new identities, so approval and invitation rotation
 remain useful controls. Do not promise permanent person-level guest bans.
+
+### 4.1 Implemented moderation policy
+
+The People panel lets the host appoint or demote co-hosts and transfer ownership
+to any other admitted member. Transfer is atomic: the old host becomes an ordinary
+member, the recipient becomes the sole host, and connected views update from the
+committed snapshot. Paired phone controllers check the member's current role on
+every operation; a role change does not preserve privileges in an old grant.
+Automatic transfer after host disconnect remains future presence/recovery work.
+
+Co-hosts can approve or decline pending ordinary guests, remove or block ordinary
+members, restore their access, approve queue priority, remove queue entries, and
+change the admission/lock settings. They cannot change roles, moderate another
+co-host, rotate invitations, transfer ownership, or close the room. Only the
+current host sees the invitation code. Paired displays show admitted members and
+the queue, with admission requests and moderation history omitted.
+
+Declined guests can read their own admission state, with no admitted room data.
+Removed or declined identities cannot rejoin through the invitation alone; a
+host or co-host can restore them from the Not in room list. Blocking additionally
+requires an explicit unblock before restoration. Unblocking leaves the member
+removed. Restoration keeps the original member ID, resets elevated roles, leaves
+held songs on hold, and never reactivates revoked device grants or socket tickets.
+Device-grant revocation commits with removal, rejection, or block; outstanding
+tickets and live sockets are revoked after that transaction commits.
+
+Moderation commands use these POST routes under `/api/ktv/rooms/:id`:
+
+| Route | Payload | Authority |
+| --- | --- | --- |
+| `/members/:memberId/approve` | `commandId` | Host/co-host; pending or excluded ordinary member; not blocked |
+| `/members/:memberId/reject` | `commandId` | Host/co-host; pending ordinary member |
+| `/members/:memberId/remove` | `commandId` | Host/co-host; admitted/pending ordinary member |
+| `/members/:memberId/block` | `commandId` | Host/co-host; ordinary member |
+| `/members/:memberId/unblock` | `commandId` | Host/co-host; blocked ordinary member |
+| `/members/:memberId/role` | `role: member or cohost`, `commandId` | Host; admitted member |
+| `/members/:memberId/transfer-host` | `commandId` | Host; another admitted member |
+
+The host can also moderate co-hosts. Mutations, audit event, revision, and command
+receipt commit in one SQLite transaction. A retry with the same ID and payload
+returns the current authorized snapshot without repeating the mutation, including
+after the transferring host loses its role. Legacy clients may omit the command
+ID for approve/remove; the updated client always supplies it. Co-host appointment
+time (`cohost_at`) and block time (`blocked_at`) are additive membership columns,
+preserving the original role/admission checks, foreign keys, and unique-host index.
 
 ## 5. Existing code and integration constraints
 
