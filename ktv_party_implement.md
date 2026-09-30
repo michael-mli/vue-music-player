@@ -6,8 +6,8 @@ Last updated: 2026-09-29
 
 Design reference: [ktv_party.md](ktv_party.md)
 
-Current status: Invitation preview is deployed at `https://music.micstec.com/party`.
-The next queue-planning slice is implemented on `feat/ktv-party` pending deployment:
+Current status: Queue-planning preview is deployed at `https://music.micstec.com/party`.
+The next slice is implemented on `feat/ktv-party`:
 members can request karaoke-ready songs, see fair upcoming order, request priority,
 and hosts can approve priority. Playback, WebSocket updates, device pairing, and
 online streaming remain unimplemented.
@@ -208,7 +208,8 @@ Evidence: `server/ktv-queue.js`, queue/receipt tables in `server/ktv-schema.js`,
 and queue routes in `server/ktv-routes.js`. Members can add up to three pending
 karaoke-ready songs, request next, and cancel their own unstarted entries. Hosts
 can approve priority and remove entries; removed singers' entries are held.
-Full-snapshot HTTP polling remains every three seconds. Singer nomination and
+The five KTV integration tests and full backend suite (32/32) pass. Full-snapshot
+HTTP polling remains every three seconds. Singer nomination and
 acceptance, played-turn fairness, WebSocket, leases, and playback state are open.
 
 ## 7. P04 — Stage, phone controller, and moderation UI
@@ -526,7 +527,8 @@ start the P01 two-device audio prototype before integrating guide playback.
 | 2026-09-29 | Baseline | `ktv-party-baseline-2026-09-29` at `6e8504b` | Local tag verified and pushed to origin before code edits | Rollback reference for main |
 | 2026-09-29 | P02.2/P02.3 and partial P02/P04 | `server/ktv-*`, party views/service/routes, auth/store and app integration | `node --test ktv.test.js` 3/3; `npm --prefix server test` 30/30; `npm run type-check`, `npm run build`, and `git diff --check` pass | Invitation/approval slice only; browser, sync, queue, and stream checks remain open |
 | 2026-09-29 | Invitation preview deployment | `https://music.micstec.com/party`, code commit `d1d9253` | Live API create → invite → join pending → approve → admitted → close passed; frontend route, bundle, service worker returned 200; deployed bundle contains `d1d9253`; backend health passed | Host and guest flow available for user testing; headless Chrome timed out in this environment, so UI browser acceptance and audio work remain open |
-| 2026-09-29 | P03 queue-planning slice | `server/ktv-queue.js`, queue routes/schema, `src/views/PartyRoom.vue` | KTV integration test covers retries, fair order, priority permission, cap, removal; backend/full build checks | Local implementation only until separately deployed; no WebSocket, playback, singer acceptance, or audio measurement |
+| 2026-09-29 | P03 queue-planning slice | `4c94e1b`; `server/ktv-queue.js`, queue routes/schema, `src/views/PartyRoom.vue` | KTV tests 5/5; full backend 32/32; type-check and production build pass | No WebSocket, playback, singer acceptance, or audio measurement |
+| 2026-09-29 | Queue preview deployment | `https://music.micstec.com/party`, bundle `main-rnQzk0zj.js` | Live join → queue request → idempotent replay → host priority approval → shared snapshot → close passed; route and bundle returned 200; queue table created | Headless Chrome timed out in this environment, so browser UI acceptance remains open; predeployment DB/static backup at `/tmp/ktv-party-queue-predeploy.l0so35h0` |
 
 ### Work-session update template
 
@@ -548,5 +550,6 @@ Next action:
 | Release | Build/commit | Environment/URL | Date | Gates and evidence | Remaining scope |
 | --- | --- | --- | --- | --- | --- |
 | Invitation preview | `d1d9253` (`main-DwOqCxch.js`) | `https://music.micstec.com/party` | 2026-09-29 | Live API smoke test and static route checks passed; browser UI check remains open; this is not the local KTV beta | Queue, audio, pairing, realtime, online/hybrid |
+| Queue-planning preview | `4c94e1b` (`main-rnQzk0zj.js`) | `https://music.micstec.com/party` | 2026-09-29 | Live queue smoke test, static route/bundle checks, backend tests and build pass; browser UI acceptance remains open | Audio, WebSocket, singer acceptance, pairing, online/hybrid |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |
