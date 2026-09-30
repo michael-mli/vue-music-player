@@ -6,7 +6,7 @@ Last updated: 2026-09-30
 
 Design reference: [ktv_party.md](ktv_party.md)
 
-Current status: The scheduled playback and private-guide preview is deployed at
+Current status: The playback and recovery preview is deployed at
 `https://music.micstec.com/party`. Members can connect a shared screen or phone
 controller with a short-lived code; a display has read-only room access, and a
 controller inherits the member's current permissions. Hosts can appoint co-hosts,
@@ -17,12 +17,14 @@ Singer nomination/acceptance, selected-turn readiness, and room clock negotiatio
 are live. A singer can accept a nominated song and confirm a host-selected turn
 from a paired phone. Readiness is a human confirmation; it does not start audio.
 Scheduled stage playback, pinned lyrics, pause/resume/seek/skip, output leases and
-an optional private original guide are live and pass a production-build journey
+a private original guide are live and pass a production-build journey
 with three isolated Chrome sessions. Physical audio alignment and streaming remain
 unverified/unimplemented. Required-guide gating/recovery, fair next-turn readiness
-and automatic host-loss transfer pass 63 backend tests, eight clock/audio checks
-and a 20-check Chrome production-build journey. Deployment verification of this
-new recovery slice is in progress.
+and automatic host-loss transfer are deployed as `323c922` (`main-Ccfld-0j.js`).
+They pass 63 backend tests, eight clock/audio checks, a 20-check Chrome
+production-build journey and 13 public recovery protocol checks. The public checks
+include the default 30-second host grace, waiting without a moderator, co-host
+inheritance and revocation of the former host’s paired control permissions.
 
 ## 1. How to use this tracker
 
@@ -561,8 +563,8 @@ prototype result is not automatically a release result.
 
 ### Current next action
 
-Finish deployment verification for guide/turn/host recovery.
-Then implement output-device and measured drift recovery. Continue the SFU/TURN and online/hybrid capture
+Implement output-device and measured drift recovery, including calibration
+invalidation and diagnostics. Continue the SFU/TURN and online/hybrid capture
 implementation. Physical phone/screen timing, memory, background and browser
 coverage remain acceptance gates. Remaining P02/P04 work includes general receipts,
 cleanup/abuse limits, QR invitations, phone tabs and accessibility.
@@ -613,6 +615,7 @@ cleanup/abuse limits, QR invitations, phone tabs and accessibility.
 | 2026-09-30 | Scheduled stage/guide playback implementation | `f87f0ff`; playback/asset services, schema, audio engine, Vue controls, `scripts/party-audio.test.mjs`, `scripts/party-browser.test.mjs` | Backend 54/54; clock/audio tests 8/8; type-check/release build and `git diff --check`; Chrome 146.0.7680.71 production-build journey 13/13 pass | Fixes verified for expired-lease resume and seek source adoption; software graph scheduling only, no acoustic or physical phone evidence |
 | 2026-09-30 | Scheduled playback preview deployment | `f87f0ff`, frontend `main-C0oS5LfE.js`, `https://music.micstec.com/party` | 11 public API/WSS checks pass: paired display presence/scope, designation, real pinned assets and range requests, leases, start retry, effective pause, fresh resume lease, seek generation, forbidden member controls, idempotent skip; seven public route/assets return 200 and SHA verified; migration verified, foreign-key errors zero | Temporary room closed; backup at `/tmp/ktv-party-playback-predeploy.cq1lqlm2`; one health retry during restart. Physical alignment, required-guide policy, automatic next turn/host-loss, complete UI and online/hybrid remain open |
 | 2026-09-30 | Required-guide, next-turn and host-loss implementation | Playback/schema/turn service, HTTP/WSS commands, guide/host UI and browser journey | Backend 63/63, clock/audio 8/8, Chrome 146.0.7680.71 production-build journey 20/20, type-check/build and diff check pass | Singer-bound required-guide gating, heartbeat/seek recovery, fair automatic next readiness and atomic co-host inheritance verified in software. Physical audio, output changes/drift, full phone UI and online/hybrid remain open |
+| 2026-09-30 | Required-guide, next-turn and host-loss preview deployment | `323c922`, frontend `main-Ccfld-0j.js`, `https://music.micstec.com/party` | Backend 63/63; clock/audio 8/8; release Chrome journey 20/20; public recovery protocol 13/13; seven public route/assets, exact frontend SHA/hash, additive schema and zero foreign-key violations verified | Temporary room closed. Backup `/tmp/ktv-party-recovery-predeploy.y3xiwtl9`; health succeeded after two connection retries during restart. Physical audio, output changes/drift, receipts/cleanup, QR/tabs/accessibility and online/hybrid remain open |
 
 ### Work-session update template
 
@@ -640,5 +643,6 @@ Next action:
 | Moderation preview | `b5b89b6` (`main-BUbZyAKB.js`) | `https://music.micstec.com/party` | 2026-09-30 | Live API/WSS role and moderation checks pass; backend 41/41, release build passes; physical UI check open | Audio, clock negotiation, singer acceptance, general receipts, cleanup, automatic host-loss recovery, online/hybrid |
 | Clock and singer readiness preview | `a7fc3c6` (`main-DZatLVFa.js`) | `https://music.micstec.com/party` | 2026-09-30 | Live API/WSS 13 checks, backend 46/46, clock tests 4/4, release build and public route/assets pass; physical UI check open | Audio scheduling, leases/timeline, lyrics, private guide, general receipts, cleanup, automatic host-loss recovery, online/hybrid |
 | Scheduled playback preview | `f87f0ff` (`main-C0oS5LfE.js`) | `https://music.micstec.com/party` | 2026-09-30 | Backend 54/54, clock/audio 8/8, Chrome journey 13/13, public protocol 11/11, build, static assets and additive schema pass | Physical alignment, required-guide and drift/output recovery, next-turn/host-loss policy, receipts/cleanup, full phone UI, online/hybrid |
+| Playback and recovery preview | `323c922` (`main-Ccfld-0j.js`) | `https://music.micstec.com/party` | 2026-09-30 | Backend 63/63, clock/audio 8/8, Chrome 20/20, public recovery protocol 13/13, release build/assets/additive schema verified | Drift/output changes and physical timing, receipts/cleanup, full phone UI and online/hybrid |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |
