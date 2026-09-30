@@ -240,7 +240,7 @@ function grantSnapshot(db, roomId, grantId, key, clock, playback) {
   return result
 }
 
-export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSong, allowedOrigins, resolveAssets, clock = createKtvClock() }) {
+export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSong, allowedOrigins, resolveAssets, clock = createKtvClock(), hostGraceMs }) {
   recoverReadiness(db, clock)
   const key = createHash('sha256').update('ktv-invitation-v1\0').update(secret).digest()
   const pairKey = createHash('sha256').update('ktv-pairing-v1\0').update(secret).digest()
@@ -258,7 +258,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
     onDisconnected: (ws) => playback.disconnected(ws),
     onDevice: (ws, message, view) => playback.deviceMessage(ws, message, view),
   })
-  playback = createKtvPlayback({ db, clock, transaction, bump, event, broadcast: realtime.broadcast, broadcastLease: realtime.broadcastLease })
+  playback = createKtvPlayback({ db, clock, transaction, bump, event, broadcast: realtime.broadcast, broadcastLease: realtime.broadcastLease, hostGraceMs })
   const closeRealtime = realtime.close
   realtime.close = () => { playback.close(); closeRealtime() }
   realtime.playback = playback
@@ -711,9 +711,9 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
           if (action === 'accept') {
             db.prepare('UPDATE ktv_queue_entries SET accepted_at = ?, updated_at = ? WHERE id = ?').run(now, now, entry.id)
           } else {
-            invalidateReadiness(db, req.params.id, clock, { entryId: entry.id })
-            playback.invalidate(req.params.id, { entryId: entry.id })
-            db.prepare("UPDATE ktv_queue_entries SET state = 'cancelled', updated_at = ? WHERE id = ?").run(now, entry.id)
+            const turn = db.prepare('SELECT entry_id, state FROM ktv_readiness WHERE room_id = ?').get(req.params.id)
+            if (turn?.state !== 'idle' && turn?.entry_id === entry.id) playback.decline(req.params.id, entry)
+            else db.prepare("UPDATE ktv_queue_entries SET state = 'cancelled', updated_at = ? WHERE id = ?").run(now, entry.id)
           }
           bump(db, req.params.id)
           event(db, req.params.id, actor.id, `queue.singer_${action}`, entry.id)
@@ -766,7 +766,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
           VALUES (?, ?, ?, 1, ?, 'awaiting-singer', ?) ON CONFLICT(room_id) DO UPDATE SET
           entry_id = excluded.entry_id, performance_id = excluded.performance_id,
           generation = ktv_readiness.generation + 1, clock_id = excluded.clock_id,
-          state = 'awaiting-singer', ready_at = NULL, updated_at = excluded.updated_at`)
+          state = 'awaiting-singer', ready_at = NULL, advance_pending = 0, updated_at = excluded.updated_at`)
           .run(room.id, entry.id, randomUUID(), clock.id, now)
         bump(db, room.id)
         event(db, room.id, actor.id, 'readiness.offered', entry.id)
@@ -799,12 +799,11 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
           if (action === 'respond' && ready) {
             db.prepare("UPDATE ktv_readiness SET state = 'ready', ready_at = ?, updated_at = ? WHERE room_id = ?")
               .run(now, now, room.id)
+          } else if (action === 'respond') {
+            playback.decline(room.id, entry)
           } else {
             playback.invalidate(room.id)
             invalidateReadiness(db, room.id, clock)
-            if (action === 'respond') {
-              db.prepare("UPDATE ktv_queue_entries SET state = 'cancelled', updated_at = ? WHERE id = ?").run(now, entry.id)
-            }
           }
           bump(db, room.id)
           event(db, room.id, actor.id, action === 'cancel' ? 'readiness.cancelled' : ready ? 'readiness.confirmed' : 'readiness.declined', entry.id)
@@ -906,13 +905,13 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
       res.json({ success: true, data }); realtime.broadcast(req.params.id)
     } catch (error) { res.status(error.status || 500).json({ success: false, code: error.code || 'PLAYBACK_ERROR', message: error.status ? error.message : 'Song preparation failed' }) }
   })
-  for (const action of ['assign-stage', 'start', 'pause', 'seek', 'skip', 'lyrics']) {
+  for (const action of ['assign-stage', 'start', 'pause', 'seek', 'skip', 'lyrics', 'guide']) {
     app.post(`/api/ktv/rooms/:id/playback/${action}`, roomAccess(true), handler((req) => {
       const actor = user(req), id = commandId(req)
       return transaction(db, () => {
         const room = activeRoom(db, req.params.id), member = admittedMember(db, room.id, actor.id)
         applyCommand(db, room.id, member.id, id, ['playback.' + action, req.body], () => {
-          moderatorMember(db, room.id, actor.id)
+          if (action !== 'guide') moderatorMember(db, room.id, actor.id)
           if (action === 'assign-stage') {
             checkClock(req); checkRevision(req, room)
             playback.assign(room.id, req.body.deviceId)
@@ -920,6 +919,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
             playback.current(req, playback.read(room.id), checkRevision, room)
             if (action === 'start') playback.start(room.id)
             else if (action === 'skip') playback.finish(room.id, 'skipped')
+            else if (action === 'guide') playback.guide(room.id, member.id, req.body.required, req.body.deviceId)
             else if (action === 'lyrics') {
               if (!Number.isSafeInteger(req.body.lyricOffsetMs) || Math.abs(req.body.lyricOffsetMs) > 10_000) {
                 fail(400, 'INVALID_OFFSET', 'Lyric correction must be within ten seconds')

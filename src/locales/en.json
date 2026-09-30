@@ -274,7 +274,18 @@
     "approve": "Approve",
     "remove": "Remove",
     "confirmRemove": "Remove this person from the room?",
-    "confirmClose": "Close this room for everyone?"
+    "confirmClose": "Close this room for everyone?",
+    "requireGuide": "Require my vocal guide for this song",
+    "requireGuideHint": "Playback waits for this phone. If its guide stops or loses connection, the room pauses for recovery. Uncheck to continue without requiring the guide.",
+    "useThisGuide": "Use this phone as my required guide",
+    "requiredGuideReady": "Required vocal guide is ready.",
+    "requiredGuideWaiting": "Waiting for the singer’s required guide. Enable or retry the guide on the selected phone, or the singer can make it optional.",
+    "guideRecovery": "The required vocal guide was interrupted. Recover the guide or make it optional, then resume with a countdown.",
+    "stageRecovery": "Stage audio was interrupted. Recover or choose an enabled stage, then resume with a countdown.",
+    "serviceRecovery": "The service restarted. Reconnect the stage and guide, confirm singer readiness, then resume from the saved position.",
+    "hostMissingWithCohost": "Host controller disconnected. Co-host controls remain available; ownership transfers after the grace period ({seconds}s remaining).",
+    "hostMissingWithoutCohost": "Host controller disconnected. The queue is preserved and the next song waits for a host or co-host controller.",
+    "guideEndedEarly": "The vocal guide stopped before the song finished. Retry the guide or make it optional."
   },
   "player": {
     "play": "Play",

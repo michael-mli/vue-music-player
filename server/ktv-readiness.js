@@ -9,6 +9,7 @@ export function readinessSnapshot(db, roomId, clock) {
     performanceId: row?.performance_id || null, entryId: row?.entry_id || null,
     songId: row?.song_id || null, title: row?.title || null,
     singerMemberId: row?.singer_member_id || null, singerName: row?.display_name || null,
+    advancePending: Boolean(row?.advance_pending),
   }
 }
 
@@ -20,7 +21,7 @@ export function invalidateReadiness(db, roomId, clock, { entryId, memberId } = {
   if (!row || row.state === 'idle' || (entryId && row.entry_id !== entryId) ||
     (memberId && row.singer_member_id !== memberId)) return false
   db.prepare(`UPDATE ktv_readiness SET state = 'idle', entry_id = NULL, performance_id = NULL,
-    generation = generation + 1, clock_id = ?, ready_at = NULL, updated_at = ? WHERE room_id = ?`)
+    generation = generation + 1, clock_id = ?, ready_at = NULL, advance_pending = 0, updated_at = ? WHERE room_id = ?`)
     .run(clock.id, new Date().toISOString(), roomId)
   return true
 }

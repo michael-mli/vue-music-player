@@ -274,7 +274,18 @@
     "approve": "批准",
     "remove": "移除",
     "confirmRemove": "要将此成员移出房间吗？",
-    "confirmClose": "要为所有人关闭此房间吗？"
+    "confirmClose": "要为所有人关闭此房间吗？",
+    "requireGuide": "本首歌曲必须使用我的原唱提示",
+    "requireGuideHint": "播放会等待这部手机就绪。提示音中断或断线时，房间暂停并等待恢复。取消勾选可继续唱歌而不要求提示音。",
+    "useThisGuide": "使用这部手机作为必要的原唱提示设备",
+    "requiredGuideReady": "必要的原唱提示已就绪。",
+    "requiredGuideWaiting": "正在等待歌手的必要原唱提示。请在指定手机上开启或重试，歌手也可将提示设为可选。",
+    "guideRecovery": "必要的原唱提示已中断。恢复提示或将其设为可选，然后倒计时继续播放。",
+    "stageRecovery": "大屏音频已中断。恢复或选择已开启音频的大屏，然后倒计时继续播放。",
+    "serviceRecovery": "服务已重启。重新连接大屏与提示设备，确认歌手就绪，再从保存的位置继续播放。",
+    "hostMissingWithCohost": "主持人控制设备已断线，副主持人仍可操作。宽限期结束后自动转交主持权（剩余 {seconds} 秒）。",
+    "hostMissingWithoutCohost": "主持人控制设备已断线。点歌队列已保留，下一首会等待主持人或副主持人的控制设备重新连接。",
+    "guideEndedEarly": "原唱提示在歌曲结束前已停止。请重试提示，或将它设为可选。"
   },
   "player": {
     "play": "播放",

@@ -146,4 +146,14 @@ export function initKtvSchema(db) {
     db.exec(`ALTER TABLE ktv_queue_entries ADD COLUMN accepted_at TEXT;
       UPDATE ktv_queue_entries SET accepted_at = created_at WHERE requester_member_id = singer_member_id;`)
   }
+  const playbackColumns = db.prepare('PRAGMA table_info(ktv_playback)').all().map(column => column.name)
+  for (const [name, definition] of [
+    ['guide_required', 'INTEGER NOT NULL DEFAULT 0 CHECK (guide_required IN (0, 1))'],
+    ['guide_device_id', 'TEXT'],
+    ['recovery_reason', 'TEXT'],
+  ]) if (!playbackColumns.includes(name)) db.exec(`ALTER TABLE ktv_playback ADD COLUMN ${name} ${definition}`)
+  const readinessColumns = db.prepare('PRAGMA table_info(ktv_readiness)').all().map(column => column.name)
+  if (!readinessColumns.includes('advance_pending')) {
+    db.exec('ALTER TABLE ktv_readiness ADD COLUMN advance_pending INTEGER NOT NULL DEFAULT 0 CHECK (advance_pending IN (0, 1))')
+  }
 }

@@ -167,6 +167,7 @@ const karaokeManifestPath = process.env.KARAOKE_MANIFEST_PATH || path.join(WEB_R
 const ktvRealtime = registerKtvRoutes(app, {
   db, authMiddleware, secret: JWT_SECRET || 'unconfigured-development-secret',
   allowedOrigins: (process.env.KTV_ALLOWED_ORIGINS || '').split(',').map((origin) => origin.trim()).filter(Boolean),
+  hostGraceMs: Number(process.env.KTV_HOST_GRACE_MS || 30_000),
   resolveAssets: createKtvAssets({
     musicRoot: process.env.MUSIC_DIR || path.join(WEB_ROOT, 'data'),
     karaokeRoot: path.dirname(karaokeManifestPath),

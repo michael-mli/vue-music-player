@@ -39,6 +39,7 @@ await fs.writeFile(path.join(root, 'data/link.1.mp3'), audio)
 await fs.writeFile(path.join(root, 'karaoke/link.1.instrumental.mp3'), audio)
 await fs.writeFile(path.join(root, 'synced/link.1.lrc'), '[00:00]Start singing\n[00:10]Second line\n[00:20]Seek line\n[00:40]Final line')
 const realtime = registerKtvRoutes(app, { db, authMiddleware: auth, secret: 'isolated-browser-secret', isKaraokeSong: id => id === 1,
+  hostGraceMs: 1000,
   resolveAssets: createKtvAssets({ musicRoot: path.join(root, 'data'), karaokeRoot: path.join(root, 'karaoke'),
     importRoot: path.join(root, 'import'), syncedRoot: path.join(root, 'synced'), lyricsRoot: path.join(root, 'lyrics') }) })
 app.get('/data/song_number.txt', (req, res) => res.type('text').send('1'))
@@ -109,7 +110,7 @@ async function page(actor, route) {
   return sessionId
 }
 const audit = session => evaluate(session, `window.__partyAudit.map(item => ({ starts: item.starts, stops: item.stops, ended: item.ended, contextTime: item.context.currentTime }))`)
-let pathRoom
+let pathRoom, closer = 1
 try {
   const info = await (await fetch(`${process.env.CHROME_DEBUG_URL || 'http://127.0.0.1:9229'}/json/version`, { signal: AbortSignal.timeout(3000) })).json()
   console.log(`Browser: ${info.Browser}`)
@@ -142,6 +143,9 @@ try {
   await click(host, 'Prepare selected song')
   await poll(async () => { const latest = await api(1, pathRoom); return latest.presence.devices.some(device => device.id === latest.playback.stageDeviceId && device.ready) }, 'stage decoded')
   check((await audit(host)).length === 0, 'Preparation does not start backing before a countdown')
+  await poll(() => evaluate(singer, `(() => { const label = [...document.querySelectorAll('label')].find(item => item.textContent.includes('Require my vocal guide')); const box = label?.querySelector('input'); if (!box || box.disabled) return false; box.click(); return true })()`), 'require guide control')
+  await poll(async () => (await api(1, pathRoom)).playback.guideRequired, 'guide marked required')
+  check(await evaluate(host, "[...document.querySelectorAll('button')].find(item => item.textContent.trim() === 'Start countdown')?.disabled"), 'Required guide blocks the rendered start control until ready')
   await click(singer, 'Enable private vocal guide')
   await poll(() => evaluate(singer, "document.body.innerText.includes('Audio prepared')"), 'guide decoded')
   await click(host, 'Start countdown')
@@ -165,10 +169,35 @@ try {
   check((await audit(host)).length === 3, 'Seek adopts the prepared next source without duplicate backing')
   const source = (await audit(host)).at(-1)
   check(source.stops.at(-1)[0] > source.contextTime, 'Active backing has an audio-clock silence deadline')
+  await click(singer, "Turn off this device's audio")
+  await poll(async () => { const current = await api(1, pathRoom); return current.playback.state === 'recovering' && current.playback.recoveryReason === 'guide.unavailable' }, 'required guide recovery')
+  await poll(async () => (await audit(host)).every(record => record.ended), 'backing stops for required guide')
+  check(true, 'Muting a required guide stops backing and preserves the current entry')
+  await evaluate(singer, `(() => { const label = [...document.querySelectorAll('label')].find(item => item.textContent.includes('Require my vocal guide')); label.querySelector('input').click(); })()`)
+  await poll(async () => !(await api(1, pathRoom)).playback.guideRequired, 'guide explicitly optional')
+  await click(host, 'Resume with countdown')
+  await poll(async () => (await api(1, pathRoom)).playback.state === 'playing', 'resume without required guide')
+  await click(singer, 'Enable private vocal guide')
+  await poll(async () => (await audit(singer)).length === 4, 'optional guide late attachment')
+  check((await audit(singer)).at(-1).starts[0][1] >= 20, 'Optional guide attaches at the live position')
+  await click(singer, "Turn off this device's audio")
+  check((await api(1, pathRoom)).playback.state === 'playing', 'Optional guide interruption leaves backing playing')
+  view = await api(1, pathRoom)
+  await api(1, `${pathRoom}/members/${view.members.find(member => member.displayName === 'Singer').id}/role`, { commandId: crypto.randomUUID(), role: 'cohost' })
+  await api(3, `${pathRoom}/queue`, { commandId: crypto.randomUUID(), songId: 1, title: 'Next browser song', requestNext: false })
   await evaluate(host, "document.querySelector('button').dispatchEvent(new Event('blur'))")
   await cdp('Target.closeTarget', { targetId: (await cdp('Target.getTargetInfo', {}, host)).targetInfo.targetId })
   await poll(async () => (await api(1, pathRoom)).playback.state === 'recovering', 'stage disconnect recovery')
   check(true, 'Closing the stage enters recovery without advancing the queue')
+  await poll(async () => (await api(2, pathRoom)).self.role === 'host', 'cohost inherits after grace')
+  closer = 2
+  await poll(() => evaluate(singer, "[...document.querySelectorAll('button')].some(item => item.textContent.trim() === 'Close room')"), 'transferred host controls')
+  check(true, 'Transferred host controls update on the remaining phone')
+  await evaluate(singer, 'window.confirm = () => true')
+  await click(singer, 'Skip song')
+  view = await poll(async () => { const current = await api(2, pathRoom); return current.readiness.title === 'Next browser song' ? current : false }, 'next singer automatically offered')
+  check(view.readiness.state === 'awaiting-singer' && view.playback.state === 'idle', 'Skip offers the next turn without starting unready audio')
+  check((await audit(viewer)).length === 0, 'The next singer’s common screen remains silent')
   check(errors.length === 0, `No browser runtime exceptions (${errors.length})`)
   console.log(`${passed} browser checks passed. Audio graph timing only; physical acoustic alignment remains unmeasured.`)
 } catch (error) {
@@ -181,7 +210,7 @@ try {
   for (const session of sessions) console.error('UI errors:', await evaluate(session, "[...document.querySelectorAll('[role=alert]')].map(item => item.textContent)").catch(() => []))
   throw error
 } finally {
-  if (pathRoom) await api(1, `${pathRoom}/close`, {}).catch(() => {})
+  if (pathRoom) await api(closer, `${pathRoom}/close`, {}).catch(() => {})
   if (debuggerSocket?.readyState === WebSocket.OPEN) {
     for (const browserContextId of contexts) await cdp('Target.disposeBrowserContext', { browserContextId }).catch(() => {})
     debuggerSocket.close()

@@ -200,7 +200,7 @@ to any other admitted member. Transfer is atomic: the old host becomes an ordina
 member, the recipient becomes the sole host, and connected views update from the
 committed snapshot. Paired phone controllers check the member's current role on
 every operation; a role change does not preserve privileges in an old grant.
-Automatic transfer after host disconnect remains future presence/recovery work.
+After host controller loss, the server transfers ownership to the earliest-appointed connected co-host after the configured grace period (30 seconds by default). Paired displays do not count as host controllers. Without a connected host/co-host controller, the queue is preserved and automatic next-turn invitations wait.
 
 Co-hosts can approve or decline pending ordinary guests, remove or block ordinary
 members, restore their access, approve queue priority, remove queue entries, and
@@ -621,7 +621,8 @@ or the room expires. Do not promote an arbitrary guest.
 `server/ktv-playback.js` persists the selected performance, pinned descriptor,
 timeline, pending transitions, lyric correction and five-second checkpoints.
 Host/co-host POST commands under `/rooms/:id/playback` are `assign-stage`,
-`prepare`, `start`, `pause`, `seek`, `skip`, and `lyrics`. Commands carry IDs,
+`prepare`, `start`, `pause`, `seek`, `skip`, and `lyrics`. The selected singer can
+use `guide` to require or release a separately bound private guide phone. Commands carry IDs,
 current room revision and clock epoch; performance controls also carry the current
 performance ID and playback generation. Preparation uses the singer-readiness
 generation. Duplicate committed commands return the authorized current state.
@@ -654,9 +655,40 @@ is marked `alignmentVerified: false`; equal durations do not prove alignment.
 The audio engine maps output timestamps once and falls back to output/base latency
 estimates. Stage and private-guide volume are separate. Positive guide calibration
 advances the guide; room lyric correction delays displayed cues. Browser scheduling
-and source cancellation have automated evidence; physical timing, output-device
-change handling, required-guide gating, measured drift, automatic next-turn
-selection, automatic host-loss transfer and streaming remain open.
+and source cancellation have automated evidence. Required-guide readiness, automatic
+next-turn selection, and automatic host-loss transfer are implemented and tested.
+Physical timing, output-device change handling, measured drift and streaming remain open.
+
+The singer's versioned, receipt-backed `guide` command carries `required` and a
+socket-bound `deviceId`. Only that singer's separate controller can be bound;
+a display, another member's phone or the designated stage cannot substitute.
+Guide readiness validates the original's pinned duration, rather than assuming it
+matches the backing duration. Current-generation guide heartbeats must remain
+fresh within four seconds. Optional guides do not block backing; losing a required
+guide enters recovery, increments generation and preserves the selected turn.
+The stage stops renewing its output lease, and the client stops output and
+acknowledges it. A retry/rebound guide, or the singer's explicit optional choice,
+allows a deliberate resume after stage readiness and the old silence boundary.
+Server restart preserves the requirement but drops the old guide device binding.
+Prepared guide generations promote at scheduled seek/pause boundaries.
+
+Finished, skipped and declined selected turns append unique-entry served history.
+`server/ktv-turns.js` selects the next accepted, admitted, unheld fair entry (or an
+approved priority override) and creates a fresh awaiting-singer performance ID.
+It never auto-starts the song. A nomination declined before selection does not
+consume a turn. A durable `advance_pending` marker waits for a connected host or
+co-host controller if all controlling moderators disappear, including across
+service restart. Explicit moderator cancellation preserves the queued song and
+clears automatic advancement. Ordinary guests are never promoted automatically.
+
+Host presence aggregates all of the member's current controller sockets, including
+valid paired controllers; read-only display sockets are excluded. Losing one of
+several controllers does not start a grace period. Healthy backing continues
+through host loss. `KTV_HOST_GRACE_MS` accepts 1000–300000 ms, default 30000.
+After grace, the earliest-appointed admitted co-host with a connected controller
+becomes the sole host in one transaction, with revision/audit/broadcast. The old
+host becomes an ordinary member. Reconnection cancels the grace deadline; explicit
+ownership transfer starts presence tracking for the new host.
 
 ## 10. Online and hybrid performance streaming
 

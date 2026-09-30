@@ -133,6 +133,25 @@ test('real room transports authorize stage preparation, scheduled controls, comp
     generation: view.playback.generation, assetVersion: assets.version, durationMs: assets.durationMs }
   assert.equal((await send({ ...ready, generation: ready.generation - 1 }, 'error')).code, 'STALE_GENERATION')
   await send(ready)
+  const guideId = randomUUID()
+  const guideTicket = (await request('POST', `${path}/socket-ticket`, 2, { deviceId: guideId })).body.data.ticket
+  const guideSocket = await openSocket(socketUrl, origin, guideTicket)
+  t.after(() => guideSocket.ws.terminate())
+  await guideSocket.first
+  async function guideSend(body) {
+    const response = nextPacket(guideSocket.ws, 'device.ack')
+    guideSocket.ws.send(JSON.stringify({ protocolVersion: 1, ...body }))
+    return response
+  }
+  await guideSend({ type: 'device.status', purpose: 'guide', label: 'Transport guide', audioEnabled: true, clockHealthy: true })
+  assert.equal((await request('POST', `${path}/playback/guide`, 1, { ...playbackCommand(), required: true, deviceId })).body.code, 'FORBIDDEN')
+  const guideCommand = { ...playbackCommand(), required: true, deviceId: guideId }
+  view = (await request('POST', `${path}/playback/guide`, 2, guideCommand)).body.data
+  assert.equal(view.playback.guideRequired, true)
+  assert.equal((await request('POST', `${path}/playback/guide`, 2, guideCommand)).body.data.room.revision, view.room.revision)
+  assert.equal((await request('POST', `${path}/playback/guide`, 2, { ...guideCommand, required: false })).body.code, 'COMMAND_CONFLICT')
+  assert.equal((await request('POST', `${path}/playback/start`, 1, playbackCommand())).body.code, 'GUIDE_NOT_READY')
+  await guideSend(ready)
   const start = playbackCommand()
   view = (await request('POST', `${path}/playback/start`, 1, start)).body.data
   const leasePacket = nextPacket(ws, 'lease')
@@ -143,6 +162,7 @@ test('real room transports authorize stage preparation, scheduled controls, comp
   nowMs = 11000
   await send({ type: 'device.heartbeat', leaseId: lease.id, clockId: clock.id,
     performanceId: ready.performanceId, generation: ready.generation }, 'lease')
+  await guideSend({ type: 'device.heartbeat', clockId: clock.id, performanceId: ready.performanceId, generation: ready.generation })
   realtime.playback.sweep()
   view = (await request('GET', path, 1)).body.data
   assert.equal(view.playback.state, 'playing')
@@ -151,16 +171,29 @@ test('real room transports authorize stage preparation, scheduled controls, comp
   assert.equal(view.playback.positionMs, 0)
   assert.equal(view.playback.pendingTransition.positionMs, 30000)
   await send({ ...ready, generation: view.playback.pendingTransition.generation })
+  await guideSend({ ...ready, generation: view.playback.pendingTransition.generation })
   nowMs = 13000; realtime.playback.sweep()
   view = (await request('GET', path, 1)).body.data
   assert.equal(view.playback.positionMs, 30000)
   assert.equal((await send({ type: 'playback.ended', entryId, leaseId: lease.id, clockId: clock.id,
     performanceId: ready.performanceId, generation: ready.generation }, 'error')).code, 'STALE_GENERATION')
   assert.equal((await request('POST', `${path}/playback/pause`, 1, { ...playbackCommand(), baseRevision: 1 })).body.code, 'REVISION_CONFLICT')
-  view = (await request('POST', `${path}/playback/skip`, 1, playbackCommand())).body.data
+  view = (await request('POST', `${path}/queue`, 1, { commandId: randomUUID(), songId: 2, title: 'Next song', requestNext: false })).body.data
+  const nextEntry = view.queue.find(entry => entry.id !== entryId).id
+  const skipCommand = playbackCommand()
+  view = (await request('POST', `${path}/playback/skip`, 1, skipCommand)).body.data
   assert.equal(view.playback.state, 'idle')
   assert.equal(db.prepare('SELECT outcome FROM ktv_turn_history WHERE entry_id = ?').get(entryId).outcome, 'skipped')
-  assert.equal(view.queue.length, 0)
+  assert.equal(view.queue.length, 1)
+  assert.equal(view.readiness.entryId, nextEntry)
+  assert.equal(view.readiness.state, 'awaiting-singer')
+  assert.equal((await request('POST', `${path}/playback/skip`, 1, skipCommand)).body.data.room.revision, view.room.revision)
+  const declineCommand = { commandId: randomUUID(), clockId: clock.id, performanceId: view.readiness.performanceId,
+    generation: view.readiness.generation, baseRevision: view.room.revision, ready: false }
+  view = (await request('POST', `${path}/readiness/respond`, 1, declineCommand)).body.data
+  assert.equal(db.prepare('SELECT outcome FROM ktv_turn_history WHERE entry_id = ?').get(nextEntry).outcome, 'declined')
+  assert.equal((await request('POST', `${path}/readiness/respond`, 1, declineCommand)).body.data.room.revision, view.room.revision)
+  assert.equal(db.prepare('SELECT COUNT(*) total FROM ktv_turn_history').get().total, 2)
   assert.equal(pending.room.id !== view.room.id && guest.self.id !== view.self.id, true)
 })
 

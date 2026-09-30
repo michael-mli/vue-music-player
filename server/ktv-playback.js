@@ -1,13 +1,17 @@
 import { randomUUID } from 'node:crypto'
 import { fail } from './ktv-errors.js'
 import { invalidateReadiness } from './ktv-readiness.js'
-import { effectiveTimeline, timelinePosition, OUTPUT_LEASE_MS, OUTPUT_MARGIN_MS, PLAYBACK_LEAD_MS, PREPARE_TIMEOUT_MS } from './ktv-timeline.js'
+import { recordTurn, requestNextTurn, offerNextTurn } from './ktv-turns.js'
+import { timelinePosition, OUTPUT_LEASE_MS, OUTPUT_MARGIN_MS, PLAYBACK_LEAD_MS, PREPARE_TIMEOUT_MS } from './ktv-timeline.js'
 
 const stamp = () => new Date().toISOString()
 
-export function createKtvPlayback({ db, clock, transaction, bump, event, broadcast, broadcastLease = () => {} }) {
+export function createKtvPlayback({ db, clock, transaction, bump, event, broadcast, broadcastLease = () => {}, hostGraceMs = 30_000 }) {
   const devices = new Map()
   const leases = new Map()
+  const hostMissing = new Map()
+  const hostSignatures = new Map()
+  if (!Number.isFinite(hostGraceMs) || hostGraceMs < 1000 || hostGraceMs > 300_000) throw new Error('Invalid KTV host grace period')
   let presenceSequence = 0
   let closed = false
   // A previous process may have renewed a lease immediately before restart.
@@ -19,7 +23,8 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
       const selection = db.prepare('SELECT * FROM ktv_readiness WHERE room_id = ?').get(row.room_id)
       db.prepare(`UPDATE ktv_playback SET state = 'paused', generation = generation + 1, clock_id = ?, performance_id = ?,
         position_ms = checkpoint_ms, anchor_server_ms = 0, pending_json = NULL,
-        stage_device_id = NULL, stage_member_id = NULL, prepare_deadline_ms = NULL, updated_at = ? WHERE room_id = ?`)
+        stage_device_id = NULL, stage_member_id = NULL, guide_device_id = NULL, recovery_reason = 'service.restarted',
+        prepare_deadline_ms = NULL, updated_at = ? WHERE room_id = ?`)
         .run(clock.id, selection?.entry_id === row.entry_id ? selection.performance_id : row.performance_id, stamp(), row.room_id)
       bump(db, row.room_id)
       event(db, row.room_id, null, 'playback.recovered', row.entry_id)
@@ -30,7 +35,8 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
   function view(row) {
     if (!row) return { state: 'idle', clockId: clock.id, generation: 0, entryId: null, performanceId: null,
       positionMs: 0, anchorServerMs: 0, durationMs: 0, pendingTransition: null, assets: null,
-      stageDeviceId: null, stageMemberId: null, lyricOffsetMs: 0, prepareDeadlineMs: null }
+      stageDeviceId: null, stageMemberId: null, lyricOffsetMs: 0, prepareDeadlineMs: null,
+      guideRequired: false, guideDeviceId: null, recoveryReason: null }
     const entry = row.entry_id && db.prepare(`SELECT q.title, q.singer_member_id, m.display_name FROM ktv_queue_entries q
       JOIN ktv_members m ON m.id = q.singer_member_id WHERE q.id = ?`).get(row.entry_id)
     return { state: row.state, clockId: row.clock_id, generation: row.generation, entryId: row.entry_id,
@@ -38,19 +44,21 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
       durationMs: row.duration_ms, pendingTransition: row.pending_json ? JSON.parse(row.pending_json) : null,
       assets: row.assets_json ? JSON.parse(row.assets_json) : null, stageDeviceId: row.stage_device_id,
       stageMemberId: row.stage_member_id, lyricOffsetMs: row.lyric_offset_ms, prepareDeadlineMs: row.prepare_deadline_ms,
-      title: entry?.title || null, singerMemberId: entry?.singer_member_id || null, singerName: entry?.display_name || null }
+      title: entry?.title || null, singerMemberId: entry?.singer_member_id || null, singerName: entry?.display_name || null,
+      guideRequired: Boolean(row.guide_required), guideDeviceId: row.guide_device_id, recoveryReason: row.recovery_reason }
   }
   function snapshot(roomId) {
-    const playback = view(read(roomId))
+    const row = read(roomId), playback = view(row)
     const lease = leases.get(roomId)
-    return { ...playback, lease: lease ? publicLease(lease) : null, restartSafeAfterMs }
+    return { ...playback, lease: lease ? publicLease(lease) : null, restartSafeAfterMs,
+      guidePrepared: row?.entry_id ? guideReady(row) : false }
   }
   function publicLease(lease) {
     const { id, deviceId, clockId, performanceId, generation, sequence, expiresServerMs, safeAfterServerMs, nextGeneration, effectiveServerMs } = lease
     return { id, deviceId, clockId, performanceId, generation, sequence, expiresServerMs, safeAfterServerMs, nextGeneration, effectiveServerMs }
   }
   function presence(roomId) {
-    return { sequence: presenceSequence, devices: [...devices.values()].filter(device => device.roomId === roomId)
+    return { sequence: presenceSequence, host: hostPresence(roomId), devices: [...devices.values()].filter(device => device.roomId === roomId)
       .map(device => ({ id: device.id, memberId: device.memberId, label: device.label, purpose: device.purpose,
         audioEnabled: device.audioEnabled, clockHealthy: device.clockHealthy, ready: Boolean(device.ready),
         readyGeneration: device.ready?.generation ?? null, connected: device.ws.readyState === 1 })) }
@@ -89,10 +97,68 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
     const lease = leases.get(roomId)
     return lease && clock.nowMs() < lease.safeAfterServerMs ? lease : null
   }
-  function ready(device, row) {
-    return device.purpose === 'stage' && device.audioEnabled && device.clockHealthy && clock.nowMs() - device.lastSeenMs <= 4000 &&
+  function ready(device, row, purpose = 'stage') {
+    return device?.purpose === purpose && device.audioEnabled && device.clockHealthy && clock.nowMs() - device.lastSeenMs <= 4000 &&
       device.ready?.performanceId === row.performance_id && device.ready?.generation === row.generation &&
-      device.ready?.clockId === clock.id && device.ready?.assetVersion === JSON.parse(row.assets_json).version
+      device.ready?.clockId === clock.id && device.ready?.assetVersion === JSON.parse(row.assets_json).version &&
+      (purpose !== 'guide' || clock.nowMs() - device.ready.atMs <= 4000)
+  }
+  function guideReady(row) {
+    if (!row.guide_device_id || !row.assets_json || !JSON.parse(row.assets_json).original) return false
+    try {
+      const device = requireDevice(row.room_id, row.guide_device_id)
+      const singer = db.prepare('SELECT singer_member_id FROM ktv_queue_entries WHERE id = ?').get(row.entry_id)
+      return device.id !== row.stage_device_id && device.memberId === singer?.singer_member_id && ready(device, row, 'guide')
+    } catch { return false }
+  }
+  function controllers(roomId) {
+    const members = new Set()
+    for (const device of devices.values()) if (device.roomId === roomId && device.scope === 'controller') {
+      try { requireDevice(roomId, device.id); members.add(device.memberId) } catch { /* Stale or revoked device. */ }
+    }
+    return members
+  }
+  function hostPresence(roomId) {
+    const members = controllers(roomId)
+    const host = db.prepare("SELECT id FROM ktv_members WHERE room_id = ? AND role = 'host' AND admission = 'admitted'").get(roomId)
+    const cohost = db.prepare(`SELECT id FROM ktv_members WHERE room_id = ? AND cohost_at IS NOT NULL AND admission = 'admitted'
+      ORDER BY cohost_at, id`).all(roomId).find(member => members.has(member.id))
+    const connected = Boolean(host && members.has(host.id))
+    const missing = hostMissing.get(roomId)
+    return { memberId: host?.id || null, connected, controlAvailable: connected || Boolean(cohost),
+      graceDeadlineMs: !connected && missing?.memberId === host?.id ? missing.sinceMs + hostGraceMs : null,
+      transferCandidateId: cohost?.id || null, graceMs: hostGraceMs }
+  }
+  function hostPolicy(roomId) {
+    let state = hostPresence(roomId)
+    if (state.connected || !state.memberId) hostMissing.delete(roomId)
+    else {
+      let missing = hostMissing.get(roomId)
+      if (!missing || missing.memberId !== state.memberId) {
+        missing = { memberId: state.memberId, sinceMs: clock.nowMs() }
+        hostMissing.set(roomId, missing)
+      }
+      if (clock.nowMs() >= missing.sinceMs + hostGraceMs && state.transferCandidateId) {
+        const now = stamp()
+        // Both changes commit together, preserving the one-host unique index.
+        db.prepare("UPDATE ktv_members SET role = 'member', cohost_at = NULL, updated_at = ? WHERE id = ?").run(now, state.memberId)
+        db.prepare("UPDATE ktv_members SET role = 'host', cohost_at = NULL, updated_at = ? WHERE id = ?").run(now, state.transferCandidateId)
+        bump(db, roomId); event(db, roomId, null, 'room.host_transferred_after_loss', state.transferCandidateId)
+        hostMissing.delete(roomId)
+      }
+    }
+    state = hostPresence(roomId)
+    const signature = JSON.stringify(state)
+    if (signature === hostSignatures.get(roomId)) return false
+    hostSignatures.set(roomId, signature); presenceSequence++
+    return true
+  }
+  function advance(roomId) {
+    if (!hostPresence(roomId).controlAvailable) return false
+    const entryId = offerNextTurn(db, roomId, clock)
+    if (!entryId) return false
+    bump(db, roomId); event(db, roomId, null, 'readiness.auto_offered', entryId)
+    return true
   }
   function ensureRow(roomId) {
     db.prepare(`INSERT OR IGNORE INTO ktv_playback (room_id, clock_id, updated_at) VALUES (?, ?, ?)`).run(roomId, clock.id, stamp())
@@ -106,7 +172,7 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
     const position = timelinePosition(prior, clock.nowMs())
     db.prepare(`UPDATE ktv_playback SET stage_device_id = ?, stage_member_id = ?, clock_id = ?, generation = generation + 1,
       state = ?, position_ms = ?, checkpoint_ms = ?, pending_json = NULL, anchor_server_ms = 0,
-      prepare_deadline_ms = NULL, updated_at = ? WHERE room_id = ?`)
+      prepare_deadline_ms = NULL, recovery_reason = NULL, updated_at = ? WHERE room_id = ?`)
       .run(device.id, device.memberId, clock.id, row.entry_id ? 'paused' : 'idle', position, position, stamp(), roomId)
     bump(db, roomId)
     event(db, roomId, null, 'stage.assigned', device.id)
@@ -116,10 +182,13 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
     requireDevice(roomId, row.stage_device_id)
     if (['playing', 'scheduled'].includes(row.state) || row.pending_json) fail(409, 'PLAYBACK_ACTIVE', 'Pause or skip the active song first')
     if (readiness.state !== 'ready') fail(409, 'SINGER_NOT_READY', 'The singer must confirm readiness first')
+    const samePerformance = row.performance_id === readiness.performanceId
     db.prepare(`UPDATE ktv_playback SET entry_id = ?, performance_id = ?, generation = generation + 1, clock_id = ?,
       state = 'preparing', position_ms = 0, checkpoint_ms = 0, duration_ms = ?, assets_json = ?, pending_json = NULL,
-      anchor_server_ms = 0, prepare_deadline_ms = ?, updated_at = ? WHERE room_id = ?`)
+      anchor_server_ms = 0, guide_required = ?, guide_device_id = ?, recovery_reason = NULL, lyric_offset_ms = ?,
+      prepare_deadline_ms = ?, updated_at = ? WHERE room_id = ?`)
       .run(readiness.entryId, readiness.performanceId, clock.id, assets.durationMs, JSON.stringify(assets),
+        samePerformance ? row.guide_required : 0, samePerformance ? row.guide_device_id : null, samePerformance ? row.lyric_offset_ms : 0,
         clock.nowMs() + PREPARE_TIMEOUT_MS, stamp(), roomId)
     bump(db, roomId)
     event(db, roomId, null, 'playback.preparing', readiness.entryId)
@@ -133,6 +202,8 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
     }
     const device = requireDevice(roomId, row.stage_device_id)
     if (!ready(device, row)) fail(409, 'DEVICE_NOT_READY', 'The designated stage is still preparing audio')
+    if (row.guide_required && !guideReady(row)) fail(409, 'GUIDE_NOT_READY', 'The singer requires a prepared vocal guide before starting')
+    if (!hostPresence(roomId).controlAvailable) fail(409, 'HOST_UNAVAILABLE', 'Reconnect a host or co-host controller before starting')
     const old = activeLease(roomId)
     if (old) fail(409, 'OUTPUT_STOPPING', 'Wait for the previous stage output to become silent')
     if (clock.nowMs() < restartSafeAfterMs) fail(409, 'OUTPUT_STOPPING', 'Wait for the previous service output lease to expire')
@@ -142,12 +213,30 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
     // The prepared generation is the scheduled generation. Requiring another
     // ready response after changing it would create an unnecessary race.
     const anchor = clock.nowMs() + PLAYBACK_LEAD_MS
-    db.prepare(`UPDATE ktv_playback SET state = 'scheduled', anchor_server_ms = ?, prepare_deadline_ms = NULL,
+    db.prepare(`UPDATE ktv_playback SET state = 'scheduled', anchor_server_ms = ?, prepare_deadline_ms = NULL, recovery_reason = NULL,
       updated_at = ? WHERE room_id = ?`).run(anchor, stamp(), roomId)
     bump(db, roomId)
     event(db, roomId, null, 'playback.scheduled', row.entry_id)
     // Materialize the grant after commit through sweep(); avoid issuing a lease
     // for a transaction that could still roll back.
+  }
+  function guide(roomId, memberId, required, deviceId) {
+    const row = read(roomId)
+    const singer = row?.entry_id && db.prepare('SELECT singer_member_id FROM ktv_queue_entries WHERE id = ?').get(row.entry_id)
+    if (!row || row.state === 'idle' || singer?.singer_member_id !== memberId) fail(403, 'FORBIDDEN', 'Only the selected singer can choose required guidance')
+    if (typeof required !== 'boolean') fail(400, 'INVALID_INPUT', 'Choose whether guidance is required')
+    if (required) {
+      if (!JSON.parse(row.assets_json).original) fail(409, 'GUIDE_UNAVAILABLE', 'Original audio is unavailable for this song')
+      const device = requireDevice(roomId, deviceId)
+      if (device.memberId !== memberId || device.scope !== 'controller' || device.id === row.stage_device_id) {
+        fail(403, 'FORBIDDEN', 'Choose your own separate guide phone')
+      }
+    }
+    db.prepare('UPDATE ktv_playback SET guide_required = ?, guide_device_id = ?, updated_at = ? WHERE room_id = ?')
+      .run(Number(required), required ? deviceId : null, stamp(), roomId)
+    const recovered = required && ['scheduled', 'playing'].includes(row.state) && !guideReady(read(roomId)) && recover(roomId, 'guide.unavailable')
+    if (!recovered) bump(db, roomId)
+    event(db, roomId, null, required ? 'guide.required' : 'guide.optional', required ? deviceId : null)
   }
   function transition(roomId, action, positionMs) {
     const row = read(roomId)
@@ -174,36 +263,38 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
       (filter.memberId && filter.memberId !== entry?.singer_member_id && filter.memberId !== row.stage_member_id)) return false
     db.prepare(`UPDATE ktv_playback SET state = 'idle', entry_id = NULL, performance_id = NULL, generation = generation + 1,
       position_ms = 0, checkpoint_ms = 0, anchor_server_ms = 0, duration_ms = 0, assets_json = NULL,
-      pending_json = NULL, prepare_deadline_ms = NULL, updated_at = ? WHERE room_id = ?`).run(stamp(), roomId)
+      pending_json = NULL, prepare_deadline_ms = NULL, guide_required = 0, guide_device_id = NULL,
+      recovery_reason = NULL, updated_at = ? WHERE room_id = ?`).run(stamp(), roomId)
     return true
   }
   function finish(roomId, outcome) {
     const row = read(roomId)
     if (!row?.entry_id || row.state === 'idle') fail(409, 'INVALID_PLAYBACK', 'No current performance')
     const entry = db.prepare('SELECT * FROM ktv_queue_entries WHERE id = ?').get(row.entry_id)
-    const latestRound = db.prepare('SELECT COALESCE(MAX(round), 1) AS round FROM ktv_turn_history WHERE room_id = ?').get(roomId).round
-    const served = new Set(db.prepare('SELECT singer_member_id FROM ktv_turn_history WHERE room_id = ? AND round = ?')
-      .all(roomId, latestRound).map(turn => turn.singer_member_id))
-    const eligible = db.prepare(`SELECT DISTINCT singer_member_id FROM ktv_queue_entries
-      WHERE room_id = ? AND state = 'queued' AND accepted_at IS NOT NULL`).all(roomId)
-    const nextRound = eligible.every(singer => served.has(singer.singer_member_id)) && served.size > 0
-    db.prepare(`INSERT OR IGNORE INTO ktv_turn_history (room_id, entry_id, singer_member_id, outcome, round, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)`).run(roomId, entry.id, entry.singer_member_id, outcome, latestRound + Number(nextRound), stamp())
+    recordTurn(db, roomId, entry, outcome)
     // Keep the original queue CHECK constraint for additive compatibility. The
     // history row distinguishes finished/skipped from an unperformed cancellation.
     db.prepare("UPDATE ktv_queue_entries SET state = 'cancelled', updated_at = ? WHERE id = ?").run(stamp(), entry.id)
     invalidateReadiness(db, roomId, clock)
     invalidate(roomId)
+    requestNextTurn(db, roomId)
+    advance(roomId)
     bump(db, roomId)
     event(db, roomId, null, `playback.${outcome}`, entry.id)
+  }
+  function decline(roomId, entry) {
+    recordTurn(db, roomId, entry, 'declined')
+    db.prepare("UPDATE ktv_queue_entries SET state = 'cancelled', updated_at = ? WHERE id = ?").run(stamp(), entry.id)
+    invalidateReadiness(db, roomId, clock); invalidate(roomId)
+    requestNextTurn(db, roomId); advance(roomId)
   }
   function recover(roomId, reason) {
     const row = read(roomId)
     if (!row || !['playing', 'scheduled', 'preparing'].includes(row.state)) return false
     const position = timelinePosition(view(row), clock.nowMs())
     db.prepare(`UPDATE ktv_playback SET state = 'recovering', generation = generation + 1, position_ms = ?, checkpoint_ms = ?,
-      anchor_server_ms = 0, pending_json = NULL, prepare_deadline_ms = NULL, updated_at = ? WHERE room_id = ?`)
-      .run(position, position, stamp(), roomId)
+      anchor_server_ms = 0, pending_json = NULL, prepare_deadline_ms = NULL, recovery_reason = ?, updated_at = ? WHERE room_id = ?`)
+      .run(position, position, reason, stamp(), roomId)
     bump(db, roomId)
     event(db, roomId, null, reason, row.entry_id)
     return true
@@ -230,9 +321,12 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
         device.audioEnabled !== message.audioEnabled || device.clockHealthy !== message.clockHealthy
       device.purpose = message.purpose; device.label = message.label.trim() || 'Device'
       device.audioEnabled = message.audioEnabled; device.clockHealthy = message.clockHealthy
-      if (!device.audioEnabled || !device.clockHealthy || (read(ws.roomId)?.stage_device_id === device.id && device.purpose !== 'stage')) {
-        device.ready = null
-        if (read(ws.roomId)?.stage_device_id === device.id) transaction(db, () => recover(ws.roomId, 'stage.unavailable'))
+      const row = read(ws.roomId)
+      if (!device.audioEnabled || !device.clockHealthy || (row?.stage_device_id === device.id && device.purpose !== 'stage') ||
+        (row?.guide_device_id === device.id && device.purpose !== 'guide')) {
+        device.ready = null; device.nextReady = null
+        if (row?.stage_device_id === device.id) transaction(db, () => recover(ws.roomId, 'stage.unavailable'))
+        else if (row?.guide_required && row.guide_device_id === device.id) transaction(db, () => recover(ws.roomId, 'guide.unavailable'))
       }
       if (changed) { presenceSequence++; broadcast(ws.roomId) }
     } else if (message.type === 'device.ready') {
@@ -241,13 +335,14 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
       const pending = row?.pending_json && JSON.parse(row.pending_json)
       if (!row?.entry_id || message.clockId !== clock.id || message.performanceId !== row.performance_id ||
         (message.generation !== row.generation && message.generation !== pending?.generation) || message.assetVersion !== assets?.version) fail(409, 'STALE_GENERATION', 'Audio preparation changed')
-      if (!device.audioEnabled || !device.clockHealthy || !Number.isFinite(message.durationMs) ||
-        Math.abs(message.durationMs - row.duration_ms) > 250) fail(409, 'DEVICE_NOT_READY', 'Audio has not decoded to the expected duration')
+      const expectedDuration = device.purpose === 'guide' ? assets?.original?.durationMs : assets?.instrumental?.durationMs
+      if (!device.audioEnabled || !device.clockHealthy || !Number.isFinite(message.durationMs) || !Number.isFinite(expectedDuration) ||
+        Math.abs(message.durationMs - expectedDuration) > 250) fail(409, 'DEVICE_NOT_READY', 'Audio has not decoded to the expected duration')
       if (device.purpose === 'guide' && db.prepare('SELECT singer_member_id FROM ktv_queue_entries WHERE id = ?').get(row.entry_id).singer_member_id !== device.memberId) {
         fail(403, 'FORBIDDEN', 'Only the selected singer can prepare a private guide')
       }
-      if (device.purpose !== 'guide' && device.id !== row.stage_device_id) fail(403, 'FORBIDDEN', 'Only the designated stage can prepare backing')
-      const prepared = { clockId: clock.id, performanceId: row.performance_id, generation: message.generation, assetVersion: assets.version }
+      if (device.purpose !== 'guide' && (device.purpose !== 'stage' || device.id !== row.stage_device_id)) fail(403, 'FORBIDDEN', 'Only the designated stage can prepare backing')
+      const prepared = { clockId: clock.id, performanceId: row.performance_id, generation: message.generation, assetVersion: assets.version, atMs: nowMs }
       if (message.generation === row.generation) device.ready = prepared
       else device.nextReady = prepared
       presenceSequence++
@@ -255,10 +350,14 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
     } else if (message.type === 'device.heartbeat') {
       const row = read(ws.roomId), lease = leases.get(ws.roomId)
       const pending = row?.pending_json && JSON.parse(row.pending_json)
+      if (row && device.purpose === 'guide' && message.clockId === clock.id && message.performanceId === row.performance_id &&
+        message.generation === row.generation && device.ready?.generation === row.generation &&
+        device.ready.performanceId === row.performance_id) device.ready.atMs = nowMs
       if (lease && lease.deviceId === device.id && lease.clockId === message.clockId && lease.id === message.leaseId &&
         lease.generation === message.generation && lease.performanceId === message.performanceId &&
         row?.generation === lease.generation && row.performance_id === lease.performanceId &&
-        ['scheduled', 'playing'].includes(row.state) && nowMs < lease.expiresServerMs && ready(device, row)) {
+        ['scheduled', 'playing'].includes(row.state) && nowMs < lease.expiresServerMs && ready(device, row) &&
+        (!row.guide_required || guideReady(row))) {
         lease.sequence++; lease.expiresServerMs = pending?.state === 'paused' ? Math.min(nowMs + OUTPUT_LEASE_MS, pending.effectiveServerMs) : nowMs + OUTPUT_LEASE_MS
         lease.safeAfterServerMs = lease.expiresServerMs + OUTPUT_MARGIN_MS
         lease.nextGeneration = pending?.generation; lease.effectiveServerMs = pending?.effectiveServerMs
@@ -292,12 +391,20 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
     devices.delete(device.id); presenceSequence++
     const row = read(device.roomId)
     if (row?.stage_device_id === device.id) transaction(db, () => recover(device.roomId, 'stage.disconnected'))
+    else if (row?.guide_required && row.guide_device_id === device.id) transaction(db, () => recover(device.roomId, 'guide.disconnected'))
     broadcast(device.roomId)
   }
   function sweep() {
     if (closed) return
     const changed = new Set()
     const nowMs = clock.nowMs()
+    const openRooms = db.prepare("SELECT id FROM ktv_rooms WHERE status = 'open' AND expires_at > ?").all(stamp())
+    const openIds = new Set(openRooms.map(room => room.id))
+    for (const room of openRooms) transaction(db, () => {
+      if (hostPolicy(room.id)) changed.add(room.id)
+      if (advance(room.id)) changed.add(room.id)
+    })
+    for (const roomId of hostSignatures.keys()) if (!openIds.has(roomId)) { hostMissing.delete(roomId); hostSignatures.delete(roomId) }
     for (const row of db.prepare("SELECT * FROM ktv_playback WHERE state != 'idle'").all()) {
       let needsLease = false
       transaction(db, () => {
@@ -320,18 +427,27 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
           db.prepare(`UPDATE ktv_playback SET state = ?, generation = ?, position_ms = ?, checkpoint_ms = ?,
             anchor_server_ms = ?, pending_json = NULL, updated_at = ? WHERE room_id = ?`)
             .run(pending.state, pending.generation, pending.positionMs, pending.positionMs, pending.anchorServerMs, stamp(), row.room_id)
-          const device = devices.get(row.stage_device_id)
-          if (device) { device.ready = device.nextReady || null; device.nextReady = null }
+          for (const device of devices.values()) if (device.roomId === row.room_id &&
+            (device.id === row.stage_device_id || device.purpose === 'guide')) {
+            device.ready = device.nextReady?.generation === pending.generation ? device.nextReady : null
+            device.nextReady = null
+          }
           if (pendingLease) {
             pendingLease.generation = pending.generation; pendingLease.nextGeneration = undefined
             pendingLease.effectiveServerMs = undefined; pendingLease.sequence++
           }
-          bump(db, row.room_id); changed.add(row.room_id); return
+          bump(db, row.room_id)
+          const committed = read(row.room_id)
+          if (pending.state === 'playing' && committed.guide_required && !guideReady(committed)) recover(row.room_id, 'guide.unavailable')
+          changed.add(row.room_id); return
         }
         if (row.state === 'preparing' && nowMs >= row.prepare_deadline_ms) {
           recover(row.room_id, 'playback.prepare_timeout'); changed.add(row.room_id); return
         }
         if (['scheduled', 'playing'].includes(row.state)) {
+          if (row.guide_required && !guideReady(row)) {
+            recover(row.room_id, 'guide.unavailable'); changed.add(row.room_id); return
+          }
           let device
           try { device = requireDevice(row.room_id, row.stage_device_id) } catch { /* recover below */ }
           const lease = leases.get(row.room_id)
@@ -366,5 +482,5 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
   const timer = setInterval(sweep, 250)
   timer.unref()
   return { snapshot, presence, connected, disconnected, deviceMessage, current, assign, prepare, start,
-    transition, invalidate, finish, read, sweep, close: () => { closed = true; clearInterval(timer) } }
+    transition, guide, invalidate, finish, decline, read, sweep, close: () => { closed = true; clearInterval(timer) } }
 }

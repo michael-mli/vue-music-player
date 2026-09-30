@@ -17,6 +17,7 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
   const readyKeys = new Set<string>()
   let clockReceivedMs = 0, failedKey = '', loadingKey = '', loadAttempt = 0
   let lastStatusMs = -Infinity, lastHeartbeatMs = -Infinity, disposed = false
+  let lastStoppedLease = ''
   let animation = 0
   const playback = computed(() => party.value?.playback)
   const serverNowMs = computed(() => nowMs.value + (clock.value?.offsetMs || 0))
@@ -26,7 +27,7 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
   const lines = computed(() => playback.value?.assets?.lyrics.mode === 'synced' ? parseLrc(playback.value.assets.lyrics.text || '') : [])
   const lyricGuide = computed(() => singingGuideState(lines.value, positionMs.value / 1000,
     (playback.value?.durationMs || 0) / 1000, (playback.value?.lyricOffsetMs || 0) / 1000))
-  const canGuide = computed(() => playback.value?.singerMemberId === party.value?.self.id && party.value?.deviceScope !== 'display')
+  const canGuide = computed(() => playback.value?.singerMemberId === party.value?.self.id && party.value?.deviceScope !== 'display' && playback.value?.stageDeviceId !== deviceId)
   const assignedHere = computed(() => playback.value?.stageDeviceId === deviceId)
   const startSafe = computed(() => !!clock.value && serverNowMs.value >= Math.max(playback.value?.restartSafeAfterMs || 0,
     lease.value?.clockId === clock.value.clockId ? lease.value.safeAfterServerMs : playback.value?.lease?.safeAfterServerMs || 0))
@@ -36,7 +37,7 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
   function status() {
     if (!connected.value) return
     send({ type: 'device.status', label: purpose.value === 'stage' ? 'Stage' : purpose.value === 'guide' ? 'Singer phone' : 'Controller',
-      purpose: purpose.value, audioEnabled: enabled.value && engine.enabled, clockHealthy: healthy.value })
+      purpose: purpose.value, audioEnabled: !document.hidden && enabled.value && engine.enabled, clockHealthy: !document.hidden && healthy.value })
     lastStatusMs = performance.now()
   }
   async function enable(role: 'stage' | 'guide') {
@@ -53,11 +54,13 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
   }
   function acknowledgeStop() {
     if (lease.value?.deviceId !== deviceId) return
-    send({ type: 'device.stopped', leaseId: lease.value.id, clockId: lease.value.clockId, generation: lease.value.generation })
+    const key = `${lease.value.id}:${lease.value.generation}`
+    if (lastStoppedLease === key) return
+    if (send({ type: 'device.stopped', leaseId: lease.value.id, clockId: lease.value.clockId, generation: lease.value.generation })) lastStoppedLease = key
   }
   async function prepare() {
     const current = playback.value
-    const eligible = enabled.value && healthy.value && current?.assets && current.state !== 'idle' &&
+    const eligible = !document.hidden && enabled.value && healthy.value && current?.assets && current.state !== 'idle' &&
       (purpose.value === 'stage' ? assignedHere.value : purpose.value === 'guide' && canGuide.value)
     if (!eligible || !current?.assets) return
     const asset = purpose.value === 'stage' ? current.assets.instrumental : current.assets.original
@@ -106,8 +109,15 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
   engine.onSuspended = () => { enabled.value = false; prepared.value = false; readyKeys.clear(); failure.value = 'audioSuspended'; status() }
   engine.onEnded = generation => {
     const current = playback.value, grant = lease.value
-    if (purpose.value !== 'stage' || !assignedHere.value || !current || !grant || !healthy.value) return
+    if (!current || !grant || !healthy.value) return
     const position = partyPosition(current, performance.now() + clock.value!.offsetMs)
+    if (purpose.value === 'guide') {
+      if (generation === segment.value?.generation && ['playing', 'scheduled'].includes(segment.value.state) && position < current.durationMs - 250) {
+        enabled.value = false; prepared.value = false; readyKeys.clear(); failure.value = 'guideEndedEarly'; status()
+      }
+      return
+    }
+    if (purpose.value !== 'stage' || !assignedHere.value) return
     if (position < current.durationMs - 250) return
     send({ type: 'playback.ended', clockId: current.clockId, performanceId: current.performanceId,
       generation, entryId: current.entryId, leaseId: grant.id })
@@ -149,6 +159,7 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
         engine.sync(current, healthy.value ? clock.value : null, grant, purpose.value === 'guide' ? 'guide' : 'stage',
           purpose.value === 'guide' ? guideAdvanceMs.value : 0)
         if (segment.value?.state === 'paused' && nowMs.value - lastHeartbeatMs < 20) acknowledgeStop()
+        if (current.state === 'recovering') acknowledgeStop()
       } else engine.stop()
     } else engine.stop()
     animation = requestAnimationFrame(tick)
@@ -156,7 +167,7 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
   function foreground() {
     // Resume is explicit after suspension. Do not make a stale source audible
     // simply because the browser resumes an AudioContext in the background.
-    if (document.hidden) { engine.stop(); readyKeys.clear(); status() }
+    if (document.hidden) { engine.stop(); acknowledgeStop(); readyKeys.clear(); status() }
     else { lease.value = null; readyKeys.clear(); status(); void prepare() }
   }
   document.addEventListener('visibilitychange', foreground)
@@ -174,5 +185,5 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
     void engine.close()
   })
   return { deviceId, purpose, enabled, preparing, prepared, failure, volume, guideAdvanceMs, positionMs,
-    segment, countdown, lines, lyricGuide, canGuide, assignedHere, startSafe, healthy, enable, disable, message, retry: () => { failedKey = ''; readyKeys.clear(); void prepare() } }
+    segment, countdown, lines, lyricGuide, canGuide, assignedHere, startSafe, healthy, serverNowMs, enable, disable, message, retry: () => { failedKey = ''; readyKeys.clear(); void prepare() } }
 }

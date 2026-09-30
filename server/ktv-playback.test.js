@@ -11,7 +11,7 @@ import { createKtvAssets } from './ktv-assets.js'
 import { orderQueue } from './ktv-queue.js'
 import { timelinePosition, effectiveTimeline } from './ktv-timeline.js'
 
-function fixture(t) {
+function fixture(t, settings = {}) {
   const directory = fsSync.mkdtempSync(path.join(os.tmpdir(), 'ktv-playback-'))
   const db = initDb(directory)
   const roomId = randomUUID(), memberId = randomUUID(), entryId = randomUUID(), performanceId = randomUUID()
@@ -36,7 +36,7 @@ function fixture(t) {
   }
   const events = [], packets = []
   const options = { db, clock, transaction, bump: (database, room) => database.prepare('UPDATE ktv_rooms SET revision = revision + 1 WHERE id = ?').run(room),
-    event: (...args) => events.push(args), broadcast: () => {} }
+    event: (...args) => events.push(args), broadcast: () => {}, ...settings }
   let service = createKtvPlayback(options)
   const ws = { clientDeviceId: randomUUID(), roomId, principal: {}, readyState: 1, send: raw => packets.push(JSON.parse(raw)) }
   const authorized = { self: { id: memberId, admission: 'admitted' } }
@@ -52,9 +52,34 @@ function fixture(t) {
     status(); transaction(db, () => service.assign(roomId, ws.clientDeviceId))
     transaction(db, () => service.prepare(roomId, human, assets)); ready()
   }
+  function member(name, cohostAt = null) {
+    const id = randomUUID(), now = new Date().toISOString()
+    const userId = db.prepare("INSERT INTO users (username, kind, created_at) VALUES (?, 'guest', ?)").run(name, now).lastInsertRowid
+    db.prepare(`INSERT INTO ktv_members (id, room_id, user_id, display_name, role, cohost_at, admission, joined_at, updated_at)
+      VALUES (?, ?, ?, ?, 'member', ?, 'admitted', ?, ?)`).run(id, roomId, userId, name, cohostAt, now, now)
+    return id
+  }
+  function enqueue(singerId, { accepted = true, state = 'queued', priority = false } = {}) {
+    const id = randomUUID(), now = new Date().toISOString()
+    db.prepare(`INSERT INTO ktv_queue_entries (id, room_id, song_id, title, requester_member_id, singer_member_id,
+      accepted_at, state, priority_approved, created_at, updated_at) VALUES (?, ?, 1, 'Song', ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, roomId, memberId, singerId, accepted ? now : null, state, Number(priority), now, now)
+    return id
+  }
+  function device(singerId = memberId, purpose = 'guide', scope = 'controller') {
+    const socket = { ...ws, clientDeviceId: randomUUID() }
+    const access = { self: { id: singerId, admission: 'admitted' }, deviceScope: scope }
+    const send = body => service.deviceMessage(socket, { protocolVersion: 1, ...body }, access)
+    const status = (audioEnabled = true, clockHealthy = true) => send({ type: 'device.status', purpose,
+      label: 'Fixture device', audioEnabled, clockHealthy })
+    status()
+    return { ws: socket, send, status, ready: (generation = service.snapshot(roomId).generation) => send({ type: 'device.ready',
+      clockId: clock.id, performanceId: service.snapshot(roomId).performanceId, generation, assetVersion: assets.version,
+      durationMs: purpose === 'guide' ? assets.original.durationMs : assets.durationMs }) }
+  }
   t.after(() => { service.close(); db.close(); fsSync.rmSync(directory, { recursive: true, force: true }) })
   return { db, roomId, memberId, entryId, performanceId, clock, ws, assets, packets, events, transaction,
-    get service() { return service }, status, message, ready, prepare,
+    get service() { return service }, status, message, ready, prepare, member, enqueue, device,
     time: value => { nowMs = value }, advance: amount => { nowMs += amount },
     restart: () => { service.close(); clock.id = randomUUID(); service = createKtvPlayback(options); return service } }
 }
@@ -182,6 +207,185 @@ test('restart restores only the durable checkpoint, drops designation and create
   assert.equal(after.state, 'paused'); assert.equal(after.positionMs, 1234)
   assert.ok(after.generation > before.generation); assert.notEqual(after.clockId, before.clockId)
   assert.equal(after.stageDeviceId, null); assert.equal(after.lease, null)
+})
+
+test('required guide gates start, validates its own duration, and interrupted guidance preserves the turn', t => {
+  const f = fixture(t)
+  f.assets.original.durationMs = 61_700
+  f.prepare()
+  const phone = f.device()
+  f.service.guide(f.roomId, f.memberId, true, phone.ws.clientDeviceId)
+  f.time(9000); f.status(); phone.status()
+  assert.throws(() => f.service.start(f.roomId), error => error.code === 'GUIDE_NOT_READY')
+  phone.ready()
+  assert.equal(f.service.snapshot(f.roomId).guidePrepared, true)
+  f.service.start(f.roomId); f.service.sweep()
+  const before = f.service.snapshot(f.roomId)
+  f.time(11_000)
+  phone.status(false)
+  const recovered = f.service.snapshot(f.roomId)
+  assert.equal(recovered.state, 'recovering'); assert.equal(recovered.recoveryReason, 'guide.unavailable')
+  assert.equal(recovered.entryId, f.entryId); assert.equal(recovered.positionMs, 0)
+  assert.ok(recovered.generation > before.generation)
+  assert.equal(f.db.prepare('SELECT COUNT(*) total FROM ktv_turn_history').get().total, 0)
+  f.service.guide(f.roomId, f.memberId, false)
+  f.status(); f.ready()
+  assert.throws(() => f.service.start(f.roomId), error => error.code === 'OUTPUT_STOPPING')
+  f.message({ type: 'device.stopped', leaseId: before.lease.id, clockId: f.clock.id, generation: before.generation })
+  f.advance(501); f.status(); f.service.start(f.roomId); f.service.sweep()
+  assert.equal(f.service.snapshot(f.roomId).state, 'scheduled')
+  assert.equal(f.service.snapshot(f.roomId).guideRequired, false)
+})
+
+test('optional guide failures do not pause backing; only the selected singer can bind a separate controller guide', t => {
+  const f = fixture(t)
+  f.prepare(); f.time(9000); f.status()
+  const other = f.member('other-singer'), strangerPhone = f.device(other)
+  const display = f.device(f.memberId, 'viewer', 'display')
+  assert.throws(() => f.service.guide(f.roomId, other, true, strangerPhone.ws.clientDeviceId), error => error.code === 'FORBIDDEN')
+  for (const id of [strangerPhone.ws.clientDeviceId, display.ws.clientDeviceId, f.ws.clientDeviceId]) {
+    assert.throws(() => f.service.guide(f.roomId, f.memberId, true, id), error => error.code === 'FORBIDDEN')
+  }
+  assert.throws(() => strangerPhone.ready(), error => error.code === 'FORBIDDEN')
+  const phone = f.device(); phone.ready()
+  f.service.start(f.roomId); f.service.sweep()
+  phone.status(false)
+  assert.equal(f.service.snapshot(f.roomId).state, 'scheduled')
+  f.service.disconnected(phone.ws)
+  assert.equal(f.service.snapshot(f.roomId).state, 'scheduled')
+})
+
+test('required guide heartbeats are generation-bound and ready responses promote at the seek boundary', t => {
+  const f = fixture(t)
+  f.prepare(); f.time(9000); f.status()
+  const phone = f.device(); phone.ready(); f.service.guide(f.roomId, f.memberId, true, phone.ws.clientDeviceId)
+  f.service.start(f.roomId); f.service.sweep()
+  f.time(11000); f.status()
+  const heartbeat = generation => phone.send({ type: 'device.heartbeat', clockId: f.clock.id,
+    performanceId: f.performanceId, generation })
+  heartbeat(f.service.snapshot(f.roomId).generation)
+  f.service.transition(f.roomId, 'seek', 20_000)
+  const pending = f.service.snapshot(f.roomId).pendingTransition
+  f.ready(pending.generation); phone.ready(pending.generation)
+  f.service.sweep(); f.time(pending.effectiveServerMs); f.service.sweep()
+  assert.equal(f.service.snapshot(f.roomId).state, 'playing')
+  assert.equal(f.service.snapshot(f.roomId).guidePrepared, true)
+  f.time(15001); f.status(); phone.status()
+  heartbeat(pending.generation - 1)
+  f.service.sweep()
+  assert.equal(f.service.snapshot(f.roomId).state, 'recovering')
+  assert.equal(f.service.snapshot(f.roomId).recoveryReason, 'guide.unavailable')
+})
+
+test('guide loss at an effective seek boundary recovers instead of extending stage authority', t => {
+  const f = fixture(t)
+  f.prepare(); f.time(9000); f.status()
+  const phone = f.device(); phone.ready(); f.service.guide(f.roomId, f.memberId, true, phone.ws.clientDeviceId)
+  f.service.start(f.roomId); f.service.sweep()
+  f.service.transition(f.roomId, 'seek', 10000)
+  const pending = f.service.snapshot(f.roomId).pendingTransition
+  f.ready(pending.generation)
+  f.time(pending.effectiveServerMs); f.service.sweep()
+  assert.equal(f.service.snapshot(f.roomId).state, 'recovering')
+  assert.equal(f.service.snapshot(f.roomId).positionMs, 10000)
+})
+
+test('restart preserves required-guide preference but cannot restore an old guide device or ready state', t => {
+  const f = fixture(t)
+  f.prepare()
+  const phone = f.device(); phone.ready()
+  f.service.guide(f.roomId, f.memberId, true, phone.ws.clientDeviceId)
+  f.restart()
+  const after = f.service.snapshot(f.roomId)
+  assert.equal(after.guideRequired, true); assert.equal(after.guideDeviceId, null)
+  assert.equal(after.guidePrepared, false); assert.equal(after.recoveryReason, 'service.restarted')
+})
+
+test('completion and decline automatically select fair accepted turns once, leaving held and unaccepted entries alone', t => {
+  const f = fixture(t)
+  const other = f.member('other')
+  const repeat = f.enqueue(f.memberId), next = f.enqueue(other)
+  const held = f.enqueue(other, { state: 'held' }), nomination = f.enqueue(other, { accepted: false })
+  f.prepare()
+  f.transaction(f.db, () => f.service.finish(f.roomId, 'finished'))
+  let human = f.db.prepare('SELECT * FROM ktv_readiness WHERE room_id = ?').get(f.roomId)
+  assert.equal(human.entry_id, next); assert.equal(human.state, 'awaiting-singer')
+  assert.notEqual(human.performance_id, f.performanceId)
+  assert.equal(f.service.snapshot(f.roomId).state, 'idle')
+  f.transaction(f.db, () => f.service.decline(f.roomId, f.db.prepare('SELECT * FROM ktv_queue_entries WHERE id = ?').get(next)))
+  human = f.db.prepare('SELECT * FROM ktv_readiness WHERE room_id = ?').get(f.roomId)
+  assert.equal(human.entry_id, repeat)
+  assert.equal(f.db.prepare('SELECT COUNT(*) total FROM ktv_turn_history WHERE round = 1').get().total, 2)
+  assert.equal(f.db.prepare('SELECT outcome FROM ktv_turn_history WHERE entry_id = ?').get(next).outcome, 'declined')
+  assert.equal(f.db.prepare('SELECT state FROM ktv_queue_entries WHERE id = ?').get(held).state, 'held')
+  assert.equal(f.db.prepare('SELECT accepted_at FROM ktv_queue_entries WHERE id = ?').get(nomination).accepted_at, null)
+  assert.throws(() => f.service.finish(f.roomId, 'finished'), error => error.code === 'INVALID_PLAYBACK')
+  assert.equal(f.db.prepare('SELECT COUNT(*) total FROM ktv_turn_history').get().total, 2)
+})
+
+test('host loss preserves a completed queue until a controller returns; paired displays and ordinary guests cannot inherit ownership', t => {
+  const f = fixture(t, { hostGraceMs: 1000 })
+  const guest = f.member('guest'), next = f.enqueue(guest)
+  f.prepare()
+  const display = f.device(f.memberId, 'stage', 'display'), guestPhone = f.device(guest, 'viewer')
+  f.service.disconnected(f.ws); f.service.sweep()
+  f.transaction(f.db, () => f.service.finish(f.roomId, 'skipped'))
+  assert.equal(f.db.prepare('SELECT advance_pending FROM ktv_readiness').get().advance_pending, 1)
+  f.time(1001); display.status(); guestPhone.status(); f.service.sweep()
+  assert.equal(f.db.prepare("SELECT id FROM ktv_members WHERE role = 'host'").get().id, f.memberId)
+  assert.equal(f.db.prepare('SELECT state FROM ktv_readiness').get().state, 'idle')
+  f.restart()
+  assert.equal(f.db.prepare('SELECT advance_pending FROM ktv_readiness').get().advance_pending, 1)
+  f.status(); f.service.sweep()
+  assert.equal(f.db.prepare('SELECT entry_id FROM ktv_readiness').get().entry_id, next)
+  assert.equal(f.db.prepare('SELECT clock_id FROM ktv_readiness').get().clock_id, f.clock.id)
+  assert.equal(f.service.presence(f.roomId).host.connected, true)
+})
+
+test('host loss transfers atomically to the earliest connected appointed co-host after grace and never interrupts healthy backing', t => {
+  const f = fixture(t, { hostGraceMs: 1000 })
+  const first = f.member('first-cohost', '2026-01-01T00:00:00Z')
+  const second = f.member('second-cohost', '2026-02-01T00:00:00Z')
+  f.prepare(); f.time(9000); f.status(); f.service.start(f.roomId); f.service.sweep()
+  const alternate = f.device(f.memberId, 'viewer')
+  const firstPhone = f.device(first, 'viewer'), secondPhone = f.device(second, 'viewer')
+  // A second host controller keeps ownership while a paired display carries backing.
+  f.service.disconnected(alternate.ws)
+  const stage = f.device(f.memberId, 'stage', 'display')
+  f.service.assign(f.roomId, stage.ws.clientDeviceId); stage.ready()
+  const previous = f.service.snapshot(f.roomId).lease
+  f.message({ type: 'device.stopped', clockId: f.clock.id, leaseId: previous.id, generation: previous.generation })
+  f.advance(501); f.status(); f.service.start(f.roomId); f.service.sweep()
+  f.service.disconnected(f.ws); f.service.sweep()
+  const before = f.service.snapshot(f.roomId)
+  f.advance(999); stage.status(); firstPhone.status(); secondPhone.status(); f.service.sweep()
+  assert.equal(f.db.prepare("SELECT id FROM ktv_members WHERE role = 'host'").get().id, f.memberId)
+  f.advance(2); f.service.sweep()
+  assert.equal(f.db.prepare("SELECT id FROM ktv_members WHERE role = 'host'").get().id, first)
+  assert.equal(f.db.prepare("SELECT COUNT(*) total FROM ktv_members WHERE role = 'host'").get().total, 1)
+  assert.equal(f.db.prepare('SELECT cohost_at FROM ktv_members WHERE id = ?').get(f.memberId).cohost_at, null)
+  assert.equal(f.service.snapshot(f.roomId).generation, before.generation)
+  assert.equal(f.service.snapshot(f.roomId).lease.id, before.lease.id)
+})
+
+test('host returns cancel the grace deadline across multiple controllers and transfer failures roll back both roles', t => {
+  const f = fixture(t, { hostGraceMs: 1000 })
+  const cohost = f.member('cohost', '2026-01-01T00:00:00Z')
+  f.status(); const otherHost = f.device(f.memberId, 'viewer'), cohostPhone = f.device(cohost, 'viewer')
+  f.service.disconnected(f.ws); f.service.sweep(); f.time(1001); otherHost.status(); cohostPhone.status(); f.service.sweep()
+  assert.equal(f.service.presence(f.roomId).host.graceDeadlineMs, null)
+  f.service.disconnected(otherHost.ws); f.service.sweep()
+  const deadline = f.service.presence(f.roomId).host.graceDeadlineMs
+  f.time(deadline - 1); f.status(); f.service.sweep()
+  assert.equal(f.service.presence(f.roomId).host.graceDeadlineMs, null)
+  f.service.disconnected(f.ws); f.service.sweep(); f.advance(1001); cohostPhone.status()
+  f.db.exec(`CREATE TRIGGER reject_automatic_host BEFORE UPDATE OF role ON ktv_members
+    WHEN NEW.role = 'host' AND NEW.id = '${cohost}' BEGIN SELECT RAISE(ABORT, 'injected transfer failure'); END;`)
+  assert.throws(() => f.service.sweep(), /injected transfer failure/)
+  assert.equal(f.db.prepare("SELECT id FROM ktv_members WHERE role = 'host'").get().id, f.memberId)
+  assert.ok(f.db.prepare('SELECT cohost_at FROM ktv_members WHERE id = ?').get(cohost).cohost_at)
+  f.db.exec('DROP TRIGGER reject_automatic_host'); f.service.sweep()
+  assert.equal(f.db.prepare("SELECT id FROM ktv_members WHERE role = 'host'").get().id, cohost)
 })
 
 function wav(seconds = 2) {

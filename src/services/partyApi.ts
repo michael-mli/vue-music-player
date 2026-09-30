@@ -23,7 +23,8 @@ export interface PartySnapshot {
   clock: { clockId: string; serverNowMs: number }
   readiness?: PartyReadiness
   playback?: PartyPlayback
-  presence?: { sequence: number; devices: PartyLiveDevice[] }
+  presence?: { sequence: number; devices: PartyLiveDevice[]; host: { memberId: string | null; connected: boolean;
+    controlAvailable: boolean; graceDeadlineMs: number | null; transferCandidateId: string | null; graceMs: number } }
   members?: PartyMember[]
   excludedMembers?: (PartyMember & { blocked: boolean })[]
   queue?: PartyQueueEntry[]
@@ -98,6 +99,10 @@ export interface PartyPlayback extends PartySegment {
   restartSafeAfterMs: number
   lyricOffsetMs: number
   prepareDeadlineMs: number | null
+  guideRequired: boolean
+  guideDeviceId: string | null
+  guidePrepared: boolean
+  recoveryReason: string | null
   title?: string | null
   singerMemberId?: string | null
   singerName?: string | null
@@ -113,6 +118,7 @@ export interface PartyReadiness {
   title: string | null
   singerMemberId: string | null
   singerName: string | null
+  advancePending: boolean
 }
 
 export interface PartyTurnCommand {
