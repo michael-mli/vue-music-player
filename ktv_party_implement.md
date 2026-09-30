@@ -6,7 +6,7 @@ Last updated: 2026-09-30
 
 Design reference: [ktv_party.md](ktv_party.md)
 
-Current status: The moderation preview is deployed at
+Current status: The clock and singer readiness preview is deployed at
 `https://music.micstec.com/party`. Members can connect a shared screen or phone
 controller with a short-lived code; a display has read-only room access, and a
 controller inherits the member's current permissions. Hosts can appoint co-hosts,
@@ -14,7 +14,8 @@ transfer ownership, reject or block guests, and restore access. Co-hosts can man
 ordinary members, queue requests, and routine settings. Synchronized playback,
 private original-vocal guide, and online streaming remain unimplemented.
 Singer nomination/acceptance, selected-turn readiness, and room clock negotiation
-are implemented locally; release verification is in progress.
+are live. A singer can accept a nominated song and confirm a host-selected turn
+from a paired phone. Readiness is a human confirmation; it does not start audio.
 
 ## 1. How to use this tracker
 
@@ -38,7 +39,7 @@ are implemented locally; release verification is in progress.
 | P01 | Two-device audio feasibility prototype | P00 minimum timing contract | In progress | Monotonic clock estimator tested; audio prototype and acoustic measurements open |
 | P02 | Rooms, identities, invitations, permissions, persistence | P00 | In progress | Rooms, pairing, moderation and atomic host transfer tested; general receipts and cleanup open |
 | P03 | Realtime state, commands, queue, leases | P02 | In progress | Live snapshots, clock probes, singer acceptance and versioned readiness; audio timeline/leases open |
-| P04 | Stage, phone controller, host UI | P02–P03 | In progress | Entry, join, host controls, song search, queue plan and live room updates; lyrics/playback open |
+| P04 | Stage, phone controller, host UI | P02–P03 | In progress | Entry, join, pairing, moderation, singer selection/readiness, queue and stage turn display; lyrics/playback open |
 | P05 | Scheduled playback, private guide, shared lyrics | P01, P03–P04 | Not started | — |
 | P06 | Recovery, browser coverage, local release readiness | P02–P05 | Not started | — |
 | P07 | Online performance streaming and hybrid operation | P01, stable P03/P05 contracts | Not started | — |
@@ -568,7 +569,8 @@ P02 work includes room creation/join/settings receipts, cleanup, and abuse limit
 | 2026-09-30 | Paired-device preview deployment | `4dc9ac1`, frontend `main-D1bUwwWt.js`, `https://music.micstec.com/party` | Health, route, and bundle return 200; live guest → room → display pair/read-only/WSS/revoke → phone controller host setting → room close passed | Physical browser/phone acceptance pending; transient 502 only during backend restart; backup at `/tmp/ktv-party-pair-predeploy.gE52PwBy` |
 | 2026-09-30 | P02.4 moderation and ownership | `b5b89b6`; `server/ktv-*`, `src/views/PartyRoom.vue`, party API and locales; design section 4.1 | KTV 14/14, full backend 41/41, type-check, release production build, and `git diff --check` pass | Physical UI acceptance, automatic host-loss transfer, playback, and streaming remain open |
 | 2026-09-30 | Moderation preview deployment | `b5b89b6`, frontend `main-BUbZyAKB.js`, `https://music.micstec.com/party` | Live API/WSS co-host and paired-phone permissions, decline, block/unblock/restore, host transfer, role redaction, and receipt replay pass; temporary room closed | Physical UI acceptance pending; one health retry during restart; backup at `/tmp/ktv-party-moderation-predeploy.UMfCnUHw` |
-| 2026-09-30 | Clock and singer readiness implementation | `server/ktv-clock.js`, `server/ktv-readiness.js`, clock estimator, party services/views and schema | Clock estimator tests 4/4; KTV integration tests 19/19 and full backend 46/46 pass; release build pending | Human readiness only; stage audio, original guide, leases, timeline and acoustic testing remain open |
+| 2026-09-30 | Clock and singer readiness implementation | `a7fc3c6`; `server/ktv-clock.js`, `server/ktv-readiness.js`, clock estimator, party services/views and schema | Clock estimator tests 4/4; KTV integration tests 19/19 and full backend 46/46; type-check, production build and `git diff --check` pass | Human readiness only; stage audio, original guide, leases, timeline and acoustic testing remain open |
+| 2026-09-30 | Clock and singer readiness preview deployment | `a7fc3c6`, frontend `main-DZatLVFa.js`, `https://music.micstec.com/party` | 13 live API/WSS checks pass: guest join, phone pairing, clock probes, singer-only acceptance, offer/readiness broadcasts, retry, cancellation and stale-generation rejection; seven route/asset checks return 200, deployed SHA verified, additive schema verified and foreign-key errors zero | Physical browser acceptance and acoustic timing unrun; observed 5–7 ms probe round trips are network timing only; temporary room closed; one health retry during restart; backup at `/tmp/ktv-party-readiness-predeploy.a8GJGzoy` |
 
 ### Work-session update template
 
@@ -594,5 +596,6 @@ Next action:
 | Realtime queue preview | `960b03d` (`main-CAq48vee.js`) | `https://music.micstec.com/party` | 2026-09-29 | Public WSS flow, backend 34/34, build and route checks pass; browser UI acceptance remains open | Audio, clock negotiation, singer acceptance, pairing, online/hybrid |
 | Paired-device preview | `4dc9ac1` (`main-D1bUwwWt.js`) | `https://music.micstec.com/party` | 2026-09-30 | Live pairing/API/WSS scope and revocation pass; backend 37/37, build and route checks pass; physical UI check open | Audio, clock negotiation, singer acceptance, complete moderation, online/hybrid |
 | Moderation preview | `b5b89b6` (`main-BUbZyAKB.js`) | `https://music.micstec.com/party` | 2026-09-30 | Live API/WSS role and moderation checks pass; backend 41/41, release build passes; physical UI check open | Audio, clock negotiation, singer acceptance, general receipts, cleanup, automatic host-loss recovery, online/hybrid |
+| Clock and singer readiness preview | `a7fc3c6` (`main-DZatLVFa.js`) | `https://music.micstec.com/party` | 2026-09-30 | Live API/WSS 13 checks, backend 46/46, clock tests 4/4, release build and public route/assets pass; physical UI check open | Audio scheduling, leases/timeline, lyrics, private guide, general receipts, cleanup, automatic host-loss recovery, online/hybrid |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |
