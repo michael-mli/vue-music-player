@@ -6,11 +6,12 @@ Last updated: 2026-09-30
 
 Design reference: [ktv_party.md](ktv_party.md)
 
-Current status: Realtime queue preview is deployed at `https://music.micstec.com/party`.
-Members can request karaoke-ready songs, see the shared queue, and request priority;
-hosts can approve priority. WebSocket snapshots update room views live, with HTTP
-refresh as a fallback. Playback, device pairing, and online streaming remain
-unimplemented.
+Current status: Room invitations, live queue planning, and room-scoped device pairing
+are implemented. Members can connect a shared screen or phone controller with a
+short-lived code; a display has read-only room access, and a controller inherits
+the member's current permissions. The paired-device preview is pending deployment
+verification. Synchronized playback, private original-vocal guide, and online
+streaming remain unimplemented.
 
 ## 1. How to use this tracker
 
@@ -32,7 +33,7 @@ unimplemented.
 | --- | --- | --- | --- | --- |
 | P00 | Scope baseline and technical contracts | Design | In progress | Baseline tag and source inventory; contracts remain open |
 | P01 | Two-device audio feasibility prototype | P00 minimum timing contract | Not started | — |
-| P02 | Rooms, identities, invitations, permissions, persistence | P00 | In progress | Guest/host API tests; remaining role, pairing, receipt work open |
+| P02 | Rooms, identities, invitations, permissions, persistence | P00 | In progress | Guest/host, queue, realtime, pairing API tests; role and receipt work open |
 | P03 | Realtime state, commands, queue, leases | P02 | In progress | Durable queue and room WebSocket snapshots; commands/playback authority open |
 | P04 | Stage, phone controller, host UI | P02–P03 | In progress | Entry, join, host controls, song search, queue plan and live room updates; lyrics/playback open |
 | P05 | Scheduled playback, private guide, shared lyrics | P01, P03–P04 | Not started | — |
@@ -143,9 +144,9 @@ integration in `server/db.js` and `server/index.js`. These paths are proposals.
   room lock, join limits, and optional approval.
 - [ ] P02.4 Implement admission waiting, approve/reject, remove/block, role changes,
   ownership transfer, and co-host restrictions from the permission matrix.
-- [ ] P02.5 Implement one-time room device pairing, display/controller scopes,
+- [x] P02.5 Implement one-time room device pairing, display/controller scopes,
   credential hashing, expiry, and revocation without sharing global account tokens.
-- [ ] P02.6 Define authorized snapshots for host, member, paired display, and pending
+- [x] P02.6 Define authorized snapshots for host, member, paired display, and pending
   guest; omit secrets and private identity details.
 - [ ] P02.7 Persist durable mutations and idempotency receipts in one transaction;
   cover room creation and invitation redemption as well as room commands.
@@ -165,9 +166,11 @@ Exit criteria:
 - [ ] Duplicate requests cannot create duplicate membership or duplicate rooms.
 
 Evidence: `server/ktv-routes.js`, `server/ktv-schema.js`, and `server/ktv.test.js`.
-Five KTV integration tests pass for guest names/IDs, approval and visibility,
-rotation/lock/close, persistence, and queue commands. Schema now also covers queue
-entries and receipts; pairing, playback state, complete moderation, and room
+Ten KTV integration tests pass for guest names/IDs, approval and visibility,
+rotation/lock/close, persistence, queue commands, realtime tickets, and pairing.
+Pairing codes are single-use and expire after two minutes; the room grants are
+hashed, revocable, and limited to two additional devices per member. Pairing does
+not create another member. Playback state, complete moderation, and room
 creation/join receipts remain open.
 
 ## 6. P03 — Realtime state, queue, and playback authority
@@ -261,8 +264,9 @@ The room now searches the existing karaoke catalog and shows the shared plan;
 the stage lists upcoming songs while explicitly saying playback is pending.
 `npm run type-check` and `npm run build` pass. Room state now uses WebSocket
 snapshots when connected and HTTP polling every three seconds while disconnected.
-The stage is a waiting view while P03/P05 playback work remains. QR, pairing,
-and full phone tabs are still open.
+The stage is a waiting view while P03/P05 playback work remains. A pairing page,
+scoped screen/controller views, and device disconnect controls are implemented.
+QR and full phone tabs are still open.
 
 ## 8. P05 — Production playback and private vocal guide
 
@@ -497,9 +501,10 @@ prototype result is not automatically a release result.
 
 ### Current next action
 
-Complete remaining P02 moderation, device pairing, and room-creation receipts.
-Continue P03 with clock negotiation, singer acceptance, and playback authority;
-start the P01 two-device audio prototype before integrating guide playback.
+Verify the paired-device preview on physical phone and screen, then complete
+remaining P02 moderation and room-creation receipts. Continue P03 with clock
+negotiation, singer acceptance, and playback authority; start the P01 two-device
+audio prototype before integrating guide playback.
 
 ### Decision log
 
@@ -537,6 +542,7 @@ start the P01 two-device audio prototype before integrating guide playback.
 | 2026-09-29 | Queue preview deployment | `https://music.micstec.com/party`, bundle `main-rnQzk0zj.js` | Live join → queue request → idempotent replay → host priority approval → shared snapshot → close passed; route and bundle returned 200; queue table created | Headless Chrome timed out in this environment, so browser UI acceptance remains open; predeployment DB/static backup at `/tmp/ktv-party-queue-predeploy.l0so35h0` |
 | 2026-09-29 | P03 room sockets | `server/ktv-realtime.js`, `src/services/partyRealtime.ts`, `server/nginx-ktv-ws.conf` | KTV integration tests cover ticket replay, origin, pending redaction, broadcasts, reconnect, removal, close; frontend build passes | Deployed in realtime queue preview; clock messages, socket commands, presence, and audio timing open |
 | 2026-09-29 | Realtime queue preview deployment | Backend `960b03d`, frontend `main-CAq48vee.js`, `https://music.micstec.com/party` | Public WSS upgrade, one-use ticket, pending redaction, approval, queue broadcast, removal revocation pass; backend tests 34/34 and build pass; nginx reload and health check pass | Browser UI acceptance and audio timing remain open; backup at `/tmp/ktv-party-ws-predeploy.jebxjh8t`, nginx backup at `/tmp/music.nginx.pre-ktv-ws.20260929` |
+| 2026-09-30 | P02.5/P02.6 paired devices | `server/ktv-*`, `src/views/PartyPair.vue`, `src/views/PartyRoom.vue`, party API/device services | Backend 37/37, type-check, production build, and `git diff --check` pass | Physical two-device UI acceptance and deployment check pending; no audio synchronization yet |
 
 ### Work-session update template
 

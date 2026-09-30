@@ -38,7 +38,9 @@ async function setup(t) {
   async function request(method, route, actor, payload) {
     const response = await fetch(base + route, {
       method,
-      headers: { 'Content-Type': 'application/json', 'X-Test-User': String(actor) },
+      headers: { 'Content-Type': 'application/json', ...(typeof actor === 'object'
+        ? { Authorization: `KtvDevice ${actor.device}` }
+        : { 'X-Test-User': String(actor) }) },
       body: payload === undefined ? undefined : JSON.stringify(payload),
     })
     return { status: response.status, body: await response.json(), headers: response.headers }
@@ -299,4 +301,88 @@ test('room socket rejects an untrusted browser origin before authentication', as
     })
   })
   assert.equal(status, 403)
+})
+
+test('display pairing is one-use, room-scoped, read-only, and revocable on an open socket', async (t) => {
+  const { db, request, socketUrl, origin } = await setup(t)
+  const created = await request('POST', '/rooms', 1, { name: 'Paired stage', displayName: 'Host' })
+  const { room, invitationCode } = created.body.data
+  const issued = await request('POST', `/rooms/${room.id}/pairings`, 1, { scope: 'display' })
+  assert.equal(issued.status, 200)
+  const code = issued.body.data.code
+  assert.match(code, /^[A-HJ-NP-Z2-9]{8}$/)
+  assert.notEqual(db.prepare('SELECT code_hash FROM ktv_pairings WHERE room_id = ?').get(room.id).code_hash, code)
+  const redeemed = await request('POST', '/pairings/redeem', 4, { code })
+  assert.equal(redeemed.status, 200)
+  const { credential, deviceId, memberId, scope } = redeemed.body.data
+  assert.equal(scope, 'display')
+  assert.equal(memberId, created.body.data.self.id)
+  assert.equal(await request('POST', '/pairings/redeem', 4, { code }).then((r) => r.status), 400)
+  assert.notEqual(db.prepare('SELECT secret_hash FROM ktv_device_grants WHERE id = ?').get(deviceId).secret_hash, credential)
+  const device = { device: credential }
+  const view = await request('GET', `/rooms/${room.id}`, device)
+  assert.equal(view.status, 200)
+  assert.equal(view.body.data.deviceScope, 'display')
+  assert.equal(view.body.data.invitationCode, undefined)
+  assert.equal(view.body.data.members.length, 1)
+  assert.equal(db.prepare('SELECT COUNT(*) AS total FROM ktv_members WHERE room_id = ?').get(room.id).total, 1)
+  assert.equal(await request('GET', `/rooms/${randomUUID()}`, device).then((r) => r.status), 403)
+  assert.equal(await request('POST', `/rooms/${room.id}/queue`, device, {
+    songId: 1, title: 'No', requestNext: false, commandId: randomUUID(),
+  }).then((r) => r.status), 403)
+  const ticket = (await request('POST', `/rooms/${room.id}/socket-ticket`, device, {})).body.data.ticket
+  const pairedSocket = await openSocket(socketUrl, origin, ticket)
+  const first = await pairedSocket.first
+  assert.equal(first.deviceScope, 'display')
+  assert.equal(first.invitationCode, undefined)
+  const changed = nextSnapshot(pairedSocket.ws)
+  await request('POST', `/rooms/${room.id}/settings`, 1, { locked: true })
+  assert.equal((await changed).room.locked, true)
+  const closed = new Promise((resolve) => pairedSocket.ws.once('close', resolve))
+  await request('POST', `/rooms/${room.id}/devices/${deviceId}/revoke`, 1, {})
+  assert.equal(await closed, 4403)
+  assert.equal(await request('GET', `/rooms/${room.id}`, device).then((r) => r.status), 403)
+  assert.equal(await request('POST', `/rooms/${room.id}/socket-ticket`, device, {}).then((r) => r.status), 403)
+  assert.equal(invitationCode.length, 8)
+})
+
+test('controller pairing inherits current membership and is revoked when member leaves', async (t) => {
+  const { request } = await setup(t)
+  const created = await request('POST', '/rooms', 1, {
+    name: 'Paired phone', displayName: 'Host', approvalRequired: false,
+  })
+  const { room, invitationCode } = created.body.data
+  const joined = await request('POST', '/join', 2, { code: invitationCode, displayName: 'Alex' })
+  const issued = await request('POST', `/rooms/${room.id}/pairings`, 2, { scope: 'controller' })
+  const paired = await request('POST', '/pairings/redeem', 4, { code: issued.body.data.code })
+  const device = { device: paired.body.data.credential }
+  const added = await request('POST', `/rooms/${room.id}/queue`, device, {
+    songId: 1, title: 'From phone', requestNext: true, commandId: randomUUID(),
+  })
+  assert.equal(added.status, 200)
+  assert.equal(added.body.data.deviceScope, 'controller')
+  assert.equal(added.body.data.queue[0].requesterMemberId, joined.body.data.self.id)
+  assert.equal(await request('POST', `/rooms/${room.id}/settings`, device, { locked: true }).then((r) => r.status), 403)
+  const spare = await request('POST', `/rooms/${room.id}/pairings`, 2, { scope: 'display' })
+  await request('POST', `/rooms/${room.id}/members/${joined.body.data.self.id}/remove`, 1, {})
+  assert.equal(await request('GET', `/rooms/${room.id}`, device).then((r) => r.status), 403)
+  assert.equal(await request('POST', '/pairings/redeem', 4, { code: spare.body.data.code }).then((r) => r.status), 400)
+})
+
+test('pairing replaces pending codes and limits a membership to three devices', async (t) => {
+  const { request } = await setup(t)
+  const created = await request('POST', '/rooms', 1, { name: 'Device limit', displayName: 'Host' })
+  const roomId = created.body.data.room.id
+  const oldCode = (await request('POST', `/rooms/${roomId}/pairings`, 1, { scope: 'display' })).body.data.code
+  const firstCode = (await request('POST', `/rooms/${roomId}/pairings`, 1, { scope: 'display' })).body.data.code
+  assert.equal(await request('POST', '/pairings/redeem', 4, { code: oldCode }).then((r) => r.status), 400)
+  const first = await request('POST', '/pairings/redeem', 4, { code: firstCode })
+  assert.equal(first.status, 200)
+  const secondCode = (await request('POST', `/rooms/${roomId}/pairings`, 1, { scope: 'controller' })).body.data.code
+  assert.equal(await request('POST', '/pairings/redeem', 4, { code: secondCode }).then((r) => r.status), 200)
+  assert.equal(await request('POST', `/rooms/${roomId}/pairings`, 1, { scope: 'display' }).then((r) => r.status), 409)
+  const devices = await request('GET', `/rooms/${roomId}/devices`, 1)
+  assert.equal(devices.body.data.length, 2)
+  await request('POST', `/rooms/${roomId}/devices/${first.body.data.deviceId}/revoke`, 1, {})
+  assert.equal(await request('POST', `/rooms/${roomId}/pairings`, 1, { scope: 'display' }).then((r) => r.status), 200)
 })

@@ -23,12 +23,12 @@ export function createKtvRealtime({ getSnapshot, allowedOrigins = [] }) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024, perMessageDeflate: false })
   let heartbeat
 
-  function issueTicket(roomId, userId) {
+  function issueTicket(roomId, principal) {
     const now = Date.now()
     for (const [hash, record] of tickets) if (record.expiresAt <= now) tickets.delete(hash)
     let memberTickets = 0
     for (const record of tickets.values()) {
-      if (record.roomId === roomId && record.userId === userId) memberTickets++
+      if (record.roomId === roomId && record.principal.memberId === principal.memberId) memberTickets++
     }
     if (tickets.size >= MAX_TICKETS || memberTickets >= MAX_TICKETS_PER_MEMBER) {
       const error = new Error('Too many pending connections')
@@ -38,7 +38,7 @@ export function createKtvRealtime({ getSnapshot, allowedOrigins = [] }) {
     }
     const ticket = randomBytes(32).toString('base64url')
     const expiresAt = now + TICKET_LIFETIME_MS
-    tickets.set(digest(ticket), { roomId, userId, expiresAt })
+    tickets.set(digest(ticket), { roomId, principal, expiresAt })
     return { ticket, expiresAt: new Date(expiresAt).toISOString() }
   }
 
@@ -52,7 +52,7 @@ export function createKtvRealtime({ getSnapshot, allowedOrigins = [] }) {
 
   function sendSnapshot(ws) {
     try {
-      const data = getSnapshot(ws.roomId, ws.userId)
+      const data = getSnapshot(ws.roomId, ws.principal)
       if (ws.bufferedAmount > 256 * 1024) { ws.terminate(); return }
       ws.send(JSON.stringify({ protocolVersion: 1, type: 'snapshot', data }))
     } catch (error) {
@@ -100,7 +100,7 @@ export function createKtvRealtime({ getSnapshot, allowedOrigins = [] }) {
         let memberSockets = 0
         for (const client of wss.clients) {
           if (client.roomId === claim.roomId) roomSockets++
-          if (client.roomId === claim.roomId && client.userId === claim.userId) memberSockets++
+          if (client.roomId === claim.roomId && client.principal?.memberId === claim.principal.memberId) memberSockets++
         }
         if (roomSockets >= MAX_ROOM_SOCKETS || memberSockets >= MAX_MEMBER_SOCKETS) {
           ws.close(4429, 'Too many room connections')
@@ -108,7 +108,7 @@ export function createKtvRealtime({ getSnapshot, allowedOrigins = [] }) {
         }
         clearTimeout(authTimeout)
         ws.roomId = claim.roomId
-        ws.userId = claim.userId
+        ws.principal = claim.principal
         sendSnapshot(ws)
       })
     })

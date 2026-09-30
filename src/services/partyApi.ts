@@ -1,6 +1,7 @@
 import axios from 'axios'
 import config from '@/config'
 import { useAuthStore } from '@/stores/auth'
+import { clearPartyDevice, getPartyDevice, type PartyDeviceGrant } from './partyDevice'
 
 export interface PartyMember {
   id: string
@@ -22,6 +23,8 @@ export interface PartySnapshot {
   members?: PartyMember[]
   queue?: PartyQueueEntry[]
   invitationCode?: string | null
+  deviceScope?: 'display' | 'controller'
+  deviceId?: string
 }
 
 export interface PartyQueueEntry {
@@ -49,23 +52,41 @@ export interface PartySocketTicket {
   expiresAt: string
 }
 
-async function call<T>(method: 'get' | 'post', path: string, body?: Record<string, unknown>, retryOnNetworkError = false): Promise<T> {
+export interface PartyPairing {
+  code: string
+  scope: 'display' | 'controller'
+  expiresAt: string
+}
+
+export interface PartyDeviceSummary {
+  id: string
+  scope: 'display' | 'controller'
+  createdAt: string
+  expiresAt: string
+}
+
+async function call<T>(method: 'get' | 'post', path: string, body?: Record<string, unknown>, retryOnNetworkError = false, bearerOnly = false): Promise<T> {
   const auth = useAuthStore()
-  await auth.ensureIdentity()
-  if (!auth.token) throw new Error('Guest identity is unavailable. Please try again.')
+  const roomId = path.match(/^\/rooms\/([^/]+)/)?.[1]
+  const paired = !bearerOnly && roomId ? getPartyDevice(decodeURIComponent(roomId)) : null
+  if (!paired) {
+    await auth.ensureIdentity()
+    if (!auth.token) throw new Error('Guest identity is unavailable. Please try again.')
+  }
   for (let attempt = 0; attempt < (retryOnNetworkError ? 2 : 1); attempt++) {
     try {
       const response = await axios.request<{ success: boolean; data: T }>({
         method,
         url: `${config.apiBaseUrl}/ktv${path}`,
         data: body,
-        headers: { Authorization: `Bearer ${auth.token}` },
+        headers: { Authorization: paired ? `KtvDevice ${paired.credential}` : `Bearer ${auth.token}` },
         timeout: 10000,
       })
       return response.data.data
     } catch (error) {
       if (axios.isAxiosError(error)) {
         if (!error.response && retryOnNetworkError && attempt === 0) continue
+        if (paired && error.response?.data?.code === 'DEVICE_REVOKED') clearPartyDevice(paired.roomId)
         const message = error.response?.data?.message
         if (typeof message === 'string') throw new Error(message)
       }
@@ -99,4 +120,23 @@ export const partyApi = {
     call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/queue/${encodeURIComponent(entryId)}/cancel`, { commandId }, true),
   approveNext: (roomId: string, entryId: string, commandId: string) =>
     call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/queue/${encodeURIComponent(entryId)}/approve-next`, { commandId }, true),
+  createPairing: (roomId: string, scope: 'display' | 'controller') =>
+    call<PartyPairing>('post', `/rooms/${encodeURIComponent(roomId)}/pairings`, { scope }, false, true),
+  devices: (roomId: string) =>
+    call<PartyDeviceSummary[]>('get', `/rooms/${encodeURIComponent(roomId)}/devices`, undefined, false, true),
+  revokeDevice: (roomId: string, deviceId: string) =>
+    call<{ id: string; deviceId: string; status: 'revoked' }>('post',
+      `/rooms/${encodeURIComponent(roomId)}/devices/${encodeURIComponent(deviceId)}/revoke`, {}, false, true),
+  async redeemPairing(code: string): Promise<PartyDeviceGrant> {
+    try {
+      const response = await axios.post<{ success: boolean; data: PartyDeviceGrant }>(
+        `${config.apiBaseUrl}/ktv/pairings/redeem`, { code }, { timeout: 10000 })
+      return response.data.data
+    } catch (error) {
+      if (axios.isAxiosError(error) && typeof error.response?.data?.message === 'string') {
+        throw new Error(error.response.data.message)
+      }
+      throw error
+    }
+  },
 }

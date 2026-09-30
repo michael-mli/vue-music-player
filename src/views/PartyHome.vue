@@ -33,6 +33,10 @@
           <RouterLink to="/party/join" class="mt-6 inline-block rounded-full border border-white/30 px-5 py-2 font-semibold hover:bg-white/10">
             {{ $t('party.enterCode') }}
           </RouterLink>
+          <p class="mt-5 text-sm text-gray-400">{{ $t('party.pairExistingHint') }}</p>
+          <RouterLink to="/party/pair" class="mt-2 inline-block text-sm text-spotify-green underline">
+            {{ $t('party.pairDevice') }}
+          </RouterLink>
         </div>
       </div>
 

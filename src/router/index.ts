@@ -9,6 +9,7 @@ import Playlist from '@/views/Playlist.vue'
 import Music from '@/views/Music.vue'
 import PartyHome from '@/views/PartyHome.vue'
 import PartyJoin from '@/views/PartyJoin.vue'
+import PartyPair from '@/views/PartyPair.vue'
 import PartyRoom from '@/views/PartyRoom.vue'
 
 const router = createRouter({
@@ -43,6 +44,7 @@ const router = createRouter({
     },
     { path: '/party', name: 'PartyHome', component: PartyHome },
     { path: '/party/join', name: 'PartyJoin', component: PartyJoin },
+    { path: '/party/pair', name: 'PartyPair', component: PartyPair },
     { path: '/party/:roomId/stage', name: 'PartyStage', component: PartyRoom, props: { stage: true } },
     { path: '/party/:roomId', name: 'PartyRoom', component: PartyRoom },
     {

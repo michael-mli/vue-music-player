@@ -17,7 +17,7 @@
               class="rounded-full border border-white/25 px-4 py-2 text-sm hover:bg-white/10">
               {{ $t('party.openStage') }}
             </RouterLink>
-            <RouterLink v-if="stage" :to="`/party/${roomId}`" class="rounded-full border border-white/25 px-4 py-2 text-sm hover:bg-white/10">
+            <RouterLink v-if="stage && party.deviceScope !== 'display'" :to="`/party/${roomId}`" class="rounded-full border border-white/25 px-4 py-2 text-sm hover:bg-white/10">
               {{ $t('party.openControls') }}
             </RouterLink>
           </div>
@@ -71,6 +71,34 @@
                   </button>
                 </div>
                 <p v-if="copied" role="status" class="mt-2 text-sm text-spotify-green">{{ $t('party.linkCopied') }}</p>
+              </section>
+
+              <section v-if="!party.deviceScope && party.self.admission === 'admitted'" class="rounded-2xl border border-white/10 bg-white/5 p-5">
+                <h2 class="text-lg font-semibold">{{ $t('party.pairDevice') }}</h2>
+                <p class="mt-2 text-sm text-gray-400">{{ $t('party.pairHint') }}</p>
+                <fieldset class="mt-4 flex flex-wrap gap-4 text-sm">
+                  <legend class="mb-2 font-medium">{{ $t('party.deviceAccess') }}</legend>
+                  <label class="flex items-center gap-2"><input v-model="pairScope" type="radio" value="display" class="accent-green-500" />{{ $t('party.displayScope') }}</label>
+                  <label class="flex items-center gap-2"><input v-model="pairScope" type="radio" value="controller" class="accent-green-500" />{{ $t('party.controllerScope') }}</label>
+                </fieldset>
+                <p class="mt-2 text-xs text-gray-400">{{ pairScope === 'display' ? $t('party.displayScopeHint') : $t('party.controllerScopeHint') }}</p>
+                <button type="button" :disabled="pairBusy" class="mt-4 rounded-full border border-spotify-green px-4 py-2 text-sm text-spotify-green disabled:opacity-50" @click="createPairing">
+                  {{ pairBusy ? $t('party.working') : $t('party.createPairing') }}
+                </button>
+                <div v-if="pairing" class="mt-4 rounded-xl bg-black/30 p-4" role="status">
+                  <p class="text-sm text-gray-300">{{ $t('party.enterPairCode') }}</p>
+                  <code class="mt-2 block text-2xl tracking-widest">{{ pairing.code }}</code>
+                  <p class="mt-2 text-xs text-gray-400">{{ $t('party.pairExpires', { time: formatTime(pairing.expiresAt) }) }}</p>
+                  <p class="mt-2 text-xs text-gray-400">{{ $t('party.pairSingleUse') }}</p>
+                </div>
+                <h3 class="mt-6 font-semibold">{{ $t('party.pairedDevices') }}</h3>
+                <p v-if="!pairedDevices.length" class="mt-2 text-sm text-gray-400">{{ $t('party.noPairedDevices') }}</p>
+                <ul v-else class="mt-3 space-y-2">
+                  <li v-for="device in pairedDevices" :key="device.id" class="flex items-center justify-between gap-3 rounded-lg bg-black/20 p-3 text-sm">
+                    <span>{{ device.scope === 'display' ? $t('party.displayScope') : $t('party.controllerScope') }} · {{ formatTime(device.createdAt) }}</span>
+                    <button type="button" :disabled="pairBusy" class="text-red-300 disabled:opacity-50" @click="revokeDevice(device.id)">{{ $t('party.revokeDevice') }}</button>
+                  </li>
+                </ul>
               </section>
 
               <section class="rounded-2xl border border-white/10 bg-white/5 p-5">
@@ -161,7 +189,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { partyApi, type PartySnapshot } from '@/services/partyApi'
+import { partyApi, type PartyDeviceSummary, type PartyPairing, type PartySnapshot } from '@/services/partyApi'
 import { subscribeParty } from '@/services/partyRealtime'
 import { useSongsStore } from '@/stores/songs'
 import { karaokeService } from '@/services/karaokeService'
@@ -178,7 +206,11 @@ const busy = ref(false)
 const copied = ref(false)
 const error = ref('')
 const liveConnected = ref(false)
-const isHost = computed(() => party.value?.self.role === 'host')
+const isHost = computed(() => party.value?.self.role === 'host' && party.value?.deviceScope !== 'display')
+const pairScope = ref<'display' | 'controller'>('display')
+const pairing = ref<PartyPairing | null>(null)
+const pairedDevices = ref<PartyDeviceSummary[]>([])
+const pairBusy = ref(false)
 const songsStore = useSongsStore()
 const songSearch = ref('')
 const catalogLoading = ref(false)
@@ -189,11 +221,46 @@ const matchingSongs = computed(() => {
     `${song.title} ${song.artist || ''} ${song.id}`.toLocaleLowerCase().includes(query)).slice(0, 30)
 })
 let timer: number | undefined
+let pairExpireTimer: number | undefined
 let stopRealtime: (() => void) | undefined
 
 function applySnapshot(next: PartySnapshot) {
   if (next.room.id !== roomId.value) return
   if (!party.value || next.room.revision >= party.value.room.revision) party.value = next
+  if (next.deviceScope === 'display' && !props.stage) void router.replace(`/party/${roomId.value}/stage`)
+  if (!props.stage && !next.deviceScope && next.self.admission === 'admitted') void loadDevices()
+}
+
+function formatTime(value: string) { return new Date(value).toLocaleString() }
+
+async function loadDevices() {
+  if (party.value?.deviceScope || party.value?.self.admission !== 'admitted') return
+  try { pairedDevices.value = await partyApi.devices(roomId.value) }
+  catch (reason) { error.value = String((reason as Error).message) }
+}
+
+async function createPairing() {
+  if (pairBusy.value) return
+  pairBusy.value = true
+  error.value = ''
+  pairing.value = null
+  try {
+    pairing.value = await partyApi.createPairing(roomId.value, pairScope.value)
+    if (pairExpireTimer !== undefined) window.clearTimeout(pairExpireTimer)
+    pairExpireTimer = window.setTimeout(() => { pairing.value = null },
+      Math.max(0, Date.parse(pairing.value.expiresAt) - Date.now()))
+  }
+  catch (reason) { error.value = String((reason as Error).message) }
+  finally { pairBusy.value = false }
+}
+
+async function revokeDevice(deviceId: string) {
+  if (pairBusy.value || !window.confirm(t('party.confirmRevokeDevice'))) return
+  pairBusy.value = true
+  error.value = ''
+  try { await partyApi.revokeDevice(roomId.value, deviceId); await loadDevices() }
+  catch (reason) { error.value = String((reason as Error).message) }
+  finally { pairBusy.value = false }
 }
 
 function startRealtime() {
@@ -232,8 +299,16 @@ onMounted(() => {
   if (!props.stage) void loadCatalog()
   timer = window.setInterval(() => { if (!document.hidden && !busy.value && !liveConnected.value) void refresh() }, 3000)
 })
-onUnmounted(() => { if (timer !== undefined) window.clearInterval(timer); stopRealtime?.() })
-watch(roomId, () => { party.value = null; loading.value = true; void refresh(); startRealtime() })
+onUnmounted(() => {
+  if (timer !== undefined) window.clearInterval(timer)
+  if (pairExpireTimer !== undefined) window.clearTimeout(pairExpireTimer)
+  stopRealtime?.()
+})
+watch(roomId, () => {
+  party.value = null; pairing.value = null; pairedDevices.value = []
+  if (pairExpireTimer !== undefined) window.clearTimeout(pairExpireTimer)
+  loading.value = true; void refresh(); startRealtime()
+})
 watch(() => props.stage, (stage) => { if (!stage) void loadCatalog() })
 
 async function act(work: () => Promise<PartySnapshot>) {

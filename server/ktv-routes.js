@@ -7,6 +7,9 @@ const ROOM_LIFETIME_MS = 12 * 60 * 60 * 1000
 const MAX_MEMBERS = 20
 const MAX_QUEUE = 100
 const MAX_SINGER_REQUESTS = 3
+const PAIR_LIFETIME_MS = 2 * 60 * 1000
+// The original browser plus two grants make three devices per member.
+const MAX_DEVICE_GRANTS = 2
 
 class RoomError extends Error {
   constructor(status, code, message) {
@@ -187,11 +190,29 @@ function snapshot(db, roomId, userId, key) {
   return result
 }
 
+function grantSnapshot(db, roomId, grantId, key) {
+  const grant = db.prepare(`SELECT g.*, m.user_id, m.admission FROM ktv_device_grants g
+    JOIN ktv_members m ON m.id = g.member_id WHERE g.id = ? AND g.room_id = ?`).get(grantId, roomId)
+  if (!grant || grant.revoked_at || Date.parse(grant.expires_at) <= Date.now() || grant.admission !== 'admitted') {
+    fail(403, 'DEVICE_REVOKED', 'Device access is unavailable')
+  }
+  const result = snapshot(db, roomId, grant.user_id, key)
+  if (grant.scope === 'display') delete result.invitationCode
+  result.deviceScope = grant.scope
+  result.deviceId = grant.id
+  return result
+}
+
 export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSong, allowedOrigins }) {
   const key = createHash('sha256').update('ktv-invitation-v1\0').update(secret).digest()
+  const pairKey = createHash('sha256').update('ktv-pairing-v1\0').update(secret).digest()
+  const grantKey = createHash('sha256').update('ktv-grant-v1\0').update(secret).digest()
   const joinHits = new Map()
+  const redeemHits = new Map()
   const realtime = createKtvRealtime({
-    getSnapshot: (roomId, userId) => snapshot(db, roomId, userId, key),
+    getSnapshot: (roomId, principal) => principal.kind === 'device'
+      ? grantSnapshot(db, roomId, principal.grantId, key)
+      : snapshot(db, roomId, principal.userId, key),
     allowedOrigins,
   })
 
@@ -201,7 +222,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
       try {
         const data = work(req)
         res.json({ success: true, data })
-        if (changed) realtime.broadcast(data.room?.id || data.id || req.params.id)
+        if (changed) realtime.broadcast(req.params.id || data.room?.id || data.roomId || data.id)
       }
       catch (error) {
         if (!(error instanceof RoomError)) console.error('[ktv]', error)
@@ -221,6 +242,33 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
 
   function displayName(req, actor) {
     return requireText(req.body?.displayName ?? (actor.kind === 'guest' ? null : actor.name || actor.username), 'Your name', 40)
+  }
+
+  function roomAccess(control = false) {
+    return (req, res, next) => {
+      if (!req.headers.authorization?.startsWith('KtvDevice ')) return authMiddleware(req, res, next)
+      res.set('Cache-Control', 'no-store')
+      const credential = req.headers.authorization.slice('KtvDevice '.length)
+      if (!/^[A-Za-z0-9_-]{43}$/.test(credential)) {
+        return res.status(401).json({ success: false, code: 'INVALID_DEVICE', message: 'Invalid device credential' })
+      }
+      const grant = db.prepare(`SELECT g.*, m.user_id, m.admission FROM ktv_device_grants g
+        JOIN ktv_members m ON m.id = g.member_id WHERE g.secret_hash = ? AND g.room_id = ?`)
+        .get(hashCode(credential, grantKey), req.params.id)
+      if (!grant || grant.revoked_at || Date.parse(grant.expires_at) <= Date.now() || grant.admission !== 'admitted' ||
+        (control && grant.scope !== 'controller')) {
+        return res.status(403).json({ success: false, code: 'DEVICE_REVOKED', message: 'Device access is unavailable' })
+      }
+      req.ktvGrant = grant
+      req.auth = { sub: grant.user_id }
+      next()
+    }
+  }
+
+  function viewerSnapshot(req) {
+    return req.ktvGrant
+      ? grantSnapshot(db, req.params.id, req.ktvGrant.id, key)
+      : snapshot(db, req.params.id, user(req).id, key)
   }
 
   app.post('/api/ktv/rooms', authMiddleware, handler((req) => {
@@ -293,18 +341,120 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
       .map((row) => ({ id: row.id, name: row.name, displayName: row.display_name, admission: row.admission }))
   }))
 
-  app.get('/api/ktv/rooms/:id', authMiddleware, handler((req) => {
-    return snapshot(db, req.params.id, user(req).id, key)
+  app.get('/api/ktv/rooms/:id', roomAccess(), handler((req) => {
+    return viewerSnapshot(req)
   }))
 
-  app.post('/api/ktv/rooms/:id/socket-ticket', authMiddleware, handler((req) => {
-    const actor = user(req)
-    snapshot(db, req.params.id, actor.id, key)
-    return realtime.issueTicket(req.params.id, actor.id)
+  app.post('/api/ktv/rooms/:id/socket-ticket', roomAccess(), handler((req) => {
+    const view = viewerSnapshot(req)
+    return realtime.issueTicket(req.params.id, req.ktvGrant
+      ? { kind: 'device', grantId: req.ktvGrant.id, memberId: view.self.id }
+      : { kind: 'user', userId: req.auth.sub, memberId: view.self.id })
   }))
+
+  app.post('/api/ktv/rooms/:id/pairings', authMiddleware, handler((req) => {
+    const actor = user(req)
+    const scope = req.body?.scope
+    if (scope !== 'display' && scope !== 'controller') fail(400, 'INVALID_SCOPE', 'Choose a device scope')
+    return transaction(db, () => {
+      const room = activeRoom(db, req.params.id)
+      const member = admittedMember(db, room.id, actor.id)
+      const active = db.prepare(`SELECT COUNT(*) AS total FROM ktv_device_grants
+        WHERE room_id = ? AND member_id = ? AND revoked_at IS NULL AND expires_at > ?`)
+        .get(room.id, member.id, new Date().toISOString()).total
+      if (active >= MAX_DEVICE_GRANTS) fail(409, 'DEVICE_LIMIT', 'Revoke a device before pairing another')
+      const now = new Date().toISOString()
+      db.prepare(`UPDATE ktv_pairings SET revoked_at = ?
+        WHERE room_id = ? AND member_id = ? AND redeemed_at IS NULL AND revoked_at IS NULL`)
+        .run(now, room.id, member.id)
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const code = freshCode()
+        const digest = hashCode(code, pairKey)
+        if (db.prepare('SELECT 1 FROM ktv_pairings WHERE code_hash = ?').get(digest)) continue
+        const expiresAt = new Date(Math.min(Date.now() + PAIR_LIFETIME_MS, Date.parse(room.expires_at))).toISOString()
+        db.prepare(`INSERT INTO ktv_pairings
+          (id, room_id, member_id, code_hash, scope, created_at, expires_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`).run(randomUUID(), room.id, member.id, digest, scope, now, expiresAt)
+        event(db, room.id, actor.id, 'device.pairing_created', member.id)
+        return { code, scope, expiresAt }
+      }
+      throw new Error('Could not allocate pairing code')
+    })
+  }))
+
+  app.post('/api/ktv/pairings/redeem', handler((req) => {
+    const code = typeof req.body?.code === 'string' ? req.body.code.trim().toUpperCase() : ''
+    if (!/^[A-HJ-NP-Z2-9]{8}$/.test(code)) fail(400, 'INVALID_PAIRING', 'Invalid pairing code')
+    const ip = String(req.headers['cf-connecting-ip'] || req.headers['x-real-ip'] || req.socket.remoteAddress || 'unknown').slice(0, 100)
+    const nowMs = Date.now()
+    const hits = (redeemHits.get(ip) || []).filter((time) => nowMs - time < 60_000)
+    if (hits.length >= 20) fail(429, 'TOO_MANY_ATTEMPTS', 'Please wait before trying another code')
+    hits.push(nowMs)
+    redeemHits.set(ip, hits)
+    if (redeemHits.size > 1000) {
+      for (const [address, attempts] of redeemHits) {
+        if (attempts.at(-1) < nowMs - 60_000) redeemHits.delete(address)
+      }
+      while (redeemHits.size > 1000) redeemHits.delete(redeemHits.keys().next().value)
+    }
+    return transaction(db, () => {
+      const pairing = db.prepare('SELECT * FROM ktv_pairings WHERE code_hash = ?')
+        .get(hashCode(code, pairKey))
+      if (!pairing || pairing.redeemed_at || pairing.revoked_at || Date.parse(pairing.expires_at) <= Date.now()) {
+        fail(400, 'INVALID_PAIRING', 'Invalid or expired pairing code')
+      }
+      const room = activeRoom(db, pairing.room_id)
+      const member = db.prepare('SELECT * FROM ktv_members WHERE id = ? AND room_id = ?')
+        .get(pairing.member_id, room.id)
+      if (!member || member.admission !== 'admitted') fail(403, 'NOT_ADMITTED', 'Room access is unavailable')
+      const active = db.prepare(`SELECT COUNT(*) AS total FROM ktv_device_grants
+        WHERE room_id = ? AND member_id = ? AND revoked_at IS NULL AND expires_at > ?`)
+        .get(room.id, member.id, new Date().toISOString()).total
+      if (active >= MAX_DEVICE_GRANTS) fail(409, 'DEVICE_LIMIT', 'Device limit reached')
+      const credential = randomBytes(32).toString('base64url')
+      const deviceId = randomUUID()
+      const now = new Date().toISOString()
+      db.prepare(`INSERT INTO ktv_device_grants
+        (id, room_id, member_id, scope, secret_hash, created_at, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+          deviceId, room.id, member.id, pairing.scope, hashCode(credential, grantKey), now, room.expires_at,
+        )
+      db.prepare('UPDATE ktv_pairings SET redeemed_at = ? WHERE id = ?').run(now, pairing.id)
+      event(db, room.id, member.user_id, 'device.paired', deviceId)
+      return { roomId: room.id, memberId: member.id, deviceId, scope: pairing.scope,
+        credential, expiresAt: room.expires_at }
+    })
+  }, true))
+
+  app.get('/api/ktv/rooms/:id/devices', authMiddleware, handler((req) => {
+    const actor = user(req)
+    activeRoom(db, req.params.id)
+    const member = admittedMember(db, req.params.id, actor.id)
+    return db.prepare(`SELECT id, scope, created_at, expires_at FROM ktv_device_grants
+      WHERE room_id = ? AND member_id = ? AND revoked_at IS NULL AND expires_at > ?
+      ORDER BY created_at DESC`).all(req.params.id, member.id, new Date().toISOString())
+      .map((row) => ({ id: row.id, scope: row.scope, createdAt: row.created_at, expiresAt: row.expires_at }))
+  }))
+
+  app.post('/api/ktv/rooms/:id/devices/:deviceId/revoke', authMiddleware, handler((req) => {
+    const actor = user(req)
+    return transaction(db, () => {
+      activeRoom(db, req.params.id)
+      const member = admittedMember(db, req.params.id, actor.id)
+      const grant = db.prepare('SELECT * FROM ktv_device_grants WHERE id = ? AND room_id = ?')
+        .get(req.params.deviceId, req.params.id)
+      if (!grant || grant.revoked_at || (grant.member_id !== member.id && member.role !== 'host')) {
+        fail(403, 'FORBIDDEN', 'Cannot revoke this device')
+      }
+      db.prepare('UPDATE ktv_device_grants SET revoked_at = ? WHERE id = ?')
+        .run(new Date().toISOString(), grant.id)
+      event(db, req.params.id, actor.id, 'device.revoked', grant.id)
+      return { id: req.params.id, deviceId: grant.id, status: 'revoked' }
+    })
+  }, true))
 
   function changeMember(action, nextState) {
-    app.post(`/api/ktv/rooms/:id/members/:memberId/${action}`, authMiddleware, handler((req) => {
+    app.post(`/api/ktv/rooms/:id/members/:memberId/${action}`, roomAccess(true), handler((req) => {
       const actor = user(req)
       return transaction(db, () => {
         activeRoom(db, req.params.id)
@@ -322,17 +472,23 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
           db.prepare(`UPDATE ktv_queue_entries SET state = 'held', updated_at = ?
             WHERE room_id = ? AND singer_member_id = ? AND state = 'queued'`)
             .run(new Date().toISOString(), req.params.id, target.id)
+          db.prepare(`UPDATE ktv_pairings SET revoked_at = ?
+            WHERE room_id = ? AND member_id = ? AND revoked_at IS NULL`)
+            .run(new Date().toISOString(), req.params.id, target.id)
+          db.prepare(`UPDATE ktv_device_grants SET revoked_at = ?
+            WHERE room_id = ? AND member_id = ? AND revoked_at IS NULL`)
+            .run(new Date().toISOString(), req.params.id, target.id)
         }
         bump(db, req.params.id)
         event(db, req.params.id, actor.id, `member.${action}`, target.id)
-        return snapshot(db, req.params.id, actor.id, key)
+        return viewerSnapshot(req)
       })
     }, true))
   }
   changeMember('approve', 'admitted')
   changeMember('remove', 'removed')
 
-  app.post('/api/ktv/rooms/:id/queue', authMiddleware, handler((req) => {
+  app.post('/api/ktv/rooms/:id/queue', roomAccess(true), handler((req) => {
     const actor = user(req)
     const id = commandId(req)
     const songId = req.body?.songId
@@ -362,11 +518,11 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
         bump(db, req.params.id)
         event(db, req.params.id, actor.id, 'queue.requested', entryId)
       })
-      return snapshot(db, req.params.id, actor.id, key)
+      return viewerSnapshot(req)
     })
   }, true))
 
-  app.post('/api/ktv/rooms/:id/queue/:entryId/cancel', authMiddleware, handler((req) => {
+  app.post('/api/ktv/rooms/:id/queue/:entryId/cancel', roomAccess(true), handler((req) => {
     const actor = user(req)
     const id = commandId(req)
     return transaction(db, () => {
@@ -382,11 +538,11 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
         bump(db, req.params.id)
         event(db, req.params.id, actor.id, 'queue.cancelled', entry.id)
       })
-      return snapshot(db, req.params.id, actor.id, key)
+      return viewerSnapshot(req)
     })
   }, true))
 
-  app.post('/api/ktv/rooms/:id/queue/:entryId/approve-next', authMiddleware, handler((req) => {
+  app.post('/api/ktv/rooms/:id/queue/:entryId/approve-next', roomAccess(true), handler((req) => {
     const actor = user(req)
     const id = commandId(req)
     return transaction(db, () => {
@@ -403,11 +559,11 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
         bump(db, req.params.id)
         event(db, req.params.id, actor.id, 'queue.priority_approved', entry.id)
       })
-      return snapshot(db, req.params.id, actor.id, key)
+      return viewerSnapshot(req)
     })
   }, true))
 
-  app.post('/api/ktv/rooms/:id/invitations/rotate', authMiddleware, handler((req) => {
+  app.post('/api/ktv/rooms/:id/invitations/rotate', roomAccess(true), handler((req) => {
     const actor = user(req)
     return transaction(db, () => {
       const room = activeRoom(db, req.params.id)
@@ -417,11 +573,11 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
       addInvite(db, room.id, room.expires_at, key)
       bump(db, room.id)
       event(db, room.id, actor.id, 'invitation.rotated')
-      return snapshot(db, room.id, actor.id, key)
+      return viewerSnapshot(req)
     })
   }, true))
 
-  app.post('/api/ktv/rooms/:id/settings', authMiddleware, handler((req) => {
+  app.post('/api/ktv/rooms/:id/settings', roomAccess(true), handler((req) => {
     const actor = user(req)
     const { locked, approvalRequired } = req.body || {}
     if (typeof locked !== 'boolean' && typeof approvalRequired !== 'boolean') {
@@ -434,11 +590,11 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
         .run(Number(typeof locked === 'boolean' ? locked : room.locked),
           Number(typeof approvalRequired === 'boolean' ? approvalRequired : room.approval_required), room.id)
       event(db, room.id, actor.id, 'room.settings')
-      return snapshot(db, room.id, actor.id, key)
+      return viewerSnapshot(req)
     })
   }, true))
 
-  app.post('/api/ktv/rooms/:id/close', authMiddleware, handler((req) => {
+  app.post('/api/ktv/rooms/:id/close', roomAccess(true), handler((req) => {
     const actor = user(req)
     return transaction(db, () => {
       const room = activeRoom(db, req.params.id)
@@ -447,6 +603,10 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
       db.prepare("UPDATE ktv_rooms SET status = 'closed', closed_at = ?, revision = revision + 1 WHERE id = ?")
         .run(now, room.id)
       db.prepare('UPDATE ktv_invitations SET revoked_at = ? WHERE room_id = ? AND revoked_at IS NULL')
+        .run(now, room.id)
+      db.prepare('UPDATE ktv_pairings SET revoked_at = ? WHERE room_id = ? AND revoked_at IS NULL')
+        .run(now, room.id)
+      db.prepare('UPDATE ktv_device_grants SET revoked_at = ? WHERE room_id = ? AND revoked_at IS NULL')
         .run(now, room.id)
       event(db, room.id, actor.id, 'room.closed')
       return { id: room.id, status: 'closed' }

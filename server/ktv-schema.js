@@ -69,5 +69,28 @@ export function initKtvSchema(db) {
       created_at TEXT NOT NULL,
       PRIMARY KEY (room_id, actor_member_id, command_id)
     );
+    CREATE TABLE IF NOT EXISTS ktv_pairings (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL REFERENCES ktv_rooms(id) ON DELETE CASCADE,
+      member_id TEXT NOT NULL REFERENCES ktv_members(id) ON DELETE CASCADE,
+      code_hash TEXT NOT NULL UNIQUE,
+      scope TEXT NOT NULL CHECK (scope IN ('display', 'controller')),
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      redeemed_at TEXT,
+      revoked_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS ktv_pairings_member ON ktv_pairings(room_id, member_id, expires_at);
+    CREATE TABLE IF NOT EXISTS ktv_device_grants (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL REFERENCES ktv_rooms(id) ON DELETE CASCADE,
+      member_id TEXT NOT NULL REFERENCES ktv_members(id) ON DELETE CASCADE,
+      scope TEXT NOT NULL CHECK (scope IN ('display', 'controller')),
+      secret_hash TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS ktv_grants_member ON ktv_device_grants(room_id, member_id, revoked_at);
   `)
 }
