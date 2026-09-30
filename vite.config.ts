@@ -69,7 +69,9 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
         runtimeCaching: [
           {
-            urlPattern: /^\/api\/.*/,
+            // KTV membership, invitations and future socket/media credentials must
+            // never be served from an offline API response.
+            urlPattern: /^\/api\/(?!ktv(?:\/|$)).*/,
             handler: 'NetworkFirst',
             options: {
               cacheName: 'api-cache',

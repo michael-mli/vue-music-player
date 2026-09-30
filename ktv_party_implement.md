@@ -1,0 +1,544 @@
+# KTV Party — Implementation Plan and Progress
+
+Created: 2026-09-29
+
+Last updated: 2026-09-29
+
+Design reference: [ktv_party.md](ktv_party.md)
+
+Current status: First room slice implemented locally on `feat/ktv-party`.
+Room creation, invitation join, host approval/removal, room settings, and a basic
+stage view are deployed as an invitation preview at
+`https://music.micstec.com/party`. Shared song requests, audio, WebSocket updates,
+device pairing, and online streaming remain unimplemented.
+
+## 1. How to use this tracker
+
+- Mark work items `[x]` only when implemented and verified. Documentation of an
+  approach does not mean that functionality exists.
+- Phase status: `Not started`, `In progress`, `Blocked`, or `Complete`.
+- A phase is complete only when its exit criteria have evidence. Include commit/PR,
+  commands/results, device/browser versions where relevant, and remaining limits.
+- Update the phase table, evidence log, decisions, and next action after each work
+  session. If scope changes, update [ktv_party.md](ktv_party.md) in the same change.
+- Keep unfinished work visible when shipping an intermediate release. Local KTV
+  completion does not imply that online/hybrid streaming is complete.
+- Avoid counting tasks as a percentage: a checked UI task and an unvalidated audio
+  system do not represent equal amounts of progress.
+
+## 2. Phase overview
+
+| Phase | Deliverable | Depends on | Status | Evidence |
+| --- | --- | --- | --- | --- |
+| P00 | Scope baseline and technical contracts | Design | In progress | Baseline tag and source inventory; contracts remain open |
+| P01 | Two-device audio feasibility prototype | P00 minimum timing contract | Not started | — |
+| P02 | Rooms, identities, invitations, permissions, persistence | P00 | In progress | Guest/host API tests; remaining role, pairing, receipt work open |
+| P03 | Realtime state, commands, queue, leases | P02 | Not started | — |
+| P04 | Stage, phone controller, host UI | P02–P03 | In progress | Entry, join, host controls, stage shell; queue/lyrics open |
+| P05 | Scheduled playback, private guide, shared lyrics | P01, P03–P04 | Not started | — |
+| P06 | Recovery, browser coverage, local release readiness | P02–P05 | Not started | — |
+| P07 | Online performance streaming and hybrid operation | P01, stable P03/P05 contracts | Not started | — |
+| P08 | Deployment, monitoring, and release verification | P06 for local; P07 for online | Not started | — |
+| P09 | Optional enhancements | Released foundation | Not started | — |
+
+P01 is an early risk gate. P02 can proceed while audio experiments run because its
+membership and queue work does not depend on a particular audio engine. P07 may
+start with a spike before the local release; its public release depends on P06.
+
+Proposed milestones:
+
+| Milestone | Completion gate |
+| --- | --- |
+| M0 — Feasible | P00–P01 evidence, selected audio approach and supported reference setup |
+| M1 — Shared room demo | P02–P04, several devices share one moderated room and queue |
+| M2 — Local KTV beta | P05–P06, private guide and recovery pass on supported devices |
+| M3 — Online/hybrid beta | P07, remote audience hears and sees aligned performance |
+| M4 — Released | Applicable P08 gate passes and limitations are published |
+
+## 3. P00 — Scope baseline and contracts
+
+Status: In progress
+
+Deliverables: implementation baseline, precise terminology, protocol/schema draft,
+and reference device setup. Use the design's defaults where a routine decision is
+needed; record assumptions without presenting them as user-confirmed decisions.
+
+- [ ] P00.1 Record whether the first public release is local, online, or hybrid;
+  retain all required later modes in the milestone list.
+- [ ] P00.2 Record reference desktop/phone browsers, speaker path, headphone path,
+  network setup, sample tracks, and existing deployment topology.
+- [ ] P00.3 Confirm the source inventory, Node runtime required by current SQLite
+  usage, migration conventions, auth flow, media URL/CORS/Range behavior, and PWA cache.
+- [ ] P00.4 Specify command/snapshot schemas, room vs member vs device IDs,
+  permission matrix, queue states, playback generations, clock IDs, and error codes.
+- [ ] P00.5 Finalize default limits, readiness/grace/lease timeouts, queue fairness,
+  invitation/pairing lifetime, and retention policy as configurable values.
+- [ ] P00.6 Sketch create/join/waiting, stage, Songs/Queue/Sing/People, and host flows,
+  including audio enablement, loading, rejection, removal, and reconnect states.
+
+Exit criteria:
+
+- [ ] The contracts cover R01–R14 and identify which release supplies each one.
+- [ ] No room control path relies on global app-admin privileges or client-only checks.
+- [ ] Every timing field has a unit and clock origin; role and device capability
+  rules are unambiguous enough to implement.
+
+Evidence: `ktv-party-baseline-2026-09-29` points to `6e8504b` on main and was
+pushed to origin before implementation. The current work is on `feat/ktv-party`.
+Source inventory was reviewed; protocol, support matrix, and all exit criteria
+remain open.
+
+## 4. P01 — Audio synchronization feasibility
+
+Status: Not started
+
+Deliverables: a small disposable or reusable developer harness, recorded timing
+measurements, and an audio-engine decision. Validate before building the full guide UI.
+
+- [ ] P01.1 Prepare original/instrumental pairs and click-track fixtures; measure
+  decoded alignment, duration, encoder offsets, and any variable drift.
+- [ ] P01.2 Implement monotonic clock probes, offset/uncertainty estimates, future
+  starts, and mapping from server time to each device's audio clock.
+- [ ] P01.3 Play the instrumental on one laptop and original on one phone; require
+  a user tap to unlock audio on both.
+- [ ] P01.4 Measure audible alignment through recorded outputs; distinguish clock
+  estimates, output delay, and real measured guide-to-stage error.
+- [ ] P01.5 Validate pause/resume, seek, late join, small drift, large-drift recovery,
+  source cancellation, and expired output gain deadlines.
+- [ ] P01.6 Add `Earlier`/`Later` calibration with documented sign and persistence;
+  test output-device changes and avoid double-applying latency estimates.
+- [ ] P01.7 Measure decode time and peak memory for representative and long tracks;
+  compare one required buffer versus preloading another track on real phones.
+- [ ] P01.8 Evaluate wired and Bluetooth outputs separately, plus foreground,
+  lock/unlock, network interruption, and suspended AudioContext behavior.
+- [ ] P01.9 Record the chosen engine, drift thresholds, start lead, memory budget,
+  supported device combinations, and fallback behavior in the architecture document.
+
+Exit criteria:
+
+- [ ] Repeated five-minute reference runs report p50/p95/max acoustic timing error
+  and discontinuities; proposed supported-setup target is p95 at or below 50 ms.
+- [ ] Alignment remains acceptable after pause/resume and seek, with no stale
+  source continuing after cancellation or lease expiration.
+- [ ] Memory/decode results are acceptable on the selected phone baseline.
+- [ ] If the target fails, revise the engine or explicitly narrow supported setups;
+  keep R08 unresolved until a usable guide experience is demonstrated.
+
+Evidence: Pending. No latency or browser-support result has been measured yet.
+
+## 5. P02 — Room domain, storage, admission, and devices
+
+Status: In progress
+
+Likely files: `server/ktv/schema.js`, `repository.js`, `permissions.js`, `routes.js`,
+integration in `server/db.js` and `server/index.js`. These paths are proposals.
+
+- [ ] P02.1 Add additive, restart-safe SQLite migrations for rooms, members,
+  invitations, pairings/device grants, queue, playback, receipts, and bounded audit history.
+- [x] P02.2 Add create/join/read/close endpoints using existing guest and Google
+  identities; preserve one membership per room/user. Require a chosen room display
+  name for a guest's first join, assign a server-generated random UUID membership
+  ID, and reuse that ID/session on reconnect. Keep the internal user key separate.
+- [x] P02.3 Generate and redeem secure invitation codes; support expiry, rotation,
+  room lock, join limits, and optional approval.
+- [ ] P02.4 Implement admission waiting, approve/reject, remove/block, role changes,
+  ownership transfer, and co-host restrictions from the permission matrix.
+- [ ] P02.5 Implement one-time room device pairing, display/controller scopes,
+  credential hashing, expiry, and revocation without sharing global account tokens.
+- [ ] P02.6 Define authorized snapshots for host, member, paired display, and pending
+  guest; omit secrets and private identity details.
+- [ ] P02.7 Persist durable mutations and idempotency receipts in one transaction;
+  cover room creation and invitation redemption as well as room commands.
+- [ ] P02.8 Add room expiry/cleanup and constraints preventing conflicting host
+  memberships, invalid foreign keys, and stale invitation reuse.
+- [ ] P02.9 Return typed errors and apply room-specific origin/rate/message limits.
+
+Exit criteria:
+
+- [ ] Fresh and existing databases migrate correctly; restart retains room state.
+- [ ] A guest can create/join a room and pair a display without registering.
+- [ ] A direct invitation asks a new guest for a name, then admits them or shows
+  approval waiting. Duplicate names remain distinct, and refresh preserves identity.
+- [ ] Pending, removed, expired, and unauthorized users cannot access room state
+  or execute controls through direct API calls.
+- [ ] Host transfer is atomic; removing a member revokes all room device grants.
+- [ ] Duplicate requests cannot create duplicate membership or duplicate rooms.
+
+Evidence: `server/ktv-routes.js`, `server/ktv-schema.js`, and `server/ktv.test.js`.
+Three KTV integration tests pass for guest names/IDs, approval and visibility,
+rotation/lock/close, and persistence. Schema currently covers rooms, members,
+invitations, and events. P02.1/P02.4–P02.9 remain open where their full scope is
+not implemented.
+
+## 6. P03 — Realtime state, queue, and playback authority
+
+Status: Not started
+
+Likely files: `server/ktv/room-service.js`, `queue.js`, `realtime.js`, `clock.js`,
+`src/types/party.ts`, `src/services/partyService.ts`, `src/stores/party.ts`.
+
+- [ ] P03.1 Attach `ws` to the HTTP server and add Vite/nginx WebSocket routing.
+  Authenticate first-message tickets with timeout and explicit origin checks.
+- [ ] P03.2 Serialize commands by room; enforce revisions, payload validation,
+  current permissions, idempotency, and transaction-before-broadcast ordering.
+- [ ] P03.3 Broadcast authorized full snapshots; keep presence/telemetry separate.
+  Implement reconnect/backoff, fresh ticket, snapshot, and clock negotiation.
+- [ ] P03.4 Implement queue entries, singer acceptance, request cancellation,
+  request-next approval, fair rounds, host overrides, caps, and held entries.
+- [ ] P03.5 Add readiness and playback states with entry/performance/generation IDs;
+  define effective transition times and reject obsolete ready/ended messages.
+- [ ] P03.6 Add device presence, designated output leases, stop acknowledgment,
+  expiry, and host/co-host disconnect policy.
+- [ ] P03.7 Implement timeline/checkpoint persistence and new-clock paused recovery
+  on process restart; persist no per-frame playhead writes.
+- [ ] P03.8 Implement store command status, conflict recovery, snapshot replacement,
+  and separate local preferences from authoritative room state.
+- [ ] P03.9 Exercise simultaneous queue edits, retries after lost acknowledgments,
+  duplicated `ended`, stale skips, and role revocation on open sockets.
+
+Exit criteria:
+
+- [ ] Three clients converge to one queue after simultaneous requests and reconnects.
+- [ ] A command applies once even if resent over another transport after restart.
+- [ ] The same song can appear in distinct entries without confusing completion.
+- [ ] Only one current output lease exists, with a defined safe replacement boundary.
+- [ ] Server restarts yield paused state and reject all old-clock readiness/schedules.
+
+Evidence: Pending.
+
+## 7. P04 — Stage, phone controller, and moderation UI
+
+Status: In progress
+
+Likely files: `src/views/party/{PartyHome,PartyJoin,PartyRoom,PartyStage,PartyPair}.vue`,
+`src/components/Party/*`, router/App integration, and `src/locales/{en,zh}.json`.
+
+- [ ] P04.1 Add routes, entry navigation, create room, typed invitation, share link,
+  QR display, paired device setup, and waiting/admission screens. Direct invitations
+  prefill the code and ask unregistered guests for `Your name`, with no signup step;
+  returning admitted members reconnect directly.
+- [ ] P04.2 Build the common stage with readable lyrics, singer, progress, countdown,
+  up-next entries, muted-viewer state, and host-controlled invitation visibility.
+- [ ] P04.3 Build phone Songs and Queue tabs using existing catalog/search helpers;
+  show requester/singer attribution, caps, priority request status, and readiness.
+- [ ] P04.4 Build People and host controls for approval, removal, roles, stage
+  assignment, invitation rotation, room locking, and settings.
+- [ ] P04.5 Build the Sing tab shell: enable guide, personal volume, timing correction,
+  required/optional guide preference, lyric view, and connection status.
+- [ ] P04.6 Add scoped action availability and server-error feedback; a disabled
+  button is presentation, with the server retaining authority.
+- [ ] P04.7 Extract/inject the lyric playback interface so stage rendering uses
+  party state and permitted callbacks rather than the solo player store.
+- [ ] P04.8 Add party layout/audio ownership hooks in App; handle global controls,
+  keyboard/media-session actions, floating recorder, and solo-player restoration.
+- [ ] P04.9 Complete Chinese/English strings, keyboard/focus support, touch targets,
+  small-screen layout, large-screen readability, and fullscreen fallback.
+
+Exit criteria:
+
+- [ ] A host and two guests complete the room/queue journey across laptop and phones.
+- [ ] Multiple devices for one member display one person in the participant list.
+- [ ] Host-only commands remain inaccessible through ordinary participant controls.
+- [ ] Entering party mode cannot accidentally start a competing solo queue/recorder.
+- [ ] Audio readiness is visibly pending until P05 is wired; no simulated success
+  is presented as working playback.
+
+Evidence: `src/views/PartyHome.vue`, `PartyJoin.vue`, `PartyRoom.vue`, navigation,
+party API client, English/Chinese strings, and party mode in `src/App.vue`.
+`npm run type-check` and `npm run build` pass. Room state currently refreshes by
+HTTP polling every three seconds; P03 WebSocket synchronization remains open.
+The stage is a waiting view while P03/P05 queue and playback work remains. QR,
+pairing, and full phone tabs are still open.
+
+## 8. P05 — Production playback and private vocal guide
+
+Status: Not started
+
+Likely files: `src/services/partyAudioEngine.ts`, `src/composables/usePartyClock.ts`,
+`usePartyAudio.ts`, asset descriptor support, and lyric-view integration.
+
+- [ ] P05.1 Integrate the P01 engine with real room snapshots and playback commands;
+  acquire/release application audio ownership and clean up sources/listeners.
+- [ ] P05.2 Resolve and pin original/instrumental/lyric versions and timing offsets,
+  including imported songs, missing stems, and manual-lyric catalog entries.
+- [ ] P05.3 Implement bounded preload/decode, required-device readiness, preparation
+  timeout/retry, future countdown start, and optional-guide late attachment.
+- [ ] P05.4 Implement scheduled pause/resume/seek/skip, generation cancellation,
+  exactly-once completion, and preparation of the next singer's entry.
+- [ ] P05.5 Wire private original playback, guide volume, calibration and output
+  change handling; other phones remain silent until enabled.
+- [ ] P05.6 Wire room lyric correction and pinned lyrics; separate device audio
+  calibration from lyric correction and existing solo local-storage settings.
+- [ ] P05.7 Add measured drift policy, fade/recovery, buffer health, clock uncertainty,
+  and clear required-guide versus optional-guide failure behavior.
+- [ ] P05.8 Enforce output-lease silence using audio scheduling and recovery guards;
+  test a suspended old stage while a replacement is designated.
+- [ ] P05.9 Add player diagnostics with no credentials/audio capture in logs and
+  distinguish acoustic measurements from calculated timing estimates.
+
+Exit criteria:
+
+- [ ] Stage instrumental and phone guide pass the P01 acoustic target using the
+  integrated application, including seek and mid-song guide enablement.
+- [ ] Every admitted stage sees the same song/queue; only the designated local
+  stage outputs room audio by default.
+- [ ] Device preferences never change the public backing mix or another guide.
+- [ ] Required-device failures prevent unsafe starts; optional viewers do not block.
+- [ ] Solo playback and existing lyric behavior still work after leaving the room.
+
+Evidence: Pending.
+
+## 9. P06 — Recovery and local beta validation
+
+Status: Not started
+
+- [ ] P06.1 Verify network drop/reconnect for controller, guide, and designated stage;
+  include losing an acknowledgment immediately after a successful command.
+- [ ] P06.2 Verify host loss with and without co-host, host transfer, singer removal,
+  room expiry, invitation rotation, and stale paired-device credentials.
+- [ ] P06.3 Restart the backend while playing; validate paused checkpoints, new clock
+  identity, revoked leases, and deliberate resumption.
+- [ ] P06.4 Validate Chrome desktop, Safari desktop, iOS Safari, and Android Chrome
+  as available; record actual OS/browser versions and unsupported combinations.
+- [ ] P06.5 Check autoplay refusal, locked screen, background/foreground, output
+  changes, Bluetooth, low-memory decode, and long songs on physical devices.
+- [ ] P06.6 Add explicit no-store/service-worker exclusions for all room state,
+  tickets, grants, and media tokens; validate upgrades with an installed old PWA.
+- [ ] P06.7 Run permission/admission abuse cases, origin validation, bounded message
+  sizes/rates, and escaped user-supplied room/member text.
+- [ ] P06.8 Measure the planning load of 20 members and bounded device/queue counts;
+  record socket memory, command latency, snapshot fanout, and database behavior.
+- [ ] P06.9 Complete the local acceptance scenarios and support/limitation notes.
+
+Exit criteria:
+
+- [ ] R01–R11 and R14 pass on the supported local setup.
+- [ ] No stale device continues audible output after its tested lease boundary.
+- [ ] No removed participant can rejoin with an existing room grant or socket ticket.
+- [ ] No cached stale room snapshot is presented as live state after reconnect.
+- [ ] Load/browser results and all remaining defects have evidence and severity.
+
+Evidence: Pending.
+
+## 10. P07 — Online and hybrid performance
+
+Status: Not started
+
+Deliverables: a media transport decision, performance capture/publishing, remote
+audience playback, and tested performer handover. This phase implements R12–R13.
+
+- [ ] P07.1 Spike an established SFU, initially evaluate LiveKit; record hosted or
+  self-hosted choice, cost/capacity assumptions, region, TURN, and network requirements.
+- [ ] P07.2 Build separate local-monitor and publish graphs: guide remains private;
+  published audio contains instrumental plus microphone exactly once.
+- [ ] P07.3 Measure microphone/input/output delay and calibrate published backing
+  alignment; verify actual singing alignment rather than only matching graph clocks.
+- [ ] P07.4 Generate scoped media tokens from room authorization; audience subscribes,
+  the current generation's performer publishes, and other members cannot publish.
+- [ ] P07.5 Integrate active revocation with the media server for removal, room close,
+  lease expiry, performer replacement, and reconnect using an old unexpired token.
+- [ ] P07.6 Implement publisher-captured lyric video synchronized with the published
+  mix; validate mobile capture support and received A/V sync under jitter.
+- [ ] P07.7 Build audience connection/playback states, audio enablement, and recovery;
+  prevent an independently playing instrumental under the received performance.
+- [ ] P07.8 Implement local-to-remote and remote-to-local performer handover with
+  readiness, generation change, old-publisher stop/revocation, and stage routing.
+- [ ] P07.9 Validate venue-mixer versus clean-mic capture, headphone leakage, feedback,
+  no duplicate backing, and monitor/publish volume independence.
+- [ ] P07.10 Measure real networks, forced TURN, reconnect, one-to-many load,
+  performance latency, A/V timing, loss, and device resource usage.
+
+Exit criteria:
+
+- [ ] A remote guest hears backing and live singing aligned, while original guide
+  audio is absent from the digital publish graph and leakage is assessed physically.
+- [ ] Remote lyrics track received media delay, including under added jitter.
+- [ ] A forced relay connection works and no unauthorized participant can publish.
+- [ ] A removed or replaced performer loses publishing promptly at the media server;
+  an old token cannot restore unauthorized room access.
+- [ ] A physical-room audience and remote audience experience a full performer
+  handover without competing backing tracks or an obsolete active publisher.
+- [ ] Publish supported-device limits and measured streaming latency; no claim of
+  simultaneous remote duet support.
+
+Evidence: Pending.
+
+## 11. P08 — Deployment and release verification
+
+Status: Not started. Track local and online releases separately within this phase.
+
+- [ ] P08.1 Add configuration/feature flags for rooms, guide, and online publishing;
+  validate required runtime values without exposing secrets to frontend builds.
+- [ ] P08.2 Document database backup/migration, additive compatibility, HTTP/WSS proxy
+  configuration, TLS/origin settings, and single room-process ownership.
+- [ ] P08.3 For online release, provision and validate SFU/TURN endpoints, credentials,
+  allowed origins, network paths, and media-server revocation integration.
+- [ ] P08.4 Add bounded metrics/logs, readiness and drift diagnostics, alert thresholds,
+  room expiry cleanup, and a practical support troubleshooting flow.
+- [ ] P08.5 Run release checks, validate the built PWA and old-client upgrade flow,
+  and document rollback to the prior build without destructive schema rollback.
+- [ ] P08.6 Deploy to a test environment and complete a real multi-device party session.
+- [ ] P08.7 Release the local milestone after P06; record URL/build/date and checks.
+- [ ] P08.8 Release online/hybrid after P07; record media configuration and checks.
+- [ ] P08.9 Verify post-release create/join/approval, queue, guide, pause/skip, reconnect,
+  room close, and applicable streaming/host-handover behavior.
+
+Local release gate:
+
+- [ ] P00–P06 complete, relevant P08 work verified, and local limitations published.
+
+Online/hybrid release gate:
+
+- [ ] P07 complete, relevant P08 work verified, and remote support matrix published.
+
+Evidence: Pending.
+
+## 12. P09 — Optional enhancements
+
+Status: Not started; these do not block the agreed core milestones.
+
+- [ ] P09.1 Retain aligned vocal stems in the separation pipeline and expose
+  independent backing/guide gain with asset-version compatibility.
+- [ ] P09.2 Add opt-in performance recording and export with correct mix alignment.
+- [ ] P09.3 Add reactions, voting, themes, or camera views after core controls are stable.
+- [ ] P09.4 Investigate native DOM remote lyrics using a verified received-media
+  clock mapping, replacing captured lyric video where support permits.
+- [ ] P09.5 Evaluate multi-room horizontal scaling with explicit room ownership,
+  shared event routing, and migration/failover behavior.
+- [ ] P09.6 Study simultaneous remote duets separately; record latency limits and
+  feasibility before committing to the feature.
+
+Evidence: Pending.
+
+## 13. Acceptance scenario register
+
+All scenarios are initially unrun. Add evidence links and mark pass/fail when executed.
+
+| ID | Scenario | Expected outcome | Phase | Result |
+| --- | --- | --- | --- | --- |
+| A01 | Guest creates room; second guest joins by code | One host, one admitted/pending member according to setting | P02 | Unrun |
+| A02 | Pending guest calls room APIs and opens stage URL | No admitted room data or controls | P02 | Unrun |
+| A03 | Same member pairs phone and TV | One participant, distinct restricted devices | P02/P04 | Unrun |
+| A04 | Two guests request simultaneously; one retries after lost ack | Both accepted requests appear once or explicit conflict prompts retry | P03 | Unrun |
+| A05 | Request next, host approval, then normal turns | Current song continues; visible override followed by fair rotation | P03/P04 | Unrun |
+| A06 | Same song appears twice and multiple clients report completion | Exactly one entry completes; next entry remains distinct | P03/P05 | Unrun |
+| A07 | Stage and phone guide run for five minutes | Measured p95 error meets supported-setup target | P01/P05 | Unrun |
+| A08 | Host pauses, seeks, resumes; old ready/ended packet arrives | One valid timeline; obsolete packet ignored | P05 | Unrun |
+| A09 | Optional guide fails; repeat with guide marked required | Guide-only recovery, then room pause in required case | P05 | Unrun |
+| A10 | Stage loses connectivity and another device takes over | Old lease stops output before replacement becomes audible | P05/P06 | Unrun |
+| A11 | Backend restarts during a song | Paused checkpoint, new clock ID, explicit readiness/resume | P06 | Unrun |
+| A12 | Host disconnects with/without co-host | Documented transfer or pause-before-next policy | P06 | Unrun |
+| A13 | Kick member with several devices; reuse grants and tickets | All revoked room capabilities fail | P06 | Unrun |
+| A14 | Background/lock/unlock or change headphones | Honest suspended state, recalibration/recovery as needed | P06 | Unrun |
+| A15 | No instrumental, no LRC, changed asset version | Clear fallback/error; no silent original substitution | P05/P06 | Unrun |
+| A16 | Old installed PWA reconnects and new build becomes available | No stale authorized data; safe version/reload handling | P06/P08 | Unrun |
+| A17 | Remote singer enables original guide | Singer hears guide; audience gets backing and live mic only | P07 | Unrun |
+| A18 | Add network jitter to remote audience | Received lyric video and audio remain aligned within measured support limits | P07 | Unrun |
+| A19 | Force TURN; remove active performer; reuse old media token | Relay works; publishing/access revocation is enforced | P07 | Unrun |
+| A20 | Switch local singer to remote singer and back | Correct stage routing, one active performance and backing source | P07 | Unrun |
+| A21 | Close/expire room and reopen old invitation/display links | Playback stops; access and new joins denied | P06/P08 | Unrun |
+| A22 | Exit party and use existing solo karaoke | Solo controls/lyrics work; party audio and listeners are released | P05/P06 | Unrun |
+| A23 | Open invitation in a fresh browser; enter name; join; refresh; another guest uses the same name | No registration required; random participant ID persists on refresh; duplicate names have distinct IDs; blank names rejected | P02/P04 | Unrun |
+
+## 14. Verification strategy
+
+Write tests for the room rules, authorization, concurrent/retried commands, clock
+math, generations, and recovery behavior. Use deterministic fake clocks for domain
+tests. Use temporary SQLite databases and real WebSocket clients for integration
+tests. Browser automation covers flows and message handling; physical audio tests
+establish timing and hardware behavior.
+
+Existing checks, when the corresponding code changes:
+
+```bash
+npm run type-check
+npm run build
+npm run test:lyrics
+npm --prefix server test
+```
+
+Add an explicit party test script once tests exist; the current backend test script
+runs `dig.test.js` and will not automatically include a new party suite. Preserve
+existing tests and add the new suite to the required release checks. Do not mark
+an uncreated command as passing.
+
+Suggested targeted coverage:
+
+| Layer | Meaningful coverage |
+| --- | --- |
+| Domain | Fair rounds, overrides, admission/roles, single host, active entry transitions |
+| Persistence | Additive migration, receipt atomicity, restart recovery, foreign keys |
+| Realtime | Lost ack, reconnect snapshot, permissions after removal, ticket replay, revision conflicts |
+| Timing | Clock offsets/uncertainty, scheduled boundaries, pause/seek, stale generation, lease deadline |
+| Browser | Multi-device journey, audio unlock, UI permissions, old PWA, solo/party ownership |
+| Physical audio | Acoustic alignment, output changes, drift, input alignment, guide leakage |
+| Streaming | TURN, publish grants/revocation, received A/V sync, performer handover |
+
+For acoustic evidence record track/version, device/OS/browser, wired/BT/TV output
+chain, network, calibration values, run duration, sample count, p50/p95/max error,
+dropouts, and measurement method. Repeat on the integrated app; a standalone
+prototype result is not automatically a release result.
+
+## 15. Progress, decisions, risks, and evidence
+
+### Current next action
+
+Complete the remaining P02 moderation/device/idempotency work, then add the P03
+shared queue and realtime protocol. Start the P01 two-device audio prototype early
+so private guide feasibility is measured before P05.
+
+### Decision log
+
+| Date | Decision / assumption | State | Revisit |
+| --- | --- | --- | --- |
+| 2026-09-29 | Build on existing Vue/Express/SQLite app | Proposed | P00 |
+| 2026-09-29 | Local-first delivery; online/hybrid remain in scope | Proposed, user has not selected first public mode | P00 / release scope |
+| 2026-09-29 | `ws`, full snapshots, server-owned commands/timeline | Proposed | P03 |
+| 2026-09-29 | Original mix for first private guide; stems later | Proposed | P01/P05 |
+| 2026-09-29 | 50 ms p95 local acoustic alignment target | Unvalidated target | P01/P05 |
+| 2026-09-29 | Mixed WebRTC audio plus captured lyric video for remote audiences | Proposed | P07 spike |
+| 2026-09-29 | Direct invitation entry; unregistered guests provide a name and receive a random participant ID without signup | Required guest-entry behavior | P02/P04 |
+
+### Risk and blocker register
+
+| ID | Risk / unknown | Next action | State |
+| --- | --- | --- | --- |
+| B01 | Audible phone/stage alignment may vary by output path | P01 measurement and calibration | Open risk, not a confirmed blocker |
+| B02 | Whole-song decoding may exceed phone memory budget | P01 memory/decode study | Open risk |
+| B03 | Mobile background audio/capture may suspend | P01/P06 support matrix | Open risk |
+| B04 | Original and instrumental alignment/lyrics coverage vary | Asset validation and versioned descriptors | Open risk |
+| B05 | SFU/TURN hosting and remote lyric capture support unknown | P07 deployment/device spike | Open decision |
+| B06 | Existing player/PWA can conflict with party authority | P04 ownership and P06 upgrade/cache tests | Open integration risk |
+
+### Evidence log
+
+| Date | Phase / item | Commit or artifact | Verification | Result / limitations |
+| --- | --- | --- | --- | --- |
+| 2026-09-29 | Planning documents | `ktv_party.md`, `ktv_party_implement.md` | Repository source reviewed for integration points | Documentation only; no party implementation or acoustic results |
+| 2026-09-29 | Guest invitation flow | Design section 3.4; P02.2/P04.1/A23 | Name, random participant ID, session reuse, and duplicate-name handling documented | API implementation and tests pass; browser acceptance remains unrun |
+| 2026-09-29 | Baseline | `ktv-party-baseline-2026-09-29` at `6e8504b` | Local tag verified and pushed to origin before code edits | Rollback reference for main |
+| 2026-09-29 | P02.2/P02.3 and partial P02/P04 | `server/ktv-*`, party views/service/routes, auth/store and app integration | `node --test ktv.test.js` 3/3; `npm --prefix server test` 30/30; `npm run type-check`, `npm run build`, and `git diff --check` pass | Invitation/approval slice only; browser, sync, queue, and stream checks remain open |
+| 2026-09-29 | Invitation preview deployment | `https://music.micstec.com/party` | Live API create → invite → join pending → approve → admitted → close passed; frontend route, bundle, service worker returned 200; backend health passed | Host and guest flow available for user testing; UI browser acceptance and audio work remain open |
+
+### Work-session update template
+
+```text
+Date:
+Phase and item IDs:
+Status change:
+Commit/PR or artifact:
+What changed:
+Checks run and results:
+Device/audio measurements, if applicable:
+Known limits or blocker:
+Design/decision changes:
+Next action:
+```
+
+### Release record
+
+| Release | Build/commit | Environment/URL | Date | Gates and evidence | Remaining scope |
+| --- | --- | --- | --- | --- | --- |
+| Invitation preview | `feat/ktv-party` branch build | `https://music.micstec.com/party` | 2026-09-29 | Live API smoke test and static route checks passed; this is not the local KTV beta | Queue, audio, pairing, realtime, online/hybrid |
+| Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
+| Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |

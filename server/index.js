@@ -13,6 +13,7 @@ import { initDb } from './db.js'
 import { createDigProvider } from './dig-provider.js'
 import { createDigLibrary } from './dig-library.js'
 import { registerDigRoutes } from './dig-routes.js'
+import { registerKtvRoutes } from './ktv-routes.js'
 import { createDigIngestionWorker } from './dig-ingestion.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -160,6 +161,8 @@ function requireAdmin(req, res, next) {
   }
   next()
 }
+
+registerKtvRoutes(app, { db, authMiddleware, secret: JWT_SECRET || 'unconfigured-development-secret' })
 
 registerDigRoutes(app, {
   authMiddleware,

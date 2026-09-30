@@ -49,6 +49,14 @@
             {{ $t('dig.title') }}
           </RouterLink>
         </li>
+        <li>
+          <RouterLink to="/party" @click="emit('close-mobile')"
+            class="flex items-center px-4 py-3 rounded-md text-sm font-medium transition-colors duration-200 hover:bg-light-border dark:hover:bg-spotify-light"
+            :class="$route.path.startsWith('/party') ? 'bg-light-border text-light-text-primary dark:bg-spotify-light dark:text-white' : 'text-light-text-secondary dark:text-gray-300'">
+            <UserGroupIcon class="mr-3 h-5 w-5" />
+            {{ $t('navigation.ktvParty') }}
+          </RouterLink>
+        </li>
         <li v-if="auth.isAdmin">
           <RouterLink
             to="/admin"
@@ -223,6 +231,7 @@ import {
   BuildingLibraryIcon,
   EllipsisHorizontalIcon,
   MicrophoneIcon,
+  UserGroupIcon,
   MagnifyingGlassIcon,
   PencilSquareIcon,
   PlusIcon,

@@ -114,9 +114,16 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /** App-start identity bootstrap: restore a session, else become a fresh guest. */
-  async function ensureIdentity() {
-    await fetchMe()
-    if (!user.value) await createGuest()
+  let identityPromise: Promise<void> | null = null
+  function ensureIdentity(): Promise<void> {
+    if (user.value) return Promise.resolve()
+    if (!identityPromise) {
+      identityPromise = (async () => {
+        await fetchMe()
+        if (!user.value) await createGuest()
+      })().finally(() => { identityPromise = null })
+    }
+    return identityPromise
   }
 
   /** Update own profile fields (username / display name / bio / avatar data-URL). */
