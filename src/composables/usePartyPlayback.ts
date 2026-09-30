@@ -112,7 +112,10 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
     if (!current || !grant || !healthy.value) return
     const position = partyPosition(current, performance.now() + clock.value!.offsetMs)
     if (purpose.value === 'guide') {
-      if (generation === segment.value?.generation && ['playing', 'scheduled'].includes(segment.value.state) && position < current.durationMs - 250) {
+      // A calibrated guide can naturally finish before the backing. Compare
+      // against its own decoded timeline, including the singer's advance.
+      const guidePosition = position + guideAdvanceMs.value + (current.assets?.original?.alignmentOffsetMs || 0)
+      if (generation === segment.value?.generation && ['playing', 'scheduled'].includes(segment.value.state) && guidePosition < engine.durationMs - 250) {
         enabled.value = false; prepared.value = false; readyKeys.clear(); failure.value = 'guideEndedEarly'; status()
       }
       return
