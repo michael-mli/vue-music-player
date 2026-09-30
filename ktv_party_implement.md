@@ -2,15 +2,15 @@
 
 Created: 2026-09-29
 
-Last updated: 2026-09-29
+Last updated: 2026-09-30
 
 Design reference: [ktv_party.md](ktv_party.md)
 
 Current status: Realtime queue preview is deployed at `https://music.micstec.com/party`.
-The queue slice allows
-members can request karaoke-ready songs, see fair upcoming order, request priority,
-and hosts can approve priority. Playback, WebSocket updates, device pairing, and
-online streaming remain unimplemented.
+Members can request karaoke-ready songs, see the shared queue, and request priority;
+hosts can approve priority. WebSocket snapshots update room views live, with HTTP
+refresh as a fallback. Playback, device pairing, and online streaming remain
+unimplemented.
 
 ## 1. How to use this tracker
 
