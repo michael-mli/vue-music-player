@@ -6,8 +6,7 @@ Last updated: 2026-09-29
 
 Design reference: [ktv_party.md](ktv_party.md)
 
-Current status: Queue-planning preview is deployed at `https://music.micstec.com/party`.
-The realtime snapshot slice is implemented on `feat/ktv-party` pending deployment.
+Current status: Realtime queue preview is deployed at `https://music.micstec.com/party`.
 The queue slice allows
 members can request karaoke-ready songs, see fair upcoming order, request priority,
 and hosts can approve priority. Playback, WebSocket updates, device pairing, and
@@ -178,7 +177,7 @@ Status: In progress
 Likely files: `server/ktv/room-service.js`, `queue.js`, `realtime.js`, `clock.js`,
 `src/types/party.ts`, `src/services/partyService.ts`, `src/stores/party.ts`.
 
-- [ ] P03.1 Attach `ws` to the HTTP server and add Vite/nginx WebSocket routing.
+- [x] P03.1 Attach `ws` to the HTTP server and add Vite/nginx WebSocket routing.
   Authenticate first-message tickets with timeout and explicit origin checks.
 - [ ] P03.2 Serialize commands by room; enforce revisions, payload validation,
   current permissions, idempotency, and transaction-before-broadcast ordering.
@@ -214,6 +213,10 @@ waiting-only snapshots, admission/removal and queue changes broadcast after comm
 and removed/closed viewers lose their sockets. The browser reconnects with a fresh
 ticket; HTTP polling remains a fallback when disconnected. Clock negotiation,
 singer nomination/acceptance, played-turn fairness, leases, and playback state are open.
+Seven KTV integration tests and the full backend suite (34/34) pass. The production
+build passes; the public WSS route, snapshots, admission, queue broadcast, and
+removal revocation passed a live API/socket smoke test. Browser UI acceptance and
+physical multi-device testing remain open.
 
 ## 7. P04 — Stage, phone controller, and moderation UI
 
@@ -532,7 +535,8 @@ start the P01 two-device audio prototype before integrating guide playback.
 | 2026-09-29 | Invitation preview deployment | `https://music.micstec.com/party`, code commit `d1d9253` | Live API create → invite → join pending → approve → admitted → close passed; frontend route, bundle, service worker returned 200; deployed bundle contains `d1d9253`; backend health passed | Host and guest flow available for user testing; headless Chrome timed out in this environment, so UI browser acceptance and audio work remain open |
 | 2026-09-29 | P03 queue-planning slice | `4c94e1b`; `server/ktv-queue.js`, queue routes/schema, `src/views/PartyRoom.vue` | KTV tests 5/5; full backend 32/32; type-check and production build pass | No WebSocket, playback, singer acceptance, or audio measurement |
 | 2026-09-29 | Queue preview deployment | `https://music.micstec.com/party`, bundle `main-rnQzk0zj.js` | Live join → queue request → idempotent replay → host priority approval → shared snapshot → close passed; route and bundle returned 200; queue table created | Headless Chrome timed out in this environment, so browser UI acceptance remains open; predeployment DB/static backup at `/tmp/ktv-party-queue-predeploy.l0so35h0` |
-| 2026-09-29 | P03 room sockets | `server/ktv-realtime.js`, `src/services/partyRealtime.ts`, `server/nginx-ktv-ws.conf` | KTV integration tests cover ticket replay, origin, pending redaction, broadcasts, reconnect, removal, close; frontend build passes | Local implementation pending deployment; clock messages, socket commands, presence, and audio timing open |
+| 2026-09-29 | P03 room sockets | `server/ktv-realtime.js`, `src/services/partyRealtime.ts`, `server/nginx-ktv-ws.conf` | KTV integration tests cover ticket replay, origin, pending redaction, broadcasts, reconnect, removal, close; frontend build passes | Deployed in realtime queue preview; clock messages, socket commands, presence, and audio timing open |
+| 2026-09-29 | Realtime queue preview deployment | Backend `960b03d`, frontend `main-CAq48vee.js`, `https://music.micstec.com/party` | Public WSS upgrade, one-use ticket, pending redaction, approval, queue broadcast, removal revocation pass; backend tests 34/34 and build pass; nginx reload and health check pass | Browser UI acceptance and audio timing remain open; backup at `/tmp/ktv-party-ws-predeploy.jebxjh8t`, nginx backup at `/tmp/music.nginx.pre-ktv-ws.20260929` |
 
 ### Work-session update template
 
@@ -555,5 +559,6 @@ Next action:
 | --- | --- | --- | --- | --- | --- |
 | Invitation preview | `d1d9253` (`main-DwOqCxch.js`) | `https://music.micstec.com/party` | 2026-09-29 | Live API smoke test and static route checks passed; browser UI check remains open; this is not the local KTV beta | Queue, audio, pairing, realtime, online/hybrid |
 | Queue-planning preview | `4c94e1b` (`main-rnQzk0zj.js`) | `https://music.micstec.com/party` | 2026-09-29 | Live queue smoke test, static route/bundle checks, backend tests and build pass; browser UI acceptance remains open | Audio, WebSocket, singer acceptance, pairing, online/hybrid |
+| Realtime queue preview | `960b03d` (`main-CAq48vee.js`) | `https://music.micstec.com/party` | 2026-09-29 | Public WSS flow, backend 34/34, build and route checks pass; browser UI acceptance remains open | Audio, clock negotiation, singer acceptance, pairing, online/hybrid |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |
