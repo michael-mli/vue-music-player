@@ -285,7 +285,22 @@
     "serviceRecovery": "The service restarted. Reconnect the stage and guide, confirm singer readiness, then resume from the saved position.",
     "hostMissingWithCohost": "Host controller disconnected. Co-host controls remain available; ownership transfers after the grace period ({seconds}s remaining).",
     "hostMissingWithoutCohost": "Host controller disconnected. The queue is preserved and the next song waits for a host or co-host controller.",
-    "guideEndedEarly": "The vocal guide stopped before the song finished. Retry the guide or make it optional."
+    "guideEndedEarly": "The vocal guide stopped before the song finished. Retry the guide or make it optional.",
+    "audioRecoveryWaiting": "Audio paused for recovery",
+    "audioOutputChanged": "Audio output changed. Timing correction has been reset. Check the selected speakers/headphones, then confirm and retry.",
+    "audioDriftRecovery": "Audio timing moved outside the recovery limit. Retry this device; required devices pause the room until ready again.",
+    "confirmOutputAndRetry": "Confirm output and retry",
+    "resetHeadphones": "Reset for new headphones",
+    "calibrationReset": "Timing correction was reset for a changed output. Check alignment with the new headphones when playback resumes.",
+    "audioDiagnostics": "Audio timing and health",
+    "audioDiagnosticsHint": "These are browser timing estimates, not a recording of speaker/headphone sound. External TV or Bluetooth delay still needs calibration.",
+    "audioPhaseEstimate": "Calculated sample phase",
+    "audioOutputLatency": "Browser output latency",
+    "audioTimingMethod": "Timing source",
+    "audioTiming_timestamp": "Output timestamp",
+    "audioTiming_estimate": "Latency estimate",
+    "audioTiming_unavailable": "Not available",
+    "audioBufferMemory": "Decoded audio memory"
   },
   "player": {
     "play": "Play",

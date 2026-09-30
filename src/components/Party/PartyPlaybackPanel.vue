@@ -11,11 +11,11 @@
       <button v-if="stage && !enabled" type="button" class="rounded-full bg-spotify-green px-5 py-3 font-semibold text-black" @click="audio.enable('stage')">{{ $t('party.enableStageAudio') }}</button>
       <button v-if="!stage && canGuide && !enabled" type="button" class="rounded-full bg-spotify-green px-5 py-3 font-semibold text-black" @click="audio.enable('guide')">{{ $t('party.enableGuide') }}</button>
       <button v-if="enabled" type="button" class="rounded-full border border-white/30 px-4 py-3 text-sm" @click="audio.disable()">{{ $t('party.disableAudio') }}</button>
-      <p class="text-sm text-gray-300" role="status">{{ $t(preparing ? 'party.audioLoading' : prepared ? 'party.audioPrepared' : enabled ? 'party.audioEnabled' : 'party.audioMuted') }}</p>
+      <p class="text-sm text-gray-300" role="status">{{ $t(blocked ? 'party.audioRecoveryWaiting' : preparing ? 'party.audioLoading' : prepared ? 'party.audioPrepared' : enabled ? 'party.audioEnabled' : 'party.audioMuted') }}</p>
       <p v-if="stage && enabled" class="text-sm text-spotify-green">{{ $t(assignedHere ? 'party.stageAssignedHere' : 'party.stageAwaitingAssignment') }}</p>
     </div>
     <p v-if="failure" role="alert" class="mt-3 text-sm text-red-300">{{ $t(`party.${failure}`) }}</p>
-    <button v-if="failure && enabled" type="button" class="mt-2 text-sm text-spotify-green underline" @click="audio.retry()">{{ $t('party.retryAudio') }}</button>
+    <button v-if="failure && enabled" type="button" class="mt-2 min-h-[44px] text-sm text-spotify-green underline" @click="retryAudio">{{ $t(failure === 'audioOutputChanged' ? 'party.confirmOutputAndRetry' : 'party.retryAudio') }}</button>
     <div v-if="enabled" class="mt-5 flex flex-wrap items-center gap-4">
       <label class="flex items-center gap-3 text-sm">{{ $t(purpose === 'guide' ? 'party.guideVolume' : 'party.stageVolume') }}
         <input v-model.number="volume" type="range" min="0" max="1" step="0.01" class="w-32 accent-green-400" />
@@ -25,9 +25,21 @@
         <button type="button" class="rounded-lg border border-white/30 px-3 py-2" @click="guideAdvanceMs += 25">{{ $t('party.guideEarlier') }}</button>
         <span class="tabular-nums">{{ guideAdvanceMs }} ms</span>
         <button type="button" class="rounded-lg border border-white/30 px-3 py-2" @click="guideAdvanceMs -= 25">{{ $t('party.guideLater') }}</button>
+        <button type="button" class="rounded-lg border border-white/30 px-3 py-2" @click="audio.resetOutput()">{{ $t('party.resetHeadphones') }}</button>
       </div>
     </div>
     <p v-if="purpose === 'guide'" class="mt-2 text-xs text-gray-400">{{ $t('party.guideCalibrationHint') }}</p>
+    <p v-if="calibrationInvalidated && purpose === 'guide'" class="mt-2 text-xs text-amber-200">{{ $t('party.calibrationReset') }}</p>
+    <details v-if="enabled" class="mt-4 rounded-xl border border-white/10 p-3 text-xs text-gray-300">
+      <summary class="min-h-[32px] cursor-pointer">{{ $t('party.audioDiagnostics') }}</summary>
+      <p class="mt-2">{{ $t('party.audioDiagnosticsHint') }}</p>
+      <dl class="mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
+        <dt>{{ $t('party.audioPhaseEstimate') }}</dt><dd class="tabular-nums">{{ diagnostics.phaseErrorMs ?? '—' }} ms</dd>
+        <dt>{{ $t('party.audioOutputLatency') }}</dt><dd class="tabular-nums">{{ diagnostics.outputLatencyMs === null ? '—' : Math.round(diagnostics.outputLatencyMs) }} ms</dd>
+        <dt>{{ $t('party.audioTimingMethod') }}</dt><dd>{{ $t(`party.audioTiming_${diagnostics.timingMode}`) }}</dd>
+        <dt>{{ $t('party.audioBufferMemory') }}</dt><dd class="tabular-nums">{{ diagnostics.decodedMiB }} MiB</dd>
+      </dl>
+    </details>
     <div v-if="canGuide && !stage" class="mt-5 rounded-xl border border-white/15 p-4">
       <label class="flex min-h-[44px] items-center gap-3 text-sm">
         <input type="checkbox" :checked="playback?.guideRequired" :disabled="busy || !playback?.assets?.original"
@@ -102,7 +114,7 @@ const props = defineProps<{ party: PartySnapshot; audio: ReturnType<typeof usePa
 const emit = defineEmits<{ action: [action: string, payload: Record<string, unknown>]; prepare: [] }>()
 const { t } = useI18n()
 const { enabled, purpose, preparing, prepared, failure, volume, guideAdvanceMs, canGuide, assignedHere,
-  positionMs, segment, countdown, lines, lyricGuide, startSafe, serverNowMs } = props.audio
+  positionMs, segment, countdown, lines, lyricGuide, startSafe, serverNowMs, blocked, diagnostics, calibrationInvalidated } = props.audio
 const playback = computed(() => props.party.playback)
 const stageDevices = computed(() => props.party.presence?.devices.filter(device => device.purpose === 'stage' && device.audioEnabled && device.clockHealthy) || [])
 const stagePrepared = computed(() => props.party.presence?.devices.some(device => device.id === playback.value?.stageDeviceId &&
@@ -117,5 +129,6 @@ function elapsed(ms: number) { const seconds = Math.max(0, Math.floor(ms / 1000)
 function seek(event: Event) { emit('action', 'seek', { positionMs: Number((event.target as HTMLInputElement).value) }) }
 function correctLyrics(event: Event) { emit('action', 'lyrics', { lyricOffsetMs: Number((event.target as HTMLInputElement).value) }) }
 function requireGuide(event: Event) { emit('action', 'guide', { required: (event.target as HTMLInputElement).checked, deviceId: props.audio.deviceId }) }
+function retryAudio() { if (failure.value === 'audioOutputChanged') calibrationInvalidated.value = false; props.audio.retry() }
 function skip() { if (window.confirm(t('party.confirmSkip'))) emit('action', 'skip', {}) }
 </script>

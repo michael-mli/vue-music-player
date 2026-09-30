@@ -301,6 +301,24 @@ test('restart preserves required-guide preference but cannot restore an old guid
   assert.equal(after.guidePrepared, false); assert.equal(after.recoveryReason, 'service.restarted')
 })
 
+test('validated stage drift and required-guide output faults enter generation-safe room recovery', t => {
+  const f = fixture(t)
+  f.prepare(); f.time(9000); f.status(); f.service.start(f.roomId); f.service.sweep()
+  const before = f.service.snapshot(f.roomId)
+  const status = { type: 'device.status', purpose: 'stage', label: 'Stage', audioEnabled: false, clockHealthy: true, audioIssue: 'drift' }
+  f.message(status)
+  assert.equal(f.service.snapshot(f.roomId).recoveryReason, 'stage.drift')
+  assert.ok(f.service.snapshot(f.roomId).generation > before.generation)
+  assert.throws(() => f.message({ ...status, audioIssue: 'arbitrary.event' }), error => error.code === 'INVALID_DEVICE_STATUS')
+  f.message({ type: 'device.stopped', clockId: f.clock.id, leaseId: before.lease.id, generation: before.generation })
+  f.advance(501); f.status(); f.ready(); f.service.start(f.roomId); f.service.sweep()
+  const phone = f.device(); phone.ready(); f.service.guide(f.roomId, f.memberId, true, phone.ws.clientDeviceId)
+  phone.send({ type: 'device.status', purpose: 'guide', label: 'Guide', audioEnabled: false, clockHealthy: true, audioIssue: 'output' })
+  assert.equal(f.service.snapshot(f.roomId).recoveryReason, 'guide.output')
+  assert.equal(f.service.snapshot(f.roomId).entryId, f.entryId)
+  assert.equal(f.db.prepare('SELECT COUNT(*) total FROM ktv_turn_history').get().total, 0)
+})
+
 test('completion and decline automatically select fair accepted turns once, leaving held and unaccepted entries alone', t => {
   const f = fixture(t)
   const other = f.member('other')

@@ -285,7 +285,22 @@
     "serviceRecovery": "服务已重启。重新连接大屏与提示设备，确认歌手就绪，再从保存的位置继续播放。",
     "hostMissingWithCohost": "主持人控制设备已断线，副主持人仍可操作。宽限期结束后自动转交主持权（剩余 {seconds} 秒）。",
     "hostMissingWithoutCohost": "主持人控制设备已断线。点歌队列已保留，下一首会等待主持人或副主持人的控制设备重新连接。",
-    "guideEndedEarly": "原唱提示在歌曲结束前已停止。请重试提示，或将它设为可选。"
+    "guideEndedEarly": "原唱提示在歌曲结束前已停止。请重试提示，或将它设为可选。",
+    "audioRecoveryWaiting": "音频已暂停，等待恢复",
+    "audioOutputChanged": "音频输出设备已改变，时间校准已重置。检查所选扬声器或耳机，然后确认并重试。",
+    "audioDriftRecovery": "音频时差超出恢复阈值。请重试此设备；必要设备未就绪时房间会暂停。",
+    "confirmOutputAndRetry": "确认输出设备并重试",
+    "resetHeadphones": "为新耳机重置校准",
+    "calibrationReset": "输出设备改变后，时间校准已重置。恢复播放时，请检查新耳机的同步情况。",
+    "audioDiagnostics": "音频时序与状态",
+    "audioDiagnosticsHint": "这些是浏览器时序估计，并非扬声器或耳机的实际声音录音。电视或蓝牙的额外延迟仍需校准。",
+    "audioPhaseEstimate": "计算的音频采样时差",
+    "audioOutputLatency": "浏览器输出延迟",
+    "audioTimingMethod": "时序来源",
+    "audioTiming_timestamp": "输出时间戳",
+    "audioTiming_estimate": "延迟估计",
+    "audioTiming_unavailable": "不可用",
+    "audioBufferMemory": "解码音频内存"
   },
   "player": {
     "play": "播放",

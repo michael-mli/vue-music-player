@@ -657,7 +657,9 @@ estimates. Stage and private-guide volume are separate. Positive guide calibrati
 advances the guide; room lyric correction delays displayed cues. Browser scheduling
 and source cancellation have automated evidence. Required-guide readiness, automatic
 next-turn selection, and automatic host-loss transfer are implemented and tested.
-Physical timing, output-device change handling, measured drift and streaming remain open.
+Browser-rendered drift and output-change recovery are implemented with automated
+unit and production-browser evidence. Physical timing
+and streaming remain open.
 
 The singer's versioned, receipt-backed `guide` command carries `required` and a
 socket-bound `deviceId`. Only that singer's separate controller can be bound;
@@ -689,6 +691,46 @@ After grace, the earliest-appointed admitted co-host with a connected controller
 becomes the sole host in one transaction, with revision/audit/broadcast. The old
 host becomes an ordinary member. Reconnection cancels the grace deadline; explicit
 ownership transfer starts presence tracking for the new host.
+
+### 9.7 Rendered timing diagnostics and output recovery
+
+The engine samples its rendered source position against the canonical timeline
+once per second. It uses the AudioContext output timestamp when available and
+labels the output-latency fallback as an estimate. The calculation follows the
+[Web Audio output timestamp contract](https://webaudio.github.io/web-audio-api/#dom-audiocontext-getoutputtimestamp).
+This observes browser audio stream timing; it does not record the sound from a
+TV, speaker, Bluetooth headset or microphone, and cannot establish acoustic
+alignment. Hardware and external transport delay still require physical tests.
+
+Recovery defaults are three consecutive timestamp samples outside
+`max(80 ms, 2 × clock uncertainty + 25 ms)`, or one sample outside
+`max(250 ms, 4 × clock uncertainty + 50 ms)`. Estimate-only timing cannot trigger
+measured-drift recovery. Scheduled countdowns, transitions and not-yet-audible
+sources are excluded. A fault fades out over 20 ms, stops lease renewal/readiness,
+and blocks the device until an explicit retry. A stage or required-guide fault
+enters room recovery; an optional guide stops only its phone. Retry prepares the
+device and never starts the room automatically. Thresholds are conservative
+implementation defaults, not a measured supported-device claim.
+
+A sink-change event, observed audio-output fingerprint change, browser output
+latency jump over 40 ms, or loss of previously available output timestamps
+invalidates the output mapping. Audio-output enumeration
+follows the [Media Capture device-change contract](https://w3c.github.io/mediacapture-main/#event-mediadevices-devicechange);
+permission/browser visibility may limit what can be observed. Microphones and
+cameras do not contribute to the fingerprint. Only a SHA-256 fingerprint is
+stored locally; raw device identifiers stay in memory and are never sent to the
+room service or logs. The guide's timing correction resets to zero, and the UI
+requires output confirmation/retry. A manual reset is available when the browser
+does not expose a change. Physical headphone/Bluetooth detection remains an
+acceptance gate.
+
+Late attachment allows the reported browser output latency plus scheduling
+headroom, so a slow output cannot force an impossible audio-clock start. The
+optional diagnostics show calculated sample phase, browser output latency,
+timestamp-versus-estimate mode and decoded audio memory; they explicitly describe
+their limits. Device status can report only `drift`, `output`, `decode` or
+`suspended` faults. A stale asynchronous decode response cannot clear a fault or
+restore readiness after recovery.
 
 ## 10. Online and hybrid performance streaming
 

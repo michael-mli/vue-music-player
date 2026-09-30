@@ -49,7 +49,7 @@ inheritance and revocation of the former host’s paired control permissions.
 | P02 | Rooms, identities, invitations, permissions, persistence | P00 | In progress | Rooms, pairing, moderation and atomic host transfer tested; general receipts and cleanup open |
 | P03 | Realtime state, commands, queue, leases | P02 | In progress | Versioned playback timeline, checkpoints, presence, renewable stage leases and turn history tested; fair automatic next turns and host-loss grace/transfer tested |
 | P04 | Stage, phone controller, host UI | P02–P03 | In progress | Entry, join, pairing, moderation, singer selection/readiness, queue, pinned lyrics, playback and guide controls; QR/tabs/accessibility open |
-| P05 | Scheduled playback, private guide, shared lyrics | P01, P03–P04 | In progress | Stage/guide/lyrics/controls pass Chrome journey; required-guide recovery tested; drift/output changes and physical timing open |
+| P05 | Scheduled playback, private guide, shared lyrics | P01, P03–P04 | In progress | Stage/guide/lyrics/controls pass Chrome journey; required-guide and rendered-drift/output recovery tested; physical timing open |
 | P06 | Recovery, browser coverage, local release readiness | P02–P05 | In progress | Guide/stage loss, host transfer, restart and revocation have automated evidence; physical/device coverage open |
 | P07 | Online performance streaming and hybrid operation | P01, stable P03/P05 contracts | Not started | — |
 | P08 | Deployment, monitoring, and release verification | P06 for local; P07 for online | In progress | Intermediate previews deployed and checked; operational and release acceptance gates open |
@@ -305,7 +305,7 @@ turn; the stage shows that singer/song and the human readiness state. Connection
 details show clock estimates, explicitly separate from headphone/speaker timing.
 Stage selection, explicit audio enablement, personal guide volume/calibration and
 host prepare/start/pause/resume/seek/skip/lyric-correction controls are wired.
-Three isolated Chrome sessions pass 20 playback/recovery checks without runtime exceptions.
+Three isolated Chrome sessions pass 27 playback/recovery/output checks without runtime exceptions.
 QR, full phone tabs, broader accessibility checks and physical acceptance are open.
 
 ## 8. P05 — Production playback and private vocal guide
@@ -323,15 +323,15 @@ Likely files: `src/services/partyAudioEngine.ts`, `src/composables/usePartyClock
   timeout/retry, future countdown start, and optional-guide late attachment.
 - [x] P05.4 Implement scheduled pause/resume/seek/skip, generation cancellation,
   exactly-once completion, and preparation of the next singer's entry.
-- [ ] P05.5 Wire private original playback, guide volume, calibration and output
+- [x] P05.5 Wire private original playback, guide volume, calibration and output
   change handling; other phones remain silent until enabled.
 - [ ] P05.6 Wire room lyric correction and pinned lyrics; separate device audio
   calibration from lyric correction and existing solo local-storage settings.
-- [ ] P05.7 Add measured drift policy, fade/recovery, buffer health, clock uncertainty,
+- [x] P05.7 Add measured drift policy, fade/recovery, buffer health, clock uncertainty,
   and clear required-guide versus optional-guide failure behavior.
 - [ ] P05.8 Enforce output-lease silence using audio scheduling and recovery guards;
   test a suspended old stage while a replacement is designated.
-- [ ] P05.9 Add player diagnostics with no credentials/audio capture in logs and
+- [x] P05.9 Add player diagnostics with no credentials/audio capture in logs and
   distinguish acoustic measurements from calculated timing estimates.
 
 Exit criteria:
@@ -346,14 +346,16 @@ Exit criteria:
 
 Evidence: `server/ktv-assets.js`, `server/ktv-playback.js`,
 `src/services/partyAudioEngine.ts`, `src/composables/usePartyPlayback.ts`,
-`src/components/Party/PartyPlaybackPanel.vue`, eight clock/audio tests, sixteen
+`src/components/Party/PartyPlaybackPanel.vue`, fifteen clock/audio tests, seventeen
 playback/asset backend tests, one real HTTP/WSS playback integration test and a
-20-check Chrome production-build journey. Pinned originals, backings and lyrics,
+27-check Chrome production-build journey. Pinned originals, backings and lyrics,
 private guide, calibration, scheduled controls, lease stops, checkpoint
 recovery and source cancellation are implemented. Required-guide gating/failure,
 current-generation guide heartbeats, guide readiness across seeks, served-turn
-declines, fair next readiness and host-loss transfer are implemented. Measured
-drift, device-change recovery, and physical alignment remain open. This is a preview; the P01/P05 exit criteria are not complete.
+declines, fair next readiness and host-loss transfer are implemented. Timestamp
+phase diagnostics, estimate-only fallback, drift/output faults, explicit retries,
+headphone correction reset and slow-output late attachment are implemented and
+tested. Physical alignment and real device-change coverage remain open. This is a preview; the P01/P05 exit criteria are not complete.
 
 ## 9. P06 — Recovery and local beta validation
 
@@ -563,8 +565,8 @@ prototype result is not automatically a release result.
 
 ### Current next action
 
-Implement output-device and measured drift recovery, including calibration
-invalidation and diagnostics. Continue the SFU/TURN and online/hybrid capture
+Finish rendered-drift/output recovery deployment checks, then complete phone
+UI/QR/accessibility and general command receipts/cleanup/limits. Continue the SFU/TURN and online/hybrid capture
 implementation. Physical phone/screen timing, memory, background and browser
 coverage remain acceptance gates. Remaining P02/P04 work includes general receipts,
 cleanup/abuse limits, QR invitations, phone tabs and accessibility.
@@ -616,6 +618,7 @@ cleanup/abuse limits, QR invitations, phone tabs and accessibility.
 | 2026-09-30 | Scheduled playback preview deployment | `f87f0ff`, frontend `main-C0oS5LfE.js`, `https://music.micstec.com/party` | 11 public API/WSS checks pass: paired display presence/scope, designation, real pinned assets and range requests, leases, start retry, effective pause, fresh resume lease, seek generation, forbidden member controls, idempotent skip; seven public route/assets return 200 and SHA verified; migration verified, foreign-key errors zero | Temporary room closed; backup at `/tmp/ktv-party-playback-predeploy.cq1lqlm2`; one health retry during restart. Physical alignment, required-guide policy, automatic next turn/host-loss, complete UI and online/hybrid remain open |
 | 2026-09-30 | Required-guide, next-turn and host-loss implementation | Playback/schema/turn service, HTTP/WSS commands, guide/host UI and browser journey | Backend 63/63, clock/audio 8/8, Chrome 146.0.7680.71 production-build journey 20/20, type-check/build and diff check pass | Singer-bound required-guide gating, heartbeat/seek recovery, fair automatic next readiness and atomic co-host inheritance verified in software. Physical audio, output changes/drift, full phone UI and online/hybrid remain open |
 | 2026-09-30 | Required-guide, next-turn and host-loss preview deployment | `323c922`, frontend `main-Ccfld-0j.js`, `https://music.micstec.com/party` | Backend 63/63; clock/audio 8/8; release Chrome journey 20/20; public recovery protocol 13/13; seven public route/assets, exact frontend SHA/hash, additive schema and zero foreign-key violations verified | Temporary room closed. Backup `/tmp/ktv-party-recovery-predeploy.y3xiwtl9`; health succeeded after two connection retries during restart. Physical audio, output changes/drift, receipts/cleanup, QR/tabs/accessibility and online/hybrid remain open |
+| 2026-09-30 | Rendered drift/output recovery implementation | Audio engine/output monitor, device fault status and bilingual UI | Backend 64/64; clock/audio 15/15; production-build Chrome 146.0.7680.71 journey 27/27; type-check/build and diff check pass | Timestamp phase samples, estimate-only fallback, explicit output retry, calibration invalidation and slow-output late attachment implemented. Includes stale decode cancellation and loss of previously available timestamps. Browser sink events are simulated; physical audio/output detection remains unverified |
 
 ### Work-session update template
 

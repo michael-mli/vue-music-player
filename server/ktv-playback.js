@@ -73,7 +73,7 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
     if (!prior) {
       devices.set(ws.clientDeviceId, { id: ws.clientDeviceId, roomId: ws.roomId, memberId: authorized.self.id,
         grantId: ws.principal.grantId || null, scope: authorized.deviceScope || 'controller', ws,
-        label: 'Device', purpose: 'viewer', audioEnabled: false, clockHealthy: false, lastSeenMs: clock.nowMs(), ready: null })
+        label: 'Device', purpose: 'viewer', audioEnabled: false, clockHealthy: false, audioIssue: null, lastSeenMs: clock.nowMs(), ready: null })
       presenceSequence++
     }
   }
@@ -315,18 +315,20 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
     if (message.type === 'device.status') {
       if (!['viewer', 'stage', 'guide'].includes(message.purpose) || typeof message.audioEnabled !== 'boolean' ||
         typeof message.clockHealthy !== 'boolean' || typeof message.label !== 'string' || message.label.length > 40 ||
-        /[\u0000-\u001f]/.test(message.label)) fail(400, 'INVALID_DEVICE_STATUS', 'Invalid device status')
+        /[\u0000-\u001f]/.test(message.label) ||
+        (message.audioIssue != null && !['drift', 'output', 'decode', 'suspended'].includes(message.audioIssue))) fail(400, 'INVALID_DEVICE_STATUS', 'Invalid device status')
       if (device.scope === 'display' && message.purpose === 'guide') fail(403, 'FORBIDDEN', 'Display access cannot use a singer guide')
       const changed = device.purpose !== message.purpose || device.label !== (message.label.trim() || 'Device') ||
-        device.audioEnabled !== message.audioEnabled || device.clockHealthy !== message.clockHealthy
+        device.audioEnabled !== message.audioEnabled || device.clockHealthy !== message.clockHealthy || device.audioIssue !== (message.audioIssue || null)
       device.purpose = message.purpose; device.label = message.label.trim() || 'Device'
       device.audioEnabled = message.audioEnabled; device.clockHealthy = message.clockHealthy
+      device.audioIssue = message.audioIssue || null
       const row = read(ws.roomId)
       if (!device.audioEnabled || !device.clockHealthy || (row?.stage_device_id === device.id && device.purpose !== 'stage') ||
         (row?.guide_device_id === device.id && device.purpose !== 'guide')) {
         device.ready = null; device.nextReady = null
-        if (row?.stage_device_id === device.id) transaction(db, () => recover(ws.roomId, 'stage.unavailable'))
-        else if (row?.guide_required && row.guide_device_id === device.id) transaction(db, () => recover(ws.roomId, 'guide.unavailable'))
+        if (row?.stage_device_id === device.id) transaction(db, () => recover(ws.roomId, `stage.${device.audioIssue || 'unavailable'}`))
+        else if (row?.guide_required && row.guide_device_id === device.id) transaction(db, () => recover(ws.roomId, `guide.${device.audioIssue || 'unavailable'}`))
       }
       if (changed) { presenceSequence++; broadcast(ws.roomId) }
     } else if (message.type === 'device.ready') {

@@ -1,5 +1,6 @@
 import { computed, onUnmounted, ref, watch, type Ref } from 'vue'
 import { PartyAudioEngine } from '@/services/partyAudioEngine'
+import { createPartyOutputMonitor } from '@/services/partyOutputMonitor'
 import type { PartySnapshot, PartyLease } from '@/services/partyApi'
 import type { PartyClockEstimate } from '@/utils/partyClock'
 import { partyPosition, partySegment } from '@/utils/partyTimeline'
@@ -11,6 +12,8 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
   const engine = new PartyAudioEngine()
   const purpose = ref<'viewer' | 'stage' | 'guide'>('viewer')
   const enabled = ref(false), preparing = ref(false), prepared = ref(false), failure = ref('')
+  const blocked = ref(false), calibrationInvalidated = ref(false), diagnostics = ref(engine.diagnostics)
+  const audioIssue = ref<'drift' | 'output' | 'decode' | 'suspended' | null>(null)
   const volume = ref(0.7), guideAdvanceMs = ref(Number(localStorage.getItem('party-guide-advance-ms')) || 0)
   const nowMs = ref(performance.now())
   const lease = ref<PartyLease | null>(null)
@@ -19,6 +22,11 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
   let lastStatusMs = -Infinity, lastHeartbeatMs = -Infinity, disposed = false
   let lastStoppedLease = ''
   let animation = 0
+  let lastDiagnosticsMs = -Infinity
+  const outputs = createPartyOutputMonitor(() => {
+    guideAdvanceMs.value = 0; calibrationInvalidated.value = true
+    if (enabled.value) engine.outputChanged()
+  })
   const playback = computed(() => party.value?.playback)
   const serverNowMs = computed(() => nowMs.value + (clock.value?.offsetMs || 0))
   const positionMs = computed(() => playback.value && clock.value?.clockId === playback.value.clockId ? partyPosition(playback.value, serverNowMs.value) : playback.value?.positionMs || 0)
@@ -37,20 +45,21 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
   function status() {
     if (!connected.value) return
     send({ type: 'device.status', label: purpose.value === 'stage' ? 'Stage' : purpose.value === 'guide' ? 'Singer phone' : 'Controller',
-      purpose: purpose.value, audioEnabled: !document.hidden && enabled.value && engine.enabled, clockHealthy: !document.hidden && healthy.value })
+      purpose: purpose.value, audioEnabled: !document.hidden && !blocked.value && enabled.value && engine.enabled,
+      clockHealthy: !document.hidden && healthy.value, audioIssue: audioIssue.value })
     lastStatusMs = performance.now()
   }
   async function enable(role: 'stage' | 'guide') {
-    failure.value = ''
+    failure.value = ''; blocked.value = false; audioIssue.value = null; engine.resetRecovery()
     if (role === 'guide' && (!canGuide.value || assignedHere.value)) return
     purpose.value = role
-    try { await engine.enable(); enabled.value = engine.enabled; failedKey = ''; readyKeys.clear(); status(); void prepare() }
+    try { await engine.enable(); enabled.value = engine.enabled; failedKey = ''; readyKeys.clear(); status(); void outputs.inspect(); void prepare() }
     catch { failure.value = 'audioEnableFailed'; enabled.value = false; status() }
   }
   function disable() {
-    loadAttempt++; engine.releaseBuffer(); enabled.value = false; prepared.value = false
+    loadAttempt++; engine.releaseBuffer(); enabled.value = false; prepared.value = false; preparing.value = false
     acknowledgeStop()
-    purpose.value = 'viewer'; loadingKey = ''; readyKeys.clear(); failedKey = ''; status()
+    purpose.value = 'viewer'; loadingKey = ''; readyKeys.clear(); failedKey = ''; audioIssue.value = null; status()
   }
   function acknowledgeStop() {
     if (lease.value?.deviceId !== deviceId) return
@@ -60,7 +69,7 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
   }
   async function prepare() {
     const current = playback.value
-    const eligible = !document.hidden && enabled.value && healthy.value && current?.assets && current.state !== 'idle' &&
+    const eligible = !document.hidden && !blocked.value && enabled.value && healthy.value && current?.assets && current.state !== 'idle' &&
       (purpose.value === 'stage' ? assignedHere.value : purpose.value === 'guide' && canGuide.value)
     if (!eligible || !current?.assets) return
     const asset = purpose.value === 'stage' ? current.assets.instrumental : current.assets.original
@@ -79,15 +88,15 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
     } catch (reason) {
       if (attempt !== loadAttempt || disposed) return
       failure.value = String((reason as Error).message) === 'AUDIO_MEMORY_LIMIT' ? 'audioMemoryLimit' : 'audioPrepareFailed'
-      failedKey = key; engine.stop()
+      blocked.value = true; audioIssue.value = 'decode'; failedKey = key; engine.stop()
       // A stage that failed decode must no longer look ready to the room.
       send({ type: 'device.status', label: purpose.value === 'stage' ? 'Stage' : 'Singer phone', purpose: purpose.value,
-        audioEnabled: false, clockHealthy: healthy.value })
+        audioEnabled: false, clockHealthy: healthy.value, audioIssue: audioIssue.value })
     } finally { if (attempt === loadAttempt) { preparing.value = false; loadingKey = '' } }
   }
   function sendReady(generation: number) {
     const current = playback.value
-    if (!current?.assets || !prepared.value || !healthy.value) return
+    if (blocked.value || !current?.assets || !prepared.value || !healthy.value) return
     const key = `${current.clockId}:${current.performanceId}:${generation}:${current.assets.version}`
     if (readyKeys.has(key)) return
     status()
@@ -106,7 +115,19 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
     if (lease.value && lease.value.id === next.id && lease.value.sequence >= next.sequence) return
     lease.value = next
   }
-  engine.onSuspended = () => { enabled.value = false; prepared.value = false; readyKeys.clear(); failure.value = 'audioSuspended'; status() }
+  engine.onSuspended = () => {
+    loadAttempt++; loadingKey = ''; preparing.value = false; engine.releaseBuffer()
+    enabled.value = false; prepared.value = false; readyKeys.clear(); failure.value = 'audioSuspended'; audioIssue.value = 'suspended'; status()
+  }
+  engine.onRecovery = reason => {
+    // A late decode response must not clear the fault or mark the old output
+    // ready after recovery has already begun.
+    loadAttempt++; loadingKey = ''; preparing.value = false
+    blocked.value = true; prepared.value = false; readyKeys.clear()
+    audioIssue.value = reason; failure.value = reason === 'output' ? 'audioOutputChanged' : 'audioDriftRecovery'
+    if (reason === 'output') { guideAdvanceMs.value = 0; calibrationInvalidated.value = true }
+    acknowledgeStop(); status(); diagnostics.value = engine.diagnostics
+  }
   engine.onEnded = generation => {
     const current = playback.value, grant = lease.value
     if (!current || !grant || !healthy.value) return
@@ -150,7 +171,7 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
     nowMs.value = performance.now()
     const current = playback.value
     if (nowMs.value - lastStatusMs >= 2000) status()
-    if (enabled.value && current && current.state !== 'idle' && healthy.value) {
+    if (enabled.value && !blocked.value && current && current.state !== 'idle' && healthy.value) {
       if (nowMs.value - lastHeartbeatMs >= 2000) {
         const grant = lease.value
         send({ type: 'device.heartbeat', clockId: current.clockId, performanceId: current.performanceId,
@@ -165,6 +186,7 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
         if (current.state === 'recovering') acknowledgeStop()
       } else engine.stop()
     } else engine.stop()
+    if (nowMs.value - lastDiagnosticsMs >= 1000) { diagnostics.value = engine.diagnostics; lastDiagnosticsMs = nowMs.value }
     animation = requestAnimationFrame(tick)
   }
   function foreground() {
@@ -183,10 +205,13 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
   onUnmounted(() => {
     disposed = true; cancelAnimationFrame(animation); window.clearInterval(statusTimer)
     document.removeEventListener('visibilitychange', foreground)
+    outputs.stop()
     if (lease.value?.deviceId === deviceId) send({ type: 'device.stopped', leaseId: lease.value.id,
       clockId: lease.value.clockId, generation: lease.value.generation })
     void engine.close()
   })
   return { deviceId, purpose, enabled, preparing, prepared, failure, volume, guideAdvanceMs, positionMs,
-    segment, countdown, lines, lyricGuide, canGuide, assignedHere, startSafe, healthy, serverNowMs, enable, disable, message, retry: () => { failedKey = ''; readyKeys.clear(); void prepare() } }
+    segment, countdown, lines, lyricGuide, canGuide, assignedHere, startSafe, healthy, serverNowMs, blocked, diagnostics,
+    calibrationInvalidated, resetOutput: () => engine.outputChanged(), enable, disable, message,
+    retry: () => { blocked.value = false; audioIssue.value = null; failure.value = ''; engine.resetRecovery(); failedKey = ''; readyKeys.clear(); status(); void prepare() } }
 }
