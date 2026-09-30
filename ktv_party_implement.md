@@ -6,7 +6,7 @@ Last updated: 2026-09-30
 
 Design reference: [ktv_party.md](ktv_party.md)
 
-Current status: The clock and singer readiness preview is deployed at
+Current status: The scheduled playback and private-guide preview is deployed at
 `https://music.micstec.com/party`. Members can connect a shared screen or phone
 controller with a short-lived code; a display has read-only room access, and a
 controller inherits the member's current permissions. Hosts can appoint co-hosts,
@@ -17,9 +17,10 @@ Singer nomination/acceptance, selected-turn readiness, and room clock negotiatio
 are live. A singer can accept a nominated song and confirm a host-selected turn
 from a paired phone. Readiness is a human confirmation; it does not start audio.
 Scheduled stage playback, pinned lyrics, pause/resume/seek/skip, output leases and
-an optional private original guide are implemented locally and pass a production
-build journey with three isolated Chrome sessions. Release verification is in
-progress. Physical audio alignment and streaming remain unverified/unimplemented.
+an optional private original guide are live and pass a production-build journey
+with three isolated Chrome sessions. Physical audio alignment and streaming remain
+unverified/unimplemented; required-guide behavior, turn progression and recovery
+still have open work.
 
 ## 1. How to use this tracker
 
@@ -517,6 +518,14 @@ npm run test:party
 npm --prefix server test
 ```
 
+For the isolated production-build browser journey, start an owned disposable
+Chrome instance with `--headless=new --no-sandbox --disable-dev-shm-usage
+--remote-debugging-port=9229 --user-data-dir=/tmp/ktv-browser-owned-profile`, then
+run `npm run test:party:browser`. `CHROME_DEBUG_URL` overrides the local DevTools
+endpoint. The script creates temporary SQLite identities, generated audio fixtures
+and three separate browser contexts, then removes them. It verifies UI and source
+scheduling; it does not record physical speaker/headphone output.
+
 The backend test script includes both the existing dig suite and the KTV suite.
 `test:party` covers clock estimation and monotonic service origins; scheduled audio
 tests will be added with the audio engine. Preserve existing checks as room features
@@ -543,7 +552,7 @@ prototype result is not automatically a release result.
 
 ### Current next action
 
-Release the scheduled playback preview, then implement required-guide readiness
+Implement required-guide readiness
 and failure behavior, automatic next-turn readiness, host-loss grace/transfer,
 output-device and drift recovery. Continue the SFU/TURN and online/hybrid capture
 implementation. Physical phone/screen timing, memory, background and browser
@@ -593,7 +602,8 @@ cleanup/abuse limits, QR invitations, phone tabs and accessibility.
 | 2026-09-30 | Moderation preview deployment | `b5b89b6`, frontend `main-BUbZyAKB.js`, `https://music.micstec.com/party` | Live API/WSS co-host and paired-phone permissions, decline, block/unblock/restore, host transfer, role redaction, and receipt replay pass; temporary room closed | Physical UI acceptance pending; one health retry during restart; backup at `/tmp/ktv-party-moderation-predeploy.UMfCnUHw` |
 | 2026-09-30 | Clock and singer readiness implementation | `a7fc3c6`; `server/ktv-clock.js`, `server/ktv-readiness.js`, clock estimator, party services/views and schema | Clock estimator tests 4/4; KTV integration tests 19/19 and full backend 46/46; type-check, production build and `git diff --check` pass | Human readiness only; stage audio, original guide, leases, timeline and acoustic testing remain open |
 | 2026-09-30 | Clock and singer readiness preview deployment | `a7fc3c6`, frontend `main-DZatLVFa.js`, `https://music.micstec.com/party` | 13 live API/WSS checks pass: guest join, phone pairing, clock probes, singer-only acceptance, offer/readiness broadcasts, retry, cancellation and stale-generation rejection; seven route/asset checks return 200, deployed SHA verified, additive schema verified and foreign-key errors zero | Physical browser acceptance and acoustic timing unrun; observed 5–7 ms probe round trips are network timing only; temporary room closed; one health retry during restart; backup at `/tmp/ktv-party-readiness-predeploy.a8GJGzoy` |
-| 2026-09-30 | Scheduled stage/guide playback implementation | Playback/asset services, schema, audio engine, Vue controls, `scripts/party-audio.test.mjs`, `scripts/party-browser.test.mjs` | Backend 54/54; clock/audio tests 8/8; type-check/build; Chrome 146.0.7680.71 production-build journey 13/13 pass | Fixes verified for expired-lease resume and seek source adoption; software graph scheduling only, no acoustic or physical phone evidence; release build/deployment pending |
+| 2026-09-30 | Scheduled stage/guide playback implementation | `f87f0ff`; playback/asset services, schema, audio engine, Vue controls, `scripts/party-audio.test.mjs`, `scripts/party-browser.test.mjs` | Backend 54/54; clock/audio tests 8/8; type-check/release build and `git diff --check`; Chrome 146.0.7680.71 production-build journey 13/13 pass | Fixes verified for expired-lease resume and seek source adoption; software graph scheduling only, no acoustic or physical phone evidence |
+| 2026-09-30 | Scheduled playback preview deployment | `f87f0ff`, frontend `main-C0oS5LfE.js`, `https://music.micstec.com/party` | 11 public API/WSS checks pass: paired display presence/scope, designation, real pinned assets and range requests, leases, start retry, effective pause, fresh resume lease, seek generation, forbidden member controls, idempotent skip; seven public route/assets return 200 and SHA verified; migration verified, foreign-key errors zero | Temporary room closed; backup at `/tmp/ktv-party-playback-predeploy.cq1lqlm2`; one health retry during restart. Physical alignment, required-guide policy, automatic next turn/host-loss, complete UI and online/hybrid remain open |
 
 ### Work-session update template
 
@@ -620,5 +630,6 @@ Next action:
 | Paired-device preview | `4dc9ac1` (`main-D1bUwwWt.js`) | `https://music.micstec.com/party` | 2026-09-30 | Live pairing/API/WSS scope and revocation pass; backend 37/37, build and route checks pass; physical UI check open | Audio, clock negotiation, singer acceptance, complete moderation, online/hybrid |
 | Moderation preview | `b5b89b6` (`main-BUbZyAKB.js`) | `https://music.micstec.com/party` | 2026-09-30 | Live API/WSS role and moderation checks pass; backend 41/41, release build passes; physical UI check open | Audio, clock negotiation, singer acceptance, general receipts, cleanup, automatic host-loss recovery, online/hybrid |
 | Clock and singer readiness preview | `a7fc3c6` (`main-DZatLVFa.js`) | `https://music.micstec.com/party` | 2026-09-30 | Live API/WSS 13 checks, backend 46/46, clock tests 4/4, release build and public route/assets pass; physical UI check open | Audio scheduling, leases/timeline, lyrics, private guide, general receipts, cleanup, automatic host-loss recovery, online/hybrid |
+| Scheduled playback preview | `f87f0ff` (`main-C0oS5LfE.js`) | `https://music.micstec.com/party` | 2026-09-30 | Backend 54/54, clock/audio 8/8, Chrome journey 13/13, public protocol 11/11, build, static assets and additive schema pass | Physical alignment, required-guide and drift/output recovery, next-turn/host-loss policy, receipts/cleanup, full phone UI, online/hybrid |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |
