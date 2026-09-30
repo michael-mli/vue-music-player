@@ -12,10 +12,10 @@ function digest(value) {
   return createHash('sha256').update(value).digest('hex')
 }
 
-function expectedOrigin(req) {
-  const protocol = String(req.headers['x-forwarded-proto'] || (req.socket.encrypted ? 'https' : 'http'))
-    .split(',')[0].trim()
-  return `${protocol}://${req.headers.host}`
+function sameHostOrigin(req, origin) {
+  // TLS may terminate at an edge proxy before the request reaches nginx/Node.
+  // Browser Origin still names the public site; require its exact host.
+  return origin === `https://${req.headers.host}` || origin === `http://${req.headers.host}`
 }
 
 export function createKtvRealtime({ getSnapshot, allowedOrigins = [] }) {
@@ -75,7 +75,7 @@ export function createKtvRealtime({ getSnapshot, allowedOrigins = [] }) {
         return
       }
       const origin = req.headers.origin
-      if (!origin || (origin !== expectedOrigin(req) && !allowedOrigins.includes(origin))) {
+      if (!origin || (!sameHostOrigin(req, origin) && !allowedOrigins.includes(origin))) {
         socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
         return
       }

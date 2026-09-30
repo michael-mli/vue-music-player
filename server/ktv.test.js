@@ -285,6 +285,9 @@ test('room sockets use one-use tickets, redact pending views, broadcast changes 
 
 test('room socket rejects an untrusted browser origin before authentication', async (t) => {
   const { socketUrl } = await setup(t)
+  const edgeOrigin = new WebSocket(socketUrl, { origin: socketUrl.replace('ws:', 'https:').replace('/api/ktv/ws', '') })
+  await new Promise((resolve, reject) => { edgeOrigin.once('open', resolve); edgeOrigin.once('error', reject) })
+  edgeOrigin.close()
   const ws = new WebSocket(socketUrl, { origin: 'https://untrusted.example' })
   ws.on('error', () => {})
   const status = await new Promise((resolve, reject) => {
