@@ -14,6 +14,7 @@ import { createDigProvider } from './dig-provider.js'
 import { createDigLibrary } from './dig-library.js'
 import { registerDigRoutes } from './dig-routes.js'
 import { registerKtvRoutes } from './ktv-routes.js'
+import { createKtvAssets } from './ktv-assets.js'
 import { createDigIngestionWorker } from './dig-ingestion.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -166,6 +167,13 @@ const karaokeManifestPath = process.env.KARAOKE_MANIFEST_PATH || path.join(WEB_R
 const ktvRealtime = registerKtvRoutes(app, {
   db, authMiddleware, secret: JWT_SECRET || 'unconfigured-development-secret',
   allowedOrigins: (process.env.KTV_ALLOWED_ORIGINS || '').split(',').map((origin) => origin.trim()).filter(Boolean),
+  resolveAssets: createKtvAssets({
+    musicRoot: process.env.MUSIC_DIR || path.join(WEB_ROOT, 'data'),
+    karaokeRoot: path.dirname(karaokeManifestPath),
+    importRoot: process.env.DIG_MUSIC_DIR || path.join(DATA_DIR, 'music'),
+    syncedRoot: process.env.KTV_SYNCED_DIR || path.join(WEB_ROOT, 'synced'),
+    lyricsRoot: process.env.KTV_LYRICS_DIR || path.join(process.env.MUSIC_DIR || path.join(WEB_ROOT, 'data'), 'lyrics'),
+  }),
   isKaraokeSong: (songId) => {
     try {
       const manifest = JSON.parse(fs.readFileSync(karaokeManifestPath, 'utf8'))

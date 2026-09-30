@@ -2,6 +2,8 @@ import config from '@/config'
 import { partyApi, type PartySnapshot } from './partyApi'
 import { PartyClockEstimator, type PartyClockEstimate } from '@/utils/partyClock'
 
+export interface PartySubscription { (): void; send: (message: Record<string, unknown>) => boolean }
+
 function socketUrl(): string {
   const url = new URL(config.apiBaseUrl, window.location.origin)
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -16,7 +18,8 @@ export function subscribeParty(
   onStatus: (connected: boolean) => void,
   onAccessEnded: () => void,
   onClock: (estimate: PartyClockEstimate | null) => void = () => {},
-): () => void {
+  options: { deviceId?: string; onMessage?: (message: Record<string, any>) => void } = {},
+): PartySubscription {
   let socket: WebSocket | null = null
   let retryTimer: number | undefined
   let stopped = false
@@ -78,7 +81,7 @@ export function subscribeParty(
     if (stopped || connecting || socket) return
     connecting = true
     try {
-      const { ticket } = await partyApi.socketTicket(roomId)
+      const { ticket } = await partyApi.socketTicket(roomId, options.deviceId)
       if (stopped) return
       const next = new WebSocket(socketUrl())
       socket = next
@@ -89,6 +92,7 @@ export function subscribeParty(
         try {
           const message = JSON.parse(event.data as string)
           if (message.protocolVersion !== 1) return
+          if (message.roomId === roomId && message.type !== 'snapshot' && message.type !== 'clock.reply') options.onMessage?.(message)
           if (message.type === 'clock.reply') {
             const sentMs = pendingProbes.get(message.probeId)
             pendingProbes.delete(message.probeId)
@@ -122,7 +126,7 @@ export function subscribeParty(
   }
 
   void connect()
-  return () => {
+  const stop = () => {
     stopped = true
     document.removeEventListener('visibilitychange', resyncClock)
     window.removeEventListener('online', resyncClock)
@@ -132,4 +136,8 @@ export function subscribeParty(
     socket = null
     onStatus(false)
   }
+  return Object.assign(stop, { send(message: Record<string, unknown>) {
+    if (stopped || !admitted || socket?.readyState !== WebSocket.OPEN) return false
+    socket.send(JSON.stringify({ protocolVersion: 1, ...message })); return true
+  } })
 }

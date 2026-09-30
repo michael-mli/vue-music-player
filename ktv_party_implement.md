@@ -11,11 +11,15 @@ Current status: The clock and singer readiness preview is deployed at
 controller with a short-lived code; a display has read-only room access, and a
 controller inherits the member's current permissions. Hosts can appoint co-hosts,
 transfer ownership, reject or block guests, and restore access. Co-hosts can manage
-ordinary members, queue requests, and routine settings. Synchronized playback,
-private original-vocal guide, and online streaming remain unimplemented.
+ordinary members, queue requests, and routine settings. Full local acceptance and
+online streaming remain open release work.
 Singer nomination/acceptance, selected-turn readiness, and room clock negotiation
 are live. A singer can accept a nominated song and confirm a host-selected turn
 from a paired phone. Readiness is a human confirmation; it does not start audio.
+Scheduled stage playback, pinned lyrics, pause/resume/seek/skip, output leases and
+an optional private original guide are implemented locally and pass a production
+build journey with three isolated Chrome sessions. Release verification is in
+progress. Physical audio alignment and streaming remain unverified/unimplemented.
 
 ## 1. How to use this tracker
 
@@ -38,9 +42,9 @@ from a paired phone. Readiness is a human confirmation; it does not start audio.
 | P00 | Scope baseline and technical contracts | Design | In progress | Baseline tag and source inventory; contracts remain open |
 | P01 | Two-device audio feasibility prototype | P00 minimum timing contract | In progress | Monotonic clock estimator tested; audio prototype and acoustic measurements open |
 | P02 | Rooms, identities, invitations, permissions, persistence | P00 | In progress | Rooms, pairing, moderation and atomic host transfer tested; general receipts and cleanup open |
-| P03 | Realtime state, commands, queue, leases | P02 | In progress | Live snapshots, clock probes, singer acceptance and versioned readiness; audio timeline/leases open |
+| P03 | Realtime state, commands, queue, leases | P02 | In progress | Versioned playback timeline, checkpoints, presence, renewable stage leases and turn history tested; host-loss and next-turn policy open |
 | P04 | Stage, phone controller, host UI | P02–P03 | In progress | Entry, join, pairing, moderation, singer selection/readiness, queue and stage turn display; lyrics/playback open |
-| P05 | Scheduled playback, private guide, shared lyrics | P01, P03–P04 | Not started | — |
+| P05 | Scheduled playback, private guide, shared lyrics | P01, P03–P04 | In progress | Stage/guide/lyrics/controls pass Chrome journey; required-guide behavior, drift and physical timing open |
 | P06 | Recovery, browser coverage, local release readiness | P02–P05 | Not started | — |
 | P07 | Online performance streaming and hybrid operation | P01, stable P03/P05 contracts | Not started | — |
 | P08 | Deployment, monitoring, and release verification | P06 for local; P07 for online | Not started | — |
@@ -102,7 +106,7 @@ measurements, and an audio-engine decision. Validate before building the full gu
 
 - [ ] P01.1 Prepare original/instrumental pairs and click-track fixtures; measure
   decoded alignment, duration, encoder offsets, and any variable drift.
-- [ ] P01.2 Implement monotonic clock probes, offset/uncertainty estimates, future
+- [x] P01.2 Implement monotonic clock probes, offset/uncertainty estimates, future
   starts, and mapping from server time to each device's audio clock.
 - [ ] P01.3 Play the instrumental on one laptop and original on one phone; require
   a user tap to unlock audio on both.
@@ -131,9 +135,13 @@ Exit criteria:
 
 Evidence: `server/ktv-clock.js`, `src/utils/partyClock.ts`, and
 `scripts/party-clock.test.mjs` cover monotonic origins, low-delay sample selection,
-new epochs, stale estimates, and invalid/delayed probes. This is the clock part of
-P01.2 only. No audio scheduling, acoustic timing, memory, or browser-support result
-has been measured yet.
+new epochs, stale estimates, and invalid/delayed probes. `partyTimeline.ts` and
+`partyAudioEngine.ts` map future starts into the output audio clock. Audio tests
+compare client/server timeline boundaries, output timestamp/fallback mapping,
+hash validation, memory limits, renewable scheduled stop deadlines and seek source
+adoption. Three isolated Chrome 146.0.7680.71 sessions play a generated 45-second
+fixture through the production build. This verifies software scheduling, not
+acoustic timing or physical phone memory/browser support.
 
 ## 5. P02 — Room domain, storage, admission, and devices
 
@@ -174,7 +182,7 @@ Exit criteria:
 - [ ] Duplicate requests cannot create duplicate membership or duplicate rooms.
 
 Evidence: `server/ktv-routes.js`, `server/ktv-schema.js`, and `server/ktv.test.js`.
-Fourteen KTV integration tests pass for guest names/IDs, approval and visibility,
+Twenty KTV integration tests pass for guest names/IDs, approval and visibility,
 rotation/lock/close, persistence, queue commands, realtime tickets, pairing,
 co-host restrictions, demotion, rejection/block/restore, and atomic host transfer.
 Pairing codes are single-use and expire after two minutes; the room grants are
@@ -203,7 +211,7 @@ Likely files: `server/ktv/room-service.js`, `queue.js`, `realtime.js`, `clock.js
   define effective transition times and reject obsolete ready/ended messages.
 - [ ] P03.6 Add device presence, designated output leases, stop acknowledgment,
   expiry, and host/co-host disconnect policy.
-- [ ] P03.7 Implement timeline/checkpoint persistence and new-clock paused recovery
+- [x] P03.7 Implement timeline/checkpoint persistence and new-clock paused recovery
   on process restart; persist no per-frame playhead writes.
 - [ ] P03.8 Implement store command status, conflict recovery, snapshot replacement,
   and separate local preferences from authoritative room state.
@@ -230,9 +238,11 @@ Clock probes and browser offset/uncertainty estimates are implemented. Singer
 nominations require acceptance, host/co-host invitations pin the selected turn,
 and the singer confirms readiness against a performance ID, generation, clock
 epoch, and room revision. Queue cancellation, removal, replacement, and restart
-invalidate obsolete confirmations. Played-turn fairness, audio readiness, output
-leases, the playback timeline, and automatic host-loss policy remain open.
-Browser UI acceptance and physical multi-device testing remain open; latest
+invalidate obsolete confirmations. The playback service adds device readiness,
+scheduled transitions, renewable stage leases, stopped acknowledgment, restart
+checkpoints and durable served-turn history. Host-loss policy, turn-decline
+fairness and automatic preparation of the next singer remain open.
+Core playback browser checks pass; physical multi-device testing remains open; latest
 automated and deployment evidence is recorded in section 15.
 
 ## 7. P04 — Stage, phone controller, and moderation UI
@@ -275,10 +285,10 @@ Exit criteria:
 Evidence: `src/views/PartyHome.vue`, `PartyJoin.vue`, `PartyRoom.vue`, navigation,
 party API client, English/Chinese strings, and party mode in `src/App.vue`.
 The room now searches the existing karaoke catalog and shows the shared plan;
-the stage lists upcoming songs while explicitly saying playback is pending.
+the stage displays pinned lyrics, song progress and countdowns for prepared playback.
 `npm run type-check` and `npm run build` pass. Room state now uses WebSocket
 snapshots when connected and HTTP polling every three seconds while disconnected.
-The stage is a waiting view while P03/P05 playback work remains. A pairing page,
+A waiting view remains until a song is prepared. A pairing page,
 scoped screen/controller views, and device disconnect controls are implemented.
 The People panel includes co-host roles, transfer, decline, block/unblock, and
 restoration with role-specific action availability. Paired displays omit pending
@@ -286,18 +296,21 @@ guests and excluded-member history; declined guests see only their own state.
 The controller can nominate singers, accept/decline songs and confirm a selected
 turn; the stage shows that singer/song and the human readiness state. Connection
 details show clock estimates, explicitly separate from headphone/speaker timing.
-QR and full phone tabs are still open.
+Stage selection, explicit audio enablement, personal guide volume/calibration and
+host prepare/start/pause/resume/seek/skip/lyric-correction controls are wired.
+Three isolated Chrome sessions pass 13 playback checks without runtime exceptions.
+QR, full phone tabs, broader accessibility checks and physical acceptance are open.
 
 ## 8. P05 — Production playback and private vocal guide
 
-Status: Not started
+Status: In progress
 
 Likely files: `src/services/partyAudioEngine.ts`, `src/composables/usePartyClock.ts`,
 `usePartyAudio.ts`, asset descriptor support, and lyric-view integration.
 
 - [ ] P05.1 Integrate the P01 engine with real room snapshots and playback commands;
   acquire/release application audio ownership and clean up sources/listeners.
-- [ ] P05.2 Resolve and pin original/instrumental/lyric versions and timing offsets,
+- [x] P05.2 Resolve and pin original/instrumental/lyric versions and timing offsets,
   including imported songs, missing stems, and manual-lyric catalog entries.
 - [ ] P05.3 Implement bounded preload/decode, required-device readiness, preparation
   timeout/retry, future countdown start, and optional-guide late attachment.
@@ -324,7 +337,15 @@ Exit criteria:
 - [ ] Required-device failures prevent unsafe starts; optional viewers do not block.
 - [ ] Solo playback and existing lyric behavior still work after leaving the room.
 
-Evidence: Pending.
+Evidence: `server/ktv-assets.js`, `server/ktv-playback.js`,
+`src/services/partyAudioEngine.ts`, `src/composables/usePartyPlayback.ts`,
+`src/components/Party/PartyPlaybackPanel.vue`, eight clock/audio tests, seven
+playback/asset backend tests, one real HTTP/WSS playback integration test and a
+13-check Chrome production-build journey. Pinned originals, backings and lyrics,
+optional private guide, calibration, scheduled controls, lease stops, checkpoint
+recovery and source cancellation are implemented. Required-guide gating, measured
+drift, automatic next turn, device-change recovery, and physical alignment remain
+open. This is a preview; the P01/P05 exit criteria are not complete.
 
 ## 9. P06 — Recovery and local beta validation
 
@@ -522,11 +543,12 @@ prototype result is not automatically a release result.
 
 ### Current next action
 
-Start the P01 two-device audio prototype with aligned assets and scheduled Web
-Audio; implement stage output leases, audio readiness and the playback timeline
-in P03/P05 before integrating the private guide.
-Verify the pairing/moderation journey on physical phone and screen. Remaining
-P02 work includes room creation/join/settings receipts, cleanup, and abuse limits.
+Release the scheduled playback preview, then implement required-guide readiness
+and failure behavior, automatic next-turn readiness, host-loss grace/transfer,
+output-device and drift recovery. Continue the SFU/TURN and online/hybrid capture
+implementation. Physical phone/screen timing, memory, background and browser
+coverage remain acceptance gates. Remaining P02/P04 work includes general receipts,
+cleanup/abuse limits, QR invitations, phone tabs and accessibility.
 
 ### Decision log
 
@@ -571,6 +593,7 @@ P02 work includes room creation/join/settings receipts, cleanup, and abuse limit
 | 2026-09-30 | Moderation preview deployment | `b5b89b6`, frontend `main-BUbZyAKB.js`, `https://music.micstec.com/party` | Live API/WSS co-host and paired-phone permissions, decline, block/unblock/restore, host transfer, role redaction, and receipt replay pass; temporary room closed | Physical UI acceptance pending; one health retry during restart; backup at `/tmp/ktv-party-moderation-predeploy.UMfCnUHw` |
 | 2026-09-30 | Clock and singer readiness implementation | `a7fc3c6`; `server/ktv-clock.js`, `server/ktv-readiness.js`, clock estimator, party services/views and schema | Clock estimator tests 4/4; KTV integration tests 19/19 and full backend 46/46; type-check, production build and `git diff --check` pass | Human readiness only; stage audio, original guide, leases, timeline and acoustic testing remain open |
 | 2026-09-30 | Clock and singer readiness preview deployment | `a7fc3c6`, frontend `main-DZatLVFa.js`, `https://music.micstec.com/party` | 13 live API/WSS checks pass: guest join, phone pairing, clock probes, singer-only acceptance, offer/readiness broadcasts, retry, cancellation and stale-generation rejection; seven route/asset checks return 200, deployed SHA verified, additive schema verified and foreign-key errors zero | Physical browser acceptance and acoustic timing unrun; observed 5–7 ms probe round trips are network timing only; temporary room closed; one health retry during restart; backup at `/tmp/ktv-party-readiness-predeploy.a8GJGzoy` |
+| 2026-09-30 | Scheduled stage/guide playback implementation | Playback/asset services, schema, audio engine, Vue controls, `scripts/party-audio.test.mjs`, `scripts/party-browser.test.mjs` | Backend 54/54; clock/audio tests 8/8; type-check/build; Chrome 146.0.7680.71 production-build journey 13/13 pass | Fixes verified for expired-lease resume and seek source adoption; software graph scheduling only, no acoustic or physical phone evidence; release build/deployment pending |
 
 ### Work-session update template
 

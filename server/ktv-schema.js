@@ -107,6 +107,34 @@ export function initKtvSchema(db) {
       CHECK ((state = 'idle' AND entry_id IS NULL AND performance_id IS NULL) OR
         (state != 'idle' AND entry_id IS NOT NULL AND performance_id IS NOT NULL))
     );
+    CREATE TABLE IF NOT EXISTS ktv_playback (
+      room_id TEXT PRIMARY KEY REFERENCES ktv_rooms(id) ON DELETE CASCADE,
+      entry_id TEXT REFERENCES ktv_queue_entries(id),
+      performance_id TEXT,
+      generation INTEGER NOT NULL DEFAULT 0 CHECK (generation >= 0),
+      clock_id TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'idle' CHECK (state IN ('idle', 'preparing', 'scheduled', 'playing', 'paused', 'recovering')),
+      position_ms REAL NOT NULL DEFAULT 0 CHECK (position_ms >= 0),
+      anchor_server_ms REAL NOT NULL DEFAULT 0,
+      duration_ms REAL NOT NULL DEFAULT 0 CHECK (duration_ms >= 0),
+      checkpoint_ms REAL NOT NULL DEFAULT 0 CHECK (checkpoint_ms >= 0),
+      assets_json TEXT,
+      pending_json TEXT,
+      lyric_offset_ms INTEGER NOT NULL DEFAULT 0,
+      prepare_deadline_ms REAL,
+      stage_device_id TEXT,
+      stage_member_id TEXT REFERENCES ktv_members(id),
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS ktv_turn_history (
+      room_id TEXT NOT NULL REFERENCES ktv_rooms(id) ON DELETE CASCADE,
+      entry_id TEXT NOT NULL REFERENCES ktv_queue_entries(id),
+      singer_member_id TEXT NOT NULL REFERENCES ktv_members(id),
+      outcome TEXT NOT NULL CHECK (outcome IN ('finished', 'skipped', 'declined')),
+      round INTEGER NOT NULL CHECK (round >= 1),
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (room_id, entry_id)
+    );
   `)
   // Keep the original role/admission CHECKs and foreign keys intact. Co-host
   // capability and blocking are additive metadata on the existing membership.

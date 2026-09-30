@@ -44,8 +44,11 @@
           <RouterLink to="/party" class="mt-5 inline-block text-sm text-spotify-green underline">{{ $t('party.back') }}</RouterLink>
         </div>
 
-        <template v-else-if="stage">
-          <div class="mt-8 flex min-h-[50vh] flex-col items-center justify-center rounded-3xl border border-white/10 bg-gradient-to-b from-emerald-900/30 to-black/30 px-6 text-center">
+        <PartyPlaybackPanel v-if="party.self.admission === 'admitted'" :party="party" :audio="roomAudio" :stage="stage" :can-manage="isModerator" :busy="busy"
+          @prepare="preparePlayback" @action="playbackAction" />
+
+        <template v-if="party.self.admission === 'admitted' && stage">
+          <div v-if="!party.playback || party.playback.state === 'idle'" class="mt-8 flex min-h-[50vh] flex-col items-center justify-center rounded-3xl border border-white/10 bg-gradient-to-b from-emerald-900/30 to-black/30 px-6 text-center">
             <p class="text-sm uppercase tracking-[0.25em] text-spotify-green">{{ $t('party.stage') }}</p>
             <h2 class="mt-5 text-3xl font-bold sm:text-5xl">{{ party.readiness?.entryId ? party.readiness.title : $t('party.stageReady') }}</h2>
             <template v-if="party.readiness?.entryId">
@@ -71,7 +74,7 @@
           </div>
         </template>
 
-        <template v-else>
+        <template v-else-if="party.self.admission === 'admitted'">
           <div class="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]">
             <div class="space-y-5">
               <section v-if="isHost" class="rounded-2xl border border-white/10 bg-white/5 p-5">
@@ -259,6 +262,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { partyApi, type PartyDeviceSummary, type PartyMember, type PartyPairing, type PartySnapshot, type PartyTurnCommand } from '@/services/partyApi'
 import { subscribeParty } from '@/services/partyRealtime'
+import type { PartySubscription } from '@/services/partyRealtime'
+import { usePartyPlayback } from '@/composables/usePartyPlayback'
+import PartyPlaybackPanel from '@/components/Party/PartyPlaybackPanel.vue'
 import { useSongsStore } from '@/stores/songs'
 import { karaokeService } from '@/services/karaokeService'
 import type { Song } from '@/types'
@@ -303,7 +309,8 @@ const matchingSongs = computed(() => {
 })
 let timer: number | undefined
 let pairExpireTimer: number | undefined
-let stopRealtime: (() => void) | undefined
+let stopRealtime: PartySubscription | undefined
+const roomAudio = usePartyPlayback(party, liveConnected, clockEstimate, message => stopRealtime?.send(message) || false)
 let realtimeEnded = false
 
 function applySnapshot(next: PartySnapshot) {
@@ -354,7 +361,8 @@ function startRealtime() {
   stopRealtime = subscribeParty(roomId.value, applySnapshot,
     (connected) => { liveConnected.value = connected },
     () => { realtimeEnded = true; void refresh() },
-    (estimate) => { clockEstimate.value = estimate })
+    (estimate) => { clockEstimate.value = estimate },
+    { deviceId: roomAudio.deviceId, onMessage: roomAudio.message })
 }
 
 async function loadCatalog() {
@@ -477,6 +485,17 @@ function respondReady(ready: boolean) {
 function cancelReadiness() {
   const command = turnCommand()
   if (command && window.confirm(t('party.confirmCancelInvitation'))) void act(() => partyApi.cancelReadiness(roomId.value, command))
+}
+function preparePlayback() {
+  const command = turnCommand()
+  if (command) void act(() => partyApi.preparePlayback(roomId.value, command))
+}
+function playbackAction(action: string, payload: Record<string, unknown>) {
+  if (!party.value) return
+  const current = party.value.playback
+  const command = { commandId: crypto.randomUUID(), clockId: party.value.clock.clockId, baseRevision: party.value.room.revision,
+    performanceId: current?.performanceId, generation: current?.generation, ...payload }
+  void act(() => partyApi.playbackCommand(roomId.value, action, command))
 }
 function cancelSong(entryId: string) {
   void act(() => partyApi.cancelSong(roomId.value, entryId, crypto.randomUUID()))

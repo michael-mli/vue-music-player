@@ -1,5 +1,5 @@
 // Materialize one turn per singer per round while retaining each singer's request order.
-export function orderQueue(entries) {
+export function orderQueue(entries, servedSingerIds = []) {
   const ready = entries.filter((entry) => entry.state === 'queued' && entry.singerAccepted !== false)
   const priority = ready.filter((entry) => entry.priorityApproved)
   const regular = ready.filter((entry) => !entry.priorityApproved)
@@ -9,6 +9,10 @@ export function orderQueue(entries) {
     singers.get(entry.singerMemberId).push(entry)
   }
   const fair = []
+  const served = new Set(servedSingerIds)
+  // A served singer waits for everyone still eligible in this round. Cancelling
+  // and requesting again cannot erase their durable turn history.
+  for (const [singerId, songs] of singers) if (!served.has(singerId) && songs.length) fair.push(songs.shift())
   let remaining = true
   while (remaining) {
     remaining = false

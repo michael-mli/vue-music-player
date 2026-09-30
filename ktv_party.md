@@ -3,8 +3,9 @@
 Created: 2026-09-29
 
 Status: Incremental implementation. Rooms, live queue planning, device pairing,
-moderation, singer nomination/readiness, and clock negotiation are implemented;
-synchronized audio and streaming remain planned. See the progress tracker for
+moderation, singer nomination/readiness, clock negotiation, and a local scheduled
+playback/private-guide preview are implemented. Streaming and physical audio
+validation remain open. See the progress tracker for
 deployment evidence and remaining work.
 
 Progress tracker: [ktv_party_implement.md](ktv_party_implement.md)
@@ -430,8 +431,8 @@ recovery collect fresh samples. HTTP polling does not report a healthy audio clo
 Singer readiness has a separate durable `ktv_readiness` row for each room. Its
 states are `idle`, `awaiting-singer`, and `ready`. It carries a selected `entryId`,
 UUID `performanceId`, monotonically increasing `generation`, and `clockId`.
-The UI's ready state confirms the person; asset decoding, stage/audio readiness,
-leases, and the playback timeline remain later work.
+The UI's ready state confirms the person. Asset decoding, stage readiness, leases
+and the playback timeline have separate state in the playback preview (section 9.6).
 
 | POST under `/api/ktv/rooms/:id` | Behavior |
 | --- | --- |
@@ -614,6 +615,48 @@ not a socket. A connected co-host may continue controls. After a configurable gr
 period, transfer ownership to the earliest-appointed connected co-host atomically;
 without one, preserve the queue and pause before the next song until the host returns
 or the room expires. Do not promote an arbitrary guest.
+
+### 9.6 Implemented playback preview
+
+`server/ktv-playback.js` persists the selected performance, pinned descriptor,
+timeline, pending transitions, lyric correction and five-second checkpoints.
+Host/co-host POST commands under `/rooms/:id/playback` are `assign-stage`,
+`prepare`, `start`, `pause`, `seek`, `skip`, and `lyrics`. Commands carry IDs,
+current room revision and clock epoch; performance controls also carry the current
+performance ID and playback generation. Preparation uses the singer-readiness
+generation. Duplicate committed commands return the authorized current state.
+
+Sockets identify a browser instance via `deviceId` in the socket-ticket request.
+`device.status`, `device.ready`, `device.heartbeat`, `device.stopped`, and
+`playback.ended` messages are authorized against that socket's principal. Device
+presence and lease telemetry do not change the durable room revision. Displays
+can enable designated stage output but cannot issue moderator controls. Only the
+selected singer's controller can prepare a private guide.
+
+The preview starts two seconds in the future. Pause and seek retain the previous
+segment until their effective time; a seek pre-schedules one replacement source.
+Output leases last eight seconds, renew every two seconds, and carry increasing
+sequences. Lease renewals reach guides as well as the stage. A stopped-device
+acknowledgment or expiration allows replacement after a 500 ms buffer margin.
+Startup waits for an old process's maximum lease window plus that margin and
+restores the persisted checkpoint paused under a new epoch, with no designation.
+These margins are implementation defaults; physical acoustic silence and Bluetooth
+behavior still require measurement before a supported-device claim.
+
+Descriptors hash original/backing files and lyrics, include ffprobe durations,
+and use versioned media queries to bypass the existing PWA solo audio cache.
+The browser verifies hashes before decoding, loads one required buffer, limits
+encoded files to 32 MiB and decoded buffers to 192 MiB, and rejects duration
+mismatches over 250 ms. The server caps duration at ten minutes and lyric files
+at 128 KiB. Missing backing never falls back to the original. Unknown alignment
+is marked `alignmentVerified: false`; equal durations do not prove alignment.
+
+The audio engine maps output timestamps once and falls back to output/base latency
+estimates. Stage and private-guide volume are separate. Positive guide calibration
+advances the guide; room lyric correction delays displayed cues. Browser scheduling
+and source cancellation have automated evidence; physical timing, output-device
+change handling, required-guide gating, measured drift, automatic next-turn
+selection, automatic host-loss transfer and streaming remain open.
 
 ## 10. Online and hybrid performance streaming
 

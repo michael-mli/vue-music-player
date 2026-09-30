@@ -9,7 +9,7 @@ import WebSocket from 'ws'
 import { initDb } from './db.js'
 import { registerKtvRoutes } from './ktv-routes.js'
 
-async function setup(t) {
+async function setup(t, options = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ktv-test-'))
   const db = initDb(dir)
   for (const username of ['host', 'alex1', 'alex2', 'outsider']) {
@@ -24,7 +24,7 @@ async function setup(t) {
     req.auth = { sub: id }
     next()
   }
-  const realtime = registerKtvRoutes(app, { db, authMiddleware, secret: 'test-only-secret', isKaraokeSong: (id) => id <= 10 })
+  const realtime = registerKtvRoutes(app, { db, authMiddleware, secret: 'test-only-secret', isKaraokeSong: (id) => id <= 10, ...options })
   const server = app.listen(0, '127.0.0.1')
   realtime.attach(server)
   await new Promise((resolve) => server.once('listening', resolve))
@@ -45,7 +45,7 @@ async function setup(t) {
     })
     return { status: response.status, body: await response.json(), headers: response.headers }
   }
-  return { db, request, socketUrl: `ws://127.0.0.1:${server.address().port}/api/ktv/ws`, origin: `http://127.0.0.1:${server.address().port}` }
+  return { db, request, realtime, socketUrl: `ws://127.0.0.1:${server.address().port}/api/ktv/ws`, origin: `http://127.0.0.1:${server.address().port}` }
 }
 
 function nextSnapshot(ws) {
@@ -81,6 +81,88 @@ function nextPacket(ws, type) {
     ws.on('message', receive); ws.once('close', closed)
   })
 }
+
+test('real room transports authorize stage preparation, scheduled controls, completion and durable retries', async t => {
+  let nowMs = 0
+  const clock = { id: randomUUID(), nowMs: () => nowMs }
+  const assets = { songId: 1, version: 'transport-fixture', durationMs: 60_000,
+    instrumental: { durationMs: 60_000 }, original: { durationMs: 60_000 }, lyrics: { mode: 'missing', text: null } }
+  const { db, request, realtime, socketUrl, origin } = await setup(t, { clock, resolveAssets: async () => assets })
+  let view = (await request('POST', '/rooms', 1, { name: 'Playback', displayName: 'Host', approvalRequired: false })).body.data
+  const path = `/rooms/${view.room.id}`
+  const guest = (await request('POST', '/join', 2, { code: view.invitationCode, displayName: 'Singer' })).body.data
+  const pending = (await request('POST', '/rooms', 3, { name: 'Other', displayName: 'Other host' })).body.data
+  assert.equal((await request('GET', `${path}/assets/1`, 4)).status, 403)
+  assert.equal((await request('GET', `${path}/assets/1`, 2)).body.data.version, assets.version)
+  const deviceId = randomUUID()
+  const ticket = (await request('POST', `${path}/socket-ticket`, 1, { deviceId })).body.data.ticket
+  const { ws, first } = await openSocket(socketUrl, origin, ticket)
+  t.after(() => ws.terminate())
+  await first
+  async function send(body, type = 'device.ack') {
+    const reply = nextPacket(ws, type)
+    ws.send(JSON.stringify({ protocolVersion: 1, ...body }))
+    return reply
+  }
+  await send({ type: 'device.status', purpose: 'stage', label: 'Transport stage', audioEnabled: true, clockHealthy: true })
+  view = (await request('GET', path, 1)).body.data
+  assert.equal(view.presence.devices[0].id, deviceId)
+  let body = { commandId: randomUUID(), clockId: clock.id, baseRevision: view.room.revision, deviceId }
+  assert.equal((await request('POST', `${path}/playback/assign-stage`, 2, body)).body.code, 'FORBIDDEN')
+  view = (await request('POST', `${path}/playback/assign-stage`, 1, body)).body.data
+  assert.equal(view.playback.stageDeviceId, deviceId)
+  view = (await request('POST', `${path}/queue`, 2, { commandId: randomUUID(), songId: 1, title: 'Song', requestNext: false })).body.data
+  const entryId = view.queue[0].id
+  view = (await request('POST', `${path}/readiness/offer`, 1, { commandId: randomUUID(), entryId,
+    clockId: clock.id, baseRevision: view.room.revision })).body.data
+  function humanCommand() { return { commandId: randomUUID(), clockId: clock.id, baseRevision: view.room.revision,
+    performanceId: view.readiness.performanceId, generation: view.readiness.generation } }
+  view = (await request('POST', `${path}/readiness/respond`, 2, { ...humanCommand(), ready: true })).body.data
+  const prepare = humanCommand()
+  const prepared = await request('POST', `${path}/playback/prepare`, 1, prepare)
+  assert.equal(prepared.status, 200)
+  view = prepared.body.data
+  assert.equal(view.playback.state, 'preparing')
+  assert.equal((await request('POST', `${path}/playback/prepare`, 1, prepare)).body.data.room.revision, view.room.revision)
+  function playbackCommand() { return { commandId: randomUUID(), clockId: clock.id, baseRevision: view.room.revision,
+    performanceId: view.playback.performanceId, generation: view.playback.generation } }
+  nowMs = 9000
+  await send({ type: 'device.status', purpose: 'stage', label: 'Transport stage', audioEnabled: true, clockHealthy: true })
+  assert.equal((await request('POST', `${path}/playback/start`, 1, playbackCommand())).body.code, 'DEVICE_NOT_READY')
+  let ready = { type: 'device.ready', clockId: clock.id, performanceId: view.playback.performanceId,
+    generation: view.playback.generation, assetVersion: assets.version, durationMs: assets.durationMs }
+  assert.equal((await send({ ...ready, generation: ready.generation - 1 }, 'error')).code, 'STALE_GENERATION')
+  await send(ready)
+  const start = playbackCommand()
+  view = (await request('POST', `${path}/playback/start`, 1, start)).body.data
+  const leasePacket = nextPacket(ws, 'lease')
+  realtime.playback.sweep()
+  const { lease } = await leasePacket
+  assert.equal(lease.deviceId, deviceId)
+  assert.equal((await request('POST', `${path}/playback/start`, 1, start)).body.data.room.revision, view.room.revision)
+  nowMs = 11000
+  await send({ type: 'device.heartbeat', leaseId: lease.id, clockId: clock.id,
+    performanceId: ready.performanceId, generation: ready.generation }, 'lease')
+  realtime.playback.sweep()
+  view = (await request('GET', path, 1)).body.data
+  assert.equal(view.playback.state, 'playing')
+  assert.equal((await request('POST', `${path}/playback/pause`, 2, playbackCommand())).body.code, 'FORBIDDEN')
+  view = (await request('POST', `${path}/playback/seek`, 1, { ...playbackCommand(), positionMs: 30000 })).body.data
+  assert.equal(view.playback.positionMs, 0)
+  assert.equal(view.playback.pendingTransition.positionMs, 30000)
+  await send({ ...ready, generation: view.playback.pendingTransition.generation })
+  nowMs = 13000; realtime.playback.sweep()
+  view = (await request('GET', path, 1)).body.data
+  assert.equal(view.playback.positionMs, 30000)
+  assert.equal((await send({ type: 'playback.ended', entryId, leaseId: lease.id, clockId: clock.id,
+    performanceId: ready.performanceId, generation: ready.generation }, 'error')).code, 'STALE_GENERATION')
+  assert.equal((await request('POST', `${path}/playback/pause`, 1, { ...playbackCommand(), baseRevision: 1 })).body.code, 'REVISION_CONFLICT')
+  view = (await request('POST', `${path}/playback/skip`, 1, playbackCommand())).body.data
+  assert.equal(view.playback.state, 'idle')
+  assert.equal(db.prepare('SELECT outcome FROM ktv_turn_history WHERE entry_id = ?').get(entryId).outcome, 'skipped')
+  assert.equal(view.queue.length, 0)
+  assert.equal(pending.room.id !== view.room.id && guest.self.id !== view.self.id, true)
+})
 
 test('invited guests enter names, retain random IDs, and wait for host approval', async (t) => {
   const { db, request } = await setup(t)

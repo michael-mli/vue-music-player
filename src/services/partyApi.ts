@@ -22,12 +22,85 @@ export interface PartySnapshot {
   self: PartyMember
   clock: { clockId: string; serverNowMs: number }
   readiness?: PartyReadiness
+  playback?: PartyPlayback
+  presence?: { sequence: number; devices: PartyLiveDevice[] }
   members?: PartyMember[]
   excludedMembers?: (PartyMember & { blocked: boolean })[]
   queue?: PartyQueueEntry[]
   invitationCode?: string | null
   deviceScope?: 'display' | 'controller'
   deviceId?: string
+}
+
+export interface PartyLiveDevice {
+  id: string
+  memberId: string
+  label: string
+  purpose: 'viewer' | 'stage' | 'guide'
+  audioEnabled: boolean
+  clockHealthy: boolean
+  ready: boolean
+  readyGeneration: number | null
+  connected: boolean
+}
+
+export interface PartyAudioAsset {
+  url: string
+  bytes: number
+  sha256: string
+  durationMs: number
+  sampleRate: number
+  channels: number
+  alignmentOffsetMs: number
+}
+
+export interface PartyAssets {
+  songId: number
+  version: string
+  durationMs: number
+  instrumental: PartyAudioAsset
+  original: PartyAudioAsset | null
+  lyrics: { mode: 'synced' | 'plain' | 'missing'; text: string | null; sha256: string | null }
+  alignmentVerified: boolean
+  durationDifferenceMs: number | null
+}
+
+export interface PartyLease {
+  id: string
+  deviceId: string
+  clockId: string
+  performanceId: string
+  generation: number
+  sequence: number
+  expiresServerMs: number
+  safeAfterServerMs: number
+  nextGeneration?: number
+  effectiveServerMs?: number
+}
+
+export interface PartySegment {
+  state: 'idle' | 'preparing' | 'scheduled' | 'playing' | 'paused' | 'recovering'
+  generation: number
+  positionMs: number
+  anchorServerMs: number
+}
+
+export interface PartyPlayback extends PartySegment {
+  clockId: string
+  entryId: string | null
+  performanceId: string | null
+  durationMs: number
+  pendingTransition: (PartySegment & { effectiveServerMs: number }) | null
+  assets: PartyAssets | null
+  stageDeviceId: string | null
+  stageMemberId: string | null
+  lease: PartyLease | null
+  restartSafeAfterMs: number
+  lyricOffsetMs: number
+  prepareDeadlineMs: number | null
+  title?: string | null
+  singerMemberId?: string | null
+  singerName?: string | null
 }
 
 export interface PartyReadiness {
@@ -123,7 +196,7 @@ async function call<T>(method: 'get' | 'post', path: string, body?: Record<strin
 export const partyApi = {
   list: () => call<PartyRoomSummary[]>('get', '/rooms'),
   get: (id: string) => call<PartySnapshot>('get', `/rooms/${encodeURIComponent(id)}`),
-  socketTicket: (id: string) => call<PartySocketTicket>('post', `/rooms/${encodeURIComponent(id)}/socket-ticket`, {}),
+  socketTicket: (id: string, deviceId?: string) => call<PartySocketTicket>('post', `/rooms/${encodeURIComponent(id)}/socket-ticket`, { deviceId }),
   create: (name: string, displayName: string, approvalRequired: boolean) =>
     call<PartySnapshot>('post', '/rooms', { name, displayName, approvalRequired }),
   join: (code: string, displayName: string) =>
@@ -164,6 +237,10 @@ export const partyApi = {
     call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/readiness/respond`, { ...command, ready }, true),
   cancelReadiness: (roomId: string, command: PartyTurnCommand) =>
     call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/readiness/cancel`, { ...command }, true),
+  preparePlayback: (roomId: string, command: PartyTurnCommand) =>
+    call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/playback/prepare`, { ...command }, true),
+  playbackCommand: (roomId: string, action: string, command: Record<string, unknown>) =>
+    call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/playback/${action}`, command, true),
   createPairing: (roomId: string, scope: 'display' | 'controller') =>
     call<PartyPairing>('post', `/rooms/${encodeURIComponent(roomId)}/pairings`, { scope }, false, true),
   devices: (roomId: string) =>

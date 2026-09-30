@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "type-check": "vue-tsc --noEmit",
     "test:lyrics": "node --test scripts/lyrics-timing.test.mjs",
-    "test:party": "node --test scripts/party-clock.test.mjs"
+    "test:party": "node --test scripts/party-clock.test.mjs scripts/party-audio.test.mjs",
+    "test:party:browser": "node scripts/party-browser.test.mjs"
   },
   "dependencies": {
     "@breezystack/lamejs": "^1.2.7",

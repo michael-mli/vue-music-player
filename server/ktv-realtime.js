@@ -18,7 +18,7 @@ function sameHostOrigin(req, origin) {
   return origin === `https://${req.headers.host}` || origin === `http://${req.headers.host}`
 }
 
-export function createKtvRealtime({ getSnapshot, allowedOrigins = [], clock }) {
+export function createKtvRealtime({ getSnapshot, allowedOrigins = [], clock, onDevice, onConnected, onDisconnected }) {
   const tickets = new Map()
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024, perMessageDeflate: false })
   let heartbeat
@@ -63,6 +63,16 @@ export function createKtvRealtime({ getSnapshot, allowedOrigins = [], clock }) {
   function broadcast(roomId) {
     for (const ws of wss.clients) {
       if (ws.readyState === WebSocket.OPEN && ws.roomId === roomId) sendSnapshot(ws)
+    }
+  }
+  function broadcastLease(roomId, lease) {
+    for (const ws of wss.clients) {
+      if (ws.readyState !== WebSocket.OPEN || ws.roomId !== roomId) continue
+      try {
+        if (getSnapshot(roomId, ws.principal).self.admission !== 'admitted') continue
+        if (ws.bufferedAmount > 256 * 1024) { ws.terminate(); continue }
+        ws.send(JSON.stringify({ protocolVersion: 1, type: 'lease', roomId, lease }))
+      } catch (error) { ws.close(error.status === 410 ? 4410 : 4403, 'Room access ended') }
     }
   }
 
@@ -120,7 +130,7 @@ export function createKtvRealtime({ getSnapshot, allowedOrigins = [], clock }) {
       ws.on('pong', () => { ws.isAlive = true })
       const authTimeout = setTimeout(() => ws.close(4401, 'Authentication timed out'), AUTH_TIMEOUT_MS)
       authTimeout.unref()
-      ws.on('close', () => clearTimeout(authTimeout))
+      ws.on('close', () => { clearTimeout(authTimeout); onDisconnected?.(ws) })
       ws.on('error', () => {})
       ws.on('message', (raw, isBinary) => {
         const receivedMs = clock.nowMs()
@@ -129,6 +139,22 @@ export function createKtvRealtime({ getSnapshot, allowedOrigins = [], clock }) {
         try { message = JSON.parse(raw.toString()) } catch { ws.close(4400, 'Invalid message'); return }
         if (ws.roomId) {
           if (message?.type === 'clock.probe') replyClock(ws, message, receivedMs)
+          else if (message?.type?.startsWith('device.') || message?.type === 'playback.ended') {
+            if (message.protocolVersion !== 1) { ws.close(4400, 'Unsupported protocol'); return }
+            if (ws.deviceWindowMs === undefined || receivedMs - ws.deviceWindowMs >= 10_000) {
+              ws.deviceWindowMs = receivedMs; ws.deviceMessageCount = 0
+            }
+            if (++ws.deviceMessageCount > 40) { ws.close(4429, 'Too many device messages'); return }
+            try {
+              const snapshot = getSnapshot(ws.roomId, ws.principal)
+              if (snapshot.self.admission !== 'admitted') throw Object.assign(new Error('Room admission is required'), { code: 'NOT_ADMITTED', status: 403 })
+              const reply = onDevice?.(ws, message, snapshot)
+              if (reply) ws.send(JSON.stringify({ protocolVersion: 1, roomId: ws.roomId, ...reply }))
+            } catch (error) {
+              ws.send(JSON.stringify({ protocolVersion: 1, type: 'error', roomId: ws.roomId,
+                code: error.code || 'DEVICE_ERROR', message: error.status ? error.message : 'Device request failed', messageType: message.type }))
+            }
+          }
           else ws.close(4400, 'Unexpected message')
           return
         }
@@ -148,6 +174,9 @@ export function createKtvRealtime({ getSnapshot, allowedOrigins = [], clock }) {
         clearTimeout(authTimeout)
         ws.roomId = claim.roomId
         ws.principal = claim.principal
+        ws.clientDeviceId = claim.principal.clientDeviceId
+        try { onConnected?.(ws, getSnapshot(ws.roomId, ws.principal)) }
+        catch { ws.close(4403, 'Device connection unavailable'); return }
         sendSnapshot(ws)
       })
     })
@@ -169,5 +198,5 @@ export function createKtvRealtime({ getSnapshot, allowedOrigins = [], clock }) {
     wss.close()
   }
 
-  return { issueTicket, broadcast, revokeMember, attach, close }
+  return { issueTicket, broadcast, broadcastLease, revokeMember, attach, close }
 }
