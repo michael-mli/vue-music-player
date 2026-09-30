@@ -518,7 +518,7 @@ so private guide feasibility is measured before P05.
 | 2026-09-29 | Guest invitation flow | Design section 3.4; P02.2/P04.1/A23 | Name, random participant ID, session reuse, and duplicate-name handling documented | API implementation and tests pass; browser acceptance remains unrun |
 | 2026-09-29 | Baseline | `ktv-party-baseline-2026-09-29` at `6e8504b` | Local tag verified and pushed to origin before code edits | Rollback reference for main |
 | 2026-09-29 | P02.2/P02.3 and partial P02/P04 | `server/ktv-*`, party views/service/routes, auth/store and app integration | `node --test ktv.test.js` 3/3; `npm --prefix server test` 30/30; `npm run type-check`, `npm run build`, and `git diff --check` pass | Invitation/approval slice only; browser, sync, queue, and stream checks remain open |
-| 2026-09-29 | Invitation preview deployment | `https://music.micstec.com/party` | Live API create → invite → join pending → approve → admitted → close passed; frontend route, bundle, service worker returned 200; backend health passed | Host and guest flow available for user testing; UI browser acceptance and audio work remain open |
+| 2026-09-29 | Invitation preview deployment | `https://music.micstec.com/party`, code commit `d1d9253` | Live API create → invite → join pending → approve → admitted → close passed; frontend route, bundle, service worker returned 200; deployed bundle contains `d1d9253`; backend health passed | Host and guest flow available for user testing; headless Chrome timed out in this environment, so UI browser acceptance and audio work remain open |
 
 ### Work-session update template
 
@@ -539,6 +539,6 @@ Next action:
 
 | Release | Build/commit | Environment/URL | Date | Gates and evidence | Remaining scope |
 | --- | --- | --- | --- | --- | --- |
-| Invitation preview | `feat/ktv-party` branch build | `https://music.micstec.com/party` | 2026-09-29 | Live API smoke test and static route checks passed; this is not the local KTV beta | Queue, audio, pairing, realtime, online/hybrid |
+| Invitation preview | `d1d9253` (`main-DwOqCxch.js`) | `https://music.micstec.com/party` | 2026-09-29 | Live API smoke test and static route checks passed; browser UI check remains open; this is not the local KTV beta | Queue, audio, pairing, realtime, online/hybrid |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |
