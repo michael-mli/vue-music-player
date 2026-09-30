@@ -6,12 +6,11 @@ Last updated: 2026-09-30
 
 Design reference: [ktv_party.md](ktv_party.md)
 
-Current status: Room invitations, live queue planning, and room-scoped device pairing
-are implemented. Members can connect a shared screen or phone controller with a
-short-lived code; a display has read-only room access, and a controller inherits
-the member's current permissions. The paired-device preview is pending deployment
-verification. Synchronized playback, private original-vocal guide, and online
-streaming remain unimplemented.
+Current status: The paired-device preview is deployed at
+`https://music.micstec.com/party`. Members can connect a shared screen or phone
+controller with a short-lived code; a display has read-only room access, and a
+controller inherits the member's current permissions. Synchronized playback,
+private original-vocal guide, and online streaming remain unimplemented.
 
 ## 1. How to use this tracker
 
@@ -542,7 +541,8 @@ audio prototype before integrating guide playback.
 | 2026-09-29 | Queue preview deployment | `https://music.micstec.com/party`, bundle `main-rnQzk0zj.js` | Live join → queue request → idempotent replay → host priority approval → shared snapshot → close passed; route and bundle returned 200; queue table created | Headless Chrome timed out in this environment, so browser UI acceptance remains open; predeployment DB/static backup at `/tmp/ktv-party-queue-predeploy.l0so35h0` |
 | 2026-09-29 | P03 room sockets | `server/ktv-realtime.js`, `src/services/partyRealtime.ts`, `server/nginx-ktv-ws.conf` | KTV integration tests cover ticket replay, origin, pending redaction, broadcasts, reconnect, removal, close; frontend build passes | Deployed in realtime queue preview; clock messages, socket commands, presence, and audio timing open |
 | 2026-09-29 | Realtime queue preview deployment | Backend `960b03d`, frontend `main-CAq48vee.js`, `https://music.micstec.com/party` | Public WSS upgrade, one-use ticket, pending redaction, approval, queue broadcast, removal revocation pass; backend tests 34/34 and build pass; nginx reload and health check pass | Browser UI acceptance and audio timing remain open; backup at `/tmp/ktv-party-ws-predeploy.jebxjh8t`, nginx backup at `/tmp/music.nginx.pre-ktv-ws.20260929` |
-| 2026-09-30 | P02.5/P02.6 paired devices | `server/ktv-*`, `src/views/PartyPair.vue`, `src/views/PartyRoom.vue`, party API/device services | Backend 37/37, type-check, production build, and `git diff --check` pass | Physical two-device UI acceptance and deployment check pending; no audio synchronization yet |
+| 2026-09-30 | P02.5/P02.6 paired devices | `4dc9ac1`; `server/ktv-*`, `src/views/PartyPair.vue`, `src/views/PartyRoom.vue`, party API/device services | Backend 37/37, type-check, production build, and `git diff --check` pass | Physical two-device UI acceptance pending; no audio synchronization yet |
+| 2026-09-30 | Paired-device preview deployment | `4dc9ac1`, frontend `main-D1bUwwWt.js`, `https://music.micstec.com/party` | Health, route, and bundle return 200; live guest → room → display pair/read-only/WSS/revoke → phone controller host setting → room close passed | Physical browser/phone acceptance pending; transient 502 only during backend restart; backup at `/tmp/ktv-party-pair-predeploy.gE52PwBy` |
 
 ### Work-session update template
 
@@ -566,5 +566,6 @@ Next action:
 | Invitation preview | `d1d9253` (`main-DwOqCxch.js`) | `https://music.micstec.com/party` | 2026-09-29 | Live API smoke test and static route checks passed; browser UI check remains open; this is not the local KTV beta | Queue, audio, pairing, realtime, online/hybrid |
 | Queue-planning preview | `4c94e1b` (`main-rnQzk0zj.js`) | `https://music.micstec.com/party` | 2026-09-29 | Live queue smoke test, static route/bundle checks, backend tests and build pass; browser UI acceptance remains open | Audio, WebSocket, singer acceptance, pairing, online/hybrid |
 | Realtime queue preview | `960b03d` (`main-CAq48vee.js`) | `https://music.micstec.com/party` | 2026-09-29 | Public WSS flow, backend 34/34, build and route checks pass; browser UI acceptance remains open | Audio, clock negotiation, singer acceptance, pairing, online/hybrid |
+| Paired-device preview | `4dc9ac1` (`main-D1bUwwWt.js`) | `https://music.micstec.com/party` | 2026-09-30 | Live pairing/API/WSS scope and revocation pass; backend 37/37, build and route checks pass; physical UI check open | Audio, clock negotiation, singer acceptance, complete moderation, online/hybrid |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |
