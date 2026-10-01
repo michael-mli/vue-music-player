@@ -2,6 +2,11 @@ import axios from 'axios'
 import config from '@/config'
 import { useAuthStore } from '@/stores/auth'
 import { clearPartyDevice, getPartyDevice, type PartyDeviceGrant } from './partyDevice'
+import { runPartyMutation } from './partyCommandJournal'
+
+export class PartyApiError extends Error {
+  constructor(message: string, public code?: string, public status?: number) { super(message); this.name = 'PartyApiError' }
+}
 
 export interface PartyMember {
   id: string
@@ -194,7 +199,7 @@ async function call<T>(method: 'get' | 'post', path: string, body?: Record<strin
         if (!error.response && retryOnNetworkError && attempt === 0) continue
         if (paired && error.response?.data?.code === 'DEVICE_REVOKED') clearPartyDevice(paired.roomId)
         const message = error.response?.data?.message
-        if (typeof message === 'string') throw new Error(message)
+        if (typeof message === 'string') throw new PartyApiError(message, error.response?.data?.code, error.response?.status)
       }
       throw error
     }
@@ -202,14 +207,25 @@ async function call<T>(method: 'get' | 'post', path: string, body?: Record<strin
   throw new Error('Room request failed')
 }
 
+async function mutation<T>(path: string, body: Record<string, unknown>, bearerOnly = false): Promise<T> {
+  const roomId = path.match(/^\/rooms\/([^/]+)/)?.[1]
+  const paired = !bearerOnly && roomId ? getPartyDevice(decodeURIComponent(roomId)) : null
+  const auth = useAuthStore()
+  if (!paired) await auth.ensureIdentity()
+  const principal = paired ? `member:${paired.memberId}` : `user:${auth.user?.id}`
+  return runPartyMutation(principal, path, body, command => call<T>('post', path, command, true, bearerOnly))
+}
+
 export const partyApi = {
   list: () => call<PartyRoomSummary[]>('get', '/rooms'),
   get: (id: string) => call<PartySnapshot>('get', `/rooms/${encodeURIComponent(id)}`),
   socketTicket: (id: string, deviceId?: string) => call<PartySocketTicket>('post', `/rooms/${encodeURIComponent(id)}/socket-ticket`, { deviceId }),
   create: (name: string, displayName: string, approvalRequired: boolean) =>
-    call<PartySnapshot>('post', '/rooms', { name, displayName, approvalRequired }),
+    mutation<PartySnapshot>('/rooms', { name, displayName, approvalRequired }, true),
   join: (code: string, displayName: string) =>
-    call<PartySnapshot>('post', '/join', { code, displayName }),
+    mutation<PartySnapshot>('/join', { code: code.trim().toUpperCase(), displayName }, true),
+  resolveInvitation: (code: string) =>
+    call<{ membership: PartySnapshot | null }>('post', '/invitations/resolve', { code: code.trim().toUpperCase() }, false, true),
   approve: (roomId: string, memberId: string, commandId: string) =>
     call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/members/${encodeURIComponent(memberId)}/approve`, { commandId }, true),
   remove: (roomId: string, memberId: string, commandId: string) =>
@@ -225,11 +241,11 @@ export const partyApi = {
   transferHost: (roomId: string, memberId: string, commandId: string) =>
     call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/members/${encodeURIComponent(memberId)}/transfer-host`, { commandId }, true),
   rotate: (roomId: string) =>
-    call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/invitations/rotate`),
+    mutation<PartySnapshot>(`/rooms/${encodeURIComponent(roomId)}/invitations/rotate`, {}),
   settings: (roomId: string, changes: { locked?: boolean; approvalRequired?: boolean; stageInviteVisible?: boolean }) =>
-    call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/settings`, changes),
+    mutation<PartySnapshot>(`/rooms/${encodeURIComponent(roomId)}/settings`, changes),
   close: (roomId: string) =>
-    call<{ id: string; status: 'closed' }>('post', `/rooms/${encodeURIComponent(roomId)}/close`),
+    mutation<{ id: string; status: 'closed' }>(`/rooms/${encodeURIComponent(roomId)}/close`, {}),
   requestSong: (roomId: string, songId: number, title: string, requestNext: boolean, commandId: string, singerMemberId: string) =>
     call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/queue`, { songId, title, requestNext, commandId, singerMemberId }, true),
   cancelSong: (roomId: string, entryId: string, commandId: string) =>
@@ -251,22 +267,28 @@ export const partyApi = {
   playbackCommand: (roomId: string, action: string, command: Record<string, unknown>) =>
     call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/playback/${action}`, command, true),
   createPairing: (roomId: string, scope: 'display' | 'controller') =>
-    call<PartyPairing>('post', `/rooms/${encodeURIComponent(roomId)}/pairings`, { scope }, false, true),
+    mutation<PartyPairing>(`/rooms/${encodeURIComponent(roomId)}/pairings`, { scope }, true),
   devices: (roomId: string) =>
     call<PartyDeviceSummary[]>('get', `/rooms/${encodeURIComponent(roomId)}/devices`, undefined, false, true),
   revokeDevice: (roomId: string, deviceId: string) =>
-    call<{ id: string; deviceId: string; status: 'revoked' }>('post',
-      `/rooms/${encodeURIComponent(roomId)}/devices/${encodeURIComponent(deviceId)}/revoke`, {}, false, true),
+    mutation<{ id: string; deviceId: string; status: 'revoked' }>(
+      `/rooms/${encodeURIComponent(roomId)}/devices/${encodeURIComponent(deviceId)}/revoke`, {}, true),
   async redeemPairing(code: string): Promise<PartyDeviceGrant> {
-    try {
-      const response = await axios.post<{ success: boolean; data: PartyDeviceGrant }>(
-        `${config.apiBaseUrl}/ktv/pairings/redeem`, { code }, { timeout: 10000 })
-      return response.data.data
-    } catch (error) {
-      if (axios.isAxiosError(error) && typeof error.response?.data?.message === 'string') {
-        throw new Error(error.response.data.message)
+    return runPartyMutation('pairing-device', '/pairings/redeem', { code: code.trim().toUpperCase() }, async body => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const response = await axios.post<{ success: boolean; data: PartyDeviceGrant }>(
+            `${config.apiBaseUrl}/ktv/pairings/redeem`, body, { timeout: 10000 })
+          return response.data.data
+        } catch (error) {
+          if (axios.isAxiosError(error) && !error.response && attempt === 0) continue
+          if (axios.isAxiosError(error) && typeof error.response?.data?.message === 'string') {
+            throw new PartyApiError(error.response.data.message, error.response.data.code, error.response.status)
+          }
+          throw error
+        }
       }
-      throw error
-    }
+      throw new Error('Device connection failed')
+    })
   },
 }

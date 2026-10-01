@@ -29,6 +29,8 @@ export function initKtvSchema(db) {
     CREATE UNIQUE INDEX IF NOT EXISTS ktv_one_host ON ktv_members(room_id) WHERE role = 'host';
     CREATE INDEX IF NOT EXISTS ktv_members_user ON ktv_members(user_id, updated_at DESC);
     CREATE INDEX IF NOT EXISTS ktv_members_room ON ktv_members(room_id, admission);
+    CREATE INDEX IF NOT EXISTS ktv_rooms_expiry ON ktv_rooms(status, expires_at);
+    CREATE INDEX IF NOT EXISTS ktv_rooms_closed ON ktv_rooms(status, closed_at);
     CREATE TABLE IF NOT EXISTS ktv_invitations (
       id TEXT PRIMARY KEY,
       room_id TEXT NOT NULL REFERENCES ktv_rooms(id) ON DELETE CASCADE,
@@ -72,6 +74,14 @@ export function initKtvSchema(db) {
       created_at TEXT NOT NULL,
       PRIMARY KEY (room_id, actor_member_id, command_id)
     );
+    CREATE TABLE IF NOT EXISTS ktv_identity_receipts (
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      command_id TEXT NOT NULL,
+      payload_hash TEXT NOT NULL,
+      room_id TEXT NOT NULL REFERENCES ktv_rooms(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, command_id)
+    );
     CREATE TABLE IF NOT EXISTS ktv_pairings (
       id TEXT PRIMARY KEY,
       room_id TEXT NOT NULL REFERENCES ktv_rooms(id) ON DELETE CASCADE,
@@ -95,6 +105,17 @@ export function initKtvSchema(db) {
       revoked_at TEXT
     );
     CREATE INDEX IF NOT EXISTS ktv_grants_member ON ktv_device_grants(room_id, member_id, revoked_at);
+    CREATE TABLE IF NOT EXISTS ktv_pairing_receipts (
+      pairing_id TEXT NOT NULL REFERENCES ktv_pairings(id) ON DELETE CASCADE,
+      command_id TEXT NOT NULL,
+      grant_id TEXT NOT NULL REFERENCES ktv_device_grants(id) ON DELETE CASCADE,
+      payload_hash TEXT NOT NULL,
+      result_cipher TEXT NOT NULL,
+      result_iv TEXT NOT NULL,
+      result_tag TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (pairing_id, command_id)
+    );
     CREATE TABLE IF NOT EXISTS ktv_readiness (
       room_id TEXT PRIMARY KEY REFERENCES ktv_rooms(id) ON DELETE CASCADE,
       entry_id TEXT REFERENCES ktv_queue_entries(id),
@@ -137,8 +158,16 @@ export function initKtvSchema(db) {
     );
   `)
   const roomColumns = db.prepare('PRAGMA table_info(ktv_rooms)').all().map(column => column.name)
+  db.exec(`CREATE INDEX IF NOT EXISTS ktv_receipts_age ON ktv_command_receipts(created_at);
+    CREATE INDEX IF NOT EXISTS ktv_identity_receipts_age ON ktv_identity_receipts(created_at);
+    CREATE INDEX IF NOT EXISTS ktv_pairing_receipts_age ON ktv_pairing_receipts(created_at);`)
   if (!roomColumns.includes('stage_invite_visible')) {
     db.exec('ALTER TABLE ktv_rooms ADD COLUMN stage_invite_visible INTEGER NOT NULL DEFAULT 0 CHECK (stage_invite_visible IN (0, 1))')
+  }
+  if (!roomColumns.includes('empty_since_at')) db.exec('ALTER TABLE ktv_rooms ADD COLUMN empty_since_at TEXT')
+  const receiptColumns = db.prepare('PRAGMA table_info(ktv_command_receipts)').all().map(column => column.name)
+  for (const name of ['result_cipher', 'result_iv', 'result_tag']) if (!receiptColumns.includes(name)) {
+    db.exec(`ALTER TABLE ktv_command_receipts ADD COLUMN ${name} TEXT`)
   }
   // Keep the original role/admission CHECKs and foreign keys intact. Co-host
   // capability and blocking are additive metadata on the existing membership.

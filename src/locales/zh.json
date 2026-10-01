@@ -179,6 +179,7 @@
     "openRoom": "打开房间",
     "back": "返回派对",
     "noAccountNeeded": "输入名字即可加入，无需注册账号。",
+    "checkingInvitation": "正在检查邀请…",
     "invitationCode": "邀请码",
     "loading": "正在打开房间…",
     "waiting": "等待中",

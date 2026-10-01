@@ -155,8 +155,12 @@ bootstrap does not replace the guest's explicit name entry for their first join.
 After submission, show the waiting screen if approval is enabled, otherwise open
 the room controller. Invalid/expired codes keep the guest on the join form with
 a clear error. Registered members can use their profile name, with an editable
-room display name. Existing admitted members reconnect directly without repeating
-the name form.
+room display name. A read-only, authenticated invitation resolution request restores
+existing admitted or pending membership without changing the chosen name. Admitted
+members open the controller directly; pending members return to approval waiting.
+New guests still choose a name before membership is created. Rotated/expired codes,
+blocked or removed membership, and locks for new guests remain enforced. Codes are
+removed from the address bar after reading the link fragment or legacy query.
 
 Store the chosen name on the room membership so it does not unexpectedly rename
 the person's global profile. Trim whitespace and require 1–40 characters after
@@ -407,14 +411,28 @@ Mutation handling:
 
 1. Authenticate and check current admission/capabilities.
 2. Check command receipt. Same ID and payload returns the prior outcome;
-   same ID with a different payload returns `COMMAND_ID_REUSED`.
+   same ID with a different payload returns `COMMAND_CONFLICT`.
 3. Validate `baseRevision`, payload, and domain rules.
 4. Commit mutation and receipt atomically; acknowledge the committed revision.
 5. Broadcast snapshots. On `REVISION_CONFLICT`, fetch state and let the caller
    deliberately resubmit against it; do not blindly replay an obsolete seek/skip.
 
 Use a bounded receipt retention period at least as long as the reconnect retry
-window, initially 24 hours. After an unknown outcome outside that window, fetch
+window, initially 24 hours. Room creation/join receipts are scoped to authenticated
+identity and command UUID; room commands are scoped to room/member/UUID. Pairing
+creation and redemption recover the original result, encrypted with AES-256-GCM at
+rest. Redemption retries recheck current room, membership and grant revocation
+before returning a credential. A different UUID cannot reuse a consumed code.
+A closed-room reply can be replayed with its original close UUID, including by its
+original paired controller; that narrow reply does not authorize any other action.
+
+The browser keeps at most 100 pending command IDs plus payload hashes in session
+storage for 24 hours. It stores no invitation/pairing codes, names, credentials or
+room snapshots in this journal. Network failures, 5xx, 408 and 429 retain the ID;
+success or definitive denial ends the attempt. Reloading the same tab and explicitly
+retrying the same unresolved intent reuses its UUID. A new action after a successful
+reply gets a new UUID. Existing queue/readiness/playback commands retain their
+explicit UUID and revision/generation contracts. After an unknown outcome outside that window, fetch
 state and require a new explicit action. Reconnect uses exponential backoff with
 jitter, fresh authentication, a full snapshot, and new clock samples.
 
@@ -820,11 +838,31 @@ to the current singer/capture device only.
 
 ## 11. Operational behavior and limits
 
-Initial planning limits: 20 members per room, three devices per member, three
-pending songs per singer, 100 queued entries, 12-hour maximum room lifetime, and
-30-minute empty-room expiry. These are configurable proposals, not load-tested
-capacity claims. Closed rooms revoke access and stop playback; retention of room
-history is a separate bounded policy.
+Implemented defaults: 20 members per room, the original browser plus two paired
+device grants per member, three pending songs per singer, 100 queued entries,
+12-hour maximum room lifetime, and 30-minute empty-room expiry. An empty room has
+no connected admitted device; pending guests do not keep a room alive. The UTC
+empty-since timestamp persists across service restarts and clears when an admitted
+device reconnects. Authorization rejects the maximum lifetime immediately; the
+10-second lifecycle sweep also commits closure, cancels readiness/playback, revokes
+invitations/pairings/grants, and ends room sockets. Offline audio stops by its output
+lease deadline. Expiry emits a single audit event and never starts another song.
+
+Receipt retention defaults to 24 hours, closed room history to seven days, and audit
+history to the latest 1000 events per room. Cleanup removes expired receipts and
+obsolete pairings/grants, then purges old closed rooms with cascading foreign keys.
+The mutation and its receipt commit together; closure and revocation commit before
+socket updates. Configurable bounds are validated at startup; history must cover
+the receipt window. `.env.server.example` lists the `KTV_*` settings. Member, queue
+and paired-device settings may lower the implemented ceilings; these ceilings are
+not load-tested capacity claims.
+
+HTTP room requests enforce an exact same-host origin or configured allowlist,
+16 KiB request size, and a 600-request/minute socket-peer budget with `Retry-After`.
+Direct bearer/device clients may omit Origin. Behind a proxy this budget is aggregate;
+forwarding headers cannot evade it. Invitation lookup/join and unauthenticated
+pair redemption retain their tighter 20-attempt/minute limits and bounded in-memory
+buckets. WebSockets retain their ticket, connection, payload and action limits.
 
 | Failure | Required behavior |
 | --- | --- |

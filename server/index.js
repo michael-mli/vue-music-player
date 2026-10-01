@@ -168,6 +168,17 @@ const ktvRealtime = registerKtvRoutes(app, {
   db, authMiddleware, secret: JWT_SECRET || 'unconfigured-development-secret',
   allowedOrigins: (process.env.KTV_ALLOWED_ORIGINS || '').split(',').map((origin) => origin.trim()).filter(Boolean),
   hostGraceMs: Number(process.env.KTV_HOST_GRACE_MS || 30_000),
+  policy: {
+    members: Number(process.env.KTV_MAX_MEMBERS || 20),
+    queue: Number(process.env.KTV_MAX_QUEUE || 100),
+    singerRequests: Number(process.env.KTV_MAX_SINGER_REQUESTS || 3),
+    deviceGrants: Number(process.env.KTV_MAX_DEVICE_GRANTS ?? 2),
+    roomLifetimeMs: Number(process.env.KTV_ROOM_LIFETIME_MS || 12 * 60 * 60 * 1000),
+    emptyRoomMs: Number(process.env.KTV_EMPTY_ROOM_MS || 30 * 60 * 1000),
+    receiptRetentionMs: Number(process.env.KTV_RECEIPT_RETENTION_MS || 24 * 60 * 60 * 1000),
+    historyRetentionMs: Number(process.env.KTV_HISTORY_RETENTION_MS || 7 * 24 * 60 * 60 * 1000),
+    eventsPerRoom: Number(process.env.KTV_MAX_ROOM_EVENTS || 1000),
+  },
   resolveAssets: createKtvAssets({
     musicRoot: process.env.MUSIC_DIR || path.join(WEB_ROOT, 'data'),
     karaokeRoot: path.dirname(karaokeManifestPath),

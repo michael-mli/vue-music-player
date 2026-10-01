@@ -8,44 +8,58 @@ import express from 'express'
 import WebSocket from 'ws'
 import { initDb } from './db.js'
 import { registerKtvRoutes } from './ktv-routes.js'
+import { ktvPolicy } from './ktv-policy.js'
+import { createKtvHttpGuard } from './ktv-http.js'
 
 async function setup(t, options = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ktv-test-'))
-  const db = initDb(dir)
+  let db = initDb(dir)
   for (const username of ['host', 'alex1', 'alex2', 'outsider']) {
     db.prepare("INSERT INTO users (username, kind, created_at) VALUES (?, 'guest', ?)")
       .run(username, new Date().toISOString())
   }
-  const app = express()
-  app.use(express.json())
   const authMiddleware = (req, res, next) => {
     const id = Number(req.headers['x-test-user'])
     if (!Number.isInteger(id) || !id) return res.sendStatus(401)
     req.auth = { sub: id }
     next()
   }
-  const realtime = registerKtvRoutes(app, { db, authMiddleware, secret: 'test-only-secret', isKaraokeSong: (id) => id <= 10, ...options })
-  const server = app.listen(0, '127.0.0.1')
-  realtime.attach(server)
-  await new Promise((resolve) => server.once('listening', resolve))
-  const base = `http://127.0.0.1:${server.address().port}/api/ktv`
-  t.after(async () => {
+  let realtime, server, base
+  async function start() {
+    const app = express()
+    app.use(express.json())
+    realtime = registerKtvRoutes(app, { db, authMiddleware, secret: 'test-only-secret', isKaraokeSong: (id) => id <= 10, ...options })
+    server = app.listen(0, '127.0.0.1')
+    realtime.attach(server)
+    await new Promise((resolve) => server.once('listening', resolve))
+    base = `http://127.0.0.1:${server.address().port}/api/ktv`
+  }
+  async function stop() {
     realtime.close()
     await new Promise((resolve) => server.close(resolve))
     db.close()
+  }
+  await start()
+  t.after(async () => {
+    await stop()
     fs.rmSync(dir, { recursive: true, force: true })
   })
-  async function request(method, route, actor, payload) {
+  async function request(method, route, actor, payload, headers = {}) {
     const response = await fetch(base + route, {
       method,
       headers: { 'Content-Type': 'application/json', ...(typeof actor === 'object'
         ? { Authorization: `KtvDevice ${actor.device}` }
-        : { 'X-Test-User': String(actor) }) },
+        : { 'X-Test-User': String(actor) }), ...headers },
       body: payload === undefined ? undefined : JSON.stringify(payload),
     })
     return { status: response.status, body: await response.json(), headers: response.headers }
   }
-  return { db, request, realtime, socketUrl: `ws://127.0.0.1:${server.address().port}/api/ktv/ws`, origin: `http://127.0.0.1:${server.address().port}` }
+  return {
+    get db() { return db }, request, get realtime() { return realtime },
+    get socketUrl() { return `ws://127.0.0.1:${server.address().port}/api/ktv/ws` },
+    get origin() { return `http://127.0.0.1:${server.address().port}` },
+    async restart() { await stop(); db = initDb(dir); await start() },
+  }
 }
 
 test('only the host exposes an invitation on admitted common screens and can hide it again', async t => {
@@ -97,6 +111,238 @@ function nextSnapshot(ws, accepts = () => true) {
     ws.on('close', onClose)
   })
 }
+
+test('room expiry atomically ends playback, revokes codes/devices, and closes connected sockets', async t => {
+  const { request, db, realtime, socketUrl, origin } = await setup(t)
+  const view = (await request('POST', '/rooms', 1, { name: 'Expiry', displayName: 'Host', approvalRequired: false })).body.data
+  const route = `/rooms/${view.room.id}`
+  const entry = (await request('POST', `${route}/queue`, 1, { commandId: randomUUID(), songId: 1, title: 'Expiry song', requestNext: false, singerMemberId: view.self.id })).body.data.queue[0]
+  db.prepare(`INSERT INTO ktv_playback (room_id, entry_id, performance_id, generation, clock_id, state, updated_at)
+    VALUES (?, ?, ?, 1, ?, 'preparing', ?)`).run(view.room.id, entry.id, randomUUID(), view.clock.clockId, new Date().toISOString())
+  const pairing = (await request('POST', `${route}/pairings`, 1, { scope: 'display' })).body.data
+  const grant = (await request('POST', '/pairings/redeem', 1, { code: pairing.code })).body.data
+  const ticket = (await request('POST', `${route}/socket-ticket`, 1, {})).body.data.ticket
+  const connected = await openSocket(socketUrl, origin, ticket); await connected.first
+  const ended = new Promise(resolve => connected.ws.once('close', resolve))
+  db.prepare('UPDATE ktv_rooms SET expires_at = ? WHERE id = ?').run(new Date(Date.now() - 1000).toISOString(), view.room.id)
+  realtime.lifecycle.sweep()
+  assert.equal(await ended, 4410)
+  assert.equal(db.prepare('SELECT status FROM ktv_rooms WHERE id = ?').get(view.room.id).status, 'closed')
+  assert.equal(db.prepare('SELECT state FROM ktv_playback WHERE room_id = ?').get(view.room.id).state, 'idle')
+  assert.ok(db.prepare('SELECT revoked_at FROM ktv_device_grants WHERE id = ?').get(grant.deviceId).revoked_at)
+  assert.equal((await request('GET', route, 1)).body.code, 'ROOM_CLOSED')
+  assert.equal((await request('GET', route, { device: grant.credential })).body.code, 'DEVICE_REVOKED')
+  assert.equal((await request('POST', '/join', 2, { code: view.invitationCode, displayName: 'Late' })).body.code, 'INVALID_INVITATION')
+  realtime.lifecycle.sweep()
+  assert.equal(db.prepare("SELECT COUNT(*) total FROM ktv_room_events WHERE action = 'room.expired'").get().total, 1)
+})
+
+test('empty-room time persists across restart and an admitted connection resets the timeout', async t => {
+  const fixture = await setup(t), { request } = fixture
+  const view = (await request('POST', '/rooms', 1, { name: 'Empty room', displayName: 'Host' })).body.data
+  const route = `/rooms/${view.room.id}`, empty = new Date(Date.now() - 29 * 60_000).toISOString()
+  fixture.db.prepare('UPDATE ktv_rooms SET empty_since_at = ? WHERE id = ?').run(empty, view.room.id)
+  await fixture.restart()
+  assert.equal(fixture.db.prepare('SELECT empty_since_at FROM ktv_rooms WHERE id = ?').get(view.room.id).empty_since_at, empty)
+  const ticket = (await request('POST', `${route}/socket-ticket`, 1, {})).body.data.ticket
+  const connected = await openSocket(fixture.socketUrl, fixture.origin, ticket); await connected.first
+  fixture.realtime.lifecycle.sweep()
+  assert.equal(fixture.db.prepare('SELECT empty_since_at FROM ktv_rooms WHERE id = ?').get(view.room.id).empty_since_at, null)
+  const disconnected = new Promise(resolve => connected.ws.once('close', resolve)); connected.ws.close(); await disconnected
+  await new Promise(resolve => setTimeout(resolve, 20))
+  fixture.realtime.lifecycle.sweep()
+  assert.ok(fixture.db.prepare('SELECT empty_since_at FROM ktv_rooms WHERE id = ?').get(view.room.id).empty_since_at)
+  fixture.db.prepare('UPDATE ktv_rooms SET empty_since_at = ? WHERE id = ?').run(new Date(Date.now() - 31 * 60_000).toISOString(), view.room.id)
+  await fixture.restart()
+  assert.equal((await request('GET', route, 1)).body.code, 'ROOM_CLOSED')
+  assert.equal(fixture.db.prepare("SELECT COUNT(*) total FROM ktv_room_events WHERE action = 'room.empty_expired'").get().total, 1)
+})
+
+test('retention bounds audit history, keeps fresh retry receipts, and purges closed rooms with valid foreign keys', async t => {
+  const { request, db, realtime } = await setup(t, { policy: { eventsPerRoom: 10 } })
+  const view = (await request('POST', '/rooms', 1, { name: 'Retained', displayName: 'Host' })).body.data
+  const route = `/rooms/${view.room.id}`
+  await request('POST', `${route}/queue`, 1, { commandId: randomUUID(), songId: 1, title: 'Kept song', requestNext: false, singerMemberId: view.self.id })
+  const oldReceipt = randomUUID()
+  db.prepare('INSERT INTO ktv_identity_receipts (user_id, command_id, payload_hash, room_id, created_at) VALUES (1, ?, ?, ?, ?)')
+    .run(oldReceipt, 'old', view.room.id, new Date(Date.now() - 25 * 60 * 60_000).toISOString())
+  for (let index = 0; index < 15; index++) db.prepare('INSERT INTO ktv_room_events (room_id, action, subject_id, created_at) VALUES (?, ?, ?, ?)')
+    .run(view.room.id, 'retention.test', String(index), new Date().toISOString())
+  realtime.lifecycle.sweep()
+  assert.equal(db.prepare('SELECT COUNT(*) total FROM ktv_room_events WHERE room_id = ?').get(view.room.id).total, 10)
+  assert.equal(db.prepare('SELECT 1 FROM ktv_identity_receipts WHERE command_id = ?').get(oldReceipt), undefined)
+  assert.equal(db.prepare('SELECT COUNT(*) total FROM ktv_identity_receipts WHERE room_id = ?').get(view.room.id).total, 1)
+  await request('POST', `${route}/close`, 1, { commandId: randomUUID() })
+  db.prepare('UPDATE ktv_rooms SET closed_at = ? WHERE id = ?').run(new Date(Date.now() - 8 * 24 * 60 * 60_000).toISOString(), view.room.id)
+  const fresh = (await request('POST', '/rooms', 2, { name: 'Fresh', displayName: 'Alex' })).body.data
+  realtime.lifecycle.sweep()
+  assert.equal(db.prepare('SELECT 1 FROM ktv_rooms WHERE id = ?').get(view.room.id), undefined)
+  assert.ok(db.prepare('SELECT 1 FROM ktv_rooms WHERE id = ?').get(fresh.room.id))
+  assert.equal(db.prepare('SELECT COUNT(*) total FROM ktv_queue_entries').get().total, 0)
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), [])
+})
+
+test('configured member/song/device ceilings are enforced and unsafe policy values fail startup', async t => {
+  assert.throws(() => ktvPolicy({ receiptRetentionMs: 1000 }), /Invalid KTV/)
+  assert.throws(() => ktvPolicy({ historyRetentionMs: 24 * 60 * 60_000, receiptRetentionMs: 48 * 60 * 60_000 }), /retry window/)
+  const { request } = await setup(t, { policy: { members: 2, singerRequests: 1, queue: 2, deviceGrants: 0 } })
+  const view = (await request('POST', '/rooms', 1, { name: 'Limits', displayName: 'Host', approvalRequired: false })).body.data
+  assert.deepEqual(view.limits, { members: 2, queue: 2, singerRequests: 1 })
+  assert.equal((await request('POST', '/join', 2, { code: view.invitationCode, displayName: 'Alex' })).status, 200)
+  assert.equal((await request('POST', '/join', 3, { code: view.invitationCode, displayName: 'Extra' })).body.code, 'ROOM_FULL')
+  const route = `/rooms/${view.room.id}`
+  assert.equal((await request('POST', `${route}/pairings`, 1, { scope: 'display' })).body.code, 'DEVICE_LIMIT')
+  const song = { songId: 1, title: 'Limit song', requestNext: false, singerMemberId: view.self.id }
+  assert.equal((await request('POST', `${route}/queue`, 1, { ...song, commandId: randomUUID() })).status, 200)
+  assert.equal((await request('POST', `${route}/queue`, 1, { ...song, commandId: randomUUID() })).body.code, 'SINGER_QUEUE_FULL')
+})
+
+test('HTTP room guard rejects foreign origins and oversized bodies; rate buckets expire and ignore forwarded spoofing', async t => {
+  const { request, origin } = await setup(t)
+  assert.equal((await request('GET', '/rooms', 1, undefined, { Origin: 'https://foreign.example' })).body.code, 'ORIGIN_DENIED')
+  assert.equal((await request('GET', '/rooms', 1, undefined, { Origin: origin })).status, 200)
+  assert.equal((await request('POST', '/rooms', 1, { name: 'Huge', displayName: 'Host', padding: 'x'.repeat(17 * 1024) })).body.code, 'MESSAGE_TOO_LARGE')
+  let timestamp = 1000, passed = 0, code, status, retry
+  const guard = createKtvHttpGuard({ limit: 2, now: () => timestamp })
+  const response = { set: (name, value) => { if (name === 'Retry-After') retry = value }, status: value => { status = value; return response }, json: value => { code = value.code } }
+  for (let index = 0; index < 3; index++) guard({ headers: { host: 'room.example', 'x-real-ip': `spoof-${index}` }, socket: { remoteAddress: 'same-peer' } }, response, () => { passed++ })
+  assert.equal(passed, 2); assert.equal(code, 'TOO_MANY_REQUESTS'); assert.equal(status, 429); assert.equal(retry, '60')
+  timestamp += 60_000
+  guard({ headers: { host: 'room.example' }, socket: { remoteAddress: 'same-peer' } }, response, () => { passed++ })
+  assert.equal(passed, 3)
+})
+
+test('identity receipts prevent duplicate rooms, survive invite rotation, and roll back with mutations', async t => {
+  const { request, db } = await setup(t)
+  const body = { commandId: randomUUID(), name: 'Receipt room', displayName: 'Host', approvalRequired: false }
+  const created = await Promise.all([request('POST', '/rooms', 1, body), request('POST', '/rooms', 1, body)])
+  assert.equal(created[0].body.data.room.id, created[1].body.data.room.id)
+  assert.equal(db.prepare('SELECT COUNT(*) total FROM ktv_rooms').get().total, 1)
+  assert.equal(db.prepare("SELECT COUNT(*) total FROM ktv_room_events WHERE action = 'room.created'").get().total, 1)
+  assert.equal((await request('POST', '/rooms', 1, { ...body, name: 'Different room' })).body.code, 'COMMAND_CONFLICT')
+  const view = created[0].body.data, route = `/rooms/${view.room.id}`
+  const join = { commandId: randomUUID(), code: view.invitationCode, displayName: 'Alex' }
+  const first = (await request('POST', '/join', 2, join)).body.data
+  await request('POST', `${route}/invitations/rotate`, 1, { commandId: randomUUID() })
+  const replay = await request('POST', '/join', 2, join)
+  assert.equal(replay.status, 200)
+  assert.equal(replay.body.data.self.id, first.self.id)
+  assert.equal((await request('POST', '/join', 2, { ...join, displayName: 'Other name' })).body.code, 'COMMAND_CONFLICT')
+  await request('POST', `${route}/members/${first.self.id}/remove`, 1, {})
+  assert.equal((await request('POST', '/join', 2, join)).body.code, 'NOT_ADMITTED')
+  db.exec(`CREATE TRIGGER fail_identity_receipt BEFORE INSERT ON ktv_identity_receipts BEGIN SELECT RAISE(ABORT, 'receipt failure'); END`)
+  const failedId = randomUUID()
+  assert.equal((await request('POST', '/rooms', 1, { ...body, commandId: failedId })).status, 500)
+  assert.equal(db.prepare('SELECT COUNT(*) total FROM ktv_rooms').get().total, 1)
+  assert.equal(db.prepare('SELECT 1 FROM ktv_identity_receipts WHERE command_id = ?').get(failedId), undefined)
+  db.exec('DROP TRIGGER fail_identity_receipt')
+})
+
+test('settings, invitation rotation and closed-room replies apply once across bearer and paired control', async t => {
+  const { request, db } = await setup(t)
+  let view = (await request('POST', '/rooms', 1, { name: 'General receipts', displayName: 'Host', approvalRequired: false })).body.data
+  const route = `/rooms/${view.room.id}`
+  const setting = { commandId: randomUUID(), stageInviteVisible: true }
+  view = (await request('POST', `${route}/settings`, 1, setting)).body.data
+  assert.equal((await request('POST', `${route}/settings`, 1, setting)).body.data.room.revision, view.room.revision)
+  assert.equal((await request('POST', `${route}/settings`, 1, { ...setting, stageInviteVisible: false })).body.code, 'COMMAND_CONFLICT')
+  const rotate = { commandId: randomUUID() }
+  view = (await request('POST', `${route}/invitations/rotate`, 1, rotate)).body.data
+  const replay = (await request('POST', `${route}/invitations/rotate`, 1, rotate)).body.data
+  assert.equal(replay.room.revision, view.room.revision); assert.equal(replay.invitationCode, view.invitationCode)
+  assert.equal(db.prepare('SELECT COUNT(*) total FROM ktv_invitations WHERE room_id = ?').get(view.room.id).total, 2)
+  const pairing = (await request('POST', `${route}/pairings`, 1, { scope: 'controller' })).body.data
+  const grant = (await request('POST', '/pairings/redeem', 1, { code: pairing.code })).body.data
+  const device = { device: grant.credential }, close = { commandId: randomUUID() }
+  assert.equal((await request('POST', `${route}/close`, device, close)).status, 200)
+  assert.equal((await request('POST', `${route}/close`, device, close)).status, 200)
+  assert.equal((await request('POST', `${route}/close`, 1, close)).status, 200)
+  assert.equal((await request('GET', route, device)).body.code, 'DEVICE_REVOKED')
+  assert.equal((await request('POST', `${route}/close`, device, { commandId: randomUUID() })).body.code, 'DEVICE_REVOKED')
+  assert.equal(db.prepare("SELECT COUNT(*) total FROM ktv_room_events WHERE room_id = ? AND action = 'room.closed'").get(view.room.id).total, 1)
+})
+
+test('pairing receipts recover the same encrypted credential without creating or restoring device grants', async t => {
+  const { request, db } = await setup(t)
+  const view = (await request('POST', '/rooms', 1, { name: 'Pair receipts', displayName: 'Host' })).body.data
+  const route = `/rooms/${view.room.id}`, command = { commandId: randomUUID(), scope: 'display' }
+  const pairing = (await request('POST', `${route}/pairings`, 1, command)).body.data
+  assert.deepEqual((await request('POST', `${route}/pairings`, 1, command)).body.data, pairing)
+  assert.equal((await request('POST', `${route}/pairings`, 1, { ...command, scope: 'controller' })).body.code, 'COMMAND_CONFLICT')
+  const redeem = { commandId: randomUUID(), code: pairing.code }
+  const grant = (await request('POST', '/pairings/redeem', 1, redeem)).body.data
+  assert.deepEqual((await request('POST', '/pairings/redeem', 1, redeem)).body.data, grant)
+  assert.equal((await request('POST', '/pairings/redeem', 1, { ...redeem, commandId: randomUUID() })).body.code, 'INVALID_PAIRING')
+  assert.equal(db.prepare('SELECT COUNT(*) total FROM ktv_device_grants WHERE room_id = ?').get(view.room.id).total, 1)
+  const stored = db.prepare('SELECT * FROM ktv_pairing_receipts WHERE command_id = ?').get(redeem.commandId)
+  assert.ok(stored.result_cipher); assert.ok(!JSON.stringify(stored).includes(grant.credential))
+  const revoke = { commandId: randomUUID() }
+  assert.equal((await request('POST', `${route}/devices/${grant.deviceId}/revoke`, 1, revoke)).status, 200)
+  assert.equal((await request('POST', `${route}/devices/${grant.deviceId}/revoke`, 1, revoke)).status, 200)
+  assert.equal((await request('POST', '/pairings/redeem', 1, redeem)).body.code, 'DEVICE_REVOKED')
+})
+
+test('invitation resolution restores existing admission without adding or renaming new guests', async t => {
+  const { request, db } = await setup(t)
+  const view = (await request('POST', '/rooms', 1, { name: 'Returning guests', displayName: 'Host' })).body.data
+  const resolve = actor => request('POST', '/invitations/resolve', actor, { code: view.invitationCode })
+  assert.deepEqual((await resolve(2)).body.data, { membership: null })
+  assert.equal(db.prepare('SELECT COUNT(*) total FROM ktv_members').get().total, 1)
+  const pending = (await request('POST', '/join', 2, { code: view.invitationCode, displayName: 'Chosen name' })).body.data
+  const recovered = (await resolve(2)).body.data.membership
+  assert.equal(recovered.self.id, pending.self.id); assert.equal(recovered.self.displayName, 'Chosen name')
+  assert.equal(recovered.self.admission, 'pending'); assert.equal(recovered.queue, undefined)
+  const route = `/rooms/${view.room.id}`
+  await request('POST', `${route}/members/${pending.self.id}/approve`, 1, {})
+  await request('POST', `${route}/settings`, 1, { locked: true })
+  assert.equal((await resolve(2)).body.data.membership.self.admission, 'admitted')
+  assert.equal((await resolve(3)).body.code, 'ROOM_LOCKED')
+  await request('POST', `${route}/members/${pending.self.id}/block`, 1, { commandId: randomUUID() })
+  assert.equal((await resolve(2)).body.code, 'ROOM_BLOCKED')
+  await request('POST', `${route}/members/${pending.self.id}/unblock`, 1, { commandId: randomUUID() })
+  assert.equal((await resolve(2)).body.code, 'NOT_ADMITTED')
+  await request('POST', `${route}/invitations/rotate`, 1, {})
+  assert.equal((await resolve(1)).body.code, 'INVALID_INVITATION')
+  assert.equal(db.prepare('SELECT COUNT(*) total FROM ktv_members').get().total, 2)
+})
+
+test('general receipts and encrypted device replies survive a full service/database restart', async t => {
+  const fixture = await setup(t), { request } = fixture
+  const create = { commandId: randomUUID(), name: 'Restart receipts', displayName: 'Host', approvalRequired: false }
+  const view = (await request('POST', '/rooms', 1, create)).body.data, route = `/rooms/${view.room.id}`
+  const join = { commandId: randomUUID(), code: view.invitationCode, displayName: 'Alex' }
+  const member = (await request('POST', '/join', 2, join)).body.data.self
+  const pair = { commandId: randomUUID(), scope: 'controller' }
+  const pairing = (await request('POST', `${route}/pairings`, 2, pair)).body.data
+  const redeem = { commandId: randomUUID(), code: pairing.code }
+  const grant = (await request('POST', '/pairings/redeem', 2, redeem)).body.data
+  const rotate = { commandId: randomUUID() }
+  const rotated = (await request('POST', `${route}/invitations/rotate`, 1, rotate)).body.data
+  await fixture.restart()
+  assert.equal((await request('POST', '/rooms', 1, create)).body.data.room.id, view.room.id)
+  assert.equal((await request('POST', '/join', 2, join)).body.data.self.id, member.id)
+  assert.deepEqual((await request('POST', `${route}/pairings`, 2, pair)).body.data, pairing)
+  assert.deepEqual((await request('POST', '/pairings/redeem', 2, redeem)).body.data, grant)
+  assert.equal((await request('POST', `${route}/invitations/rotate`, 1, rotate)).body.data.invitationCode, rotated.invitationCode)
+  assert.equal((await request('GET', route, { device: grant.credential })).status, 200)
+  assert.equal(fixture.db.prepare('SELECT COUNT(*) total FROM ktv_rooms').get().total, 1)
+  assert.deepEqual(fixture.db.prepare('PRAGMA foreign_key_check').all(), [])
+})
+
+test('a failed encrypted pairing receipt rolls back redemption and leaves its code usable', async t => {
+  const { request, db } = await setup(t)
+  const view = (await request('POST', '/rooms', 1, { name: 'Pair rollback', displayName: 'Host' })).body.data
+  const pairing = (await request('POST', `/rooms/${view.room.id}/pairings`, 1, { commandId: randomUUID(), scope: 'display' })).body.data
+  const redeem = { commandId: randomUUID(), code: pairing.code }
+  db.exec("CREATE TRIGGER fail_pair_receipt BEFORE INSERT ON ktv_pairing_receipts BEGIN SELECT RAISE(ABORT, 'pair receipt failure'); END")
+  assert.equal((await request('POST', '/pairings/redeem', 1, redeem)).status, 500)
+  assert.equal(db.prepare('SELECT COUNT(*) total FROM ktv_device_grants').get().total, 0)
+  assert.equal(db.prepare('SELECT redeemed_at FROM ktv_pairings').get().redeemed_at, null)
+  assert.equal(db.prepare("SELECT COUNT(*) total FROM ktv_room_events WHERE action = 'device.paired'").get().total, 0)
+  db.exec('DROP TRIGGER fail_pair_receipt')
+  assert.equal((await request('POST', '/pairings/redeem', 1, redeem)).status, 200)
+  assert.equal(db.prepare('SELECT COUNT(*) total FROM ktv_device_grants').get().total, 1)
+})
 
 async function openSocket(url, origin, ticket) {
   const ws = new WebSocket(url, { origin })

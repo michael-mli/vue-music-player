@@ -20,7 +20,7 @@ Scheduled stage playback, pinned lyrics, pause/resume/seek/skip, output leases a
 a private original guide are live and pass a production-build journey
 with three isolated Chrome sessions. Physical audio alignment and streaming remain
 unverified/unimplemented. Required-guide gating/recovery, fair next-turn readiness
-and automatic host-loss transfer are deployed as `323c922` (`main-Ccfld-0j.js`).
+and automatic host-loss transfer were first deployed as `323c922` (`main-Ccfld-0j.js`).
 The combined phone/audio-recovery preview is now deployed as `f701e9a`
 (`main-1-asbyg9.js`). It adds persistent Songs/Queue/Sing/People tabs, local invitation
 and pairing QR codes, host-controlled common-screen invitations, fullscreen exit,
@@ -159,7 +159,7 @@ Status: In progress
 Likely files: `server/ktv/schema.js`, `repository.js`, `permissions.js`, `routes.js`,
 integration in `server/db.js` and `server/index.js`. These paths are proposals.
 
-- [ ] P02.1 Add additive, restart-safe SQLite migrations for rooms, members,
+- [x] P02.1 Add additive, restart-safe SQLite migrations for rooms, members,
   invitations, pairings/device grants, queue, playback, receipts, and bounded audit history.
 - [x] P02.2 Add create/join/read/close endpoints using existing guest and Google
   identities; preserve one membership per room/user. Require a chosen room display
@@ -173,11 +173,11 @@ integration in `server/db.js` and `server/index.js`. These paths are proposals.
   credential hashing, expiry, and revocation without sharing global account tokens.
 - [x] P02.6 Define authorized snapshots for host, member, paired display, and pending
   guest; omit secrets and private identity details.
-- [ ] P02.7 Persist durable mutations and idempotency receipts in one transaction;
+- [x] P02.7 Persist durable mutations and idempotency receipts in one transaction;
   cover room creation and invitation redemption as well as room commands.
-- [ ] P02.8 Add room expiry/cleanup and constraints preventing conflicting host
+- [x] P02.8 Add room expiry/cleanup and constraints preventing conflicting host
   memberships, invalid foreign keys, and stale invitation reuse.
-- [ ] P02.9 Return typed errors and apply room-specific origin/rate/message limits.
+- [x] P02.9 Return typed errors and apply room-specific origin/rate/message limits.
 
 Exit criteria:
 
@@ -191,15 +191,23 @@ Exit criteria:
 - [ ] Duplicate requests cannot create duplicate membership or duplicate rooms.
 
 Evidence: `server/ktv-routes.js`, `server/ktv-schema.js`, and `server/ktv.test.js`.
-Twenty-one KTV integration tests pass for guest names/IDs, approval and visibility,
-rotation/lock/close, persistence, queue commands, realtime tickets, pairing,
-co-host restrictions, demotion, rejection/block/restore, and atomic host transfer.
-Pairing codes are single-use and expire after two minutes; the room grants are
-hashed, revocable, and limited to two additional devices per member. Pairing does
-not create another member. Transfer rollback, competing transfers, and retry
-after the old host loses its role are covered. Additive co-host/block metadata
-survives restart. Playback state, room cleanup, and room creation/join receipts
-remain open; physical UI acceptance is unrun.
+The domain now includes transactional receipts for room creation/join, settings,
+rotation, closure, pairing creation/redemption and device revocation, alongside the
+existing queue/moderation/readiness/playback receipts. Encrypted pairing replies
+survive a full service/database restart; replay rechecks current admission and
+revocation. Rollback injection proves that identity or pairing receipt failures
+cannot leave a partial room or consumed code/grant. The tab-scoped browser journal
+keeps bounded pending IDs/hashes through reload without storing names or codes.
+
+UTC room expiry and empty-since recovery, grant/code revocation, socket closure,
+24-hour receipts, seven-day closed-room retention and per-room audit caps are
+implemented. Startup validates configured member/song/device and retention bounds.
+HTTP origin/body/rate checks complement the existing WebSocket limits. Returning
+invitation lookup is read-only; new guests still choose a name, duplicate names get
+distinct random member IDs, and pending guests recover only the approval screen.
+The staged candidate passes 76 full backend checks, 19 frontend unit checks and a
+48-check production Chrome journey; the final exact release and public checks are
+recorded below after publication. Physical browser/device acceptance remains open.
 
 ## 6. P03 — Realtime state, queue, and playback authority
 
@@ -263,7 +271,7 @@ Status: In progress
 Likely files: `src/views/party/{PartyHome,PartyJoin,PartyRoom,PartyStage,PartyPair}.vue`,
 `src/components/Party/*`, router/App integration, and `src/locales/{en,zh}.json`.
 
-- [ ] P04.1 Add routes, entry navigation, create room, typed invitation, share link,
+- [x] P04.1 Add routes, entry navigation, create room, typed invitation, share link,
   QR display, paired device setup, and waiting/admission screens. Direct invitations
   prefill the code and ask unregistered guests for `Your name`, with no signup step;
   returning admitted members reconnect directly.
@@ -574,10 +582,11 @@ prototype result is not automatically a release result.
 
 ### Current next action
 
-Implement general command receipts, room cleanup/limits and returning-invite
-recovery, followed by SFU/TURN and online/hybrid capture. Physical phone/screen timing, memory, background and browser
-coverage remain acceptance gates. Remaining P02/P04 work includes general receipts,
-cleanup/abuse limits, QR invitations, phone tabs and accessibility.
+Publish the durable receipts, room lifecycle/limits and returning-invite update,
+then continue remaining queue/UI/PWA integration and SFU/TURN online/hybrid capture.
+Physical phone/screen timing, memory, background behavior, broad browser coverage
+and real streaming remain acceptance gates. Phone tabs and QR invitations are live;
+general receipts, cleanup and returning-invite software checks now pass.
 
 ### Decision log
 
@@ -631,6 +640,7 @@ cleanup/abuse limits, QR invitations, phone tabs and accessibility.
 | 2026-09-30 | Phone tabs, invitation/pairing QR and common-screen controls | `PartyRoom.vue`, `PartyQrCode.vue`, bilingual UI, additive stage invitation preference and production browser journey | Backend 65/65 plus locked-screen invitation regression; clock/audio 15/15; release-candidate Chrome 42/42; independent OpenCV decodes match both QR links; type-check/build pass | Persistent Songs/Queue/Sing/People panels retain guide audio. Keyboard focus, server request caps, host-only stage invitation visibility/rotation/lock hiding and explicit fullscreen exit verified. Headless foreground flags and separate stage/singer processes used; physical timing, broader a11y, returning-invite recovery and streaming remain open |
 
 | 2026-09-30 | Phone/audio-recovery preview deployment | `f701e9a`, frontend `main-1-asbyg9.js`, QR chunk `browser-BXdiCFWD.js` | Backend 65/65; clock/audio 15/15; exact-release foreground Chrome 42/42; public recovery protocol 18/18; public routes/assets/health/schema 10/10; both QR links independently decoded | Temporary public room closed. Backup `/tmp/ktv-party-phone-predeploy.lurd7md3`; one local connection retry during PM2 restart. Static hashes and embedded SHA match; additive invitation column and zero foreign-key violations verified. Physical audio, general receipts/cleanup, broader browser/PWA/a11y and online/hybrid remain open |
+| 2026-09-30 | Durable room requests and lifecycle candidate | `server/ktv-receipts.js`, `ktv-lifecycle.js`, `ktv-policy.js`, `ktv-http.js`, invitation resolution, frontend command journal and browser fixture | Backend 76/76; frontend 19/19; production Chrome 48/48; type-check/build and diff check pass | Restart/encrypted reply and rollback, expiry/revocation/socket closure, empty-since persistence, bounded history/configured caps, origin/body/rate guards, duplicate-name guest entry and reload retry verified. Candidate check used a deterministic post-commit gateway 502; bare TCP resets may be transparently retried by Chrome. Exact-release/public gates follow. |
 
 ### Work-session update template
 

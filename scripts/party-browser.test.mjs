@@ -16,11 +16,29 @@ const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ktv-browser-'))
 const db = initDb(root)
 const app = express()
 app.use(express.json())
-for (let id = 1; id <= 3; id++) db.prepare("INSERT INTO users (username, kind, created_at) VALUES (?, 'guest', ?)").run(`browser-${id}`, new Date().toISOString())
+const receiptRequests = [], receiptRoomName = 'Browser receipt room'
+let lostReceiptReplies = 0
+app.use((req, res, next) => {
+  if (req.path === '/api/ktv/rooms' && req.body?.name === receiptRoomName) {
+    receiptRequests.push(req.body.commandId)
+    const json = res.json.bind(res)
+    res.json = body => {
+      // A proxy can lose the upstream reply after commit and return 502. A
+      // bare TCP reset is unsuitable here: Chrome may transparently retry it.
+      if (body.success && lostReceiptReplies < 1) {
+        lostReceiptReplies++; res.status(502)
+        return json({ success: false, code: 'TEST_GATEWAY_LOST_REPLY', message: 'Gateway lost the committed reply' })
+      }
+      return json(body)
+    }
+  }
+  next()
+})
+for (let id = 1; id <= 4; id++) db.prepare("INSERT INTO users (username, kind, created_at) VALUES (?, 'guest', ?)").run(`browser-${id}`, new Date().toISOString())
 const user = id => ({ id, username: `browser-${id}`, name: `Browser ${id}`, role: 'user', kind: 'guest' })
 const auth = (req, res, next) => {
   const id = Number(req.headers.authorization?.replace('Bearer ', ''))
-  if (!Number.isInteger(id) || id < 1 || id > 3) return res.sendStatus(401)
+  if (!Number.isInteger(id) || id < 1 || id > 4) return res.sendStatus(401)
   req.auth = { sub: id }; next()
 }
 app.get('/api/auth/me', auth, (req, res) => res.json({ success: true, data: user(req.auth.sub) }))
@@ -88,7 +106,7 @@ async function tab(session, name) {
   await evaluate(session, `document.getElementById('party-tab-${name}').click()`)
   await poll(() => evaluate(session, `document.getElementById('party-tab-${name}').getAttribute('aria-selected') === 'true' && document.getElementById('party-panel-${name}').getClientRects().length > 0`), `${name} tab`)
 }
-async function page(actor, route) {
+async function page(actor, route, ready = "document.body?.innerText.includes('Live room updates connected')") {
   const socket = actor === 2 && phoneSocket ? phoneSocket : debuggerSocket
   const { browserContextId } = await cdp('Target.createBrowserContext', {}, undefined, socket)
   contexts.push({ browserContextId, socket })
@@ -139,7 +157,7 @@ async function page(actor, route) {
       return node;
     };` }, sessionId)
   await cdp('Page.navigate', { url: origin + route }, sessionId)
-  await poll(() => evaluate(sessionId, "document.body?.innerText.includes('Live room updates connected')"), 'room connected')
+  await poll(() => evaluate(sessionId, ready), 'page ready')
   assert.equal(await evaluate(sessionId, 'document.hidden'), false)
   return sessionId
 }
@@ -163,10 +181,54 @@ try {
   }
   debuggerSocket = await connect(process.env.CHROME_DEBUG_URL || 'http://127.0.0.1:9229', 'Stage browser')
   if (process.env.CHROME_SINGER_DEBUG_URL) phoneSocket = await connect(process.env.CHROME_SINGER_DEBUG_URL, 'Singer browser')
+  const receiptPage = await page(4, '/party', "!!document.getElementById('party-room-name')")
+  const fillReceiptForm = () => evaluate(receiptPage, `(() => {
+    for (const [id, value] of [['party-room-name', ${JSON.stringify(receiptRoomName)}], ['party-host-name', 'Receipt host']]) {
+      const input = document.getElementById(id); input.value = value; input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  })()`)
+  await fillReceiptForm(); await click(receiptPage, 'Create room')
+  await poll(() => evaluate(receiptPage, "!!document.querySelector('[role=alert]')"), 'lost room reply feedback')
+  check(lostReceiptReplies === 1 && db.prepare('SELECT COUNT(*) total FROM ktv_rooms WHERE name = ?').get(receiptRoomName).total === 1,
+    'A gateway losing the committed reply leaves one room and visible retry feedback')
+  await cdp('Page.reload', {}, receiptPage)
+  await poll(() => evaluate(receiptPage, "!!document.getElementById('party-room-name')"), 'receipt page reload')
+  await fillReceiptForm(); await click(receiptPage, 'Create room')
+  await poll(() => evaluate(receiptPage, "document.body.innerText.includes('Live room updates connected')"), 'room restored after lost reply')
+  check(receiptRequests.length === 2 && new Set(receiptRequests).size === 1,
+    'Room creation retries use the same command ID after a full tab reload')
+  const receiptRoomId = db.prepare('SELECT id FROM ktv_rooms WHERE name = ?').get(receiptRoomName).id
+  await api(4, `/rooms/${receiptRoomId}/close`, {})
+  await cdp('Target.closeTarget', { targetId: (await cdp('Target.getTargetInfo', {}, receiptPage)).targetInfo.targetId })
+  const admissionRoom = await api(1, '/rooms', { name: 'Browser admission party', displayName: 'Host' })
+  await api(4, '/join', { code: admissionRoom.invitationCode, displayName: 'Waiting guest' })
+  const waitingGuest = await page(4, `/party/join#invite=${admissionRoom.invitationCode}`)
+  check(await evaluate(waitingGuest, "document.body.innerText.includes('Waiting for host approval') && !document.querySelector('[role=tablist]')"),
+    'A returning pending guest recovers the approval screen without admitted controls')
+  await api(1, `/rooms/${admissionRoom.room.id}/close`, {})
+  await cdp('Target.closeTarget', { targetId: (await cdp('Target.getTargetInfo', {}, waitingGuest)).targetInfo.targetId })
   let view = await api(1, '/rooms', { name: 'Browser playback party', displayName: 'Host', approvalRequired: false })
   pathRoom = `/rooms/${view.room.id}`
   await api(2, '/join', { code: view.invitationCode, displayName: 'Singer' })
   await api(3, '/join', { code: view.invitationCode, displayName: 'Viewer' })
+  const newGuest = await page(4, `/party/join#invite=${view.invitationCode}`, "!!document.getElementById('party-guest-name') && !document.querySelector('[role=status]')")
+  await poll(() => evaluate(newGuest, "document.activeElement?.id === 'party-guest-name'"), 'new guest name focus')
+  check(await evaluate(newGuest, "document.getElementById('party-guest-name').value === '' && !location.hash && !location.search"),
+    'New invitation guests choose a name and the code leaves the address bar')
+  check(!db.prepare('SELECT 1 FROM ktv_members WHERE room_id = ? AND user_id = 4').get(view.room.id),
+    'Opening an invitation alone does not create membership')
+  await evaluate(newGuest, "(() => { const input = document.getElementById('party-guest-name'); input.value = 'Viewer'; input.dispatchEvent(new Event('input', { bubbles: true })); })()")
+  await click(newGuest, 'Join room')
+  await poll(() => evaluate(newGuest, "document.body.innerText.includes('Live room updates connected')"), 'new guest admitted without signup')
+  const duplicateNames = db.prepare("SELECT id FROM ktv_members WHERE room_id = ? AND display_name = 'Viewer'").all(view.room.id)
+  check(duplicateNames.length === 2 && duplicateNames[0].id !== duplicateNames[1].id,
+    'Guest joining through the form gets a distinct participant ID despite a duplicate name')
+  await cdp('Target.closeTarget', { targetId: (await cdp('Target.getTargetInfo', {}, newGuest)).targetInfo.targetId })
+  const returning = await page(3, `/party/join#invite=${view.invitationCode}`)
+  check(await evaluate(returning, `location.pathname === '/party/${view.room.id}' && !document.getElementById('party-guest-name')`) &&
+    db.prepare('SELECT display_name FROM ktv_members WHERE room_id = ? AND user_id = 3').get(view.room.id).display_name === 'Viewer',
+    'Returning invitation guests recover their existing room and chosen name')
+  await cdp('Target.closeTarget', { targetId: (await cdp('Target.getTargetInfo', {}, returning)).targetInfo.targetId })
   const host = await page(1, `/party/${view.room.id}/stage`)
   const singer = await page(2, `/party/${view.room.id}`)
   await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }, singer)
