@@ -20,6 +20,7 @@ function sameHostOrigin(req, origin) {
 
 export function createKtvRealtime({ getSnapshot, allowedOrigins = [], clock, onDevice, onConnected, onDisconnected }) {
   const tickets = new Map()
+  const pendingBroadcasts = new Map()
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024, perMessageDeflate: false })
   let heartbeat
 
@@ -61,9 +62,19 @@ export function createKtvRealtime({ getSnapshot, allowedOrigins = [], clock, onD
   }
 
   function broadcast(roomId) {
+    const pending = pendingBroadcasts.get(roomId)
+    if (pending) clearTimeout(pending)
+    pendingBroadcasts.delete(roomId)
     for (const ws of wss.clients) {
       if (ws.readyState === WebSocket.OPEN && ws.roomId === roomId) sendSnapshot(ws)
     }
+  }
+  function scheduleBroadcast(roomId) {
+    if (!roomId || pendingBroadcasts.has(roomId)) return
+    // Concurrent queue requests can otherwise serialize the same growing room
+    // snapshot once per member per command. A later revision contains all of
+    // them; command HTTP replies and receipts remain immediate and individual.
+    pendingBroadcasts.set(roomId, setTimeout(() => broadcast(roomId), 25))
   }
   function broadcastLease(roomId, lease) {
     for (const ws of wss.clients) {
@@ -194,9 +205,11 @@ export function createKtvRealtime({ getSnapshot, allowedOrigins = [], clock, onD
 
   function close() {
     if (heartbeat) clearInterval(heartbeat)
+    for (const timer of pendingBroadcasts.values()) clearTimeout(timer)
+    pendingBroadcasts.clear()
     for (const ws of wss.clients) ws.terminate()
     wss.close()
   }
 
-  return { issueTicket, broadcast, broadcastLease, revokeMember, attach, close }
+  return { issueTicket, broadcast, scheduleBroadcast, broadcastLease, revokeMember, attach, close }
 }

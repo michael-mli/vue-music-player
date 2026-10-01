@@ -291,7 +291,11 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
       try {
         const data = work(req)
         res.json({ success: true, data })
-        if (changed) realtime.broadcast(req.params.id || data.room?.id || data.roomId || data.id)
+        if (changed) {
+          const roomId = req.params.id || data.room?.id || data.roomId || data.id
+          if (changed === 'batch') realtime.scheduleBroadcast(roomId)
+          else realtime.broadcast(roomId)
+        }
       }
       catch (error) {
         if (!(error instanceof RoomError)) console.error('[ktv]', error)
@@ -752,7 +756,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
       })
       return viewerSnapshot(req)
     })
-  }, true))
+  }, 'batch'))
 
   app.post('/api/ktv/rooms/:id/queue/:entryId/cancel', roomAccess(true), handler((req) => {
     const actor = user(req)
