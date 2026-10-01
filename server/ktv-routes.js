@@ -191,12 +191,14 @@ function snapshot(db, roomId, userId, key, clock, playback) {
   const result = {
     room: {
       id: room.id, name: room.name, approvalRequired: Boolean(room.approval_required),
-      locked: Boolean(room.locked), revision: room.revision, expiresAt: room.expires_at,
+      locked: Boolean(room.locked), stageInviteVisible: Boolean(room.stage_invite_visible), revision: room.revision, expiresAt: room.expires_at,
     },
     self: publicMember(self),
     clock: { clockId: clock.id, serverNowMs: clock.nowMs() },
   }
   if (self.admission !== 'admitted') return result
+
+  result.limits = { members: MAX_MEMBERS, queue: MAX_QUEUE, singerRequests: MAX_SINGER_REQUESTS }
 
   result.members = db.prepare(`SELECT id, display_name, role, cohost_at, admission FROM ktv_members
     WHERE room_id = ? AND admission IN ('admitted', 'pending')
@@ -215,10 +217,12 @@ function snapshot(db, roomId, userId, key, clock, playback) {
     result.playback = playback.snapshot(roomId)
     result.presence = playback.presence(roomId)
   }
-  if (self.role === 'host') {
+  if (self.role === 'host' || room.stage_invite_visible) {
     const invite = db.prepare(`SELECT * FROM ktv_invitations WHERE room_id = ? AND revoked_at IS NULL
       ORDER BY rowid DESC LIMIT 1`).get(roomId)
-    result.invitationCode = invite ? decryptCode(invite, key) : null
+    const code = invite ? decryptCode(invite, key) : null
+    if (self.role === 'host') result.invitationCode = code
+    if (room.stage_invite_visible && !room.locked) result.stageInvitationCode = code
   }
   return result
 }
@@ -829,16 +833,18 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
 
   app.post('/api/ktv/rooms/:id/settings', roomAccess(true), handler((req) => {
     const actor = user(req)
-    const { locked, approvalRequired } = req.body || {}
-    if (typeof locked !== 'boolean' && typeof approvalRequired !== 'boolean') {
+    const { locked, approvalRequired, stageInviteVisible } = req.body || {}
+    if (typeof locked !== 'boolean' && typeof approvalRequired !== 'boolean' && typeof stageInviteVisible !== 'boolean') {
       fail(400, 'INVALID_INPUT', 'A room setting is required')
     }
     return transaction(db, () => {
       const room = activeRoom(db, req.params.id)
       moderatorMember(db, room.id, actor.id)
-      db.prepare('UPDATE ktv_rooms SET locked = ?, approval_required = ?, revision = revision + 1 WHERE id = ?')
+      if (typeof stageInviteVisible === 'boolean') hostMember(db, room.id, actor.id)
+      db.prepare('UPDATE ktv_rooms SET locked = ?, approval_required = ?, stage_invite_visible = ?, revision = revision + 1 WHERE id = ?')
         .run(Number(typeof locked === 'boolean' ? locked : room.locked),
-          Number(typeof approvalRequired === 'boolean' ? approvalRequired : room.approval_required), room.id)
+          Number(typeof approvalRequired === 'boolean' ? approvalRequired : room.approval_required),
+          Number(typeof stageInviteVisible === 'boolean' ? stageInviteVisible : room.stage_invite_visible), room.id)
       event(db, room.id, actor.id, 'room.settings')
       return viewerSnapshot(req)
     })

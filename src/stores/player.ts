@@ -1298,7 +1298,7 @@ export const usePlayerStore = defineStore('player', () => {
 
   function startSleepTimerCountdown() {
     if (sleepTimer.value > 0 && sleepTimerRemaining.value > 0) {
-      sleepTimerInterval.value = setInterval(() => {
+      sleepTimerInterval.value = window.setInterval(() => {
         sleepTimerRemaining.value--
         
         // Save every 10 seconds to persist remaining time
@@ -1351,7 +1351,7 @@ export const usePlayerStore = defineStore('player', () => {
     }
     
     // Start new interval to increment playtime every second
-    playtimeInterval.value = setInterval(() => {
+    playtimeInterval.value = window.setInterval(() => {
       totalPlaytime.value += 1
       sessionPlaytime.value += 1
 

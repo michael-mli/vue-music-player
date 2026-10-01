@@ -16,10 +16,12 @@ export interface PartySnapshot {
     name: string
     approvalRequired: boolean
     locked: boolean
+    stageInviteVisible?: boolean
     revision: number
     expiresAt: string
   }
   self: PartyMember
+  limits?: { members: number; queue: number; singerRequests: number }
   clock: { clockId: string; serverNowMs: number }
   readiness?: PartyReadiness
   playback?: PartyPlayback
@@ -29,6 +31,7 @@ export interface PartySnapshot {
   excludedMembers?: (PartyMember & { blocked: boolean })[]
   queue?: PartyQueueEntry[]
   invitationCode?: string | null
+  stageInvitationCode?: string | null
   deviceScope?: 'display' | 'controller'
   deviceId?: string
 }
@@ -223,7 +226,7 @@ export const partyApi = {
     call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/members/${encodeURIComponent(memberId)}/transfer-host`, { commandId }, true),
   rotate: (roomId: string) =>
     call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/invitations/rotate`),
-  settings: (roomId: string, changes: { locked?: boolean; approvalRequired?: boolean }) =>
+  settings: (roomId: string, changes: { locked?: boolean; approvalRequired?: boolean; stageInviteVisible?: boolean }) =>
     call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/settings`, changes),
   close: (roomId: string) =>
     call<{ id: string; status: 'closed' }>('post', `/rooms/${encodeURIComponent(roomId)}/close`),

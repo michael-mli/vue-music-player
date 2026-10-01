@@ -33,10 +33,12 @@ const error = ref('')
 const busy = ref(false)
 
 onMounted(async () => {
-  const invite = new URLSearchParams(window.location.hash.slice(1)).get('invite')
+  const url = new URL(window.location.href)
+  const invite = new URLSearchParams(url.hash.slice(1)).get('invite') || url.searchParams.get('code') || url.searchParams.get('invite')
   if (invite) {
     code.value = invite.toUpperCase()
-    window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search)
+    url.hash = ''; url.searchParams.delete('code'); url.searchParams.delete('invite')
+    window.history.replaceState(window.history.state, '', url.pathname + url.search)
   }
   await auth.ensureIdentity()
   if (auth.isRegistered) displayName.value = auth.displayName

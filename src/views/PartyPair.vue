@@ -28,10 +28,12 @@ const error = ref('')
 const busy = ref(false)
 
 onMounted(() => {
-  const pair = new URLSearchParams(window.location.hash.slice(1)).get('pair')
+  const url = new URL(window.location.href)
+  const pair = new URLSearchParams(url.hash.slice(1)).get('pair') || url.searchParams.get('code') || url.searchParams.get('pair')
   if (pair) {
     code.value = pair.toUpperCase()
-    window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search)
+    url.hash = ''; url.searchParams.delete('code'); url.searchParams.delete('pair')
+    window.history.replaceState(window.history.state, '', url.pathname + url.search)
   }
 })
 

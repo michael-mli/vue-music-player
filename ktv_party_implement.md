@@ -48,7 +48,7 @@ inheritance and revocation of the former host’s paired control permissions.
 | P01 | Two-device audio feasibility prototype | P00 minimum timing contract | In progress | Monotonic clock estimator tested; audio prototype and acoustic measurements open |
 | P02 | Rooms, identities, invitations, permissions, persistence | P00 | In progress | Rooms, pairing, moderation and atomic host transfer tested; general receipts and cleanup open |
 | P03 | Realtime state, commands, queue, leases | P02 | In progress | Versioned playback timeline, checkpoints, presence, renewable stage leases and turn history tested; fair automatic next turns and host-loss grace/transfer tested |
-| P04 | Stage, phone controller, host UI | P02–P03 | In progress | Entry, join, pairing, moderation, singer selection/readiness, queue, pinned lyrics, playback and guide controls; QR/tabs/accessibility open |
+| P04 | Stage, phone controller, host UI | P02–P03 | In progress | Entry/join/pairing, Songs/Queue/Sing/People tabs, local invitation/pairing QR, moderation, readiness and guide controls; broad accessibility/physical coverage open |
 | P05 | Scheduled playback, private guide, shared lyrics | P01, P03–P04 | In progress | Stage/guide/lyrics/controls pass Chrome journey; required-guide and rendered-drift/output recovery tested; physical timing open |
 | P06 | Recovery, browser coverage, local release readiness | P02–P05 | In progress | Guide/stage loss, host transfer, restart and revocation have automated evidence; physical/device coverage open |
 | P07 | Online performance streaming and hybrid operation | P01, stable P03/P05 contracts | Not started | — |
@@ -263,13 +263,13 @@ Likely files: `src/views/party/{PartyHome,PartyJoin,PartyRoom,PartyStage,PartyPa
   QR display, paired device setup, and waiting/admission screens. Direct invitations
   prefill the code and ask unregistered guests for `Your name`, with no signup step;
   returning admitted members reconnect directly.
-- [ ] P04.2 Build the common stage with readable lyrics, singer, progress, countdown,
+- [x] P04.2 Build the common stage with readable lyrics, singer, progress, countdown,
   up-next entries, muted-viewer state, and host-controlled invitation visibility.
-- [ ] P04.3 Build phone Songs and Queue tabs using existing catalog/search helpers;
+- [x] P04.3 Build phone Songs and Queue tabs using existing catalog/search helpers;
   show requester/singer attribution, caps, priority request status, and readiness.
-- [ ] P04.4 Build People and host controls for approval, removal, roles, stage
+- [x] P04.4 Build People and host controls for approval, removal, roles, stage
   assignment, invitation rotation, room locking, and settings.
-- [ ] P04.5 Build the Sing tab shell: enable guide, personal volume, timing correction,
+- [x] P04.5 Build the Sing tab shell: enable guide, personal volume, timing correction,
   required/optional guide preference, lyric view, and connection status.
 - [ ] P04.6 Add scoped action availability and server-error feedback; a disabled
   button is presentation, with the server retaining authority.
@@ -305,8 +305,8 @@ turn; the stage shows that singer/song and the human readiness state. Connection
 details show clock estimates, explicitly separate from headphone/speaker timing.
 Stage selection, explicit audio enablement, personal guide volume/calibration and
 host prepare/start/pause/resume/seek/skip/lyric-correction controls are wired.
-Three isolated Chrome sessions pass 27 playback/recovery/output checks without runtime exceptions.
-QR, full phone tabs, broader accessibility checks and physical acceptance are open.
+Three isolated Chrome sessions pass 42 playback/recovery/output and phone-UI checks without runtime exceptions. Stage and singer use separate Chrome 146.0.7680.71 processes with headless foreground scheduling flags.
+The controller has four persistent tabs with arrow/Home/End keyboard focus, a singer turn prompt and server-provided request caps. Local invitation/pairing QR codes have accessible links; an independent OpenCV decoder matches both links. The host controls common-screen invitation visibility, which defaults off, follows rotation and hides when locked. Fullscreen has an explicit exit and a separate refusal state. Broader accessibility, returning-invite recovery and physical acceptance remain open.
 
 ## 8. P05 — Production playback and private vocal guide
 
@@ -535,7 +535,12 @@ For the isolated production-build browser journey, start an owned disposable
 Chrome instance with `--headless=new --no-sandbox --disable-dev-shm-usage
 --remote-debugging-port=9229 --user-data-dir=/tmp/ktv-browser-owned-profile`, then
 run `npm run test:party:browser`. `CHROME_DEBUG_URL` overrides the local DevTools
-endpoint. The script creates temporary SQLite identities, generated audio fixtures
+endpoint. For the release journey use a second owned Chrome for the singer and set
+`CHROME_SINGER_DEBUG_URL` to its DevTools endpoint. Both foreground test processes
+use `--disable-background-timer-throttling --disable-renderer-backgrounding
+--disable-backgrounding-occluded-windows`. Run CPU-heavy backend/build checks before
+the audio journey. These are headless harness conditions, not a physical-device
+support claim. The script creates temporary SQLite identities, generated audio fixtures
 and three separate browser contexts, then removes them. It verifies UI and source
 scheduling; it does not record physical speaker/headphone output.
 
@@ -565,9 +570,9 @@ prototype result is not automatically a release result.
 
 ### Current next action
 
-Finish rendered-drift/output recovery deployment checks, then complete phone
-UI/QR/accessibility and general command receipts/cleanup/limits. Continue the SFU/TURN and online/hybrid capture
-implementation. Physical phone/screen timing, memory, background and browser
+Finish the combined audio-recovery/phone-UI release verification and deployment.
+Then implement general command receipts, room cleanup/limits and returning-invite
+recovery, followed by SFU/TURN and online/hybrid capture. Physical phone/screen timing, memory, background and browser
 coverage remain acceptance gates. Remaining P02/P04 work includes general receipts,
 cleanup/abuse limits, QR invitations, phone tabs and accessibility.
 
@@ -619,6 +624,8 @@ cleanup/abuse limits, QR invitations, phone tabs and accessibility.
 | 2026-09-30 | Required-guide, next-turn and host-loss implementation | Playback/schema/turn service, HTTP/WSS commands, guide/host UI and browser journey | Backend 63/63, clock/audio 8/8, Chrome 146.0.7680.71 production-build journey 20/20, type-check/build and diff check pass | Singer-bound required-guide gating, heartbeat/seek recovery, fair automatic next readiness and atomic co-host inheritance verified in software. Physical audio, output changes/drift, full phone UI and online/hybrid remain open |
 | 2026-09-30 | Required-guide, next-turn and host-loss preview deployment | `323c922`, frontend `main-Ccfld-0j.js`, `https://music.micstec.com/party` | Backend 63/63; clock/audio 8/8; release Chrome journey 20/20; public recovery protocol 13/13; seven public route/assets, exact frontend SHA/hash, additive schema and zero foreign-key violations verified | Temporary room closed. Backup `/tmp/ktv-party-recovery-predeploy.y3xiwtl9`; health succeeded after two connection retries during restart. Physical audio, output changes/drift, receipts/cleanup, QR/tabs/accessibility and online/hybrid remain open |
 | 2026-09-30 | Rendered drift/output recovery implementation | Audio engine/output monitor, device fault status and bilingual UI | Backend 64/64; clock/audio 15/15; production-build Chrome 146.0.7680.71 journey 27/27; type-check/build and diff check pass | Timestamp phase samples, estimate-only fallback, explicit output retry, calibration invalidation and slow-output late attachment implemented. Includes stale decode cancellation and loss of previously available timestamps. Browser sink events are simulated; physical audio/output detection remains unverified |
+
+| 2026-09-30 | Phone tabs, invitation/pairing QR and common-screen controls | `PartyRoom.vue`, `PartyQrCode.vue`, bilingual UI, additive stage invitation preference and production browser journey | Backend 65/65 plus locked-screen invitation regression; clock/audio 15/15; release-candidate Chrome 42/42; independent OpenCV decodes match both QR links; type-check/build pass | Persistent Songs/Queue/Sing/People panels retain guide audio. Keyboard focus, server request caps, host-only stage invitation visibility/rotation/lock hiding and explicit fullscreen exit verified. Headless foreground flags and separate stage/singer processes used; physical timing, broader a11y, returning-invite recovery and streaming remain open |
 
 ### Work-session update template
 

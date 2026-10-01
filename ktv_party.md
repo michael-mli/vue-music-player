@@ -72,6 +72,26 @@ Invitation links can use `/party/join#invite=...`; redeem through an authenticat
 POST and remove the fragment afterward. An invitation is not a membership token.
 Possessing a stage URL alone does not grant admission to the room.
 
+The implemented controller has Songs, Queue, Sing, and People tabs. Arrow keys,
+Home, and End select a tab and move keyboard focus; inactive panels are hidden.
+The Sing panel remains mounted, so changing tabs keeps its private audio graph
+and calibration. A selected singer sees a turn prompt from the other tabs.
+Songs shows the selected singer's pending count against the server's request cap.
+
+Host invitations and short-lived device connections have QR codes generated
+locally with `qrcode` and accessible text links. Both URLs carry the code in their
+fragment; the join/pair pages also accept legacy `?code=` links and remove the code
+from the address after reading it. Scanning a pairing link prefills its form;
+connection still requires a tap and the server's one-time redemption check.
+
+The host can expose or hide the invitation on common screens. This preference
+defaults to off and persists in `ktv_rooms.stage_invite_visible`. Only admitted
+snapshots include `stageInvitationCode` while visible and unlocked; waiting guests
+never receive it. Paired displays still omit the private host invitation and cannot execute host
+commands. Rotation updates the exposed code, and locking hides it immediately.
+The stage's fullscreen control toggles an explicit exit; browser refusal has a
+separate message and does not change audio readiness.
+
 ### 3.2 Main journey
 
 1. Host creates a room and chooses admission, queue, and audience settings.

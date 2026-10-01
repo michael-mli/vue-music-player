@@ -48,6 +48,40 @@ async function setup(t, options = {}) {
   return { db, request, realtime, socketUrl: `ws://127.0.0.1:${server.address().port}/api/ktv/ws`, origin: `http://127.0.0.1:${server.address().port}` }
 }
 
+test('only the host exposes an invitation on admitted common screens and can hide it again', async t => {
+  const { request, db } = await setup(t)
+  let view = (await request('POST', '/rooms', 1, { name: 'Stage invitations', displayName: 'Host' })).body.data
+  const route = `/rooms/${view.room.id}`, code = view.invitationCode
+  const joined = (await request('POST', '/join', 2, { code, displayName: 'Cohost' })).body.data
+  const pairing = (await request('POST', `${route}/pairings`, 1, { scope: 'display' })).body.data
+  const grant = (await request('POST', '/pairings/redeem', 1, { code: pairing.code })).body.data
+  const display = { device: grant.credential }
+  assert.equal((await request('GET', route, display)).body.data.stageInvitationCode, undefined)
+  await request('POST', `${route}/members/${joined.self.id}/approve`, 1, {})
+  await request('POST', `${route}/members/${joined.self.id}/role`, 1, { commandId: randomUUID(), role: 'cohost' })
+  assert.equal((await request('POST', `${route}/settings`, 2, { stageInviteVisible: true })).body.code, 'FORBIDDEN')
+  assert.equal((await request('POST', `${route}/settings`, display, { stageInviteVisible: true })).body.code, 'DEVICE_REVOKED')
+  view = (await request('POST', `${route}/settings`, 1, { stageInviteVisible: true })).body.data
+  assert.equal(view.room.stageInviteVisible, true)
+  const publicStage = (await request('GET', route, display)).body.data
+  assert.equal(publicStage.invitationCode, undefined)
+  assert.equal(publicStage.stageInvitationCode, code)
+  assert.deepEqual(publicStage.limits, { members: 20, queue: 100, singerRequests: 3 })
+  await request('POST', `${route}/settings`, 2, { locked: true })
+  assert.equal((await request('GET', route, display)).body.data.stageInvitationCode, undefined)
+  await request('POST', `${route}/settings`, 2, { locked: false })
+  assert.equal((await request('GET', route, display)).body.data.stageInvitationCode, code)
+  const pending = (await request('POST', '/join', 3, { code, displayName: 'Waiting' })).body.data
+  assert.equal(pending.stageInvitationCode, undefined)
+  assert.equal(pending.limits, undefined)
+  view = (await request('POST', `${route}/invitations/rotate`, 1, {})).body.data
+  assert.notEqual(view.stageInvitationCode, code)
+  assert.equal((await request('GET', route, display)).body.data.stageInvitationCode, view.stageInvitationCode)
+  assert.equal(db.prepare('SELECT stage_invite_visible FROM ktv_rooms WHERE id = ?').get(view.room.id).stage_invite_visible, 1)
+  await request('POST', `${route}/settings`, 1, { stageInviteVisible: false })
+  assert.equal((await request('GET', route, display)).body.data.stageInvitationCode, undefined)
+})
+
 function nextSnapshot(ws) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => { cleanup(); reject(new Error('snapshot timeout')) }, 3000)

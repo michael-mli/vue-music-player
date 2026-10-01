@@ -5,7 +5,7 @@
         <h2 class="text-xl font-semibold">{{ $t(stage ? 'party.stage' : 'party.playbackTitle') }}</h2>
         <p class="mt-2 max-w-xl text-sm text-gray-300">{{ $t(stage ? 'party.stageAudioHint' : 'party.guideAudioHint') }}</p>
       </div>
-      <button v-if="stage && fullscreenSupported" type="button" class="rounded-full border border-white/30 px-4 py-2 text-sm" @click="fullscreen">{{ $t('party.fullscreen') }}</button>
+      <button v-if="stage && fullscreenSupported" type="button" class="min-h-[44px] rounded-full border border-white/30 px-4 py-2 text-sm" :aria-pressed="isFullscreen" @click="fullscreen">{{ $t(isFullscreen ? 'party.exitFullscreen' : 'party.fullscreen') }}</button>
     </header>
     <div class="mt-4 flex flex-wrap items-center gap-3">
       <button v-if="stage && !enabled" type="button" class="rounded-full bg-spotify-green px-5 py-3 font-semibold text-black" @click="audio.enable('stage')">{{ $t('party.enableStageAudio') }}</button>
@@ -14,6 +14,7 @@
       <p class="text-sm text-gray-300" role="status">{{ $t(blocked ? 'party.audioRecoveryWaiting' : preparing ? 'party.audioLoading' : prepared ? 'party.audioPrepared' : enabled ? 'party.audioEnabled' : 'party.audioMuted') }}</p>
       <p v-if="stage && enabled" class="text-sm text-spotify-green">{{ $t(assignedHere ? 'party.stageAssignedHere' : 'party.stageAwaitingAssignment') }}</p>
     </div>
+    <p v-if="fullscreenFailed" role="status" class="mt-3 text-sm text-amber-200">{{ $t('party.fullscreenFailed') }}</p>
     <p v-if="failure" role="alert" class="mt-3 text-sm text-red-300">{{ $t(`party.${failure}`) }}</p>
     <button v-if="failure && enabled" type="button" class="mt-2 min-h-[44px] text-sm text-spotify-green underline" @click="retryAudio">{{ $t(failure === 'audioOutputChanged' ? 'party.confirmOutputAndRetry' : 'party.retryAudio') }}</button>
     <div v-if="enabled" class="mt-5 flex flex-wrap items-center gap-4">
@@ -35,6 +36,7 @@
       <p class="mt-2">{{ $t('party.audioDiagnosticsHint') }}</p>
       <dl class="mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
         <dt>{{ $t('party.audioPhaseEstimate') }}</dt><dd class="tabular-nums">{{ diagnostics.phaseErrorMs ?? '—' }} ms</dd>
+        <dt>{{ $t('party.audioMaxPhaseEstimate') }}</dt><dd class="tabular-nums">{{ diagnostics.maxAbsPhaseErrorMs }} ms ({{ diagnostics.sampleCount }})</dd>
         <dt>{{ $t('party.audioOutputLatency') }}</dt><dd class="tabular-nums">{{ diagnostics.outputLatencyMs === null ? '—' : Math.round(diagnostics.outputLatencyMs) }} ms</dd>
         <dt>{{ $t('party.audioTimingMethod') }}</dt><dd>{{ $t(`party.audioTiming_${diagnostics.timingMode}`) }}</dd>
         <dt>{{ $t('party.audioBufferMemory') }}</dt><dd class="tabular-nums">{{ diagnostics.decodedMiB }} MiB</dd>
@@ -106,7 +108,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { PartySnapshot } from '@/services/partyApi'
 import type { usePartyPlayback } from '@/composables/usePartyPlayback'
@@ -124,7 +126,22 @@ const hostGraceSeconds = computed(() => Math.max(0, Math.ceil(((props.party.pres
 const recoveryMessage = computed(() => playback.value?.recoveryReason?.startsWith('guide.') ? 'party.guideRecovery' :
   playback.value?.recoveryReason === 'service.restarted' ? 'party.serviceRecovery' : 'party.stageRecovery')
 const fullscreenSupported = !!document.fullscreenEnabled
-async function fullscreen() { try { await document.documentElement.requestFullscreen() } catch { failure.value = 'fullscreenFailed' } }
+const isFullscreen = ref(!!document.fullscreenElement)
+const fullscreenFailed = ref(false)
+let ownsFullscreen = false
+function fullscreenChanged() { isFullscreen.value = !!document.fullscreenElement; if (!isFullscreen.value) ownsFullscreen = false }
+onMounted(() => document.addEventListener('fullscreenchange', fullscreenChanged))
+onUnmounted(() => {
+  document.removeEventListener('fullscreenchange', fullscreenChanged)
+  if (ownsFullscreen && document.fullscreenElement) void document.exitFullscreen().catch(() => {})
+})
+async function fullscreen() {
+  fullscreenFailed.value = false
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen()
+    else { await document.documentElement.requestFullscreen(); ownsFullscreen = true }
+  } catch { fullscreenFailed.value = true }
+}
 function elapsed(ms: number) { const seconds = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` }
 function seek(event: Event) { emit('action', 'seek', { positionMs: Number((event.target as HTMLInputElement).value) }) }
 function correctLyrics(event: Event) { emit('action', 'lyrics', { lyricOffsetMs: Number((event.target as HTMLInputElement).value) }) }

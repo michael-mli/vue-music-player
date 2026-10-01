@@ -54,7 +54,8 @@ realtime.attach(server)
 await new Promise(resolve => server.once('listening', resolve))
 const origin = `http://127.0.0.1:${server.address().port}`
 const contexts = [], errors = [], sessions = []
-let debuggerSocket, nextId = 0, passed = 0
+let debuggerSocket, phoneSocket, nextId = 0, passed = 0
+const debuggerSockets = [], sessionSockets = new Map()
 const pending = new Map()
 async function api(actor, route, body) {
   const response = await fetch(`${origin}/api/ktv${route}`, { method: body === undefined ? 'GET' : 'POST',
@@ -67,12 +68,12 @@ async function poll(work, label, timeout = 15000) {
   while (Date.now() < deadline) { const result = await work(); if (result) return result; await new Promise(resolve => setTimeout(resolve, 100)) }
   throw new Error(`Timed out: ${label}`)
 }
-function cdp(method, params = {}, sessionId) {
+function cdp(method, params = {}, sessionId, socket = sessionSockets.get(sessionId) || debuggerSocket) {
   return new Promise((resolve, reject) => {
     const id = ++nextId
     const timeout = setTimeout(() => { pending.delete(id); reject(new Error(`DevTools timeout: ${method}`)) }, 15000)
     pending.set(id, { resolve: result => { clearTimeout(timeout); resolve(result) }, reject: error => { clearTimeout(timeout); reject(error) } })
-    debuggerSocket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
+    socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
   })
 }
 async function evaluate(session, expression) {
@@ -81,21 +82,28 @@ async function evaluate(session, expression) {
   return result.result.value
 }
 async function click(session, text) {
-  await poll(() => evaluate(session, `(() => { const button = [...document.querySelectorAll('button')].find(item => item.textContent.trim() === ${JSON.stringify(text)} && !item.disabled); if (!button) return false; button.click(); return true })()`), `button ${text}`)
+  await poll(() => evaluate(session, `(() => { const button = [...document.querySelectorAll('button')].find(item => item.textContent.trim() === ${JSON.stringify(text)} && !item.disabled && item.getClientRects().length); if (!button) return false; button.click(); return true })()`), `visible button ${text}`)
+}
+async function tab(session, name) {
+  await evaluate(session, `document.getElementById('party-tab-${name}').click()`)
+  await poll(() => evaluate(session, `document.getElementById('party-tab-${name}').getAttribute('aria-selected') === 'true' && document.getElementById('party-panel-${name}').getClientRects().length > 0`), `${name} tab`)
 }
 async function page(actor, route) {
-  const { browserContextId } = await cdp('Target.createBrowserContext')
-  contexts.push(browserContextId)
-  const { targetId } = await cdp('Target.createTarget', { url: 'about:blank', browserContextId })
-  const { sessionId } = await cdp('Target.attachToTarget', { targetId, flatten: true })
+  const socket = actor === 2 && phoneSocket ? phoneSocket : debuggerSocket
+  const { browserContextId } = await cdp('Target.createBrowserContext', {}, undefined, socket)
+  contexts.push({ browserContextId, socket })
+  const { targetId } = await cdp('Target.createTarget', { url: 'about:blank', browserContextId }, undefined, socket)
+  const { sessionId } = await cdp('Target.attachToTarget', { targetId, flatten: true }, undefined, socket)
+  sessionSockets.set(sessionId, socket)
   sessions.push(sessionId)
   await cdp('Runtime.enable', {}, sessionId); await cdp('Page.enable', {}, sessionId)
   await cdp('Page.addScriptToEvaluateOnNewDocument', { source: `
     localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', 'en');
-    window.__partyAudit = []; window.__partyContexts = []; window.__partyTimestamps = []; window.__partyClocks = [];
+    window.__partyAudit = []; window.__partyContexts = []; window.__partyTimestamps = []; window.__partyClocks = []; window.__partyPlaybacks = [];
     const timestamp = AudioContext.prototype.getOutputTimestamp;
     AudioContext.prototype.getOutputTimestamp = function() {
-      const result = timestamp.call(this);
+      const native = timestamp.call(this);
+      const result = { ...native, contextTime: Math.max(0, native.contextTime - (window.__partyTimestampShiftMs || 0) / 1000) };
       window.__partyTimestamps.push({ ...result, now: performance.now(), currentTime: this.currentTime, outputLatency: this.outputLatency });
       if (window.__partyTimestamps.length > 256) window.__partyTimestamps.shift();
       return result;
@@ -110,6 +118,11 @@ async function page(actor, route) {
           if (packet.type === 'clock.reply') {
             window.__partyClocks.push({ ...packet, received: performance.now() });
             if (window.__partyClocks.length > 16) window.__partyClocks.shift();
+          }
+          if (packet.type === 'snapshot' && packet.data?.playback) {
+            const { state, generation, positionMs, anchorServerMs, pendingTransition } = packet.data.playback;
+            window.__partyPlaybacks.push({ state, generation, positionMs, anchorServerMs, pendingTransition, received: performance.now() });
+            if (window.__partyPlaybacks.length > 16) window.__partyPlaybacks.shift();
           }
         });
       }
@@ -133,24 +146,49 @@ async function page(actor, route) {
 const audit = session => evaluate(session, `window.__partyAudit.map(item => ({ starts: item.starts, stops: item.stops, ended: item.ended, contextTime: item.context.currentTime }))`)
 let pathRoom, closer = 1
 try {
-  const info = await (await fetch(`${process.env.CHROME_DEBUG_URL || 'http://127.0.0.1:9229'}/json/version`, { signal: AbortSignal.timeout(3000) })).json()
-  console.log(`Browser: ${info.Browser}`)
-  debuggerSocket = new WebSocket(info.webSocketDebuggerUrl)
-  await new Promise((resolve, reject) => { debuggerSocket.once('open', resolve); debuggerSocket.once('error', reject) })
-  debuggerSocket.on('message', raw => {
-    const packet = JSON.parse(raw)
-    if (packet.id) {
-      const item = pending.get(packet.id); if (!item) return
-      pending.delete(packet.id); packet.error ? item.reject(new Error(packet.error.message)) : item.resolve(packet.result)
-    } else if (packet.method === 'Runtime.exceptionThrown') errors.push(packet.params.exceptionDetails.exception?.description || packet.params.exceptionDetails.text)
-  })
+  async function connect(debugUrl, label) {
+    const info = await (await fetch(`${debugUrl}/json/version`, { signal: AbortSignal.timeout(3000) })).json()
+    console.log(`${label}: ${info.Browser}`)
+    const socket = new WebSocket(info.webSocketDebuggerUrl)
+    debuggerSockets.push(socket)
+    await new Promise((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject) })
+    socket.on('message', raw => {
+      const packet = JSON.parse(raw)
+      if (packet.id) {
+        const item = pending.get(packet.id); if (!item) return
+        pending.delete(packet.id); packet.error ? item.reject(new Error(packet.error.message)) : item.resolve(packet.result)
+      } else if (packet.method === 'Runtime.exceptionThrown') errors.push(packet.params.exceptionDetails.exception?.description || packet.params.exceptionDetails.text)
+    })
+    return socket
+  }
+  debuggerSocket = await connect(process.env.CHROME_DEBUG_URL || 'http://127.0.0.1:9229', 'Stage browser')
+  if (process.env.CHROME_SINGER_DEBUG_URL) phoneSocket = await connect(process.env.CHROME_SINGER_DEBUG_URL, 'Singer browser')
   let view = await api(1, '/rooms', { name: 'Browser playback party', displayName: 'Host', approvalRequired: false })
   pathRoom = `/rooms/${view.room.id}`
   await api(2, '/join', { code: view.invitationCode, displayName: 'Singer' })
   await api(3, '/join', { code: view.invitationCode, displayName: 'Viewer' })
   const host = await page(1, `/party/${view.room.id}/stage`)
   const singer = await page(2, `/party/${view.room.id}`)
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }, singer)
   const viewer = await page(3, `/party/${view.room.id}/stage`)
+  check(await evaluate(viewer, "!document.querySelector('canvas[aria-label=\"Scan to join this KTV room\"]')"), 'Common screen keeps invitations hidden by default')
+  if (await evaluate(host, 'document.fullscreenEnabled')) {
+    await click(host, 'Fullscreen')
+    await poll(() => evaluate(host, "!!document.fullscreenElement || document.body.innerText.includes('Fullscreen is unavailable')"), 'fullscreen result')
+    const entered = await evaluate(host, '!!document.fullscreenElement')
+    if (entered) {
+      await click(host, 'Exit fullscreen')
+      await poll(() => evaluate(host, '!document.fullscreenElement'), 'fullscreen exit')
+      check(await evaluate(host, '!document.fullscreenElement'), 'Stage provides an explicit fullscreen exit')
+    } else check(await evaluate(host, "document.body.innerText.includes('Fullscreen is unavailable')"), 'Fullscreen refusal leaves the stage usable with a clear fallback')
+  }
+  check(await evaluate(singer, "document.querySelectorAll('[role=tab]').length === 4 && [...document.querySelectorAll('[role=tabpanel]')].filter(panel => panel.getClientRects().length).length === 1"), 'Phone presents four tabs and one active panel')
+  await evaluate(singer, "document.getElementById('party-tab-songs').focus(); document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))")
+  await poll(() => evaluate(singer, "document.activeElement.id === 'party-tab-queue' && document.activeElement.getAttribute('aria-selected') === 'true'"), 'keyboard tab focus')
+  check(true, 'Arrow keys move selection and keyboard focus together')
+  await tab(singer, 'people')
+  check(await evaluate(singer, "!document.body.innerText.includes('Close room') && !document.body.innerText.includes('Invite people')"), 'Ordinary phone hides host-only controls')
+  await tab(singer, 'sing')
   check((await audit(viewer)).length === 0, 'Viewer stays silent before audio enablement')
   await click(host, 'Enable stage audio')
   await poll(async () => { const latest = await api(1, pathRoom); return latest.presence.devices.find(device => device.purpose === 'stage' && device.clockHealthy && device.audioEnabled) }, 'stage audio enabled')
@@ -173,6 +211,10 @@ try {
   await poll(async () => (await api(1, pathRoom)).playback.state === 'playing', 'playing')
   check((await audit(host)).length === 1, 'Designated stage schedules one backing source')
   check((await audit(singer)).length === 1, 'Singer phone schedules its private original source')
+  await tab(singer, 'queue')
+  check(await evaluate(singer, "document.body.innerText.includes('Requested by') && document.body.innerText.includes('Singer')"), 'Queue tab shows singer and requester attribution')
+  check((await audit(singer)).length === 1 && !(await audit(singer))[0].ended, 'Changing phone tabs preserves the active private guide')
+  await tab(singer, 'sing')
   check((await audit(viewer)).length === 0, 'Other common screens remain silent during playback')
   check(await evaluate(host, "document.body.innerText.includes('Start singing')"), 'Stage renders pinned synchronized lyrics')
   await click(host, 'Pause song')
@@ -202,16 +244,36 @@ try {
   await poll(async () => (await audit(singer)).length === 4, 'optional guide late attachment')
   check((await audit(singer)).at(-1).starts[0][1] >= 20, 'Optional guide attaches at the live position')
   await click(singer, "Turn off this device's audio")
-  check((await api(1, pathRoom)).playback.state === 'playing', 'Optional guide interruption leaves backing playing')
+  const beforeOutput = (await api(1, pathRoom)).playback
+  check(beforeOutput.state === 'playing', 'Optional guide interruption leaves backing playing')
   await click(singer, 'Enable private vocal guide')
   await poll(async () => (await audit(singer)).length === 5, 'guide enabled for output check')
   await click(singer, 'Earlier')
   await poll(() => evaluate(singer, "localStorage.getItem('party-guide-advance-ms') === '25'"), 'guide calibration before output change')
-  const stageCount = (await audit(host)).length
+  let stageCount = (await audit(host)).length
   await evaluate(singer, "window.__partyContexts[0].dispatchEvent(new Event('sinkchange'))")
   await poll(() => evaluate(singer, "document.body.innerText.includes('Audio output changed')"), 'guide output change alert')
   check(await evaluate(singer, "localStorage.getItem('party-guide-advance-ms') === '0'"), 'Changing guide output invalidates its old timing correction')
-  check((await api(1, pathRoom)).playback.state === 'playing' && (await audit(host)).length === stageCount, 'Optional guide output change preserves healthy backing')
+  // A real headless output-clock stall is a required recovery scenario. Do not
+  // disable drift detection or treat a recovered stage as a healthy speaker.
+  const afterOutput = await api(1, pathRoom)
+  if (afterOutput.playback.state === 'recovering' && afterOutput.playback.recoveryReason === 'stage.drift') {
+    const maxError = await evaluate(host, "parseFloat(document.querySelector('dl dd:nth-of-type(2)').textContent)")
+    check(maxError >= 80 && afterOutput.playback.entryId === beforeOutput.entryId && afterOutput.playback.generation > beforeOutput.generation,
+      'Rendered stage drift stops the room and preserves the current turn')
+    await poll(async () => (await audit(host)).every(record => record.ended), 'drift source silence')
+    await click(host, 'Retry audio preparation')
+    check((await api(1, pathRoom)).playback.state === 'recovering', 'Drift retry prepares without automatically resuming the room')
+    await click(host, 'Resume with countdown')
+    await poll(async () => (await api(1, pathRoom)).playback.state === 'playing', 'deliberate drift resume')
+    await click(singer, 'Confirm output and retry')
+    await poll(async () => (await audit(singer)).at(-1)?.starts.length && !(await audit(singer)).at(-1).ended, 'guide reattaches after drift recovery')
+    stageCount = (await audit(host)).length
+    await evaluate(singer, "window.__partyContexts[0].dispatchEvent(new Event('sinkchange'))")
+    await poll(() => evaluate(singer, "document.body.innerText.includes('Audio output changed')"), 'isolated optional guide output fault')
+  }
+  const healthyOutputTurn = (await api(1, pathRoom)).playback
+  check(healthyOutputTurn.state === 'playing' && (await audit(host)).length === stageCount, 'Optional guide output change preserves healthy backing')
   await poll(async () => (await audit(singer)).every(record => record.ended), 'optional guide stops for output recovery')
   const mutedCount = (await audit(singer)).length
   await new Promise(resolve => setTimeout(resolve, 300))
@@ -220,6 +282,18 @@ try {
   await poll(async () => (await audit(singer)).length === mutedCount + 1, 'guide resumes after explicit output confirmation')
   check(true, 'Explicit confirmation reattaches the guide to the live position')
   await click(singer, "Turn off this device's audio")
+  const driftTurn = healthyOutputTurn
+  await evaluate(host, 'window.__partyTimestampShiftMs = 350')
+  await poll(async () => { const current = await api(1, pathRoom); return current.playback.state === 'recovering' && current.playback.recoveryReason === 'stage.drift' ? current : false }, 'injected rendered-clock drift')
+  const driftRecovered = (await api(1, pathRoom)).playback
+  check(driftRecovered.entryId === driftTurn.entryId && driftRecovered.generation > driftTurn.generation, 'Rendered-clock drift preserves the selected turn under a recovery generation')
+  await poll(async () => (await audit(host)).every(record => record.ended), 'all drift backing sources stop')
+  check(true, 'Rendered-clock drift cancels the active backing source')
+  await evaluate(host, 'window.__partyTimestampShiftMs = 0')
+  await click(host, 'Retry audio preparation')
+  check((await api(1, pathRoom)).playback.state === 'recovering', 'Explicit drift retry does not restart backing by itself')
+  await click(host, 'Resume with countdown')
+  await poll(async () => ['scheduled', 'playing'].includes((await api(1, pathRoom)).playback.state), 'fresh drift countdown')
   await evaluate(host, "window.__partyContexts[0].dispatchEvent(new Event('sinkchange'))")
   await poll(async () => { const current = await api(1, pathRoom); return current.playback.state === 'recovering' && current.playback.recoveryReason === 'stage.output' }, 'stage output recovery')
   check(true, 'Stage output change preserves the song in room recovery')
@@ -237,8 +311,26 @@ try {
   check(true, 'Closing the stage enters recovery without advancing the queue')
   await poll(async () => (await api(2, pathRoom)).self.role === 'host', 'cohost inherits after grace')
   closer = 2
+  await tab(singer, 'people')
   await poll(() => evaluate(singer, "[...document.querySelectorAll('button')].some(item => item.textContent.trim() === 'Close room')"), 'transferred host controls')
   check(true, 'Transferred host controls update on the remaining phone')
+  await poll(() => evaluate(singer, "document.querySelector('canvas[aria-label=\"Scan to join this KTV room\"]')?.width === 224"), 'invitation QR rendering')
+  check(await evaluate(singer, "!!document.querySelector('a[href*=\"#invite=\"]') && !!document.querySelector('canvas[aria-label=\"Scan to join this KTV room\"]')"), 'Host has a local invitation QR and accessible link')
+  await evaluate(singer, "[...document.querySelectorAll('label')].find(label => label.textContent.includes('Show invitation QR')).querySelector('input').click()")
+  await poll(() => evaluate(viewer, "!!document.querySelector('canvas[aria-label=\"Scan to join this KTV room\"]')"), 'host exposes invitation on stage')
+  check(true, 'Host can show invitation QR on the common screen')
+  await evaluate(singer, "[...document.querySelectorAll('label')].find(label => label.textContent.includes('Show invitation QR')).querySelector('input').click()")
+  await poll(() => evaluate(viewer, "!document.querySelector('canvas[aria-label=\"Scan to join this KTV room\"]')"), 'host hides invitation on stage')
+  check(true, 'Hiding invitations removes the common-screen QR immediately')
+  await fs.writeFile('/tmp/ktv-ui-invitation-qr.png', Buffer.from((await evaluate(singer, "document.querySelector('canvas[aria-label=\"Scan to join this KTV room\"]').toDataURL().split(',')[1]")), 'base64'))
+  await fs.writeFile('/tmp/ktv-ui-invitation-qr-link.txt', await evaluate(singer, "document.querySelector('a[href*=\"#invite=\"]').href"))
+  await click(singer, 'Create pairing code')
+  await poll(() => evaluate(singer, "document.querySelector('canvas[aria-label=\"Scan to connect this device\"]')?.width === 224"), 'pairing QR rendering')
+  check(await evaluate(singer, "!!document.querySelector('a[href*=\"#pair=\"]')"), 'Device pairing has its own QR and scoped connection link')
+  await fs.writeFile('/tmp/ktv-ui-pairing-qr.png', Buffer.from((await evaluate(singer, "document.querySelector('canvas[aria-label=\"Scan to connect this device\"]').toDataURL().split(',')[1]")), 'base64'))
+  await fs.writeFile('/tmp/ktv-ui-pairing-qr-link.txt', await evaluate(singer, "document.querySelector('a[href*=\"#pair=\"]').href"))
+  check(await evaluate(singer, "document.documentElement.scrollWidth <= 390 && [...document.querySelectorAll('[role=tab]')].every(button => button.getBoundingClientRect().height >= 44)"), 'Phone tabs fit a 390-pixel viewport with touch-sized controls')
+  await tab(singer, 'sing')
   await evaluate(singer, 'window.confirm = () => true')
   await click(singer, 'Skip song')
   view = await poll(async () => { const current = await api(2, pathRoom); return current.readiness.title === 'Next browser song' ? current : false }, 'next singer automatically offered')
@@ -255,15 +347,16 @@ try {
   }
   for (const session of sessions) {
     console.error('UI errors:', await evaluate(session, "[...document.querySelectorAll('[role=alert]')].map(item => item.textContent)").catch(() => []))
-    console.error('Audio timing evidence:', await evaluate(session, "({sources: window.__partyAudit.map(item => ({starts:item.starts, stops:item.stops.slice(-2), currentTime:item.context.currentTime})), timestamps:window.__partyTimestamps.slice(-8), clocks:window.__partyClocks.slice(-3)})").catch(() => ({})))
+    console.error('Timing diagnostics:', await evaluate(session, "[...document.querySelectorAll('dl')].map(item => item.textContent)").catch(() => []))
+    console.error('Audio timing evidence:', JSON.stringify(await evaluate(session, "({sources: window.__partyAudit.map(item => ({starts:item.starts, stops:item.stops.slice(-2), currentTime:item.context.currentTime})), timestamps:window.__partyTimestamps.slice(-8), clocks:window.__partyClocks, playbacks:window.__partyPlaybacks})").catch(() => ({}))))
   }
   throw error
 } finally {
   if (pathRoom) await api(closer, `${pathRoom}/close`, {}).catch(() => {})
-  if (debuggerSocket?.readyState === WebSocket.OPEN) {
-    for (const browserContextId of contexts) await cdp('Target.disposeBrowserContext', { browserContextId }).catch(() => {})
-    debuggerSocket.close()
+  for (const { browserContextId, socket } of contexts) if (socket.readyState === WebSocket.OPEN) {
+    await cdp('Target.disposeBrowserContext', { browserContextId }, undefined, socket).catch(() => {})
   }
+  for (const socket of debuggerSockets) socket.close()
   realtime.close()
   await new Promise(resolve => server.close(resolve))
   db.close(); await fs.rm(root, { recursive: true, force: true })

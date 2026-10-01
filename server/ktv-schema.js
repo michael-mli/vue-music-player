@@ -136,6 +136,10 @@ export function initKtvSchema(db) {
       PRIMARY KEY (room_id, entry_id)
     );
   `)
+  const roomColumns = db.prepare('PRAGMA table_info(ktv_rooms)').all().map(column => column.name)
+  if (!roomColumns.includes('stage_invite_visible')) {
+    db.exec('ALTER TABLE ktv_rooms ADD COLUMN stage_invite_visible INTEGER NOT NULL DEFAULT 0 CHECK (stage_invite_visible IN (0, 1))')
+  }
   // Keep the original role/admission CHECKs and foreign keys intact. Co-host
   // capability and blocking are additive metadata on the existing membership.
   const columns = db.prepare('PRAGMA table_info(ktv_members)').all().map((column) => column.name)
