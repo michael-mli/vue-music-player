@@ -13,7 +13,56 @@ function compile(filename, replace = value => value) {
 const timingModule = compile('../src/utils/partyTimeline.ts')
 const { partyPosition, serverToAudioTime, partyOutputClock } = await import(timingModule)
 const { partyOutputSignature } = await import(compile('../src/services/partyOutputMonitor.ts'))
-const { PartyAudioEngine } = await import(compile('../src/services/partyAudioEngine.ts', source => source.replace("'@/utils/partyTimeline'", JSON.stringify(timingModule))))
+const { PartyAudioEngine, waitForPartyAudioClock } = await import(compile('../src/services/partyAudioEngine.ts', source => source.replace("'@/utils/partyTimeline'", JSON.stringify(timingModule))))
+
+test('output readiness waits through a running context with a stalled startup clock', async t => {
+  const original = globalThis.performance
+  let wall = 0, polls = 0
+  globalThis.performance = { now: () => wall }
+  t.after(() => { globalThis.performance = original })
+  const context = { state: 'running', currentTime: 0 }
+  await waitForPartyAudioClock(context, () => true, async () => {
+    wall += 100; polls++
+    if (polls > 20) context.currentTime += .1
+  })
+  assert.equal(polls, 23)
+})
+
+test('output readiness rejects a stalled, suspended or cancelled clock', async t => {
+  const original = globalThis.performance
+  let wall = 0
+  globalThis.performance = { now: () => wall }
+  t.after(() => { globalThis.performance = original })
+  const context = { state: 'running', currentTime: 0 }
+  const sleep = async () => { wall += 100 }
+  await assert.rejects(waitForPartyAudioClock(context, () => true, sleep), /AUDIO_OUTPUT_NOT_READY/)
+  await assert.rejects(waitForPartyAudioClock(context, () => false, sleep), /AUDIO_ENABLE_CANCELLED/)
+  context.state = 'suspended'
+  await assert.rejects(waitForPartyAudioClock(context, () => true, sleep), /AUDIO_ENABLE_CANCELLED/)
+})
+
+test('output readiness restarts its stable window after a render clock jump', async t => {
+  const original = globalThis.performance
+  let wall = 0, polls = 0
+  globalThis.performance = { now: () => wall }
+  t.after(() => { globalThis.performance = original })
+  const context = { state: 'running', currentTime: 0 }
+  await waitForPartyAudioClock(context, () => true, async () => {
+    wall += 100; polls++; context.currentTime += polls === 3 ? .3 : .1
+  })
+  assert.equal(polls, 6)
+})
+
+test('output readiness rejects a clock running consistently slower than wall time', async t => {
+  const original = globalThis.performance
+  let wall = 0
+  globalThis.performance = { now: () => wall }
+  t.after(() => { globalThis.performance = original })
+  const context = { state: 'running', currentTime: 0 }
+  await assert.rejects(waitForPartyAudioClock(context, () => true, async () => {
+    wall += 100; context.currentTime += .09
+  }), /AUDIO_OUTPUT_NOT_READY/)
+})
 
 test('browser and room timelines agree before and after a scheduled seek/pause', () => {
   for (const state of ['scheduled', 'playing', 'paused']) {
@@ -58,7 +107,10 @@ function fixture(t) {
     }
   }
   globalThis.AudioContext = Context
-  globalThis.window = { setTimeout, clearTimeout }
+  globalThis.window = { setTimeout: (work, delay) => {
+    if (delay === 100) return setTimeout(() => { nowMs += delay; context.currentTime += delay / 1000; work() }, 0)
+    return setTimeout(work, delay)
+  }, clearTimeout }
   const bytes = Buffer.from([1, 2, 3, 4])
   globalThis.fetch = async () => new Response(bytes)
   const asset = { url: '/test.mp3', bytes: 4, sha256: createHash('sha256').update(bytes).digest('hex'), durationMs: 60000,
@@ -87,7 +139,7 @@ test('decoded audio is hashed, bounded and remains silent without a current outp
   f.engine.sync(f.playback, f.clock, { ...f.lease, expiresServerMs: f.lease.expiresServerMs + 2000 }, 'stage')
   assert.ok(f.nodes[0].stops.at(-1)[0] > deadline + 1.9)
   f.engine.sync(f.playback, { ...f.clock, clockId: 'old-clock' }, f.lease, 'stage')
-  assert.equal(f.nodes[0].stops.at(-1)[0], 100)
+  assert.equal(f.nodes[0].stops.at(-1)[0], f.context.currentTime)
   await assert.rejects(f.engine.prepare({ ...f.asset, sha256: 'wrong-hash' }), /AUDIO_ASSET_CHANGED/)
   await assert.rejects(f.engine.prepare({ ...f.asset, durationMs: 10000000 }), /AUDIO_MEMORY_LIMIT/)
 })
@@ -182,8 +234,16 @@ test('a decode completing after an output fault cannot restore the old ready buf
   assert.equal(f.engine.preparedHash, '')
   assert.equal(f.engine.diagnostics.recovery, 'output')
   f.context.decodeAudioData = originalDecode
-  f.engine.resetRecovery(); await f.engine.prepare(f.asset)
+  f.engine.resetRecovery(); await f.engine.enable(); await f.engine.prepare(f.asset)
   assert.equal(f.engine.preparedHash, f.asset.sha256)
+})
+
+test('disabling audio while its clock settles cannot enable a stale request', async t => {
+  const f = fixture(t), pending = f.engine.enable()
+  assert.equal(f.engine.enabled, false)
+  f.engine.cancelEnable()
+  await assert.rejects(pending, /AUDIO_ENABLE_CANCELLED/)
+  assert.equal(f.engine.enabled, false)
 })
 
 test('loss of previously available output timestamps recovers an active device instead of inventing ongoing rendered samples', async t => {

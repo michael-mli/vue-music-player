@@ -14,7 +14,7 @@ const stubs = {
   '@/services/partyMediaTransport': 'export const createPartyMediaTransport = (...args) => globalThis.__partyMediaLifecycle.transport(...args);',
   '@/services/partyPublishGraph': 'export class PartyPublishGraph {}',
   '@/services/partyLyricCapture': 'export class PartyLyricCapture {}',
-  '@/services/partyAudioEngine': 'export class PartyAudioEngine {}',
+  '@/services/partyAudioEngine': 'export class PartyAudioEngine { constructor() { return globalThis.__partyMediaLifecycle.audioEngine(); } }',
   './useMicDevices': 'export const getMicStream = () => globalThis.__partyMediaLifecycle.mic(); export const releaseMicStream = stream => {for (const track of stream?.getTracks() || []) track.stop();};',
 }
 let compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText
@@ -32,7 +32,14 @@ function fixture(t) {
   const window = Object.assign(new EventTarget(), { setInterval(fn) { timers.set(timers.size + 1, fn); return timers.size }, clearInterval(id) { timers.delete(id) } })
   const document = Object.assign(new EventTarget(), { hidden: false })
   globalThis.window = window; globalThis.document = document
+  const engines = []
   const state = { cleanups, api: { async mediaStatus() { return { available: true } }, async mediaRevoke(...args) { removals.push(args) } },
+    audioEngine() {
+      const ready = deferred()
+      const engine = { ready, prepared: 0, closed: false, enable: () => ready.promise,
+        async prepare() { this.prepared++ }, stop() {}, async close() { this.closed = true }, setVolume() {} }
+      engines.push(engine); return engine
+    },
     mic() { const request = deferred(); micRequests.push(request); return request.promise }, transport() { throw new Error('Unexpected transport creation') } }
   globalThis.__partyMediaLifecycle = state
   const party = ref({ room: { id: 'first-room', performanceMode: 'online', mediaConfigured: true }, self: { id: 'singer', role: 'member', admission: 'admitted' },
@@ -47,7 +54,7 @@ function fixture(t) {
     await nextTick()
     globalThis.window = previous.window; globalThis.document = previous.document; globalThis.__partyMediaLifecycle = previous.state
   })
-  return { media, party, connected, audio, document, window, micRequests, state, removals, get disabled() { return disabled } }
+  return { media, party, connected, audio, document, window, micRequests, state, removals, engines, get disabled() { return disabled } }
 }
 async function permissionRequested(f) {
   for (let attempt = 0; attempt < 10 && !f.micRequests.length; attempt++) await nextTick()
@@ -96,4 +103,21 @@ test('paired displays cannot request microphone capture even when they represent
   f.party.value.deviceScope = 'display'
   await f.media.prepareCapture()
   assert.equal(f.micRequests.length, 0); assert.equal(f.media.captureActive.value, false)
+})
+
+test('turning off a private guide while audio starts keeps the microphone and skips stale decode', async t => {
+  const f = fixture(t), capture = f.media.prepareCapture()
+  await permissionRequested(f)
+  const input = stream(); f.micRequests[0].resolve(input); await capture
+  f.party.value.playback.assets = { original: { sha256: 'guide' } }
+  const pending = f.media.toggleOriginal()
+  assert.equal(f.engines.length, 1)
+  await f.media.toggleOriginal()
+  f.engines[0].ready.resolve(); await pending
+  assert.equal(f.engines[0].prepared, 0); assert.equal(f.engines[0].closed, true)
+  assert.equal(f.media.originalEnabled.value, false)
+  assert.equal(f.media.captureActive.value, true)
+  assert.equal(input.getAudioTracks()[0].readyState, 'live')
+  assert.equal(f.audio.volume.value, .7)
+  assert.equal(f.media.failure.value, '')
 })

@@ -8,10 +8,10 @@
       <button v-if="stage && fullscreenSupported" type="button" class="min-h-[44px] rounded-full border border-white/30 px-4 py-2 text-sm" :aria-pressed="isFullscreen" @click="fullscreen">{{ $t(isFullscreen ? 'party.exitFullscreen' : 'party.fullscreen') }}</button>
     </header>
     <div class="mt-4 flex flex-wrap items-center gap-3">
-      <button v-if="stage && !enabled && !audience && (party.room.performanceMode || 'local') === 'local'" type="button" class="rounded-full bg-spotify-green px-5 py-3 font-semibold text-black" @click="audio.enable('stage')">{{ $t('party.enableStageAudio') }}</button>
-      <button v-if="!stage && canGuide && !enabled && !audience && party.room.performanceMode !== 'online'" type="button" class="rounded-full bg-spotify-green px-5 py-3 font-semibold text-black" @click="audio.enable('guide')">{{ $t('party.enableGuide') }}</button>
-      <button v-if="enabled" type="button" class="rounded-full border border-white/30 px-4 py-3 text-sm" @click="audio.disable()">{{ $t('party.disableAudio') }}</button>
-      <p class="text-sm text-gray-300" role="status">{{ $t(blocked ? 'party.audioRecoveryWaiting' : preparing ? 'party.audioLoading' : prepared ? 'party.audioPrepared' : enabled ? 'party.audioEnabled' : 'party.audioMuted') }}</p>
+      <button v-if="stage && !enabled && !audience && (party.room.performanceMode || 'local') === 'local'" :disabled="enabling" type="button" class="rounded-full bg-spotify-green px-5 py-3 font-semibold text-black disabled:opacity-50" @click="audio.enable('stage')">{{ $t('party.enableStageAudio') }}</button>
+      <button v-if="!stage && canGuide && !enabled && !audience && party.room.performanceMode !== 'online'" :disabled="enabling" type="button" class="rounded-full bg-spotify-green px-5 py-3 font-semibold text-black disabled:opacity-50" @click="audio.enable('guide')">{{ $t('party.enableGuide') }}</button>
+      <button v-if="enabled || enabling" type="button" class="rounded-full border border-white/30 px-4 py-3 text-sm" @click="audio.disable()">{{ $t('party.disableAudio') }}</button>
+      <p class="text-sm text-gray-300" role="status">{{ $t(blocked ? 'party.audioRecoveryWaiting' : enabling ? 'party.audioStarting' : preparing ? 'party.audioLoading' : prepared ? 'party.audioPrepared' : enabled ? 'party.audioEnabled' : 'party.audioMuted') }}</p>
       <p v-if="stage && enabled" class="text-sm text-spotify-green">{{ $t(assignedHere ? 'party.stageAssignedHere' : 'party.stageAwaitingAssignment') }}</p>
     </div>
     <p v-if="fullscreenFailed" role="status" class="mt-3 text-sm text-amber-200">{{ $t('party.fullscreenFailed') }}</p>
@@ -115,7 +115,7 @@ import type { usePartyPlayback } from '@/composables/usePartyPlayback'
 const props = defineProps<{ party: PartySnapshot; audio: ReturnType<typeof usePartyPlayback>; stage: boolean; canManage: boolean; busy: boolean; audience?: boolean; privateOriginal?: boolean }>()
 const emit = defineEmits<{ action: [action: string, payload: Record<string, unknown>]; prepare: [] }>()
 const { t } = useI18n()
-const { enabled, purpose, preparing, prepared, failure, volume, guideAdvanceMs, canGuide, assignedHere,
+const { enabled, enabling, purpose, preparing, prepared, failure, volume, guideAdvanceMs, canGuide, assignedHere,
   positionMs, segment, countdown, lines, lyricGuide, startSafe, serverNowMs, blocked, diagnostics, calibrationInvalidated } = props.audio
 const playback = computed(() => props.party.playback)
 const stageDevices = computed(() => props.party.presence?.devices.filter(device => device.purpose === 'stage' && device.audioEnabled && device.clockHealthy) || [])

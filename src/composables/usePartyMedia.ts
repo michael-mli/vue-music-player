@@ -152,13 +152,15 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
     if (!asset || !capture.value || party.value?.self.id !== singerId.value) return
     const attempt = epoch, engine = new PartyAudioEngine()
     original = engine; oldMonitorVolume = audio.volume.value; originalEnabled.value = true; audio.volume.value = 0
-    engine.onSuspended = () => { if (epoch === attempt) fail(new Error('Headphone audio paused. Prepare capture again.')) }
-    engine.onRecovery = () => { if (epoch === attempt) fail(new Error('Headphone output changed. Prepare capture again.')) }
+    engine.onSuspended = () => { if (epoch === attempt && original === engine) fail(new Error('Headphone audio paused. Prepare capture again.')) }
+    engine.onRecovery = () => { if (epoch === attempt && original === engine) fail(new Error('Headphone output changed. Prepare capture again.')) }
     try {
-      await engine.enable(); await engine.prepare(asset, 'original')
+      await engine.enable()
+      if (epoch !== attempt || original !== engine) { await engine.close(); return }
+      await engine.prepare(asset, 'original')
       if (epoch === attempt && original === engine) { originalReady = true; engine.setVolume(originalVolume.value) }
       else await engine.close()
-    } catch (error) { if (epoch === attempt) fail(error) }
+    } catch (error) { if (epoch === attempt && original === engine) fail(error) }
   }
   watch(originalVolume, value => original?.setVolume(value))
   watch([backingLevel, vocalLevel], () => graph?.setPublishLevels(backingLevel.value, vocalLevel.value))

@@ -110,6 +110,7 @@
     "audioLoading": "正在加载并解码歌曲音频…",
     "audioPrepared": "音频准备就绪",
     "audioEnabled": "音频已启用，等待歌曲",
+    "audioStarting": "正在启动音频并检查输出时序…",
     "audioMuted": "此设备保持静音",
     "audioEnableFailed": "无法启用音频。请再次点击，并允许浏览器播放。",
     "audioMemoryLimit": "此歌曲所需音频内存超出支持上限，请选择较短歌曲。",

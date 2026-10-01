@@ -110,6 +110,7 @@
     "audioLoading": "Loading and decoding song audio…",
     "audioPrepared": "Audio prepared",
     "audioEnabled": "Audio enabled; waiting for a song",
+    "audioStarting": "Starting audio and checking output timing…",
     "audioMuted": "This device is silent",
     "audioEnableFailed": "Audio could not be enabled. Tap again and allow playback in this browser.",
     "audioMemoryLimit": "This song needs more audio memory than the supported limit. Choose a shorter song.",

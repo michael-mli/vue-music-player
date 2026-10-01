@@ -26,7 +26,7 @@ const provider = new RoomServiceClient(upstreamUrl, apiKey, apiSecret, { request
 const db = initDb(root), contexts = [], debuggerSockets = [], pending = new Map(), sessionSockets = new Map(), errors = []
 const ownedTcp = new Set()
 const trackTcp = server => server.on('connection', socket => { ownedTcp.add(socket); socket.once('close', () => ownedTcp.delete(socket)) })
-let frontend, backend, worker, realtime, chrome, pathRoom, running = false, nextId = 0, passed = 0
+let frontend, backend, worker, realtime, chrome, pulseModule, pathRoom, running = false, nextId = 0, passed = 0
 const check = (value, label) => { assert.ok(value, label); passed++; console.log(`PASS ${label}`) }
 const poll = async (work, label, timeout = 20000) => {
   const deadline = Date.now() + timeout
@@ -139,11 +139,18 @@ try {
   const singer = await api(2, '/join', { commandId: randomUUID(), code: room.invitationCode, displayName: 'Singer' })
   const nextSinger = await api(3, '/join', { commandId: randomUUID(), code: room.invitationCode, displayName: 'Next singer' })
   const singerDebugPort = Number(process.env.CHROME_MEDIA_TEST_PORT || 9240)
+  const chromeEnv = { ...process.env }
+  if (process.env.PARTY_TEST_PULSE_SINK === '1') {
+    // An owned virtual output isolates the fixture from this host's shared sink.
+    // Browser audio clocks and all application drift guards remain native.
+    const sink = `ktv_${randomUUID().replaceAll('-', '')}`
+    pulseModule = (await exec('pactl', ['load-module', 'module-null-sink', `sink_name=${sink}`, 'rate=44100'])).stdout.trim()
+    chromeEnv.PULSE_SINK = sink
+  }
   chrome = spawn(process.env.CHROME_BIN || '/usr/bin/google-chrome', ['--headless', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu',
-    '--disable-audio-output',
     '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--no-first-run', '--no-default-browser-check', '--no-proxy-server',
     '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', `--use-file-for-fake-audio-capture=${micFile}`,
-    `--remote-debugging-port=${singerDebugPort}`, `--user-data-dir=${path.join(root, 'chrome')}`, 'about:blank'], { stdio: 'ignore' })
+    `--remote-debugging-port=${singerDebugPort}`, `--user-data-dir=${path.join(root, 'chrome')}`, 'about:blank'], { stdio: 'ignore', env: chromeEnv })
   await poll(async () => { try { return (await fetch(`http://127.0.0.1:${singerDebugPort}/json/version`)).ok } catch { return false } }, 'owned fake-mic Chrome')
   const singerSocket = await debuggerConnection(`http://127.0.0.1:${singerDebugPort}`)
   const audienceSocket = await debuggerConnection(process.env.CHROME_DEBUG_URL || 'http://127.0.0.1:9231')
@@ -185,18 +192,7 @@ try {
   await click(phone, 'Enable microphone and prepare')
   await poll(() => evaluate(phone, "document.querySelector('[data-party-media-status]')?.textContent.includes('Microphone ready')"), 'microphone ready')
   check(await evaluate(phone, "window.__micStreams.length === 1 && window.__micStreams[0].getAudioTracks()[0].readyState === 'live'"), 'built app acquires exactly one requested microphone stream')
-  // The host's PulseAudio null sink can take seconds to settle after startup.
-  // Wait for the actual output timestamp to advance at wall-clock speed; keep
-  // the application's recovery checks intact throughout this synthetic journey.
-  async function stableOutput(session) {
-    await poll(() => evaluate(session, `(() => { const context = window.__contexts[0], output = context?.getOutputTimestamp();
-      if (!output?.performanceTime || context.state !== 'running') return false;
-      const previous = window.__warmOutput; if (!previous) { window.__warmOutput = output; return false; }
-      const elapsed = output.performanceTime - previous.performanceTime; if (elapsed < 2000) return false;
-      window.__warmOutput = output; return Math.abs((output.contextTime - previous.contextTime) * 1000 - elapsed) < 50;
-    })()`), 'virtual output clock settled', 30000)
-  }
-  await stableOutput(phone)
+  // Readiness comes from the application's real output-clock startup check.
   let device = await poll(async () => (await api(1, pathRoom)).presence.devices.find(item => item.memberId === singer.self.id && item.purpose === 'stage' && item.audioEnabled && item.clockHealthy), 'performing device status')
   await click(host, 'Stage · Singer')
   await click(host, 'Prepare selected song')
@@ -240,7 +236,6 @@ try {
   await evaluate(nextPhone, "[...document.querySelectorAll('label')].find(item => item.textContent.includes('I am using headphones')).querySelector('input').click()")
   await click(nextPhone, 'Enable microphone and prepare')
   await poll(() => evaluate(nextPhone, "document.querySelector('[data-party-media-status]')?.textContent.includes('Microphone ready')"), 'next microphone ready')
-  await stableOutput(nextPhone)
   await click(host, 'Stage · Next singer'); await click(host, 'Prepare selected song')
   await click(host, 'Start countdown')
   await poll(() => evaluate(nextPhone, "document.querySelector('[data-party-media-status]')?.textContent.includes('Sending live singing')"), 'replacement publisher ready')
@@ -275,5 +270,6 @@ try {
   for (const socket of ownedTcp) socket.destroy()
   for (const server of [frontend, backend]) if (server?.listening) await new Promise(resolve => { server.close(resolve); server.closeAllConnections() })
   if (running) await exec('docker', ['rm', '-f', container]).catch(() => {})
+  if (pulseModule) await exec('pactl', ['unload-module', pulseModule]).catch(() => {})
   db.close(); await fs.rm(root, { recursive: true, force: true })
 }

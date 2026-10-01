@@ -17,8 +17,32 @@ export interface PartyAudioDiagnostics {
   recovery: 'drift' | 'output' | null
 }
 
+// resume() unlocks audio but does not establish that the output clock is moving.
+// Wait for three consecutive clock intervals before mapping a room start time.
+export async function waitForPartyAudioClock(context: AudioContext, current: () => boolean,
+  sleep = () => new Promise<void>(resolve => window.setTimeout(resolve, 100))) {
+  const started = performance.now()
+  let wall = started, audio = context.currentTime, stable = 0, windowWall = wall, windowAudio = audio
+  while (performance.now() - started < 8000) {
+    await sleep()
+    if (!current() || context.state !== 'running') throw new Error('AUDIO_ENABLE_CANCELLED')
+    const now = performance.now(), rendered = context.currentTime
+    const interval = now - wall, elapsed = (rendered - audio) * 1000
+    if (interval >= 50 && interval <= 250 && Math.abs(elapsed - interval) <= 35) stable++
+    else { stable = 0; windowWall = now; windowAudio = rendered }
+    wall = now; audio = rendered
+    if (stable >= 3) {
+      if (Math.abs((rendered - windowAudio) * 1000 - (now - windowWall)) <= 25) return
+      stable = 0; windowWall = now; windowAudio = rendered
+    }
+  }
+  throw new Error('AUDIO_OUTPUT_NOT_READY')
+}
+
 export class PartyAudioEngine {
   private context: AudioContext | null = null
+  private outputReady = false
+  private enableId = 0
   private buffer: AudioBuffer | null = null
   private assetHash = ''
   private assetRole: 'instrumental' | 'original' = 'instrumental'
@@ -40,7 +64,7 @@ export class PartyAudioEngine {
   onSuspended: (() => void) | null = null
   onRecovery: ((reason: 'drift' | 'output') => void) | null = null
 
-  get enabled() { return this.context?.state === 'running' }
+  get enabled() { return this.outputReady && this.context?.state === 'running' }
   get preparedHash() { return this.assetHash }
   get durationMs() { return (this.buffer?.duration || 0) * 1000 }
   // Capture uses the rendered source clock, before the device's output delay.
@@ -59,21 +83,26 @@ export class PartyAudioEngine {
   async enable() {
     if (!this.context) {
       this.context = new AudioContext({ latencyHint: 'interactive', sampleRate: 44100 })
-      this.context.onstatechange = () => { if (!this.enabled) { this.stop(); this.onSuspended?.() } }
+      this.context.onstatechange = () => { if (this.context?.state !== 'running') { this.outputReady = false; this.stop(); this.onSuspended?.() } }
       this.context.addEventListener?.('sinkchange', this.outputChanged)
     }
     // Never resume a context with a source left over from before suspension.
     // Fresh sources are scheduled only after the room/clock/lease guards pass.
     this.stop()
-    await this.context.resume()
-    if (!this.enabled) throw new Error('AUDIO_GESTURE_REQUIRED')
+    this.outputReady = false
+    const context = this.context, attempt = ++this.enableId
+    await context.resume()
+    if (context.state !== 'running') throw new Error('AUDIO_GESTURE_REQUIRED')
+    await waitForPartyAudioClock(context, () => this.context === context && attempt === this.enableId)
+    this.outputReady = true
   }
+  cancelEnable() { this.enableId++; this.outputReady = false }
   resetRecovery() {
     this.blocked = false; this.badSamples = 0; this.lastMeasureMs = -Infinity; this.outputLatencyMs = null
     this.stats = { ...this.stats, phaseErrorMs: null, maxAbsPhaseErrorMs: 0, sampleCount: 0, timingMode: 'unavailable', outputLatencyMs: null, recovery: null }
   }
   outputChanged = () => {
-    if (this.context) this.recover('output')
+    if (this.context) { this.cancelEnable(); this.recover('output') }
   }
   private recover(reason: 'drift' | 'output') {
     if (this.blocked) return
@@ -272,6 +301,7 @@ export class PartyAudioEngine {
   }
 
   async close() {
+    this.cancelEnable()
     this.releaseBuffer(); this.onEnded = null; this.onSuspended = null; this.onRecovery = null
     const context = this.context; this.context = null
     if (context) { context.onstatechange = null; context.removeEventListener?.('sinkchange', this.outputChanged); await context.close() }

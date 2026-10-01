@@ -98,6 +98,23 @@ older PWA is still part of release acceptance.
 `ktv_party_deploy.md` records the configuration and release procedure. The public
 frontend is `4a216be` and backend is `6c73d58`, with online mode unavailable until relay and physical gates pass.
 
+TURN deployment preparation now uses `ktv-turn.3.219.116.105.sslip.io`, resolving
+directly to this server. A trusted Let's Encrypt certificate, restricted ACME
+challenge route, six-hour renewal timer and AWS/IPv4 UFW media rules are installed.
+Certificate tests 4/4, the actual renewal service and staging renewal dry run pass.
+The supervised public media service and different-network transport acceptance
+remain open; provisioning network access is not a streaming release.
+
+Audio startup now waits for three stable native render-clock intervals, with a
+bounded eight-second timeout, before declaring the device enabled. Pending startup
+can be cancelled by disabling audio, output changes or navigation. Switching off
+a private guide during startup cannot decode stale audio or stop the microphone.
+The UI shows startup timing checks. Party unit checks 46/46, type check and build
+pass. The integrated SFU journey still reaches provider-ready audio/video and
+guide-free audience audio, then the native virtual output loses seconds and
+correctly enters drift recovery. A separately owned PulseAudio sink reproduces
+the same failure; complete guide/handover and physical acceptance remain open.
+
 ## 1. How to use this tracker
 
 - Mark work items `[x]` only when implemented and verified. Documentation of an
@@ -687,9 +704,10 @@ prototype result is not automatically a release result.
 ### Current next action
 
 The room UI, publisher tap, lifecycle and supervisor shutdown are implemented and
-verified in local checks. Complete the integrated guide/handover journey on a
-real output device, provision a direct public DNS/certificate/ICE/TURN path, and
-run physical phone and network acceptance. Keep the online flag disabled until
+verified in local checks. Direct DNS, certificate renewal and media firewall
+rules are installed. Complete the integrated guide/handover journey on a real
+output device, start the supervised public service, and run phone and network
+acceptance. Keep the online flag disabled until
 those checks pass. Complete remaining local/browser/PWA release gates alongside
 streaming.
 Physical phone/screen timing, memory, background behavior, broad browser coverage
@@ -760,6 +778,18 @@ general receipts, cleanup and returning-invite recovery are now deployed.
 | 2026-10-01 | P06.8 bounded load and queue fanout deployment | Backend `6c73d58`; `scripts/party-load.test.mjs` and separate server fixture; public frontend remains `4a216be` | Backend 104/104; public queue/WSS/idempotent replay/cleanup 4/4; separate-process local capacity probe passes at 20 members/60 sockets/100 songs, cap excess denied, no foreign-key errors | At capacity, 80 command samples in bursts of 20: p50 217 ms, p95 623 ms, max 972 ms; server RSS 114.7 MiB/heap 17.6 MiB; 420 queue snapshots/18,165,047 bytes; DB/WAL 368,640 bytes, 102 receipts and 122 events. Local control only, no streaming/media or internet capacity claim. Backend rollback backup `/tmp/ktv-party-queue-fanout-predeploy.2dFKHO`; public test room closed. |
 
 ### Work-session update template
+
+Latest deployment preparation and audio startup evidence (2026-10-01):
+`652affe` provisions the TURN certificate renewal tooling. Certbot staging renewal
+passed (`/tmp/ktv-turn-renew-dry-run.log`); installed service returned success;
+certificate tests 4/4 (`/tmp/ktv-turn-renew-tests-final.log`). Audio readiness and
+guide cancellation tests pass 46/46 (`/tmp/ktv-audio-readiness-units-final.log`),
+type check passes (`/tmp/ktv-audio-readiness-types-final.log`). Native Chrome probes
+showed a running context stalled for about two seconds before clock progression.
+Integrated default and isolated-sink journeys remain failed at rendered drift,
+with provider-confirmed mixed audio/lyric video verified before recovery
+(`/tmp/ktv-audio-readiness-room-media-final.log`,
+`/tmp/ktv-audio-readiness-room-media-sink.log`). No physical alignment claim.
 
 ```text
 Date:

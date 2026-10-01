@@ -11,7 +11,7 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
   const deviceId = crypto.randomUUID()
   const engine = new PartyAudioEngine()
   const purpose = ref<'viewer' | 'stage' | 'guide'>('viewer')
-  const enabled = ref(false), preparing = ref(false), prepared = ref(false), failure = ref('')
+  const enabled = ref(false), enabling = ref(false), preparing = ref(false), prepared = ref(false), failure = ref('')
   const blocked = ref(false), calibrationInvalidated = ref(false), diagnostics = ref(engine.diagnostics)
   const audioIssue = ref<'drift' | 'output' | 'decode' | 'suspended' | null>(null)
   const volume = ref(0.7), guideAdvanceMs = ref(Number(localStorage.getItem('party-guide-advance-ms')) || 0)
@@ -19,7 +19,7 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
   const lease = ref<PartyLease | null>(null)
   const readyKeys = new Set<string>()
   let clockReceivedMs = 0, failedKey = '', loadingKey = '', loadAttempt = 0
-  let lastStatusMs = -Infinity, lastHeartbeatMs = -Infinity, disposed = false
+  let lastStatusMs = -Infinity, lastHeartbeatMs = -Infinity, disposed = false, enableAttempt = 0
   let lastStoppedLease = ''
   let animation = 0
   let lastDiagnosticsMs = -Infinity
@@ -55,10 +55,20 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
     failure.value = ''; blocked.value = false; audioIssue.value = null; engine.resetRecovery()
     if (role === 'guide' && (!canGuide.value || assignedHere.value)) return
     purpose.value = role
-    try { await engine.enable(); enabled.value = engine.enabled; failedKey = ''; readyKeys.clear(); status(); void outputs.inspect(); void prepare() }
-    catch { failure.value = 'audioEnableFailed'; enabled.value = false; status() }
+    const attempt = ++enableAttempt
+    enabling.value = true; enabled.value = false
+    try {
+      await engine.enable()
+      if (disposed || attempt !== enableAttempt || document.hidden) return
+      enabled.value = engine.enabled; failedKey = ''; readyKeys.clear(); status(); void outputs.inspect(); void prepare()
+    } catch {
+      if (disposed || attempt !== enableAttempt) return
+      failure.value = 'audioEnableFailed'; enabled.value = false; status()
+    } finally { if (attempt === enableAttempt) enabling.value = false }
   }
   function disable() {
+    enableAttempt++; engine.cancelEnable()
+    enabling.value = false
     loadAttempt++; engine.releaseBuffer(); enabled.value = false; prepared.value = false; preparing.value = false
     acknowledgeStop()
     purpose.value = 'viewer'; loadingKey = ''; readyKeys.clear(); failedKey = ''; audioIssue.value = null; status()
@@ -212,7 +222,7 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
       clockId: lease.value.clockId, generation: lease.value.generation })
     void engine.close()
   })
-  return { deviceId, purpose, enabled, preparing, prepared, failure, volume, guideAdvanceMs, positionMs,
+  return { deviceId, purpose, enabled, enabling, preparing, prepared, failure, volume, guideAdvanceMs, positionMs,
     createPublisherTap: (hash: string, generation: number) => engine.createPublisherTap(hash, generation), renderPosition: () => engine.renderPositionMs,
     segment, countdown, lines, lyricGuide, canGuide, assignedHere, startSafe, healthy, serverNowMs, blocked, diagnostics,
     calibrationInvalidated, resetOutput: () => engine.outputChanged(), enable, disable, message,
