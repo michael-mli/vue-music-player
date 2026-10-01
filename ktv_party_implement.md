@@ -6,7 +6,7 @@ Last updated: 2026-09-30
 
 Design reference: [ktv_party.md](ktv_party.md)
 
-Current status: The playback and recovery preview is deployed at
+Current status: The durable-room preview is deployed at
 `https://music.micstec.com/party`. Members can connect a shared screen or phone
 controller with a short-lived code; a display has read-only room access, and a
 controller inherits the member's current permissions. Hosts can appoint co-hosts,
@@ -21,7 +21,7 @@ a private original guide are live and pass a production-build journey
 with three isolated Chrome sessions. Physical audio alignment and streaming remain
 unverified/unimplemented. Required-guide gating/recovery, fair next-turn readiness
 and automatic host-loss transfer were first deployed as `323c922` (`main-Ccfld-0j.js`).
-The combined phone/audio-recovery preview is now deployed as `f701e9a`
+The preceding combined phone/audio-recovery preview was deployed as `f701e9a`
 (`main-1-asbyg9.js`). It adds persistent Songs/Queue/Sing/People tabs, local invitation
 and pairing QR codes, host-controlled common-screen invitations, fullscreen exit,
 and rendered-drift/output recovery. It passes 65 backend tests, 15 clock/audio
@@ -29,6 +29,13 @@ checks, a 42-check production Chrome journey, 18 public recovery protocol checks
 and 10 public deployment checks. Public checks include the default 30-second host
 grace, pending-next recovery, role revocation, drift/output faults and invitation
 visibility while locked. Physical timing and online/hybrid streaming remain open.
+
+The latest preview is `f1e21da` (`main-l1KzzXwT.js`). General room/device command
+receipts, encrypted pairing response recovery, returning invitation recovery and
+room lifecycle/retention are live. Release checks pass: backend 76/76, frontend
+19/19, exact-release foreground Chrome 49/49, public protocol 24/24 and deployment
+10/10. P02 room-domain software criteria are complete; physical timing, remaining
+queue/UI/PWA work and online/hybrid streaming still need implementation/acceptance.
 
 ## 1. How to use this tracker
 
@@ -50,7 +57,7 @@ visibility while locked. Physical timing and online/hybrid streaming remain open
 | --- | --- | --- | --- | --- |
 | P00 | Scope baseline and technical contracts | Design | In progress | Baseline tag and source inventory; contracts remain open |
 | P01 | Two-device audio feasibility prototype | P00 minimum timing contract | In progress | Monotonic clock estimator tested; audio prototype and acoustic measurements open |
-| P02 | Rooms, identities, invitations, permissions, persistence | P00 | In progress | Rooms, pairing, moderation and atomic host transfer tested; general receipts and cleanup open |
+| P02 | Rooms, identities, invitations, permissions, persistence | P00 | Complete | Transactional general/encrypted receipts, restart/rollback, guest recovery, expiry/retention, permissions and configured bounds pass backend/browser/public checks |
 | P03 | Realtime state, commands, queue, leases | P02 | In progress | Versioned playback timeline, checkpoints, presence, renewable stage leases and turn history tested; fair automatic next turns and host-loss grace/transfer tested |
 | P04 | Stage, phone controller, host UI | P02–P03 | In progress | Entry/join/pairing, Songs/Queue/Sing/People tabs, local invitation/pairing QR, moderation, readiness and guide controls; broad accessibility/physical coverage open |
 | P05 | Scheduled playback, private guide, shared lyrics | P01, P03–P04 | In progress | Stage/guide/lyrics/controls pass Chrome journey; required-guide and rendered-drift/output recovery tested; physical timing open |
@@ -154,7 +161,7 @@ acoustic timing or physical phone memory/browser support.
 
 ## 5. P02 — Room domain, storage, admission, and devices
 
-Status: In progress
+Status: Complete
 
 Likely files: `server/ktv/schema.js`, `repository.js`, `permissions.js`, `routes.js`,
 integration in `server/db.js` and `server/index.js`. These paths are proposals.
@@ -181,14 +188,14 @@ integration in `server/db.js` and `server/index.js`. These paths are proposals.
 
 Exit criteria:
 
-- [ ] Fresh and existing databases migrate correctly; restart retains room state.
-- [ ] A guest can create/join a room and pair a display without registering.
-- [ ] A direct invitation asks a new guest for a name, then admits them or shows
+- [x] Fresh and existing databases migrate correctly; restart retains room state.
+- [x] A guest can create/join a room and pair a display without registering.
+- [x] A direct invitation asks a new guest for a name, then admits them or shows
   approval waiting. Duplicate names remain distinct, and refresh preserves identity.
-- [ ] Pending, removed, expired, and unauthorized users cannot access room state
+- [x] Pending, removed, expired, and unauthorized users cannot access admitted room state
   or execute controls through direct API calls.
 - [x] Host transfer is atomic; removing a member revokes all room device grants.
-- [ ] Duplicate requests cannot create duplicate membership or duplicate rooms.
+- [x] Duplicate requests cannot create duplicate membership or duplicate rooms.
 
 Evidence: `server/ktv-routes.js`, `server/ktv-schema.js`, and `server/ktv.test.js`.
 The domain now includes transactional receipts for room creation/join, settings,
@@ -205,9 +212,9 @@ implemented. Startup validates configured member/song/device and retention bound
 HTTP origin/body/rate checks complement the existing WebSocket limits. Returning
 invitation lookup is read-only; new guests still choose a name, duplicate names get
 distinct random member IDs, and pending guests recover only the approval screen.
-The staged candidate passes 76 full backend checks, 19 frontend unit checks and a
-48-check production Chrome journey; the final exact release and public checks are
-recorded below after publication. Physical browser/device acceptance remains open.
+Release `f1e21da` passes 76 full backend checks, 19 frontend unit checks and a
+49-check exact-release production Chrome journey, plus 24 public protocol and
+10 deployment checks. Physical browser/device acceptance remains open.
 
 ## 6. P03 — Realtime state, queue, and playback authority
 
@@ -582,11 +589,11 @@ prototype result is not automatically a release result.
 
 ### Current next action
 
-Publish the durable receipts, room lifecycle/limits and returning-invite update,
-then continue remaining queue/UI/PWA integration and SFU/TURN online/hybrid capture.
+Continue queue safeguards, held-request reassignment, visible host ordering/caps,
+remaining UI/PWA integration and SFU/TURN online/hybrid capture.
 Physical phone/screen timing, memory, background behavior, broad browser coverage
 and real streaming remain acceptance gates. Phone tabs and QR invitations are live;
-general receipts, cleanup and returning-invite software checks now pass.
+general receipts, cleanup and returning-invite recovery are now deployed.
 
 ### Decision log
 
@@ -641,6 +648,7 @@ general receipts, cleanup and returning-invite software checks now pass.
 
 | 2026-09-30 | Phone/audio-recovery preview deployment | `f701e9a`, frontend `main-1-asbyg9.js`, QR chunk `browser-BXdiCFWD.js` | Backend 65/65; clock/audio 15/15; exact-release foreground Chrome 42/42; public recovery protocol 18/18; public routes/assets/health/schema 10/10; both QR links independently decoded | Temporary public room closed. Backup `/tmp/ktv-party-phone-predeploy.lurd7md3`; one local connection retry during PM2 restart. Static hashes and embedded SHA match; additive invitation column and zero foreign-key violations verified. Physical audio, general receipts/cleanup, broader browser/PWA/a11y and online/hybrid remain open |
 | 2026-09-30 | Durable room requests and lifecycle candidate | `server/ktv-receipts.js`, `ktv-lifecycle.js`, `ktv-policy.js`, `ktv-http.js`, invitation resolution, frontend command journal and browser fixture | Backend 76/76; frontend 19/19; production Chrome 48/48; type-check/build and diff check pass | Restart/encrypted reply and rollback, expiry/revocation/socket closure, empty-since persistence, bounded history/configured caps, origin/body/rate guards, duplicate-name guest entry and reload retry verified. Candidate check used a deterministic post-commit gateway 502; bare TCP resets may be transparently retried by Chrome. Exact-release/public gates follow. |
+| 2026-09-30 | Durable-room preview deployment | `f1e21da`, `main-l1KzzXwT.js`, lifecycle/policy/receipt additive schema | Backend 76/76; frontend 19/19; exact-release foreground Chrome 49/49; public protocol 24/24 and deployment 10/10; type-check/build/diff checks pass | Both temporary public rooms closed. Backup `/tmp/ktv-party-durable-predeploy.3p9p3hv8` includes consistent SQLite/static/previous source. One restart connection retry. Schema probe uses SQLite busy timeout; public fault probe captures the silence boundary before expired lease cleanup. Backend test waits for committed state rather than unrelated presence snapshots. Physical timing, remaining queue/UI/PWA and streaming remain open. |
 
 ### Work-session update template
 
@@ -670,5 +678,6 @@ Next action:
 | Scheduled playback preview | `f87f0ff` (`main-C0oS5LfE.js`) | `https://music.micstec.com/party` | 2026-09-30 | Backend 54/54, clock/audio 8/8, Chrome journey 13/13, public protocol 11/11, build, static assets and additive schema pass | Physical alignment, required-guide and drift/output recovery, next-turn/host-loss policy, receipts/cleanup, full phone UI, online/hybrid |
 | Playback and recovery preview | `323c922` (`main-Ccfld-0j.js`) | `https://music.micstec.com/party` | 2026-09-30 | Backend 63/63, clock/audio 8/8, Chrome 20/20, public recovery protocol 13/13, release build/assets/additive schema verified | Drift/output changes and physical timing, receipts/cleanup, full phone UI and online/hybrid |
 | Phone/audio-recovery preview | `f701e9a` (`main-1-asbyg9.js`) | `https://music.micstec.com/party` | 2026-09-30 | Backend 65/65, clock/audio 15/15, foreground Chrome 42/42, public protocol 18/18 and deployment checks 10/10; QR decodes, release assets and additive schema verified | Physical timing, receipts/cleanup, returning-invite flow, broad PWA/browser/a11y and online/hybrid |
+| Durable-room preview | `f1e21da` (`main-l1KzzXwT.js`) | `https://music.micstec.com/party` | 2026-09-30 | Backend 76/76, frontend 19/19, exact-release foreground Chrome 49/49, public protocol 24/24 and deployment 10/10; restart/rollback, guest recovery, bounded cleanup and exact assets/schema verified | Queue/UI/PWA completion, physical timing/broader browsers and online/hybrid |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |

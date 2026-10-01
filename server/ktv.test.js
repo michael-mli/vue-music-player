@@ -657,8 +657,8 @@ test('room sockets use one-use tickets, redact pending views, broadcast changes 
   reused.send(JSON.stringify({ type: 'authenticate', ticket: guestTicket }))
   assert.equal(await denied, 4401)
 
-  const hostApproval = nextSnapshot(host.ws)
-  const guestApproval = nextSnapshot(guest.ws)
+  const hostApproval = nextSnapshot(host.ws, data => data.members.some(member => member.id === memberId && member.admission === 'admitted'))
+  const guestApproval = nextSnapshot(guest.ws, data => data.self.admission === 'admitted')
   const approved = await request('POST', `/rooms/${room.id}/members/${memberId}/approve`, 1, {})
   assert.equal(approved.status, 200)
   assert.equal((await hostApproval).members.length, 2)
@@ -669,8 +669,8 @@ test('room sockets use one-use tickets, redact pending views, broadcast changes 
   guest = await openSocket(socketUrl, origin, reconnectTicket)
   assert.equal((await guest.first).members.length, 2)
 
-  const hostQueue = nextSnapshot(host.ws)
-  const guestQueue = nextSnapshot(guest.ws)
+  const hostQueue = nextSnapshot(host.ws, data => data.queue.some(entry => entry.title === 'Live song'))
+  const guestQueue = nextSnapshot(guest.ws, data => data.queue.some(entry => entry.title === 'Live song'))
   const song = await request('POST', `/rooms/${room.id}/queue`, 2, {
     songId: 1, title: 'Live song', requestNext: false, commandId: randomUUID(),
   })
@@ -679,7 +679,7 @@ test('room sockets use one-use tickets, redact pending views, broadcast changes 
   assert.equal((await guestQueue).queue[0].title, 'Live song')
 
   const removedClose = new Promise((resolve) => guest.ws.once('close', resolve))
-  const hostRemoval = nextSnapshot(host.ws)
+  const hostRemoval = nextSnapshot(host.ws, data => !data.members.some(member => member.id === memberId))
   await request('POST', `/rooms/${room.id}/members/${memberId}/remove`, 1, {})
   assert.equal(await removedClose, 4403)
   assert.equal((await hostRemoval).members.length, 1)
@@ -740,7 +740,7 @@ test('display pairing is one-use, room-scoped, read-only, and revocable on an op
   const first = await pairedSocket.first
   assert.equal(first.deviceScope, 'display')
   assert.equal(first.invitationCode, undefined)
-  const changed = nextSnapshot(pairedSocket.ws)
+  const changed = nextSnapshot(pairedSocket.ws, data => data.room.locked)
   await request('POST', `/rooms/${room.id}/settings`, 1, { locked: true })
   assert.equal((await changed).room.locked, true)
   const closed = new Promise((resolve) => pairedSocket.ws.once('close', resolve))
@@ -837,7 +837,7 @@ test('co-host permissions follow the room matrix and demotion updates paired con
   const ticket = (await request('POST', `${root}/socket-ticket`, device, {})).body.data.ticket
   const connected = await openSocket(socketUrl, origin, ticket)
   assert.equal((await connected.first).self.role, 'cohost')
-  const demoted = nextSnapshot(connected.ws)
+  const demoted = nextSnapshot(connected.ws, data => data.self.role === 'member')
   await request('POST', `${root}/members/${members[2]}/role`, 1, { role: 'member', commandId: randomUUID() })
   assert.equal((await demoted).self.role, 'member')
   assert.equal(await request('POST', `${root}/settings`, device, { locked: false }).then((r) => r.status), 403)
@@ -989,7 +989,7 @@ test('room clock probes recheck admission, use a monotonic epoch, validate proto
   const versionError = nextPacket(host.ws, 'error')
   host.ws.send(JSON.stringify({ ...probe, protocolVersion: 2 }))
   assert.equal((await versionError).code, 'PROTOCOL_UNSUPPORTED')
-  const admitted = nextSnapshot(pending.ws)
+  const admitted = nextSnapshot(pending.ws, data => data.self.admission === 'admitted')
   await request('POST', `${root}/members/${member}/approve`, 1)
   await admitted
   const admittedProbe = nextPacket(pending.ws, 'clock.reply')
