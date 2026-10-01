@@ -10,7 +10,7 @@ Implemented contracts: [ktv_party_protocol.md](ktv_party_protocol.md)
 
 Current status: The durable-room preview is deployed at
 `https://music.micstec.com/party` with frontend `3e76e15`
-(`main-B_OYznt7.js`, `main-D0gBov56.css`) and backend `09879ac`. Online media remains disabled.
+(`main-B_OYznt7.js`, `main-D0gBov56.css`) and backend `0e0c7aa`. Online media remains disabled.
 Members can connect a shared screen or phone
 controller with a short-lived code; a display has read-only room access, and a
 controller inherits the member's current permissions. Hosts can appoint co-hosts,
@@ -906,6 +906,16 @@ type check and current built-app UI 29/29 (`/tmp/ktv-timing-ui-final.log`).
 P00 contracts/policy are complete; physical/browser and online acceptance remain
 open. Deployment backup: `/home/mli/ktv-party-timing-predeploy.xkgmym9r`.
 
+Timing backend `0e0c7aa` is deployed, frontend remains `3e76e15`. Public release
+checks pass 11/11 (`/tmp/ktv-timing-public-release-final.log`): default timing in
+HTTP and real WSS snapshots, pairing/ticket lifetime, media flag disabled,
+operator no-store diagnostics, additive safety record and SQLite integrity/FKs.
+The temporary room was closed and no public account/identity was added. One
+initial probe omitted the admin role claim and was correctly denied before any
+room mutation; the corrected fixture uses the existing app-admin role and DB
+check. Backend warmup required connection retries. There was no active room
+performance at restart. Defaults and the durable bound are 8000/500 ms.
+
 ```text
 Date:
 Phase and item IDs:
@@ -938,5 +948,6 @@ Next action:
 | Streaming-foundation preview | `4a216be` (`main-D4pM4JGY.js`, `main-Be17GLqV.css`) | `https://music.micstec.com/party` | 2026-10-01 | Backend 104/104; party units 40/40; solo 10/10; local Chrome 59/59 on same source before SHA build; exact-build PWA 6/6; public release checks 10/10; DB integrity/FKs and assets/SHA verified | Online flag disabled; exact-build audio journey stalled on host virtual output; public relay and physical phone/network acceptance open |
 | Queue fanout backend update | Backend `6c73d58`, frontend `4a216be` | `https://music.micstec.com/party` | 2026-10-01 | Backend 104/104; public queue/WSS/replay/cleanup 4/4; isolated 20-member/60-socket/100-song capacity probe and cap denials pass | Online flag disabled; physical/browser and public media acceptance remain open |
 | Mobile UI/capture preview | Frontend `3e76e15`, backend `09879ac` | `https://music.micstec.com/party` | 2026-10-01 | Party units 49/49; exact-build UI 29/29, PWA 6/6 on both owned Chrome processes; public assets/routes/SHA/health/SQLite 8/8 | Online flag disabled; transient earlier PWA update timeouts recorded; physical/browser and full streaming acceptance open |
+| Timing policy backend | Backend `0e0c7aa`, frontend `3e76e15` | `https://music.micstec.com/party` | 2026-10-01 | Backend 121/121; party units 49/49; type check and UI 29/29; public HTTP/WSS/timing/schema/cleanup 11/11 | Online flag disabled; physical/browser and integrated/different-network streaming acceptance remain open |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |
