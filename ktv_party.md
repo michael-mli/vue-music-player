@@ -426,6 +426,14 @@ sequence and does not increment the durable revision. A newer full snapshot can
 replace an older one without replaying intermediate revisions. Never apply a
 snapshot from another clock epoch to an existing scheduled audio source.
 
+Concurrent song requests share a 25 ms snapshot broadcast window. Their HTTP
+replies and durable command receipts are still individual; subscribers receive
+the latest authorized revision containing the accepted requests. Other room and
+playback broadcasts remain immediate and cancel any pending queue broadcast.
+This bounds repeated serialization during a request burst without delaying
+leases or removal. `npm run test:party:load` measures an isolated server at 20
+members, 60 sockets and 100 queued songs, including enforcement of those caps.
+
 Mutation handling:
 
 1. Authenticate and check current admission/capabilities.
