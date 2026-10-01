@@ -13,7 +13,7 @@ but the production media flag remains disabled while acceptance is incomplete.
 | Reference | Current evidence | Remaining acceptance |
 | --- | --- | --- |
 | App server | EC2 `us-east-1`, Express/SQLite, nginx, PM2; Node 25.2.1 | Persistent public media service and distinct access-network acceptance |
-| Remote EC2 Chrome 137.0.7151.68 | Separate-host public HTTPS/WSS, direct media and strict TURN TLS relay; transport probe 14/14 | Integrated room/guide/handover journey, physical audio and Wi-Fi/LTE |
+| Remote EC2 Chrome 137.0.7151.68 | Separate-host public transport 14/14; isolated built-app singing, private guide and handover 18/18 via loopback SSH app/CDP forwards | Physical audio, broader devices and Wi-Fi/LTE; integrated app is not a production online release |
 | Chrome 146.0.7680.71 on Linux | Isolated browser contexts/processes, Web Audio, room/PWA/SFU checks | Native virtual output stalls in the full streaming journey; no physical audio claim |
 | Desktop stage + phone controller + wired headphones | Selected physical reference setup for local acceptance | Five-minute acoustic recording, pause/seek/late-guide and device-loss checks |
 | Android Chrome and iOS Safari phones | Required device/browser evaluation | Permission/autoplay, canvas capture, decode/memory, foreground/background and physical alignment |
@@ -261,6 +261,14 @@ Party audio URLs carry `?ktvAsset=<hash>` and bypass the solo audio cache. Same-
 media routes provide HTTP/Range behavior; there is no user-supplied external media
 URL in a room command. Asset descriptors report `alignmentVerified: false` until
 actual asset alignment evidence is available.
+
+A performer waits for a live output lease matching its device, clock, performance
+and generation before requesting publisher authority. A scheduled snapshot alone
+is not that capability: the committed lease arrives from the playback sweep.
+The server continues checking device admission/readiness and its current lease.
+Audience tracks share one audio/video element. Unsubscribe cleanup uses the
+transport's owned element even if the SDK already detached it; delayed old-track
+events cannot remove a replacement, and closed transports reject late tracks.
 
 The publisher tap is taken from the instrumental before personal monitor gain.
 Original-guide engines cannot obtain that tap. Clean capture mixes one backing

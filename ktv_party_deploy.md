@@ -226,9 +226,33 @@ npm run test:party:supervisor
 Use owned Chrome processes for the existing local browser journey and streaming
 spike. `test:party:room-media` also owns a separate browser and virtual audio
 fixture; it exercises the built app against real room authorization and SFU.
-It requires Linux PulseAudio and Docker. All scripts remove their owned fixtures.
-Synthetic loopback results do not measure speaker/headphone alignment or internet
-latency. A failed integration journey remains an open gate in the tracker.
+The default uses native Linux output and a synthetic microphone; an optional
+owned PulseAudio sink is available. Docker is required. A remote EC2 Chrome client
+can exercise the entire built app through loopback SSH forwards with direct media
+to the SFU host:
+
+```bash
+KTV_ROOM_TEST_CLIENT=remote-ec2 \
+KTV_ROOM_TEST_PUBLIC_IP=3.219.116.105 \
+KTV_ROOM_TEST_INTERFACE=ens5 \
+KTV_ROOM_TEST_SSH_HOST=operator@owned-host \
+KTV_ROOM_TEST_KNOWN_HOSTS=/path/to/already-trusted-known_hosts \
+npm run test:party:room-media
+```
+
+The target must already have a trusted SSH key and `/usr/bin/google-chrome`.
+The fixture does not change trust records or existing profiles/services. It
+uploads only its synthetic microphone, creates a private temporary profile,
+checks that Chrome and both forwards bind loopback, and owns cleanup plus a
+15-minute remote watchdog. Keep CDP 9243, private SFU 17900 and public ICE
+7881/TCP + 7882/UDP free. The public IP/interface must describe this SFU host.
+The backend, accounts, rooms and grants are isolated temporary fixtures;
+production configuration stays unchanged. Native clocks and drift/readiness
+checks are retained. The remote 2026-10-01 candidate passes the full singing,
+private guide and handover journey 18/18, including spectral guide separation.
+All scripts remove their owned fixtures. This does not measure physical acoustic
+alignment or distinct Wi-Fi/LTE networks. Failed journeys remain recorded in the
+tracker until their concrete defect is resolved.
 
 Before enabling online rooms publicly, record these results:
 

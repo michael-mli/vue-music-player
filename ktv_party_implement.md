@@ -954,6 +954,32 @@ room closure and SQLite integrity/FKs. There were no active performances at
 restart, default rooms/guide remain enabled, media remains disabled and no user
 identity was created. Backend warmup required two connection retries.
 
+Integrated streaming checkpoint (2026-10-01): an owned Chrome 137 client on the
+second EC2 host runs the built app, synthetic microphone, actual room policy and
+SFU through private SSH app/CDP forwards and direct media ports. Native output
+clocks and all existing drift/permission gates remain enabled. The first run
+reached guide separation, then exposed a fixture race that confirmed the next
+singer before Skip committed. Later runs exposed an application race: requesting
+a publisher token from the scheduled snapshot before its lease arrived produced
+403. The client now waits for a matching live lease; its regression covers
+missing, foreign, stale and expired leases plus cancellation during issuance.
+A subsequent handover received new media but retained an empty old player because
+SDK detach could return no elements. Transport ownership now guarantees old
+player cleanup and denies delayed subscriptions after close. Three regression
+cases cover empty detach, replacement/old-event order and close/unauthorized tracks.
+
+Candidate checks: party units 53/53 (`/tmp/ktv-stream-handover-party.log`), build/type
+check (`/tmp/ktv-stream-handover-build.log`), integrated remote journey 18/18
+(`/tmp/ktv-room-media-remote-handover-fixed.log`). Original guide scheduling is
+confirmed from its actual 1729 Hz buffer source and native output timestamps;
+received backing/microphone are present and guide tone stays at least 25 dB below
+both. Handover leaves one authorized nonce and releases both microphone captures.
+Owned remote profile/browser, SSH forwards, SFU and private fixtures were removed.
+This closes the earlier virtual-host stall as a software test-environment limit;
+it does not establish physical alignment, mobile support or Wi-Fi/LTE acceptance.
+The original host's failed native-clock journeys remain historical evidence.
+Final exact-commit release verification follows; public media remains disabled.
+
 ```text
 Date:
 Phase and item IDs:

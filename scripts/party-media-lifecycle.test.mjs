@@ -25,6 +25,7 @@ const { usePartyMedia, partyMediaFailureCode } = await import(dataModule(compile
 test('media failures provide actionable message keys without exposing provider URLs or tokens', () => {
   assert.equal(partyMediaFailureCode(new Error('wss://provider/rtc?access_token=private')), 'mediaErrorUnavailable')
   assert.equal(partyMediaFailureCode(Object.assign(new Error('private-body'), { code: 'MEDIA_REVOKED' })), 'mediaErrorPermission')
+  assert.equal(partyMediaFailureCode({ code: 'MEDIA_FORBIDDEN' }), 'mediaErrorPermission')
   assert.equal(partyMediaFailureCode(Object.assign(new Error('private-label'), { name: 'NotAllowedError' })), 'mediaErrorMicPermission')
   assert.equal(partyMediaFailureCode(new Error('MEDIA_HEADPHONES_CHANGED')), 'mediaErrorHeadphonesChanged')
   assert.equal(partyMediaFailureCode(null), 'mediaErrorUnavailable')
@@ -62,12 +63,46 @@ function fixture(t) {
     await nextTick()
     globalThis.window = previous.window; globalThis.document = previous.document; globalThis.__partyMediaLifecycle = previous.state
   })
-  return { media, party, connected, audio, document, window, micRequests, state, removals, engines, get disabled() { return disabled } }
+  return { media, party, connected, clock, audio, document, window, timers, micRequests, state, removals, engines, get disabled() { return disabled } }
 }
 async function permissionRequested(f) {
   for (let attempt = 0; attempt < 10 && !f.micRequests.length; attempt++) await nextTick()
   assert.equal(f.micRequests.length, 1)
 }
+
+test('a scheduled snapshot waits for its matching output lease before requesting publisher authority', async t => {
+  const f = fixture(t), capture = f.media.prepareCapture(), issued = deferred()
+  await permissionRequested(f)
+  const input = stream(); f.micRequests[0].resolve(input); await capture
+  let requests = 0
+  f.state.api.mediaGrant = () => { requests++; return issued.promise }
+  f.audio.prepared.value = true; f.audio.assignedHere.value = true
+  f.party.value.playback = { state: 'scheduled', performanceId: 'first-performance', singerMemberId: 'singer',
+    clockId: 'clock', generation: 4, stageDeviceId: 'device', assets: { instrumental: { sha256: 'backing' } }, lease: null }
+  const lease = { id: 'lease', deviceId: 'device', clockId: 'clock', performanceId: 'first-performance', generation: 4,
+    expiresServerMs: performance.now() + 8000 }
+  for (const candidate of [null, { ...lease, deviceId: 'other' }, { ...lease, clockId: 'old-clock' },
+    { ...lease, performanceId: 'old-performance' }, { ...lease, generation: 3 }, { ...lease, expiresServerMs: performance.now() }]) {
+    f.party.value.playback.lease = candidate
+    for (const tick of f.timers.values()) tick()
+    await nextTick()
+    assert.equal(requests, 0)
+    assert.equal(input.getAudioTracks()[0].readyState, 'live')
+    assert.equal(f.media.status.value, 'ready')
+  }
+  f.party.value.playback.lease = lease
+  for (const tick of f.timers.values()) tick()
+  await nextTick()
+  assert.equal(requests, 1)
+  assert.equal(f.media.status.value, 'connecting')
+  for (const tick of f.timers.values()) tick()
+  assert.equal(requests, 1)
+  await f.media.stop()
+  issued.resolve({ identity: 'late-publisher', scope: 'publisher', room: 'ktv-first-room' })
+  for (let attempt = 0; attempt < 10 && !f.removals.length; attempt++) await nextTick()
+  assert.deepEqual(f.removals, [['first-room', 'late-publisher']])
+  assert.equal(input.getAudioTracks()[0].readyState, 'ended')
+})
 
 test('a microphone permission reply after the selected turn changes is released immediately', async t => {
   const f = fixture(t), pending = f.media.prepareCapture()

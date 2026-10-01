@@ -12,21 +12,29 @@ export async function createPartyMediaTransport(grant: PartyMediaGrant, callback
     reconnectPolicy: { nextRetryDelayInMs: () => null } })
   const received = new Map<string, { participant: string; element: HTMLVideoElement; track: import('livekit-client').RemoteTrack; publication: import('livekit-client').RemoteTrackPublication }>()
   let stopped = false
+  function removeElement(element: HTMLMediaElement) {
+    element.pause(); element.srcObject = null; element.remove(); callbacks.detached(element)
+  }
+  function clearReceived() {
+    const previous = [...received.values()]
+    received.clear()
+    for (const item of previous) { item.publication.setSubscribed(false); item.track.detach() }
+    for (const element of new Set(previous.map(item => item.element))) removeElement(element)
+  }
   room.on(RoomEvent.AudioPlaybackStatusChanged, allowed => { if (!allowed && !stopped) callbacks.playbackBlocked?.() })
   room.on(RoomEvent.VideoPlaybackStatusChanged, allowed => { if (!allowed && !stopped) callbacks.playbackBlocked?.() })
   room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
     const source = track.kind === Track.Kind.Audio ? Track.Source.Microphone : Track.Source.Camera
     // Receive one performance mix and one captured lyric track. A second audio
     // publication must never become a competing instrumental or vocal guide.
-    if (grant.scope !== 'audience' || publication.source !== source ||
+    if (stopped || grant.scope !== 'audience' || publication.source !== source ||
       publication.trackName !== (track.kind === Track.Kind.Audio ? 'performance-mix' : 'performance-lyrics')) {
       publication.setSubscribed(false); return
     }
     if ([...received.values()].some(item => item.participant !== participant.identity)) {
       // A new authorized nonce replaces any delayed old-track UI events. Remove
       // its entire old media stream before attaching the replacement.
-      for (const item of received.values()) { item.publication.setSubscribed(false); item.track.detach(); item.element.pause(); item.element.remove(); callbacks.detached(item.element) }
-      received.clear()
+      clearReceived()
     }
     if (received.has(track.kind)) { publication.setSubscribed(false); return }
     const element = received.values().next().value?.element || document.createElement('video')
@@ -39,9 +47,13 @@ export async function createPartyMediaTransport(grant: PartyMediaGrant, callback
   room.on(RoomEvent.TrackUnsubscribed, track => {
     const current = received.get(track.kind)
     if (current?.track === track) received.delete(track.kind)
-    for (const element of track.detach()) {
+    // LiveKit may detach the media element before emitting TrackUnsubscribed,
+    // so detach() can return []. Our own record still owns the stale UI node.
+    const detached = new Set<HTMLMediaElement>(track.detach())
+    if (current?.track === track) detached.add(current.element)
+    for (const element of detached) {
       if ([...received.values()].some(item => item.element === element)) callbacks.attached(element)
-      else { element.pause(); element.remove(); callbacks.detached(element) }
+      else removeElement(element)
     }
   })
   room.on(RoomEvent.Disconnected, () => { if (!stopped) callbacks.ended() })
@@ -64,8 +76,7 @@ export async function createPartyMediaTransport(grant: PartyMediaGrant, callback
     },
     async close() {
       stopped = true
-      for (const item of received.values()) { item.element.pause(); item.element.remove(); callbacks.detached(item.element) }
-      received.clear(); await room.disconnect(true)
+      clearReceived(); await room.disconnect(true)
     },
   }
 }

@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "type-check": "vue-tsc --noEmit",
     "test:lyrics": "node --test scripts/lyrics-timing.test.mjs",
-    "test:party": "node --test scripts/party-clock.test.mjs scripts/party-audio.test.mjs scripts/party-commands.test.mjs scripts/party-publish.test.mjs scripts/party-capture.test.mjs scripts/party-media-lifecycle.test.mjs scripts/party-media-config.test.mjs",
+    "test:party": "node --test scripts/party-clock.test.mjs scripts/party-audio.test.mjs scripts/party-commands.test.mjs scripts/party-publish.test.mjs scripts/party-capture.test.mjs scripts/party-media-lifecycle.test.mjs scripts/party-transport.test.mjs scripts/party-media-config.test.mjs",
     "test:party:browser": "node scripts/party-browser.test.mjs",
     "test:party:ui": "node scripts/party-ui-browser.test.mjs",
     "test:party:load": "node scripts/party-load.test.mjs",

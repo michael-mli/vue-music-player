@@ -1,5 +1,5 @@
 // Full built-app room/capture journey with actual gated SFU transport and a fake
-// microphone tone. Owned fixtures only; this is not physical or internet evidence.
+// microphone tone. Owned fixtures only; this is not physical audio evidence.
 import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -17,16 +17,25 @@ import { initDb } from '../server/db.js'
 import { registerKtvRoutes } from '../server/ktv-routes.js'
 import { createKtvAssets } from '../server/ktv-assets.js'
 import { createKtvMediaWorker } from '../server/ktv-media-worker.js'
+import { createOwnedRemoteBrowser } from './party-remote-browser.mjs'
+
+const clientLocation = process.env.KTV_ROOM_TEST_CLIENT || 'same-host'
+assert.ok(['same-host', 'remote-ec2'].includes(clientLocation), 'Unknown room-test client topology')
+const remoteMode = clientLocation === 'remote-ec2'
+if (remoteMode) {
+  assert.equal(net.isIP(process.env.KTV_ROOM_TEST_PUBLIC_IP || ''), 4, 'Remote fixture requires the SFU public IPv4')
+  assert.match(process.env.KTV_ROOM_TEST_INTERFACE || '', /^[A-Za-z0-9_-]+$/, 'Remote fixture requires its network interface')
+}
 
 const exec = promisify(execFile), root = await fs.mkdtemp(path.join(os.tmpdir(), 'ktv-room-stream-'))
 const container = `ktv-room-stream-${randomUUID().slice(0, 8)}`
 const apiKey = 'room-browser', apiSecret = randomBytes(32).toString('hex'), controlSecret = randomBytes(32).toString('hex')
 const upstreamUrl = 'http://127.0.0.1:17900', image = 'livekit/livekit-server:v1.13.7@sha256:6fd3b7088874c4d119160dd688798dfec852bc014786d392caad15f6f63912a3'
 const provider = new RoomServiceClient(upstreamUrl, apiKey, apiSecret, { requestTimeout: 2, failover: false })
-const db = initDb(root), contexts = [], debuggerSockets = [], pending = new Map(), sessionSockets = new Map(), errors = []
+const db = initDb(root), contexts = [], debuggerSockets = [], pending = new Map(), sessionSockets = new Map(), errors = [], mediaHttp = []
 const ownedTcp = new Set()
 const trackTcp = server => server.on('connection', socket => { ownedTcp.add(socket); socket.once('close', () => ownedTcp.delete(socket)) })
-let frontend, backend, worker, realtime, chrome, pulseModule, pathRoom, running = false, nextId = 0, passed = 0
+let frontend, backend, worker, realtime, chrome, remoteBrowser, pulseModule, pathRoom, running = false, nextId = 0, passed = 0
 const check = (value, label) => { assert.ok(value, label); passed++; console.log(`PASS ${label}`) }
 const poll = async (work, label, timeout = 20000) => {
   const deadline = Date.now() + timeout
@@ -52,6 +61,13 @@ async function debuggerConnection(url) {
     const packet = JSON.parse(raw)
     if (packet.id) { const item = pending.get(packet.id); if (!item) return; pending.delete(packet.id); packet.error ? item.reject(new Error(packet.error.message)) : item.resolve(packet.result) }
     else if (packet.method === 'Runtime.exceptionThrown') errors.push(packet.params.exceptionDetails.exception?.description || packet.params.exceptionDetails.text)
+    else if (packet.method === 'Network.responseReceived') {
+      const response = packet.params.response, pathname = new URL(response.url).pathname
+      if (pathname.startsWith('/api/ktv/') && pathname.includes('media')) {
+        mediaHttp.push({ path: pathname.replace(/[0-9a-f]{8}-[0-9a-f-]{27}/g, 'id'), status: response.status })
+        if (mediaHttp.length > 16) mediaHttp.shift()
+      }
+    }
   })
   console.log(`Browser: ${info.Browser}`); return socket
 }
@@ -79,7 +95,10 @@ try {
   await fs.writeFile(path.join(root, 'synced/link.1.lrc'), '[00:00]Singing together\n[00:10]Second lyric\n[00:25]Third lyric\n[00:50]Final lyric')
   const micFile = path.join(root, 'microphone.wav'); await fs.writeFile(micFile, wav(880))
   const config = path.join(root, 'livekit.yaml')
-  await fs.writeFile(config, `port: 17900\nbind_addresses: [127.0.0.1]\nrtc:\n  node_ip: 127.0.0.1\n  use_external_ip: false\n  tcp_port: 17901\n  udp_port: 17902\n  enable_loopback_candidate: true\n  interfaces:\n    includes: [lo]\nroom:\n  max_participants: 6\nkeys:\n  ${apiKey}: ${apiSecret}\nlogging:\n  level: warn\n`, { mode: 0o600 })
+  const rtc = remoteMode
+    ? `  node_ip: ${process.env.KTV_ROOM_TEST_PUBLIC_IP}\n  use_external_ip: false\n  tcp_port: 7881\n  udp_port: 7882\n  interfaces:\n    includes: [${process.env.KTV_ROOM_TEST_INTERFACE}]\n`
+    : '  node_ip: 127.0.0.1\n  use_external_ip: false\n  tcp_port: 17901\n  udp_port: 17902\n  enable_loopback_candidate: true\n  interfaces:\n    includes: [lo]\n'
+  await fs.writeFile(config, `port: 17900\nbind_addresses: [127.0.0.1]\nrtc:\n${rtc}room:\n  max_participants: 6\nkeys:\n  ${apiKey}: ${apiSecret}\nlogging:\n  level: warn\n`, { mode: 0o600 })
   await exec('docker', ['run', '-d', '--name', container, '--network', 'host', '--user', `${process.getuid()}:${process.getgid()}`,
     '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', '-v', `${config}:/run/livekit.yaml:ro`, image, '--config', '/run/livekit.yaml'])
   running = true
@@ -140,20 +159,25 @@ try {
   const nextSinger = await api(3, '/join', { commandId: randomUUID(), code: room.invitationCode, displayName: 'Next singer' })
   const singerDebugPort = Number(process.env.CHROME_MEDIA_TEST_PORT || 9240)
   const chromeEnv = { ...process.env }
-  if (process.env.PARTY_TEST_PULSE_SINK === '1') {
+  if (!remoteMode && process.env.PARTY_TEST_PULSE_SINK === '1') {
     // An owned virtual output isolates the fixture from this host's shared sink.
     // Browser audio clocks and all application drift guards remain native.
     const sink = `ktv_${randomUUID().replaceAll('-', '')}`
     pulseModule = (await exec('pactl', ['load-module', 'module-null-sink', `sink_name=${sink}`, 'rate=44100'])).stdout.trim()
     chromeEnv.PULSE_SINK = sink
   }
-  chrome = spawn(process.env.CHROME_BIN || '/usr/bin/google-chrome', ['--headless', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu',
+  if (remoteMode) remoteBrowser = await createOwnedRemoteBrowser({ host: process.env.KTV_ROOM_TEST_SSH_HOST,
+    knownHosts: process.env.KTV_ROOM_TEST_KNOWN_HOSTS, micFile, frontendPort: frontend.address().port,
+    debugPort: Number(process.env.KTV_ROOM_TEST_CHROME_PORT || 9243) })
+  else chrome = spawn(process.env.CHROME_BIN || '/usr/bin/google-chrome', ['--headless', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu',
     '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--no-first-run', '--no-default-browser-check', '--no-proxy-server',
     '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', `--use-file-for-fake-audio-capture=${micFile}`,
     `--remote-debugging-port=${singerDebugPort}`, `--user-data-dir=${path.join(root, 'chrome')}`, 'about:blank'], { stdio: 'ignore', env: chromeEnv })
-  await poll(async () => { try { return (await fetch(`http://127.0.0.1:${singerDebugPort}/json/version`)).ok } catch { return false } }, 'owned fake-mic Chrome')
-  const singerSocket = await debuggerConnection(`http://127.0.0.1:${singerDebugPort}`)
-  const audienceSocket = await debuggerConnection(process.env.CHROME_DEBUG_URL || 'http://127.0.0.1:9231')
+  const singerDebugUrl = remoteBrowser?.debuggerUrl || `http://127.0.0.1:${singerDebugPort}`
+  await poll(async () => { try { return (await fetch(singerDebugUrl + '/json/version')).ok } catch { return false } }, 'owned fake-mic Chrome')
+  const singerSocket = await debuggerConnection(singerDebugUrl)
+  const audienceSocket = remoteMode ? singerSocket : await debuggerConnection(process.env.CHROME_DEBUG_URL || 'http://127.0.0.1:9231')
+  console.log('Client topology:', clientLocation, '; native audio clocks; isolated synthetic room/microphone')
   async function page(actor, stage = false) {
     const socket = actor === 2 || actor === 3 ? singerSocket : audienceSocket
     const { browserContextId } = await cdp(socket, 'Target.createBrowserContext'); contexts.push({ socket, browserContextId })
@@ -161,16 +185,22 @@ try {
     const { targetId } = await cdp(socket, 'Target.createTarget', { browserContextId, url: 'about:blank' })
     const { sessionId } = await cdp(socket, 'Target.attachToTarget', { targetId, flatten: true }); sessionSockets.set(sessionId, socket)
     await cdp(socket, 'Page.enable', {}, sessionId); await cdp(socket, 'Runtime.enable', {}, sessionId)
+    await cdp(socket, 'Network.enable', {}, sessionId)
     await cdp(socket, 'Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', 'en');
       window.__micStreams = []; window.__bufferSources = []; window.__sourceEvidence = []; window.__outputEvidence = []; window.__peers = []; window.__contexts = [];
       const Context = window.AudioContext; window.AudioContext = class extends Context { constructor(...args) { super(...args); window.__contexts.push(this); } };
       const Peer = window.RTCPeerConnection; window.RTCPeerConnection = class extends Peer { constructor(...args) { super(...args); window.__peers.push(this); } };
       const timestamp = AudioContext.prototype.getOutputTimestamp;
-      AudioContext.prototype.getOutputTimestamp = function() { const output = timestamp.call(this); window.__outputEvidence.push({ ...output, now: performance.now(), render: this.currentTime, latency: this.outputLatency }); if (__outputEvidence.length > 24) __outputEvidence.shift(); return output; };
+      AudioContext.prototype.getOutputTimestamp = function() { const output = timestamp.call(this); window.__outputEvidence.push({ ...output, context: window.__contexts.indexOf(this), now: performance.now(), render: this.currentTime, latency: this.outputLatency }); if (__outputEvidence.length > 24) __outputEvidence.shift(); return output; };
       const getMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
       navigator.mediaDevices.getUserMedia = async (...args) => { const stream = await getMedia(...args); window.__micStreams.push(stream); return stream; };
       const source = AudioContext.prototype.createBufferSource;
-      AudioContext.prototype.createBufferSource = function() { const item = source.call(this), start = item.start.bind(item); item.start = (...args) => { window.__sourceEvidence.push({when:args[0],offset:args[1],now:performance.now(),render:this.currentTime,output:this.getOutputTimestamp()}); return start(...args); }; window.__bufferSources.push(item); return item; };
+      AudioContext.prototype.createBufferSource = function() { const item = source.call(this), start = item.start.bind(item); item.start = (...args) => {
+        const samples = item.buffer?.getChannelData(0), length = Math.min(samples?.length || 0, 4096); let crossings = 0;
+        for (let index = 1; index < length; index++) if (samples[index-1] <= 0 && samples[index] > 0) crossings++;
+        window.__sourceEvidence.push({when:args[0],offset:args[1],now:performance.now(),render:this.currentTime,output:this.getOutputTimestamp(),
+          frequency: length ? Math.round(crossings * item.buffer.sampleRate / length) : null}); return start(...args);
+      }; window.__bufferSources.push(item); return item; };
       window.confirm = () => true;` }, sessionId)
     await cdp(socket, 'Page.navigate', { url: origin + `/party/${room.room.id}${stage ? '/stage' : ''}` }, sessionId)
     await poll(() => evaluate(sessionId, "document.body?.innerText.includes('Live room updates connected')"), 'room page connected')
@@ -218,19 +248,26 @@ try {
   check(await evaluate(audience, "(() => { const video = document.querySelector('[data-party-media-screen] video'); return video.videoWidth > 0 && Math.abs(video.videoWidth / video.videoHeight - 16/9) < .02; })()"), 'audience displays decoded captured lyric video')
   await click(phone, 'Listen to original vocals privately')
   await poll(() => evaluate(phone, "document.body.innerText.includes('Turn off private original vocals')"), 'private original enabled')
-  await poll(() => evaluate(phone, 'window.__bufferSources.length >= 2'), 'private original source actually scheduled')
+  await poll(() => evaluate(phone, 'window.__sourceEvidence.some(item => item.frequency > 1600 && item.frequency < 1850)'), 'native private original tone source actually scheduled')
+  check(await evaluate(phone, 'window.__sourceEvidence.some(item => item.frequency > 1600 && item.frequency < 1850) && window.__outputEvidence.some(item => item.contextTime > 0 && item.performanceTime > 0)'), 'private original tone is scheduled against native Web Audio output timestamps')
   peaks = await poll(async () => { const value = await spectrum(); return value[0] > -55 && value[1] > -55 ? value : false }, 'private guide keeps public backing intact')
   check(peaks[2] < Math.min(peaks[0], peaks[1]) - 25, `enabling the original guide in the built app keeps it outside the public mix (${peaks.map(value => value.toFixed(1)).join(', ')} dB)`)
   check(await evaluate(audience, 'window.__bufferSources.length === 0'), 'remote common screen creates no independent instrumental player')
+  const oldPublisherGrant = await api(2, `${pathRoom}/media/${firstPublisher.identity}/renew`, { deviceId: device.id })
   await click(phone, 'Stop streaming on this device')
   check(await evaluate(phone, "window.__micStreams.every(stream => stream.getTracks().every(track => track.readyState === 'ended'))"), 'stop releases the actual microphone immediately')
   await poll(async () => !(await provider.listParticipants(`ktv-${room.room.id}`)).some(item => item.identity === firstPublisher.identity), 'old publisher removed at SFU')
   check(db.prepare('SELECT state FROM ktv_media_grants WHERE identity = ?').get(firstPublisher.identity).state === 'revoked', 'provider removal commits terminal nonce revocation')
+  const oldClaims = JSON.parse(Buffer.from(oldPublisherGrant.token.split('.')[1], 'base64url').toString())
+  const denied = await fetch(origin + '/api/ktv/media/rtc/validate?access_token=' + encodeURIComponent(oldPublisherGrant.token))
+  check(oldClaims.exp * 1000 > Date.now() && denied.status === 403, 'revoked unexpired room-issued publisher JWT cannot restore media access')
   check((await api(1, pathRoom)).playback.state === 'recovering', 'losing the publisher enters explicit room recovery')
   await click(host, 'Skip song')
+  await poll(async () => { const current = await api(1, pathRoom); return current.playback.state === 'idle' && current.readiness.entryId !== request.queue[0].id }, 'skip commits before the next singer is invited')
   const nextRequest = await api(3, `${pathRoom}/queue`, { commandId: randomUUID(), songId: 1, title: 'Second live performer', requestNext: false, singerMemberId: nextSinger.self.id })
   view = await api(1, pathRoom)
   if (view.readiness.state === 'idle') view = await api(1, `${pathRoom}/readiness/offer`, { commandId: randomUUID(), entryId: nextRequest.queue[0].id, clockId: view.clock.clockId, baseRevision: view.room.revision })
+  view = await poll(async () => { const current = await api(1, pathRoom); return current.readiness.entryId === nextRequest.queue[0].id && current.readiness.singerMemberId === nextSinger.self.id ? current : false }, 'correct next singer selection committed')
   await api(3, `${pathRoom}/readiness/respond`, { commandId: randomUUID(), clockId: view.readiness.clockId, performanceId: view.readiness.performanceId, generation: view.readiness.generation, baseRevision: view.room.revision, ready: true })
   const nextPhone = await page(3)
   await poll(() => evaluate(nextPhone, "[...document.querySelectorAll('label')].some(item => item.textContent.includes('I am using headphones'))"), 'next performer capture form')
@@ -244,16 +281,19 @@ try {
   check(secondPublisher.identity !== firstPublisher.identity && secondPublisher.member_id === nextSinger.self.id, 'a new singer gets a fresh nonce after old-provider acknowledgment')
   check(db.prepare("SELECT COUNT(*) total FROM ktv_media_grants WHERE scope = 'publisher' AND state != 'revoked'").get().total === 1, 'handover keeps one non-revoked publisher')
   await poll(() => evaluate(audience, "(() => { const video = document.querySelector('[data-party-media-screen] video'); return video?.srcObject?.getAudioTracks().length === 1 && video.srcObject.getVideoTracks().length === 1; })()"), 'audience receives replacement tracks')
+  await poll(() => evaluate(audience, "document.querySelector('[data-party-media-screen] video')?.getVideoPlaybackQuality().totalVideoFrames >= 10"), 'replacement lyric video decodes ten frames')
+  check(await evaluate(audience, "document.querySelectorAll('[data-party-media-screen] video').length === 1"), 'handover presents exactly one current audience player with decoded replacement video')
   await click(nextPhone, 'Stop streaming on this device')
   check(await evaluate(nextPhone, "window.__micStreams.every(stream => stream.getTracks().every(track => track.readyState === 'ended'))"), 'replacement capture also releases its microphone')
   check(errors.length === 0, `no browser runtime exceptions (${errors.length})`)
-  console.log(`${passed} built-app streaming checks passed. Synthetic microphone, foreground Chrome, loopback SFU only.`)
+  console.log(`${passed} built-app streaming checks passed. Client: ${clientLocation}; synthetic microphone, foreground Chrome, isolated policy/SFU. Remote HTTP/CDP use loopback SSH forwards; physical and distinct access-network acceptance remains open.`)
 } catch (error) {
   console.error('Journey failure:', error.message)
   console.error('Runtime exception count:', errors.length)
+  console.error('Media HTTP status (paths only):', JSON.stringify(mediaHttp))
   for (const session of sessionSockets.keys()) console.error('UI state:', JSON.stringify(await evaluate(session, ` (async () => ({status:document.querySelector('[data-party-media-status]')?.textContent,
     errors:[...document.querySelectorAll('[role=alert]')].map(item=>item.textContent), diagnostics:[...document.querySelectorAll('dl')].map(item=>item.textContent),
-    output:window.__outputEvidence, sources:window.__sourceEvidence, canvas:[...document.querySelectorAll('canvas')].map(item=>({width:item.width,height:item.height,connected:item.isConnected})),
+    output:window.__outputEvidence, sources:window.__sourceEvidence, contexts:window.__contexts.map(item=>({state:item.state,time:item.currentTime})), canvas:[...document.querySelectorAll('canvas')].map(item=>({width:item.width,height:item.height,connected:item.isConnected})),
     video:[...document.querySelectorAll('video')].map(item=>({width:item.videoWidth,height:item.videoHeight,ready:item.readyState,paused:item.paused,muted:item.muted,tracks:item.srcObject?.getTracks().map(track=>({kind:track.kind,state:track.readyState,muted:track.muted,settings:track.getSettings()}))})),
     rtc:await Promise.all(window.__peers.map(async peer=>({state:peer.connectionState,tracks:[...await peer.getStats()].map(([,item])=>item).filter(item=>['inbound-rtp','outbound-rtp'].includes(item.type)).map(item=>({kind:item.kind,type:item.type,bytes:item.bytesSent??item.bytesReceived,frames:item.framesEncoded??item.framesDecoded,framesReceived:item.framesReceived,framesDropped:item.framesDropped}))})))
   }))()` ).catch(() => ({}))))
@@ -261,6 +301,10 @@ try {
 } finally {
   for (const { socket, browserContextId } of contexts) if (socket.readyState === WebSocket.OPEN) await cdp(socket, 'Target.disposeBrowserContext', { browserContextId }).catch(() => {})
   for (const socket of debuggerSockets) socket.close()
+  if (remoteBrowser) await remoteBrowser.close().catch(() => {
+    console.error('Owned remote browser cleanup was not verified; its 15-minute watchdog remains bounded')
+    process.exitCode = 1
+  })
   for (const child of [chrome]) if (child && child.exitCode === null && child.signalCode === null) {
     const ended = once(child, 'exit'); child.kill('SIGTERM')
     const timer = setTimeout(() => child.kill('SIGKILL'), 1000)

@@ -10,7 +10,7 @@ import type { PartyClockEstimate } from '@/utils/partyClock'
 
 type Transport = Awaited<ReturnType<typeof createPartyMediaTransport>>
 const mediaErrors: Record<string, string> = {
-  MEDIA_UNAVAILABLE: 'mediaErrorUnavailable', MEDIA_REVOKED: 'mediaErrorPermission', MEDIA_PERMISSION: 'mediaErrorPermission',
+  MEDIA_UNAVAILABLE: 'mediaErrorUnavailable', MEDIA_REVOKED: 'mediaErrorPermission', MEDIA_PERMISSION: 'mediaErrorPermission', MEDIA_FORBIDDEN: 'mediaErrorPermission',
   AUDIO_GESTURE_REQUIRED: 'mediaErrorOutput', AUDIO_OUTPUT_NOT_READY: 'mediaErrorOutput', MEDIA_OUTPUT: 'mediaErrorOutput',
   MEDIA_MIC_DISCONNECTED: 'mediaErrorMicDisconnected', MEDIA_PERFORMER_ENDED: 'mediaErrorPerformerEnded',
   MEDIA_AUDIENCE_ENDED: 'mediaErrorAudienceEnded', MEDIA_HEADPHONES_PAUSED: 'mediaErrorHeadphonesPaused',
@@ -103,6 +103,14 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
   }
   async function startPublisher() {
     if (starting || grant.value || !capture.value || !party.value?.playback?.assets || !audio.prepared.value || !audio.assignedHere.value) return
+    // The scheduled snapshot can arrive before sweep() commits and publishes
+    // its lease. Wait for that capability instead of sending a forbidden token
+    // request and tearing down a microphone that is already prepared.
+    const playback = party.value.playback, lease = playback.lease, estimate = clock.value
+    if (!lease || !estimate || estimate.status !== 'healthy' || !['scheduled', 'playing'].includes(playback.state) ||
+      lease.deviceId !== audio.deviceId || lease.clockId !== playback.clockId || lease.clockId !== estimate.clockId ||
+      lease.performanceId !== playback.performanceId || lease.generation !== playback.generation ||
+      !(lease.expiresServerMs > performance.now() + estimate.offsetMs + estimate.uncertaintyMs + 100)) return
     const attempt = epoch, roomId = party.value.room.id
     starting = true; status.value = 'connecting'
     let issued: PartyMediaGrant | null = null, connection: Transport | null = null
