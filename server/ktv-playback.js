@@ -2,21 +2,23 @@ import { randomUUID } from 'node:crypto'
 import { fail } from './ktv-errors.js'
 import { invalidateReadiness } from './ktv-readiness.js'
 import { recordTurn, requestNextTurn, offerNextTurn } from './ktv-turns.js'
-import { timelinePosition, OUTPUT_LEASE_MS, OUTPUT_MARGIN_MS, PLAYBACK_LEAD_MS, PREPARE_TIMEOUT_MS } from './ktv-timeline.js'
+import { timelinePosition } from './ktv-timeline.js'
+import { ktvTiming, ktvRestartSilenceMs } from './ktv-timing.js'
 
 const stamp = () => new Date().toISOString()
 
-export function createKtvPlayback({ db, clock, transaction, bump, event, broadcast, broadcastLease = () => {}, hostGraceMs = 30_000 }) {
+export function createKtvPlayback({ db, clock, transaction, bump, event, broadcast, broadcastLease = () => {}, hostGraceMs, timing: timingOptions }) {
+  const timing = ktvTiming({ ...timingOptions, ...(hostGraceMs === undefined ? {} : { hostGraceMs }) })
+  hostGraceMs = timing.hostGraceMs
   const devices = new Map()
   const leases = new Map()
   const hostMissing = new Map()
   const hostSignatures = new Map()
-  if (!Number.isFinite(hostGraceMs) || hostGraceMs < 1000 || hostGraceMs > 300_000) throw new Error('Invalid KTV host grace period')
   let presenceSequence = 0
   let closed = false
   // A previous process may have renewed a lease immediately before restart.
   // The new epoch cannot shorten that device's already-scheduled silence deadline.
-  const restartSafeAfterMs = clock.nowMs() + OUTPUT_LEASE_MS + OUTPUT_MARGIN_MS
+  const restartSafeAfterMs = clock.nowMs() + transaction(db, () => ktvRestartSilenceMs(db, timing))
   const restarted = db.prepare("SELECT * FROM ktv_playback WHERE state != 'idle'").all()
   if (restarted.length) transaction(db, () => {
     for (const row of restarted) {
@@ -83,7 +85,7 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
     const grant = device?.grantId && db.prepare('SELECT revoked_at, expires_at FROM ktv_device_grants WHERE id = ?').get(device.grantId)
     if (!device || device.roomId !== roomId || device.ws.readyState !== 1 || member?.admission !== 'admitted' ||
       (device.grantId && (!grant || grant.revoked_at || Date.parse(grant.expires_at) <= Date.now())) ||
-      clock.nowMs() - device.lastSeenMs > OUTPUT_LEASE_MS) fail(409, 'DEVICE_NOT_READY', 'The stage device is not connected')
+      clock.nowMs() - device.lastSeenMs > timing.outputLeaseMs) fail(409, 'DEVICE_NOT_READY', 'The stage device is not connected')
     return device
   }
   function current(req, row, checkRevision, room) {
@@ -189,7 +191,7 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
       prepare_deadline_ms = ?, updated_at = ? WHERE room_id = ?`)
       .run(readiness.entryId, readiness.performanceId, clock.id, assets.durationMs, JSON.stringify(assets),
         samePerformance ? row.guide_required : 0, samePerformance ? row.guide_device_id : null, samePerformance ? row.lyric_offset_ms : 0,
-        clock.nowMs() + PREPARE_TIMEOUT_MS, stamp(), roomId)
+        clock.nowMs() + timing.prepareTimeoutMs, stamp(), roomId)
     bump(db, roomId)
     event(db, roomId, null, 'playback.preparing', readiness.entryId)
   }
@@ -222,7 +224,7 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
     leases.delete(roomId)
     // The prepared generation is the scheduled generation. Requiring another
     // ready response after changing it would create an unnecessary race.
-    const anchor = clock.nowMs() + (mode === 'local' ? PLAYBACK_LEAD_MS : 6000)
+    const anchor = clock.nowMs() + (mode === 'local' ? timing.playbackLeadMs : timing.onlineLeadMs)
     db.prepare(`UPDATE ktv_playback SET state = 'scheduled', anchor_server_ms = ?, prepare_deadline_ms = NULL, recovery_reason = NULL,
       updated_at = ? WHERE room_id = ?`).run(anchor, stamp(), roomId)
     bump(db, roomId)
@@ -260,7 +262,7 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
     if (action === 'seek' && (!Number.isFinite(positionMs) || positionMs < 0 || positionMs >= row.duration_ms)) {
       fail(400, 'INVALID_POSITION', 'Choose a position inside the song')
     }
-    const effectiveServerMs = nowMs + PLAYBACK_LEAD_MS
+    const effectiveServerMs = nowMs + timing.playbackLeadMs
     const state = action === 'pause' || !['playing', 'scheduled'].includes(row.state) ? 'paused' : 'playing'
     const pending = { state, generation: row.generation + 1, effectiveServerMs, anchorServerMs: effectiveServerMs,
       positionMs: action === 'seek' ? positionMs : timelinePosition(view(row), effectiveServerMs) }
@@ -316,7 +318,7 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
   function issueLease(row) {
     const lease = { id: randomUUID(), roomId: row.room_id, deviceId: row.stage_device_id, clockId: clock.id,
       performanceId: row.performance_id, generation: row.generation, sequence: 1,
-      expiresServerMs: clock.nowMs() + OUTPUT_LEASE_MS, safeAfterServerMs: clock.nowMs() + OUTPUT_LEASE_MS + OUTPUT_MARGIN_MS }
+      expiresServerMs: clock.nowMs() + timing.outputLeaseMs, safeAfterServerMs: clock.nowMs() + timing.outputLeaseMs + timing.outputMarginMs }
     leases.set(row.room_id, lease)
     return lease
   }
@@ -377,8 +379,8 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
         row?.generation === lease.generation && row.performance_id === lease.performanceId &&
         ['scheduled', 'playing'].includes(row.state) && nowMs < lease.expiresServerMs && ready(device, row) &&
         (!row.guide_required || guideReady(row))) {
-        lease.sequence++; lease.expiresServerMs = pending?.state === 'paused' ? Math.min(nowMs + OUTPUT_LEASE_MS, pending.effectiveServerMs) : nowMs + OUTPUT_LEASE_MS
-        lease.safeAfterServerMs = lease.expiresServerMs + OUTPUT_MARGIN_MS
+        lease.sequence++; lease.expiresServerMs = pending?.state === 'paused' ? Math.min(nowMs + timing.outputLeaseMs, pending.effectiveServerMs) : nowMs + timing.outputLeaseMs
+        lease.safeAfterServerMs = lease.expiresServerMs + timing.outputMarginMs
         lease.nextGeneration = pending?.generation; lease.effectiveServerMs = pending?.effectiveServerMs
         broadcastLease(ws.roomId, publicLease(lease))
         return { type: 'lease', lease: publicLease(lease) }
@@ -388,7 +390,7 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
       if (lease && lease.deviceId === device.id && message.leaseId === lease.id && message.generation === lease.generation &&
         message.clockId === lease.clockId) {
         lease.expiresServerMs = Math.min(lease.expiresServerMs, nowMs)
-        lease.safeAfterServerMs = Math.min(lease.safeAfterServerMs, nowMs + OUTPUT_MARGIN_MS)
+        lease.safeAfterServerMs = Math.min(lease.safeAfterServerMs, nowMs + timing.outputMarginMs)
         lease.sequence++
         broadcastLease(ws.roomId, publicLease(lease))
       }
@@ -438,7 +440,7 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
           pendingLease.sequence++
           if (pending.state === 'paused') {
             pendingLease.expiresServerMs = Math.min(pendingLease.expiresServerMs, pending.effectiveServerMs)
-            pendingLease.safeAfterServerMs = pendingLease.expiresServerMs + OUTPUT_MARGIN_MS
+            pendingLease.safeAfterServerMs = pendingLease.expiresServerMs + timing.outputMarginMs
           }
           changed.add(row.room_id)
         }
@@ -511,7 +513,7 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
     if (changed) broadcast(roomId)
     return changed
   }
-  const api = { snapshot, presence, connected, disconnected, deviceMessage, current, assign, prepare, start,
+  const api = { timing, snapshot, presence, connected, disconnected, deviceMessage, current, assign, prepare, start,
     transition, guide, invalidate, finish, decline, read, sweep, mediaFailed, close: () => { closed = true; clearInterval(timer) } }
   return api
 }

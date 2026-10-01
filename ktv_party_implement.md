@@ -144,7 +144,7 @@ deployed; it does not resolve streaming/device acceptance.
 
 | Phase | Deliverable | Depends on | Status | Evidence |
 | --- | --- | --- | --- | --- |
-| P00 | Scope baseline and technical contracts | Design | In progress | Implemented protocol/reference inventory documented; configurable timing policy remains open |
+| P00 | Scope baseline and technical contracts | Design | Complete | Protocol/reference inventory, configurable limits/timing, coordinated validation and durable restart-silence policy documented and verified |
 | P01 | Two-device audio feasibility prototype | P00 minimum timing contract | In progress | Monotonic clock estimator tested; audio prototype and acoustic measurements open |
 | P02 | Rooms, identities, invitations, permissions, persistence | P00 | Complete | Transactional general/encrypted receipts, restart/rollback, guest recovery, expiry/retention, permissions and configured bounds pass backend/browser/public checks |
 | P03 | Realtime state, commands, queue, leases | P02 | In progress | Versioned playback timeline, checkpoints, presence, renewable stage leases and turn history tested; fair automatic next turns and host-loss grace/transfer tested |
@@ -171,7 +171,7 @@ Proposed milestones:
 
 ## 3. P00 — Scope baseline and contracts
 
-Status: In progress
+Status: Complete
 
 Deliverables: implementation baseline, precise terminology, protocol/schema draft,
 and reference device setup. Use the design's defaults where a routine decision is
@@ -185,7 +185,7 @@ needed; record assumptions without presenting them as user-confirmed decisions.
   usage, migration conventions, auth flow, media URL/CORS/Range behavior, and PWA cache.
 - [x] P00.4 Specify command/snapshot schemas, room vs member vs device IDs,
   permission matrix, queue states, playback generations, clock IDs, and error codes.
-- [ ] P00.5 Finalize default limits, readiness/grace/lease timeouts, queue fairness,
+- [x] P00.5 Finalize default limits, readiness/grace/lease timeouts, queue fairness,
   invitation/pairing lifetime, and retention policy as configurable values.
 - [x] P00.6 Sketch create/join/waiting, stage, Songs/Queue/Sing/People, and host flows,
   including audio enablement, loading, rejection, removal, and reconnect states.
@@ -205,8 +205,12 @@ A read-only production instrumental probe returned HTTP 206, an exact 16-byte
 body and matching Content-Range; party assets use same-origin URLs. PWA/cache
 behavior has the separate six-check upgrade test. Synthetic fixtures use a
 45-second 440 Hz local track and 60-second streaming tones (backing 440 Hz,
-mic 880 Hz, private guide 1729 Hz); these are not acoustic evidence. P00.5 stays
-open because several coordinated timing constants are not runtime settings.
+mic 880 Hz, private guide 1729 Hz); these are not acoustic evidence. P00.5 now
+uses validated runtime preparation/start/lease/margin/host/pairing/ticket/auth
+timing, existing room lifetime/retention/limits, and persisted fairness/host-order
+controls. `ktv_output_safety` retains the greatest lease/margin across restarts
+and decreases in settings. Backend 121/121, party units 49/49, type check and
+built-app UI 29/29 pass. P01/device and online release gates remain separate.
 
 Evidence: `ktv-party-baseline-2026-09-29` points to `6e8504b` on main and was
 pushed to origin before implementation. The current work is on `feat/ktv-party`.
@@ -850,8 +854,8 @@ UI/capture and protocol checkpoint (2026-10-01): party units 49/49
 (`/tmp/ktv-ui-layout-build.log`) and real built-app Chrome UI checks 29/29
 (`/tmp/ktv-ui-layout-browser.log`). Owned temporary SQLite rooms and browser
 contexts were removed. P00.1–4/P00.6 contract documentation and P04.9 software
-work are complete; P00.5 runtime timing policy and physical/browser phase exits
-stay open. Neither an exactly silent output node nor temporarily raising the
+work were complete at that checkpoint; P00.5 runtime timing policy and
+physical/browser phase exits were still open. Neither an exactly silent output node nor temporarily raising the
 owned PulseAudio process priority resolved virtual render-clock stalls; both
 experiments were reverted. The integrated SFU guide/handover journey still fails
 its real drift guard (`/tmp/ktv-pulse-priority-room-media-final.log`).
@@ -888,6 +892,19 @@ This does not establish different-network or physical/integrated-room acceptance
 The read-only inventory attempt against the other EC2 Linux host stopped at a
 changed SSH host key; AWS console output provided no fingerprint to verify it.
 No trust record, remote service or host was changed.
+
+Timing policy checkpoint (2026-10-01): `ktv-timing.js` centralizes bounded
+preparation/start/output/host/pairing/ticket/authentication durations; admitted
+snapshots publish the operator policy without changing room permissions.
+The additive singleton `ktv_output_safety` protects older leases through repeated
+restarts and lower settings. Defaults remain 30 s preparation, 2 s local/6 s online
+lead, 8 s lease and 500 ms margin. Tests cover exact preparation/pause boundaries,
+custom local/online leads, lease/margin changes, repeated restart safety, bounded
+pairing expiry, snapshot redaction and actual unauthenticated socket expiry.
+Verified: backend 121/121 (`/tmp/ktv-timing-backend-final.log`), party units 49/49,
+type check and current built-app UI 29/29 (`/tmp/ktv-timing-ui-final.log`).
+P00 contracts/policy are complete; physical/browser and online acceptance remain
+open. Deployment backup: `/home/mli/ktv-party-timing-predeploy.xkgmym9r`.
 
 ```text
 Date:

@@ -7,6 +7,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { initDb } from './db.js'
 import { createKtvPlayback } from './ktv-playback.js'
+import { createKtvMediaGrants } from './ktv-media-grants.js'
 import { createKtvAssets } from './ktv-assets.js'
 import { orderQueue } from './ktv-queue.js'
 import { timelinePosition, effectiveTimeline } from './ktv-timeline.js'
@@ -81,7 +82,7 @@ function fixture(t, settings = {}) {
   return { db, roomId, memberId, entryId, performanceId, clock, ws, assets, packets, events, transaction,
     get service() { return service }, status, message, ready, prepare, member, enqueue, device,
     time: value => { nowMs = value }, advance: amount => { nowMs += amount },
-    restart: () => { service.close(); clock.id = randomUUID(); service = createKtvPlayback(options); return service } }
+    restart: (updated = {}) => { service.close(); clock.id = randomUUID(); Object.assign(options, updated); service = createKtvPlayback(options); return service } }
 }
 
 test('scheduled timeline holds before its boundary and preserves the old segment before a pause/seek', () => {
@@ -122,6 +123,54 @@ test('stage readiness and startup silence are required; leases renew only for th
   assert.equal(f.service.snapshot(f.roomId).positionMs, 8001)
   assert.notEqual(f.service.snapshot(f.roomId).generation, heartbeat.generation)
   assert.notEqual(f.message(heartbeat).type, 'lease')
+})
+
+test('configured preparation/start/lease/transition timing is enforced at exact boundaries', t => {
+  const f = fixture(t, { timing: { playbackLeadMs: 1500, onlineLeadMs: 4000, outputLeaseMs: 6000,
+    outputMarginMs: 1000, prepareTimeoutMs: 12000 } })
+  f.time(10000); f.prepare(); f.service.start(f.roomId); f.service.sweep()
+  let view = f.service.snapshot(f.roomId)
+  assert.equal(view.anchorServerMs, 11500)
+  assert.equal(view.lease.expiresServerMs, 16000); assert.equal(view.lease.safeAfterServerMs, 17000)
+  f.time(11500); f.message({ type: 'device.heartbeat' }); f.service.sweep()
+  f.service.transition(f.roomId, 'pause'); f.service.sweep()
+  view = f.service.snapshot(f.roomId)
+  assert.equal(view.pendingTransition.effectiveServerMs, 13000)
+  assert.equal(view.lease.expiresServerMs, 13000); assert.equal(view.lease.safeAfterServerMs, 14000)
+  f.ready(view.pendingTransition.generation)
+  f.time(12999); f.service.sweep(); assert.equal(f.service.snapshot(f.roomId).state, 'playing')
+  f.time(13000); f.service.sweep(); assert.equal(f.service.snapshot(f.roomId).state, 'paused')
+})
+
+test('configured preparation timeout recovers at its deadline and online lead changes only the scheduled anchor', t => {
+  const f = fixture(t, { timing: { prepareTimeoutMs: 12000, onlineLeadMs: 5000 } })
+  f.time(10000); f.prepare()
+  assert.equal(f.service.snapshot(f.roomId).prepareDeadlineMs, 22000)
+  f.time(21999); f.status(); f.service.sweep(); assert.equal(f.service.snapshot(f.roomId).state, 'preparing')
+  f.time(22000); f.service.sweep(); assert.equal(f.service.snapshot(f.roomId).recoveryReason, 'playback.prepare_timeout')
+  f.prepare()
+  createKtvMediaGrants({ db: f.db, clock: f.clock, getPlayback: id => f.service.snapshot(id), getDevices: () => [],
+    apiKey: 'timing-test', apiSecret: 'timing-test-only-secret-more-than-thirty-two-bytes' })
+  f.db.prepare("UPDATE ktv_rooms SET performance_mode = 'online' WHERE id = ?").run(f.roomId)
+  f.service.media = { grants: { publisherReady: () => true } }
+  f.message({ type: 'device.status', purpose: 'stage', label: 'Singer', audioEnabled: true, clockHealthy: true, mediaProtocol: 1 })
+  f.service.start(f.roomId); f.service.sweep()
+  assert.equal(f.service.snapshot(f.roomId).anchorServerMs, 27000)
+})
+
+test('decreasing lease settings and repeated restarts cannot shorten an older output silence boundary', t => {
+  const f = fixture(t, { timing: { outputLeaseMs: 15000, outputMarginMs: 2000 } })
+  f.time(20000); f.prepare(); f.service.start(f.roomId); f.service.sweep()
+  assert.equal(f.service.snapshot(f.roomId).lease.safeAfterServerMs, 37000)
+  f.time(0); f.restart({ timing: { outputLeaseMs: 8000, outputMarginMs: 500 } })
+  assert.equal(f.service.snapshot(f.roomId).restartSafeAfterMs, 17000)
+  f.time(0); f.restart({ timing: { outputLeaseMs: 6000, onlineLeadMs: 4000 } })
+  assert.equal(f.service.snapshot(f.roomId).restartSafeAfterMs, 17000)
+  f.prepare(); f.time(16999); f.status()
+  assert.throws(() => f.service.start(f.roomId), error => error.code === 'OUTPUT_STOPPING')
+  f.time(17000); f.status(); f.service.start(f.roomId); f.service.sweep()
+  assert.equal(f.service.snapshot(f.roomId).lease.expiresServerMs, 23000)
+  assert.deepEqual(f.db.prepare('PRAGMA foreign_key_check').all(), [])
 })
 
 test('pause and seek preserve effective boundaries and reject obsolete completion', t => {

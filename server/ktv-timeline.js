@@ -1,8 +1,3 @@
-export const PLAYBACK_LEAD_MS = 2000
-export const OUTPUT_LEASE_MS = 8000
-export const OUTPUT_MARGIN_MS = 500
-export const PREPARE_TIMEOUT_MS = 30_000
-
 export function timelinePosition(timeline, nowMs) {
   if (!timeline || timeline.state === 'idle') return 0
   const pending = timeline.pendingTransition

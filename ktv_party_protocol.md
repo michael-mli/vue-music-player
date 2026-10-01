@@ -103,7 +103,8 @@ and applicable clock/generation. Database changes and receipts commit before
 broadcast. One Node process runs synchronous SQLite transactions; asynchronous
 asset/provider work must recheck authority around its commit.
 
-Snapshots contain `room`, `self`, `limits`, `clock`, and, for admitted viewers,
+Snapshots contain `room`, `self`, `clock`, and, for admitted viewers, `limits`,
+`timing` (operator policy durations in milliseconds),
 `members`, `queue`, `readiness`, `playback`, `presence`. Pending/rejected/removed
 viewers receive only their allowed admission state. Host invitation codes and
 excluded-member history are omitted from paired displays. A room revision owns
@@ -200,15 +201,26 @@ Neither correction belongs in another member's private guide setting.
 | Receipt / closed history retention | 24 h / 7 days | `KTV_RECEIPT_RETENTION_MS` 1–7 days; `KTV_HISTORY_RETENTION_MS` 1–30 days, covering receipt retention |
 | Room audit cap | 1000 | `KTV_MAX_ROOM_EVENTS`, 10–10000 |
 | Host-loss grace | 30 s | `KTV_HOST_GRACE_MS`, 1–300 s |
-| Pairing code / socket ticket | 2 min / 30 s | Fixed protocol constants; pairing cannot outlive the room |
-| Preparation / local lead / online lead | 30 s / 2 s / 6 s | Fixed protocol constants |
-| Output lease / restart margin | 8 s / 500 ms | Fixed coordinated safety constants in `ktv-timeline.js` |
+| Pairing code | 2 min | `KTV_PAIRING_LIFETIME_MS`, 30–300 s; cannot outlive the room |
+| Socket ticket / initial authentication | 30 s / 5 s | `KTV_TICKET_LIFETIME_MS` 5–60 s; `KTV_SOCKET_AUTH_TIMEOUT_MS` 1–10 s, no longer than ticket lifetime |
+| Preparation | 30 s | `KTV_PREPARE_TIMEOUT_MS`, 5–60 s; covers both start leads |
+| Local lead / online lead | 2 s / 6 s | `KTV_PLAYBACK_LEAD_MS` 1–5 s; `KTV_ONLINE_LEAD_MS` 4–10 s |
+| Output lease / silence margin | 8 s / 500 ms | `KTV_OUTPUT_LEASE_MS` 6–15 s; `KTV_OUTPUT_MARGIN_MS` 500–2000 ms; lease covers both leads plus 1 s |
 | Publisher nonce / audience nonce | Up to 5 s / 120 s | Publisher cannot outlive output lease; signed JWT TTL 120 s is not the authorization lifetime |
 | Encoded/decoded audio | 32 MiB / 192 MiB per engine | Bounded fixed decoder policy; assets at most ten minutes/two channels |
 
-Invalid runtime policy fails startup. Timing constants are explicitly identified
-above; making every timing policy a runtime option remains open in P00.5.
-Changing a coordinated safety constant requires both protocol and recovery tests.
+Invalid or incompatible runtime timing fails startup in `ktv-timing.js`.
+`ktv_output_safety` retains the greatest configured lease and margin, with the
+legacy 8 s/500 ms floor. Restart silence uses this durable bound in the new clock
+epoch; reducing settings or repeatedly restarting cannot shorten an older
+device's stop deadline. Never delete this row while clients may retain leases.
+Rollback to code predating this policy requires stopping the backend and waiting
+the durable bound before restarting old code. Render-clock drift/readiness
+thresholds remain separate fixed safety checks, with physical acceptance still
+open. Human singer confirmation is deliberate rather than automatically timed
+out; audio preparation has the deadline above. Fair rotation is the default
+product rule, with explicit persisted host ordering/priority controls. Invitation
+lifetime follows the configured room lifetime and host rotation/revocation.
 
 ## 8. Media and asset contracts
 

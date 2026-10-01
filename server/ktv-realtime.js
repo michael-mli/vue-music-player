@@ -1,8 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { WebSocket, WebSocketServer } from 'ws'
+import { ktvTiming } from './ktv-timing.js'
 
-const TICKET_LIFETIME_MS = 30_000
-const AUTH_TIMEOUT_MS = 5_000
 const MAX_TICKETS = 1_000
 const MAX_TICKETS_PER_MEMBER = 5
 const MAX_ROOM_SOCKETS = 60
@@ -18,7 +17,8 @@ function sameHostOrigin(req, origin) {
   return origin === `https://${req.headers.host}` || origin === `http://${req.headers.host}`
 }
 
-export function createKtvRealtime({ getSnapshot, allowedOrigins = [], clock, onDevice, onConnected, onDisconnected }) {
+export function createKtvRealtime({ getSnapshot, allowedOrigins = [], clock, onDevice, onConnected, onDisconnected, timing: timingOptions }) {
+  const timing = ktvTiming(timingOptions)
   const tickets = new Map()
   const pendingBroadcasts = new Map()
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024, perMessageDeflate: false })
@@ -38,7 +38,7 @@ export function createKtvRealtime({ getSnapshot, allowedOrigins = [], clock, onD
       throw error
     }
     const ticket = randomBytes(32).toString('base64url')
-    const expiresAt = now + TICKET_LIFETIME_MS
+    const expiresAt = now + timing.ticketLifetimeMs
     tickets.set(digest(ticket), { roomId, principal, expiresAt })
     return { ticket, expiresAt: new Date(expiresAt).toISOString() }
   }
@@ -139,7 +139,7 @@ export function createKtvRealtime({ getSnapshot, allowedOrigins = [], clock, onD
     wss.on('connection', (ws) => {
       ws.isAlive = true
       ws.on('pong', () => { ws.isAlive = true })
-      const authTimeout = setTimeout(() => ws.close(4401, 'Authentication timed out'), AUTH_TIMEOUT_MS)
+      const authTimeout = setTimeout(() => ws.close(4401, 'Authentication timed out'), timing.socketAuthTimeoutMs)
       authTimeout.unref()
       ws.on('close', () => { clearTimeout(authTimeout); onDisconnected?.(ws) })
       ws.on('error', () => {})

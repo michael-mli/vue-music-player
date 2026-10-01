@@ -197,6 +197,34 @@ test('configured member/song/device ceilings are enforced and unsafe policy valu
   assert.equal((await request('POST', `${route}/queue`, 1, { ...song, commandId: randomUUID() })).body.code, 'SINGER_QUEUE_FULL')
 })
 
+test('configured pairing/ticket policy is published only to admitted viewers and expiry stays within the room', async t => {
+  const timing = { pairingLifetimeMs: 45000, ticketLifetimeMs: 10000, socketAuthTimeoutMs: 2000 }
+  const f = await setup(t, { timing })
+  const room = (await f.request('POST', '/rooms', 1, { name: 'Timed room', displayName: 'Host', approvalRequired: true })).body.data
+  assert.equal(room.timing.pairingLifetimeMs, 45000); assert.equal(room.timing.outputLeaseMs, 8000)
+  const route = `/rooms/${room.room.id}`
+  const pairing = (await f.request('POST', `${route}/pairings`, 1, { scope: 'display' })).body.data
+  const stored = f.db.prepare('SELECT created_at, expires_at FROM ktv_pairings WHERE room_id = ?').get(room.room.id)
+  assert.equal(Date.parse(stored.expires_at) - Date.parse(stored.created_at), 45000)
+  assert.equal(pairing.expiresAt, stored.expires_at)
+  const ticket = (await f.request('POST', `${route}/socket-ticket`, 1)).body.data
+  assert.ok(Math.abs(Date.parse(ticket.expiresAt) - Date.now() - 10000) < 500)
+  const pending = (await f.request('POST', '/join', 2, { code: room.invitationCode, displayName: 'Pending' })).body.data
+  assert.equal(pending.timing, undefined)
+  f.db.prepare('UPDATE ktv_rooms SET expires_at = ? WHERE id = ?').run(new Date(Date.now() + 5000).toISOString(), room.room.id)
+  const capped = (await f.request('POST', `${route}/pairings`, 1, { scope: 'display' })).body.data
+  assert.equal(capped.expiresAt, f.db.prepare('SELECT expires_at FROM ktv_rooms WHERE id = ?').get(room.room.id).expires_at)
+})
+
+test('configured socket authentication deadline closes an unauthenticated real connection', async t => {
+  const f = await setup(t, { timing: { socketAuthTimeoutMs: 1000 } })
+  const socket = new WebSocket(f.socketUrl, { origin: f.origin })
+  socket.on('error', () => {}); t.after(() => socket.terminate())
+  const started = performance.now()
+  const code = await new Promise(resolve => socket.once('close', resolve))
+  assert.equal(code, 4401); assert.ok(performance.now() - started >= 900)
+})
+
 test('HTTP room guard rejects foreign origins and oversized bodies; rate buckets expire and ignore forwarded spoofing', async t => {
   const { request, origin } = await setup(t)
   assert.equal((await request('GET', '/rooms', 1, undefined, { Origin: 'https://foreign.example' })).body.code, 'ORIGIN_DENIED')

@@ -171,6 +171,16 @@ const ktvRealtime = registerKtvRoutes(app, {
   db, authMiddleware, secret: JWT_SECRET || 'unconfigured-development-secret',
   allowedOrigins: (process.env.KTV_ALLOWED_ORIGINS || '').split(',').map((origin) => origin.trim()).filter(Boolean),
   hostGraceMs: Number(process.env.KTV_HOST_GRACE_MS || 30_000),
+  timing: {
+    prepareTimeoutMs: Number(process.env.KTV_PREPARE_TIMEOUT_MS || 30000),
+    playbackLeadMs: Number(process.env.KTV_PLAYBACK_LEAD_MS || 2000),
+    onlineLeadMs: Number(process.env.KTV_ONLINE_LEAD_MS || 6000),
+    outputLeaseMs: Number(process.env.KTV_OUTPUT_LEASE_MS || 8000),
+    outputMarginMs: Number(process.env.KTV_OUTPUT_MARGIN_MS || 500),
+    pairingLifetimeMs: Number(process.env.KTV_PAIRING_LIFETIME_MS || 120000),
+    ticketLifetimeMs: Number(process.env.KTV_TICKET_LIFETIME_MS || 30000),
+    socketAuthTimeoutMs: Number(process.env.KTV_SOCKET_AUTH_TIMEOUT_MS || 5000),
+  },
   media: process.env.KTV_MEDIA_ENABLED === 'true' ? {
     apiKey: process.env.KTV_MEDIA_API_KEY, apiSecret: process.env.KTV_MEDIA_API_SECRET,
     controlSecret: process.env.KTV_MEDIA_CONTROL_SECRET,

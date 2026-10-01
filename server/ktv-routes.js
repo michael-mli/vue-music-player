@@ -6,13 +6,13 @@ import { RoomError, fail } from './ktv-errors.js'
 import { invalidateReadiness, readinessSnapshot, recoverReadiness } from './ktv-readiness.js'
 import { createKtvPlayback } from './ktv-playback.js'
 import { ktvPolicy } from './ktv-policy.js'
+import { ktvTiming } from './ktv-timing.js'
 import { createKtvLifecycle } from './ktv-lifecycle.js'
 import { createKtvHttpGuard } from './ktv-http.js'
 import { identityCommand, resultCommand, payloadHash, assertSamePayload, sealResult, openResult } from './ktv-receipts.js'
 import { registerKtvMediaRoutes } from './ktv-media-routes.js'
 
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-const PAIR_LIFETIME_MS = 2 * 60 * 1000
 
 function requireText(value, label, limit) {
   if (typeof value !== 'string') fail(400, 'INVALID_INPUT', `${label} is required`)
@@ -199,6 +199,7 @@ function snapshot(db, roomId, userId, key, clock, playback, policy) {
   }
   if (self.admission !== 'admitted') return result
 
+  result.timing = playback.timing
   result.limits = { members: policy.members, queue: policy.queue, singerRequests: room.singer_request_limit ?? policy.singerRequests }
 
   result.members = db.prepare(`SELECT id, display_name, role, cohost_at, admission FROM ktv_members
@@ -245,8 +246,9 @@ function grantSnapshot(db, roomId, grantId, key, clock, playback, policy) {
   return result
 }
 
-export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSong, allowedOrigins, resolveAssets, clock = createKtvClock(), hostGraceMs, policy: policyOptions, media }) {
+export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSong, allowedOrigins, resolveAssets, clock = createKtvClock(), hostGraceMs, timing: timingOptions, policy: policyOptions, media }) {
   const policy = ktvPolicy(policyOptions)
+  const timing = ktvTiming({ ...timingOptions, ...(hostGraceMs === undefined ? {} : { hostGraceMs }) })
   app.use('/api/ktv', createKtvHttpGuard({ allowedOrigins }))
   recoverReadiness(db, clock)
   const key = createHash('sha256').update('ktv-invitation-v1\0').update(secret).digest()
@@ -261,12 +263,12 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
       ? grantSnapshot(db, roomId, principal.grantId, key, clock, playback, policy)
       : snapshot(db, roomId, principal.userId, key, clock, playback, policy),
     allowedOrigins,
-    clock,
+    clock, timing,
     onConnected: (ws, view) => playback.connected(ws, view),
     onDisconnected: (ws) => playback.disconnected(ws),
     onDevice: (ws, message, view) => playback.deviceMessage(ws, message, view),
   })
-  playback = createKtvPlayback({ db, clock, transaction, bump, event, broadcast: realtime.broadcast, broadcastLease: realtime.broadcastLease, hostGraceMs })
+  playback = createKtvPlayback({ db, clock, transaction, bump, event, broadcast: realtime.broadcast, broadcastLease: realtime.broadcastLease, timing })
   function closeRoom(roomId, actorId, action, now = new Date().toISOString()) {
     invalidateReadiness(db, roomId, clock)
     playback.invalidate(roomId)
@@ -506,7 +508,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
           const code = freshCode()
           const digest = hashCode(code, pairKey)
           if (db.prepare('SELECT 1 FROM ktv_pairings WHERE code_hash = ?').get(digest)) continue
-          const expiresAt = new Date(Math.min(Date.now() + PAIR_LIFETIME_MS, Date.parse(room.expires_at))).toISOString()
+          const expiresAt = new Date(Math.min(Date.parse(now) + timing.pairingLifetimeMs, Date.parse(room.expires_at))).toISOString()
           db.prepare(`INSERT INTO ktv_pairings
             (id, room_id, member_id, code_hash, scope, created_at, expires_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)`).run(randomUUID(), room.id, member.id, digest, scope, now, expiresAt)

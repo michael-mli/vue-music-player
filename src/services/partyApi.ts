@@ -29,6 +29,9 @@ export interface PartySnapshot {
   }
   self: PartyMember
   limits?: { members: number; queue: number; singerRequests: number }
+  timing?: { prepareTimeoutMs: number; playbackLeadMs: number; onlineLeadMs: number;
+    outputLeaseMs: number; outputMarginMs: number; hostGraceMs: number;
+    pairingLifetimeMs: number; ticketLifetimeMs: number; socketAuthTimeoutMs: number }
   clock: { clockId: string; serverNowMs: number }
   readiness?: PartyReadiness
   playback?: PartyPlayback

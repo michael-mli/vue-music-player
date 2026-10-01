@@ -2,6 +2,11 @@
 export function initKtvSchema(db) {
   db.exec(`
     PRAGMA foreign_keys = ON;
+    CREATE TABLE IF NOT EXISTS ktv_output_safety (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      max_lease_ms INTEGER NOT NULL CHECK (max_lease_ms BETWEEN 8000 AND 15000),
+      max_margin_ms INTEGER NOT NULL CHECK (max_margin_ms BETWEEN 500 AND 2000)
+    );
     CREATE TABLE IF NOT EXISTS ktv_rooms (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,

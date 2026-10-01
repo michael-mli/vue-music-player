@@ -46,6 +46,23 @@ The generated configuration targets the [pinned v1.13.7 configuration](https://g
 
 ## 2. Prepare the private configuration
 
+### Room timing policy
+
+The backend accepts the timing environment variables and bounds recorded in
+`ktv_party_protocol.md`, section 7. Values are integer milliseconds and apply on
+backend restart. Incompatible preparation/lead/lease/authentication values fail
+startup. Default values preserve the deployed timing behavior. Operators can
+increase leads for slower preparation/network paths without changing render-clock
+drift guards or claiming acoustic alignment.
+
+The additive `ktv_output_safety` singleton retains the greatest configured lease
+and silence margin. Backend restart waits that durable duration in its new clock
+epoch, including after settings are reduced or a restart occurs during recovery.
+Do not delete/reset it as routine cleanup. Room/pairing expiry and one-use socket
+tickets still enforce their deadlines separately from audio timing.
+
+### Private media files
+
 Run from the repository with the actual public IPv4, DNS-only hostname and network
 interface. The following addresses are documentation examples.
 
@@ -291,3 +308,10 @@ the current additive database schema and data when rolling software back. Restor
 an old database discards newer room/user state and is a separate disaster recovery
 action, not the normal rollback. The original main rollback point is
 `ktv-party-baseline-2026-09-29` at `6e8504b`.
+
+For rollback to code predating `ktv-timing.js`, stop the backend before launching
+the older release. Read `max_lease_ms + max_margin_ms` from `ktv_output_safety`
+(use 8500 ms if the table/row is absent), wait at least that duration, then start
+old code. Older releases cannot read this durable bound themselves. Keep the
+table/data when rolling back. This silence wait is required if longer leases
+have ever been configured; it prevents an old output from overlapping new audio.
