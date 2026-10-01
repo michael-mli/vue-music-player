@@ -76,7 +76,7 @@
     />
 
     <!-- Floating karaoke recorder (shown while karaoke mode is on) -->
-    <FloatingRecorder v-if="!isPartyRoute" />
+    <FloatingRecorder />
     
     <!-- PWA Install Prompt -->
     <InstallPrompt 
@@ -155,11 +155,11 @@ const isPartyStage = computed(() => route.name === 'PartyStage')
 // Music view) can toggle the same panels.
 const { showLyrics, showVisualizer } = storeToRefs(useUiStore())
 watch(isPartyRoute, (inParty) => {
+  playerStore.setPartyAudioOwnership(inParty)
   if (inParty) {
-    playerStore.pause()
     showVisualizer.value = false
   }
-}, { immediate: true })
+}, { immediate: true, flush: 'sync' })
 const showInstallPrompt = ref(false)
 const updateAvailable = ref(false)
 const showMobileSidebar = ref(false)

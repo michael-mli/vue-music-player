@@ -44,6 +44,14 @@ controls for that entry; hosts use performance controls. The release passes 77
 backend checks, the unchanged 19 frontend unit checks, an exact-release foreground
 Chrome journey of 50 checks, 25 public protocol checks and 10 deployment checks.
 
+The next candidate adds persistent host ordering/fair-order restoration, held-song
+reassignment, per-room singer caps, duplicate warnings, and solo/party audio
+ownership. Backend queue/assignment/cap restart and race checks pass. Solo ownership
+unit checks cover saved media handlers, delayed reconnect/error recovery and
+pending autoplay retries. A full command journal now refuses new unresolved
+intents instead of evicting uncertain IDs. This candidate is not deployed yet;
+exact-release browser and public checks will be recorded before release.
+
 ## 1. How to use this tracker
 
 - Mark work items `[x]` only when implemented and verified. Documentation of an
@@ -260,7 +268,11 @@ Exit criteria:
 Evidence: `server/ktv-queue.js`, `server/ktv-realtime.js`, queue/receipt tables in
 `server/ktv-schema.js`, and queue routes in `server/ktv-routes.js`. Members can add up to three pending
 karaoke-ready songs, request next, and cancel their own unstarted entries. Hosts
-can approve priority and remove entries; removed singers' entries are held.
+can approve priority and move accepted requests next or back to fair order. Hosts
+and co-hosts can remove/reassign unstarted requests, including held requests;
+reassignment keeps requester attribution and requires recipient acceptance. The
+host can set each singer's cap from one to ten without dropping existing requests.
+Selected/active entries stay protected; ordering and assignment enforce revisions.
 One-use tickets authorize short-lived WebSocket connections. Pending viewers get
 waiting-only snapshots, admission/removal and queue changes broadcast after commit,
 and removed/closed viewers lose their sockets. The browser reconnects with a fresh
@@ -563,6 +575,7 @@ npm run type-check
 npm run build
 npm run test:lyrics
 npm run test:party
+node --test scripts/player-order.test.mjs
 npm --prefix server test
 ```
 

@@ -146,6 +146,7 @@ function queueSnapshot(db, roomId) {
       singerMemberId: row.singer_member_id, singerName: row.singer_name,
       state: row.state, priorityRequested: Boolean(row.priority_requested),
       priorityApproved: Boolean(row.priority_approved),
+      hostOrder: row.host_order,
       singerAccepted: Boolean(row.accepted_at),
     }))
   const round = db.prepare('SELECT COALESCE(MAX(round), 1) AS round FROM ktv_turn_history WHERE room_id = ?').get(roomId).round
@@ -196,7 +197,7 @@ function snapshot(db, roomId, userId, key, clock, playback, policy) {
   }
   if (self.admission !== 'admitted') return result
 
-  result.limits = { members: policy.members, queue: policy.queue, singerRequests: policy.singerRequests }
+  result.limits = { members: policy.members, queue: policy.queue, singerRequests: room.singer_request_limit ?? policy.singerRequests }
 
   result.members = db.prepare(`SELECT id, display_name, role, cohost_at, admission FROM ktv_members
     WHERE room_id = ? AND admission IN ('admitted', 'pending')
@@ -344,6 +345,17 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
     const current = playback.read(roomId)
     if (current?.entry_id === entryId && current.state !== 'idle') {
       fail(409, 'PERFORMANCE_ACTIVE', 'Use performance controls to change the current song')
+    }
+  }
+
+  function singerLimit(roomId) {
+    return db.prepare('SELECT singer_request_limit FROM ktv_rooms WHERE id = ?').get(roomId).singer_request_limit ?? policy.singerRequests
+  }
+
+  function assertNotSelected(roomId, entryId) {
+    assertUnstarted(roomId, entryId)
+    if (db.prepare('SELECT entry_id FROM ktv_readiness WHERE room_id = ?').get(roomId)?.entry_id === entryId) {
+      fail(409, 'TURN_SELECTED', 'Cancel the selected singer invitation before changing this request')
     }
   }
 
@@ -712,7 +724,8 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
         if (!isKaraokeSong?.(songId)) fail(409, 'SONG_UNAVAILABLE', 'Karaoke backing is unavailable for this song')
         const pending = db.prepare(`SELECT COUNT(*) AS total FROM ktv_queue_entries
           WHERE room_id = ? AND singer_member_id = ? AND state = 'queued'`).get(req.params.id, singerId).total
-        if (pending >= policy.singerRequests) fail(409, 'SINGER_QUEUE_FULL', `Singer already has ${policy.singerRequests} pending songs`)
+        const limit = singerLimit(req.params.id)
+        if (pending >= limit) fail(409, 'SINGER_QUEUE_FULL', `Singer already has ${limit} pending songs`)
         const total = db.prepare(`SELECT COUNT(*) AS total FROM ktv_queue_entries
           WHERE room_id = ? AND state IN ('queued', 'held')`).get(req.params.id).total
         if (total >= policy.queue) fail(409, 'QUEUE_FULL', 'Room queue is full')
@@ -771,6 +784,50 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
           .run(new Date().toISOString(), entry.id)
         bump(db, req.params.id)
         event(db, req.params.id, actor.id, 'queue.priority_approved', entry.id)
+      })
+      return viewerSnapshot(req)
+    })
+  }, true))
+
+  app.post('/api/ktv/rooms/:id/queue/:entryId/order', roomAccess(true), handler(req => {
+    const actor = user(req), id = commandId(req), action = req.body?.action
+    if (!['next', 'fair'].includes(action)) fail(400, 'INVALID_INPUT', 'Choose a queue action')
+    return transaction(db, () => {
+      const room = activeRoom(db, req.params.id), member = admittedMember(db, room.id, actor.id)
+      applyCommand(db, room.id, member.id, id, ['queue.order', req.params.entryId, action, req.body?.baseRevision], () => {
+        hostMember(db, room.id, actor.id); checkRevision(req, room)
+        const entry = db.prepare('SELECT * FROM ktv_queue_entries WHERE room_id = ? AND id = ?').get(room.id, req.params.entryId)
+        if (!entry || entry.state !== 'queued' || !entry.accepted_at) fail(409, 'INVALID_QUEUE_STATE', 'Choose an accepted pending song')
+        assertNotSelected(room.id, entry.id)
+        const order = action === 'next' ? db.prepare("SELECT COALESCE(MIN(host_order), 0) - 1 AS value FROM ktv_queue_entries WHERE room_id = ? AND state = 'queued'").get(room.id).value : null
+        db.prepare('UPDATE ktv_queue_entries SET host_order = ?, updated_at = ? WHERE id = ?').run(order, new Date().toISOString(), entry.id)
+        bump(db, room.id); event(db, room.id, actor.id, action === 'next' ? 'queue.host_moved' : 'queue.fair_restored', entry.id)
+      })
+      return viewerSnapshot(req)
+    })
+  }, true))
+
+  app.post('/api/ktv/rooms/:id/queue/:entryId/reassign', roomAccess(true), handler(req => {
+    const actor = user(req), id = commandId(req), singerId = req.body?.singerMemberId
+    if (typeof singerId !== 'string') fail(400, 'INVALID_SINGER', 'Choose an admitted singer')
+    return transaction(db, () => {
+      const room = activeRoom(db, req.params.id), member = admittedMember(db, room.id, actor.id)
+      applyCommand(db, room.id, member.id, id, ['queue.reassign', req.params.entryId, singerId, req.body?.baseRevision], () => {
+        moderatorMember(db, room.id, actor.id); checkRevision(req, room)
+        const entry = db.prepare('SELECT * FROM ktv_queue_entries WHERE room_id = ? AND id = ?').get(room.id, req.params.entryId)
+        if (!entry || !['queued', 'held'].includes(entry.state)) fail(409, 'INVALID_QUEUE_STATE', 'Song is not pending')
+        assertNotSelected(room.id, entry.id)
+        const singer = db.prepare('SELECT * FROM ktv_members WHERE room_id = ? AND id = ?').get(room.id, singerId)
+        if (!singer || singer.admission !== 'admitted' || singer.blocked_at) fail(409, 'INVALID_SINGER', 'Singer is not admitted to the room')
+        if (entry.singer_member_id === singer.id && entry.state === 'queued') fail(409, 'INVALID_SINGER', 'Choose a different singer')
+        const pending = db.prepare("SELECT COUNT(*) total FROM ktv_queue_entries WHERE room_id = ? AND singer_member_id = ? AND state = 'queued' AND id != ?")
+          .get(room.id, singer.id, entry.id).total
+        if (pending >= singerLimit(room.id)) fail(409, 'SINGER_QUEUE_FULL', 'Singer has reached the pending song limit')
+        const now = new Date().toISOString()
+        db.prepare(`UPDATE ktv_queue_entries SET singer_member_id = ?, state = 'queued', accepted_at = ?,
+          host_order = NULL, priority_requested = 0, priority_approved = 0, updated_at = ? WHERE id = ?`)
+          .run(singer.id, singer.id === member.id ? now : null, now, entry.id)
+        bump(db, room.id); event(db, room.id, actor.id, 'queue.reassigned', entry.id)
       })
       return viewerSnapshot(req)
     })
@@ -917,20 +974,26 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
   app.post('/api/ktv/rooms/:id/settings', roomAccess(true), handler((req) => {
     const actor = user(req)
     const id = memberCommandId(req)
-    const { locked, approvalRequired, stageInviteVisible } = req.body || {}
-    if (typeof locked !== 'boolean' && typeof approvalRequired !== 'boolean' && typeof stageInviteVisible !== 'boolean') {
+    const { locked, approvalRequired, stageInviteVisible, singerRequests } = req.body || {}
+    if (singerRequests !== undefined && (!Number.isSafeInteger(singerRequests) || singerRequests < 1 || singerRequests > 10)) {
+      fail(400, 'INVALID_INPUT', 'Pending song limit must be between one and ten')
+    }
+    if (typeof locked !== 'boolean' && typeof approvalRequired !== 'boolean' && typeof stageInviteVisible !== 'boolean' && singerRequests === undefined) {
       fail(400, 'INVALID_INPUT', 'A room setting is required')
     }
     return transaction(db, () => {
       const room = activeRoom(db, req.params.id)
       const member = admittedMember(db, room.id, actor.id)
-      applyCommand(db, room.id, member.id, id, ['room.settings', locked ?? null, approvalRequired ?? null, stageInviteVisible ?? null], () => {
+      const payload = ['room.settings', locked ?? null, approvalRequired ?? null, stageInviteVisible ?? null]
+      if (singerRequests !== undefined) payload.push(singerRequests)
+      applyCommand(db, room.id, member.id, id, payload, () => {
         moderatorMember(db, room.id, actor.id)
-        if (typeof stageInviteVisible === 'boolean') hostMember(db, room.id, actor.id)
-        db.prepare('UPDATE ktv_rooms SET locked = ?, approval_required = ?, stage_invite_visible = ?, revision = revision + 1 WHERE id = ?')
+        if (typeof stageInviteVisible === 'boolean' || singerRequests !== undefined) hostMember(db, room.id, actor.id)
+        db.prepare('UPDATE ktv_rooms SET locked = ?, approval_required = ?, stage_invite_visible = ?, singer_request_limit = ?, revision = revision + 1 WHERE id = ?')
           .run(Number(typeof locked === 'boolean' ? locked : room.locked),
             Number(typeof approvalRequired === 'boolean' ? approvalRequired : room.approval_required),
-            Number(typeof stageInviteVisible === 'boolean' ? stageInviteVisible : room.stage_invite_visible), room.id)
+          Number(typeof stageInviteVisible === 'boolean' ? stageInviteVisible : room.stage_invite_visible),
+          singerRequests ?? room.singer_request_limit, room.id)
         event(db, room.id, actor.id, 'room.settings')
       })
       return viewerSnapshot(req)

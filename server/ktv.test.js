@@ -234,6 +234,93 @@ test('request cancellation, nomination decline and priority approval cannot inte
   assert.equal(db.prepare('SELECT entry_id FROM ktv_playback WHERE room_id = ?').get(view.room.id).entry_id, queued.id)
 })
 
+test('host ordering is visible, revision-safe, idempotent and persistent while fair turns resume after an override', async t => {
+  const fixture = await setup(t), { request } = fixture
+  let view = (await request('POST', '/rooms', 1, { name: 'Queue ordering', displayName: 'Host', approvalRequired: false })).body.data
+  const route = `/rooms/${view.room.id}`
+  const alex = (await request('POST', '/join', 2, { code: view.invitationCode, displayName: 'Alex' })).body.data.self
+  await request('POST', '/join', 3, { code: view.invitationCode, displayName: 'Casey' })
+  await request('POST', `${route}/members/${alex.id}/role`, 1, { commandId: randomUUID(), role: 'cohost' })
+  const entries = {}
+  for (const [actor, title] of [[1, 'Host one'], [1, 'Host two'], [2, 'Alex one'], [3, 'Casey one']]) {
+    view = (await request('POST', `${route}/queue`, actor, { commandId: randomUUID(), songId: 1, title, requestNext: false })).body.data
+    entries[title] = view.queue.find(entry => entry.title === title).id
+  }
+  assert.deepEqual(view.queue.map(entry => entry.title), ['Host one', 'Alex one', 'Casey one', 'Host two'])
+  const move = { commandId: randomUUID(), action: 'next', baseRevision: view.room.revision }
+  assert.equal((await request('POST', `${route}/queue/${entries['Casey one']}/order`, 2, move)).body.code, 'FORBIDDEN')
+  view = (await request('POST', `${route}/queue/${entries['Casey one']}/order`, 1, move)).body.data
+  assert.equal(view.queue[0].title, 'Casey one'); assert.ok(view.queue[0].hostOrder < 0)
+  assert.equal((await request('POST', `${route}/queue/${entries['Casey one']}/order`, 1, move)).body.data.room.revision, view.room.revision)
+  assert.equal((await request('POST', `${route}/queue/${entries['Host two']}/order`, 1, { ...move, commandId: randomUUID() })).body.code, 'REVISION_CONFLICT')
+  await fixture.restart()
+  view = (await request('GET', route, 1)).body.data
+  assert.equal(view.queue[0].title, 'Casey one')
+  assert.equal((await request('POST', `${route}/queue/${entries['Casey one']}/order`, 1, move)).body.data.queue[0].title, 'Casey one')
+  view = (await request('POST', `${route}/queue/${entries['Casey one']}/order`, 1, { commandId: randomUUID(), action: 'fair', baseRevision: view.room.revision })).body.data
+  assert.deepEqual(view.queue.map(entry => entry.title), ['Host one', 'Alex one', 'Casey one', 'Host two'])
+  const concurrent = await Promise.all(['Host two', 'Alex one'].map(title => request('POST', `${route}/queue/${entries[title]}/order`, 1,
+    { commandId: randomUUID(), action: 'next', baseRevision: view.room.revision })))
+  assert.deepEqual(concurrent.map(result => result.status).sort(), [200, 409])
+  view = (await request('GET', route, 1)).body.data
+  const first = view.queue[0]
+  view = (await request('POST', `${route}/readiness/offer`, 1, { commandId: randomUUID(), entryId: first.id, clockId: view.clock.clockId, baseRevision: view.room.revision })).body.data
+  assert.equal((await request('POST', `${route}/queue/${first.id}/order`, 1, { commandId: randomUUID(), action: 'fair', baseRevision: view.room.revision })).body.code, 'TURN_SELECTED')
+  assert.equal((await request('GET', route, 1)).body.data.queue[0].id, first.id)
+})
+
+test('moderators reassign held requests without changing requester identity or reviving old acceptance/priority', async t => {
+  const { request, db } = await setup(t)
+  let view = (await request('POST', '/rooms', 1, { name: 'Held reassignment', displayName: 'Host', approvalRequired: false })).body.data
+  const route = `/rooms/${view.room.id}`
+  const departed = (await request('POST', '/join', 2, { code: view.invitationCode, displayName: 'Departed' })).body.data.self
+  const recipient = (await request('POST', '/join', 3, { code: view.invitationCode, displayName: 'Recipient' })).body.data.self
+  view = (await request('POST', `${route}/queue`, 2, { commandId: randomUUID(), songId: 1, title: 'Held song', requestNext: true })).body.data
+  const entry = view.queue[0]
+  await request('POST', `${route}/queue/${entry.id}/approve-next`, 1, { commandId: randomUUID() })
+  view = (await request('POST', `${route}/members/${departed.id}/remove`, 1, {})).body.data
+  assert.equal(view.queue[0].state, 'held')
+  const reassign = { commandId: randomUUID(), singerMemberId: recipient.id, baseRevision: view.room.revision }
+  assert.equal((await request('POST', `${route}/queue/${entry.id}/reassign`, 3, reassign)).body.code, 'FORBIDDEN')
+  view = (await request('POST', `${route}/queue/${entry.id}/reassign`, 1, reassign)).body.data
+  const reassigned = view.queue[0]
+  assert.equal(reassigned.id, entry.id); assert.equal(reassigned.requesterMemberId, departed.id)
+  assert.equal(reassigned.singerMemberId, recipient.id); assert.equal(reassigned.singerAccepted, false)
+  assert.equal(reassigned.priorityRequested, false); assert.equal(reassigned.priorityApproved, false); assert.equal(reassigned.hostOrder, null)
+  assert.equal((await request('POST', `${route}/queue/${entry.id}/reassign`, 1, reassign)).body.data.room.revision, view.room.revision)
+  assert.equal((await request('POST', `${route}/readiness/offer`, 1, { commandId: randomUUID(), entryId: entry.id, clockId: view.clock.clockId, baseRevision: view.room.revision })).body.code, 'SINGER_NOT_ACCEPTED')
+  view = (await request('POST', `${route}/queue/${entry.id}/accept`, 3, { commandId: randomUUID() })).body.data
+  assert.equal(view.queue[0].singerAccepted, true)
+  await request('POST', `${route}/members/${departed.id}/approve`, 1, {})
+  view = (await request('GET', route, 1)).body.data
+  view = (await request('POST', `${route}/queue/${entry.id}/reassign`, 1, { commandId: randomUUID(), singerMemberId: departed.id, baseRevision: view.room.revision })).body.data
+  assert.equal(view.queue[0].requesterMemberId, view.queue[0].singerMemberId); assert.equal(view.queue[0].singerAccepted, false)
+  view = (await request('POST', `${route}/queue/${entry.id}/accept`, 2, { commandId: randomUUID() })).body.data
+  assert.equal(view.queue[0].singerAccepted, true)
+  assert.equal(db.prepare("SELECT COUNT(*) total FROM ktv_room_events WHERE action = 'queue.reassigned'").get().total, 2)
+})
+
+test('only hosts set per-room singer caps; existing requests survive reductions and reassignment respects the cap', async t => {
+  const fixture = await setup(t), { request } = fixture
+  let view = (await request('POST', '/rooms', 1, { name: 'Room singer cap', displayName: 'Host', approvalRequired: false })).body.data
+  const route = `/rooms/${view.room.id}`
+  const alex = (await request('POST', '/join', 2, { code: view.invitationCode, displayName: 'Alex' })).body.data.self
+  await request('POST', `${route}/members/${alex.id}/role`, 1, { commandId: randomUUID(), role: 'cohost' })
+  assert.equal((await request('POST', `${route}/settings`, 2, { singerRequests: 1 })).body.code, 'FORBIDDEN')
+  for (const value of [0, 11, '3', 1.5]) assert.equal((await request('POST', `${route}/settings`, 1, { singerRequests: value })).body.code, 'INVALID_INPUT')
+  for (let index = 0; index < 2; index++) view = (await request('POST', `${route}/queue`, 2, { commandId: randomUUID(), songId: 1, title: `Alex ${index}`, requestNext: false })).body.data
+  const setCap = { commandId: randomUUID(), singerRequests: 1 }
+  view = (await request('POST', `${route}/settings`, 1, setCap)).body.data
+  assert.equal(view.limits.singerRequests, 1); assert.equal(view.queue.length, 2)
+  assert.equal((await request('POST', `${route}/settings`, 1, setCap)).body.data.room.revision, view.room.revision)
+  assert.equal((await request('POST', `${route}/queue`, 2, { commandId: randomUUID(), songId: 1, title: 'Extra', requestNext: false })).body.code, 'SINGER_QUEUE_FULL')
+  view = (await request('POST', `${route}/queue`, 1, { commandId: randomUUID(), songId: 1, title: 'Host request', requestNext: false })).body.data
+  const own = view.queue.find(entry => entry.singerMemberId === view.self.id)
+  assert.equal((await request('POST', `${route}/queue/${own.id}/reassign`, 1, { commandId: randomUUID(), singerMemberId: alex.id, baseRevision: view.room.revision })).body.code, 'SINGER_QUEUE_FULL')
+  await fixture.restart()
+  assert.equal((await request('GET', route, 1)).body.data.limits.singerRequests, 1)
+})
+
 test('identity receipts prevent duplicate rooms, survive invite rotation, and roll back with mutations', async t => {
   const { request, db } = await setup(t)
   const body = { commandId: randomUUID(), name: 'Receipt room', displayName: 'Host', approvalRequired: false }

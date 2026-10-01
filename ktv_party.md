@@ -119,25 +119,34 @@ Queue and People, with a separate settings panel.
   another member before becoming ready; host assignment follows the same readiness step.
   The implemented queue puts unaccepted nominations after eligible songs. Own
   requests are accepted automatically, while nominations count toward the nominated
-  singer's three-song cap. Declining a nomination cancels that unique queue entry.
+  singer's configured request cap. Declining a nomination cancels that unique queue entry.
 - Default fairness: one song per eligible singer per round, ordered by first
   pending request, with each singer's requests in their own submission order.
   New singers join the end of the current unserved round. A completed, skipped,
   or declined turn counts as served; deleting and re-adding requests does not reset it.
 - Materialize and display the actual upcoming order. An accepted `Request next`
   or host move creates a visible manual override, then normal rotation resumes.
-- Default cap: three pending requests per singer, configurable by the host.
+- The host can use `Move next` on an accepted, unselected request, or return that
+  request to fair order. Overrides persist across restart; the actual next-turn
+  selector and every snapshot use the same order. Concurrent edits require the
+  current room revision, so a stale drag/move cannot overwrite a newer decision.
+- Default cap: three pending requests per singer, configurable by the host from
+  one to ten. Lowering the cap preserves existing requests and blocks additional
+  requests/assignments until the recipient is below the cap.
 - Allow the same song for different turns; warn about an existing request.
   Queue entries have unique IDs even when their song IDs match.
 - Members may cancel their own unstarted requests. Once performance preparation
   begins, request removal, nomination decline and priority approval cannot change
   that entry; the phone hides those actions and the server returns
   `PERFORMANCE_ACTIVE`. Hosts use the performance controls for the current song.
-  Only hosts reorder the room
-  queue, remove other requests, or change the current performance.
-- Freeze the selected next entry during its readiness countdown. Any replacement
-  cancels that preparation and starts a new one.
-- Departed singers' pending entries are held. Hosts can reassign or remove them.
+  Only the host creates manual queue overrides. Hosts and co-hosts can remove
+  other unstarted requests and use authorized performance controls.
+- Freeze the selected next entry during readiness. Ordering or reassignment of
+  that entry returns `TURN_SELECTED`; cancel the singer invitation first. Other
+  moves cannot displace the pinned selected turn.
+- Departed singers' pending entries are held. Hosts/co-hosts can reassign or remove
+  them. Reassignment preserves the entry/song/requester, clears manual priority,
+  and requires acceptance by the recipient unless they made the assignment.
   Removing a member holds those entries and stops their active performance.
 
 ### 3.4 Direct invitation and guest name entry
@@ -289,6 +298,12 @@ This inventory describes source inspected on 2026-09-29, not production readines
 Party audio must acquire application audio ownership: pause solo playback, disable
 solo auto-advance/shortcuts and floating recording for the active party view, and
 release ownership on exit. Do not automatically resume a previous solo song.
+The implemented store guard also invalidates delayed autoplay/network/missing-file
+retries when entering a party, removes solo media-session handlers, and suppresses
+foreground auto-resume. Returning restores solo controls with the previous song
+and position paused. The floating recorder remains mounted but hidden, finishes
+an active take, cancels pending capture and releases its microphone on entry; its
+finished take remains available when returning to solo mode.
 Only the server advances the party queue, even if multiple devices emit `ended`.
 
 Use a playback-view interface for the lyric component: current song, duration,
@@ -435,7 +450,9 @@ storage for 24 hours. It stores no invitation/pairing codes, names, credentials 
 room snapshots in this journal. Network failures, 5xx, 408 and 429 retain the ID;
 success or definitive denial ends the attempt. Reloading the same tab and explicitly
 retrying the same unresolved intent reuses its UUID. A new action after a successful
-reply gets a new UUID. Existing queue/readiness/playback commands retain their
+reply gets a new UUID. A full journal refuses new intents while allowing retries
+of its existing attempts; uncertain IDs are never evicted to make room.
+Existing queue/readiness/playback commands retain their
 explicit UUID and revision/generation contracts. After an unknown outcome outside that window, fetch
 state and require a new explicit action. Reconnect uses exponential backoff with
 jitter, fresh authentication, a full snapshot, and new clock samples.

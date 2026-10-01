@@ -117,6 +117,17 @@ async function page(actor, route, ready = "document.body?.innerText.includes('Li
   await cdp('Runtime.enable', {}, sessionId); await cdp('Page.enable', {}, sessionId)
   await cdp('Page.addScriptToEvaluateOnNewDocument', { source: `
     localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', 'en');
+    window.__soloAudios = []; window.__soloHandlers = {};
+    const NativeAudio = window.Audio;
+    window.Audio = function(...args) { const audio = new NativeAudio(...args); window.__soloAudios.push(audio); return audio; };
+    window.Audio.prototype = NativeAudio.prototype;
+    if ('mediaSession' in navigator) {
+      const setHandler = navigator.mediaSession.setActionHandler.bind(navigator.mediaSession);
+      navigator.mediaSession.setActionHandler = (action, handler) => {
+        if (handler && ['play', 'nexttrack'].includes(action)) window.__soloHandlers[action] = handler;
+        return setHandler(action, handler);
+      };
+    }
     window.__partyAudit = []; window.__partyContexts = []; window.__partyTimestamps = []; window.__partyClocks = []; window.__partyPlaybacks = [];
     const timestamp = AudioContext.prototype.getOutputTimestamp;
     AudioContext.prototype.getOutputTimestamp = function() {
@@ -230,6 +241,17 @@ try {
     db.prepare('SELECT display_name FROM ktv_members WHERE room_id = ? AND user_id = 3').get(view.room.id).display_name === 'Viewer',
     'Returning invitation guests recover their existing room and chosen name')
   await cdp('Target.closeTarget', { targetId: (await cdp('Target.getTargetInfo', {}, returning)).targetInfo.targetId })
+  const solo = await page(1, '/music', "window.__soloAudios?.[0]?.src && document.querySelector('a[href=\"/party\"]')")
+  await evaluate(solo, 'window.__soloAudios[0].play()')
+  await poll(() => evaluate(solo, "!!window.__soloHandlers.play && !window.__soloAudios[0].paused"), 'solo music enabled')
+  await evaluate(solo, "document.querySelector('a[href=\"/party\"]').click()")
+  await poll(() => evaluate(solo, "location.pathname === '/party' && !!document.getElementById('party-room-name')"), 'party route owns audio')
+  await evaluate(solo, 'window.__soloHandlers.play(); window.__soloHandlers.nexttrack()')
+  check(await evaluate(solo, "window.__soloAudios[0].paused && navigator.mediaSession.metadata === null"), 'Entering party mode blocks saved solo media controls')
+  await evaluate(solo, "document.querySelector('a[href=\"/music\"]').click()")
+  await poll(() => evaluate(solo, "location.pathname === '/music'"), 'solo route restored')
+  check(await evaluate(solo, 'window.__soloAudios[0].paused'), 'Returning to solo mode keeps its preserved song paused')
+  await cdp('Target.closeTarget', { targetId: (await cdp('Target.getTargetInfo', {}, solo)).targetInfo.targetId })
   const host = await page(1, `/party/${view.room.id}/stage`)
   const singer = await page(2, `/party/${view.room.id}`)
   await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }, singer)
@@ -251,6 +273,43 @@ try {
   check(true, 'Arrow keys move selection and keyboard focus together')
   await tab(singer, 'people')
   check(await evaluate(singer, "!document.body.innerText.includes('Close room') && !document.body.innerText.includes('Invite people')"), 'Ordinary phone hides host-only controls')
+  const controller = await page(1, `/party/${view.room.id}`)
+  const singerId = view.members.find(member => member.displayName === 'Singer').id
+  view = await api(1, `${pathRoom}/queue`, { commandId: crypto.randomUUID(), songId: 1, title: 'Host ordering song' })
+  const hostRequestId = view.queue.find(entry => entry.title === 'Host ordering song').id
+  view = await api(3, `${pathRoom}/queue`, { commandId: crypto.randomUUID(), songId: 1, title: 'Viewer ordering song' })
+  const viewerRequestId = view.queue.find(entry => entry.title === 'Viewer ordering song').id
+  await tab(singer, 'songs')
+  await poll(() => evaluate(singer, "document.body.innerText.includes('Already requested in this room; another turn is allowed.')"), 'duplicate song warning')
+  check(true, 'Catalog warns about duplicates while allowing another performance')
+  await tab(controller, 'queue')
+  const queueButton = async (title, text) => {
+    await poll(() => evaluate(controller, `(() => { const row = [...document.querySelectorAll('#party-panel-queue li')].find(item => item.textContent.includes(${JSON.stringify(title)})); const button = [...(row?.querySelectorAll('button') || [])].find(item => item.textContent.trim() === ${JSON.stringify(text)} && !item.disabled); if (!button) return false; button.click(); return true })()`), text)
+  }
+  await queueButton('Viewer ordering song', 'Move next')
+  view = await poll(async () => { const current = await api(1, pathRoom); return current.queue[0]?.id === viewerRequestId && current.queue[0].hostOrder != null ? current : false }, 'manual next order')
+  check(true, 'Host phone moves a pending performance next')
+  await queueButton('Viewer ordering song', 'Return to fair order')
+  await poll(async () => (await api(1, pathRoom)).queue[0]?.id === hostRequestId, 'restored fair order')
+  check(true, 'Host phone restores the singer rotation')
+  await tab(singer, 'queue')
+  check(await evaluate(singer, "!document.querySelector('[id^=party-reassign-]') && ![...document.querySelectorAll('#party-panel-queue button')].some(button => button.textContent.trim() === 'Move next')"), 'Ordinary phones hide ordering and assignment controls')
+  await evaluate(controller, `(() => { const select = document.getElementById('party-reassign-${hostRequestId}'); select.value = '${singerId}'; select.dispatchEvent(new Event('change', { bubbles: true })); })()`)
+  await queueButton('Host ordering song', 'Assign song')
+  view = await poll(async () => { const current = await api(1, pathRoom); const entry = current.queue.find(item => item.id === hostRequestId); return entry?.singerMemberId === singerId && !entry.singerAccepted ? current : false }, 'new singer must accept')
+  check(view.queue.find(item => item.id === hostRequestId).requesterName === 'Host', 'Reassignment preserves requester and requires the new singer’s acceptance')
+  await click(singer, 'Accept song')
+  await poll(async () => (await api(1, pathRoom)).queue.find(item => item.id === hostRequestId)?.singerAccepted, 'assignment acceptance')
+  await tab(controller, 'people')
+  await evaluate(controller, "(() => { const select = document.getElementById('party-singer-limit'); select.value = '1'; select.dispatchEvent(new Event('change', { bubbles: true })); })()")
+  await poll(async () => (await api(1, pathRoom)).limits.singerRequests === 1, 'host singer cap')
+  await tab(singer, 'songs')
+  await poll(() => evaluate(singer, "[...document.querySelectorAll('#party-panel-songs button')].find(button => button.textContent.trim() === 'Add song')?.disabled"), 'singer cap control')
+  check(true, 'Host cap updates disable extra singer requests without removing existing songs')
+  check(await evaluate(controller, 'document.documentElement.scrollWidth <= window.innerWidth'), 'Assignment and cap controls fit their viewport')
+  await api(1, `${pathRoom}/settings`, { commandId: crypto.randomUUID(), singerRequests: 3 })
+  for (const id of [hostRequestId, viewerRequestId]) await api(1, `${pathRoom}/queue/${id}/cancel`, { commandId: crypto.randomUUID() })
+  await cdp('Target.closeTarget', { targetId: (await cdp('Target.getTargetInfo', {}, controller)).targetInfo.targetId })
   await tab(singer, 'sing')
   check((await audit(viewer)).length === 0, 'Viewer stays silent before audio enablement')
   await click(host, 'Enable stage audio')

@@ -29,7 +29,8 @@ export function offerNextTurn(db, roomId, clock) {
   if (selection?.state !== 'idle' || !selection.advance_pending) return null
   const entries = db.prepare(`SELECT q.* FROM ktv_queue_entries q JOIN ktv_members m ON m.id = q.singer_member_id
     WHERE q.room_id = ? AND q.state = 'queued' AND q.accepted_at IS NOT NULL AND m.admission = 'admitted'
-    ORDER BY q.created_at, q.id`).all(roomId).map(entry => ({ ...entry, singerMemberId: entry.singer_member_id,
+    ORDER BY q.created_at, q.rowid`).all(roomId).map(entry => ({ ...entry, singerMemberId: entry.singer_member_id,
+      hostOrder: entry.host_order,
       singerAccepted: true, priorityApproved: Boolean(entry.priority_approved) }))
   const next = orderQueue(entries, servedRound(db, roomId).served)[0]
   if (!next) return null

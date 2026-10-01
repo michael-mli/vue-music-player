@@ -148,6 +148,7 @@ export interface PartyQueueEntry {
   state: 'queued' | 'held'
   priorityRequested: boolean
   priorityApproved: boolean
+  hostOrder?: number | null
   singerAccepted: boolean
 }
 
@@ -242,7 +243,7 @@ export const partyApi = {
     call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/members/${encodeURIComponent(memberId)}/transfer-host`, { commandId }, true),
   rotate: (roomId: string) =>
     mutation<PartySnapshot>(`/rooms/${encodeURIComponent(roomId)}/invitations/rotate`, {}),
-  settings: (roomId: string, changes: { locked?: boolean; approvalRequired?: boolean; stageInviteVisible?: boolean }) =>
+  settings: (roomId: string, changes: { locked?: boolean; approvalRequired?: boolean; stageInviteVisible?: boolean; singerRequests?: number }) =>
     mutation<PartySnapshot>(`/rooms/${encodeURIComponent(roomId)}/settings`, changes),
   close: (roomId: string) =>
     mutation<{ id: string; status: 'closed' }>(`/rooms/${encodeURIComponent(roomId)}/close`, {}),
@@ -252,6 +253,10 @@ export const partyApi = {
     call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/queue/${encodeURIComponent(entryId)}/cancel`, { commandId }, true),
   approveNext: (roomId: string, entryId: string, commandId: string) =>
     call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/queue/${encodeURIComponent(entryId)}/approve-next`, { commandId }, true),
+  orderSong: (roomId: string, entryId: string, action: 'next' | 'fair', baseRevision: number) =>
+    mutation<PartySnapshot>(`/rooms/${encodeURIComponent(roomId)}/queue/${encodeURIComponent(entryId)}/order`, { action, baseRevision }),
+  reassignSong: (roomId: string, entryId: string, singerMemberId: string, baseRevision: number) =>
+    mutation<PartySnapshot>(`/rooms/${encodeURIComponent(roomId)}/queue/${encodeURIComponent(entryId)}/reassign`, { singerMemberId, baseRevision }),
   acceptSong: (roomId: string, entryId: string, commandId: string) =>
     call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/queue/${encodeURIComponent(entryId)}/accept`, { commandId }, true),
   declineSong: (roomId: string, entryId: string, commandId: string) =>

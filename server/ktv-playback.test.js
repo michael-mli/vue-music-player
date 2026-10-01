@@ -325,6 +325,17 @@ test('validated stage drift and required-guide output faults enter generation-sa
   assert.equal(f.db.prepare('SELECT COUNT(*) total FROM ktv_turn_history').get().total, 0)
 })
 
+test('automatic turn selection honors a visible host override and resumes the fair round after it', t => {
+  const f = fixture(t), other = f.member('other')
+  const fair = f.enqueue(other), moved = f.enqueue(f.memberId)
+  f.db.prepare('UPDATE ktv_queue_entries SET host_order = -1 WHERE id = ?').run(moved)
+  f.prepare()
+  f.transaction(f.db, () => f.service.finish(f.roomId, 'finished'))
+  assert.equal(f.db.prepare('SELECT entry_id FROM ktv_readiness WHERE room_id = ?').get(f.roomId).entry_id, moved)
+  f.transaction(f.db, () => f.service.decline(f.roomId, f.db.prepare('SELECT * FROM ktv_queue_entries WHERE id = ?').get(moved)))
+  assert.equal(f.db.prepare('SELECT entry_id FROM ktv_readiness WHERE room_id = ?').get(f.roomId).entry_id, fair)
+})
+
 test('completion and decline automatically select fair accepted turns once, leaving held and unaccepted entries alone', t => {
   const f = fixture(t)
   const other = f.member('other')

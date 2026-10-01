@@ -165,6 +165,7 @@ export function initKtvSchema(db) {
     db.exec('ALTER TABLE ktv_rooms ADD COLUMN stage_invite_visible INTEGER NOT NULL DEFAULT 0 CHECK (stage_invite_visible IN (0, 1))')
   }
   if (!roomColumns.includes('empty_since_at')) db.exec('ALTER TABLE ktv_rooms ADD COLUMN empty_since_at TEXT')
+  if (!roomColumns.includes('singer_request_limit')) db.exec('ALTER TABLE ktv_rooms ADD COLUMN singer_request_limit INTEGER CHECK (singer_request_limit BETWEEN 1 AND 10)')
   const receiptColumns = db.prepare('PRAGMA table_info(ktv_command_receipts)').all().map(column => column.name)
   for (const name of ['result_cipher', 'result_iv', 'result_tag']) if (!receiptColumns.includes(name)) {
     db.exec(`ALTER TABLE ktv_command_receipts ADD COLUMN ${name} TEXT`)
@@ -175,6 +176,7 @@ export function initKtvSchema(db) {
   if (!columns.includes('cohost_at')) db.exec('ALTER TABLE ktv_members ADD COLUMN cohost_at TEXT')
   if (!columns.includes('blocked_at')) db.exec('ALTER TABLE ktv_members ADD COLUMN blocked_at TEXT')
   const queueColumns = db.prepare('PRAGMA table_info(ktv_queue_entries)').all().map((column) => column.name)
+  if (!queueColumns.includes('host_order')) db.exec('ALTER TABLE ktv_queue_entries ADD COLUMN host_order INTEGER')
   if (!queueColumns.includes('accepted_at')) {
     db.exec(`ALTER TABLE ktv_queue_entries ADD COLUMN accepted_at TEXT;
       UPDATE ktv_queue_entries SET accepted_at = created_at WHERE requester_member_id = singer_member_id;`)

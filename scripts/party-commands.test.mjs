@@ -69,16 +69,29 @@ test('journal isolates principals and retains no invitation/name plaintext; expi
   assert.equal(storage.length, 0)
 })
 
-test('offline retention stays bounded and invalid stored IDs cannot become commands', async t => {
-  const storage = browser(t), { runPartyMutation } = await reload()
-  for (let index = 0; index < 105; index++) {
-    await assert.rejects(runPartyMutation('user:1', '/rooms', { name: `Room ${index}` }, async () => { throw new Error('Offline') }))
+test('a full journal refuses new requests without losing IDs that may have committed', async t => {
+  const storage = browser(t), first = await reload(), ids = []
+  for (let index = 0; index < 100; index++) {
+    await assert.rejects(first.runPartyMutation('user:1', '/rooms', { name: `Room ${index}` }, async body => {
+      ids.push(body.commandId); throw new Error('Reply lost')
+    }), /Reply lost/)
   }
-  assert.equal(storage.length, 100)
-  const key = [...storage.values.keys()].at(-1)
-  const invalid = '------------------------------------'
+  const next = await reload()
+  let sent = false
+  await assert.rejects(next.runPartyMutation('user:1', '/rooms', { name: 'Room 100' }, async () => { sent = true }), /Too many unresolved/)
+  assert.equal(sent, false); assert.equal(storage.length, 100)
+  await next.runPartyMutation('user:1', '/rooms', { name: 'Room 0' }, async body => { assert.equal(body.commandId, ids[0]); return true })
+  assert.equal(storage.length, 99)
+  await next.runPartyMutation('user:1', '/rooms', { name: 'Room 100' }, async body => { assert.ok(!ids.includes(body.commandId)); return true })
+  await next.runPartyMutation('user:1', '/rooms', { name: 'Room 99' }, async body => { assert.equal(body.commandId, ids[99]); return true })
+})
+
+test('invalid stored IDs cannot become commands', async t => {
+  const storage = browser(t), first = await reload()
+  await assert.rejects(first.runPartyMutation('user:1', '/rooms', { name: 'Room' }, async () => { throw new Error('Offline') }))
+  const key = [...storage.values.keys()][0], invalid = '------------------------------------'
   storage.setItem(key, JSON.stringify({ id: invalid, createdAt: Date.now() }))
   const next = await reload()
-  await next.runPartyMutation('user:1', '/rooms', { name: 'Room 104' }, async body => { assert.notEqual(body.commandId, invalid); return true })
-  assert.equal(storage.length, 99)
+  await next.runPartyMutation('user:1', '/rooms', { name: 'Room' }, async body => { assert.notEqual(body.commandId, invalid); return true })
+  assert.equal(storage.length, 0)
 })

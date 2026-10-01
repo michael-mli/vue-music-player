@@ -16,7 +16,8 @@ export async function runPartyMutation<T>(principal: string, route: string, payl
   const bytes = new TextEncoder().encode(JSON.stringify(payload))
   const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('')
   const key = `${prefix}${principal}:${route}:${hash}`, now = Date.now(), store = storage()
-  // Retention is bounded even if an offline page leaves failed commands behind.
+  // Expire old attempts, but never evict an uncertain request to admit a new one.
+  const pendingKeys = new Set<string>()
   for (const [name, record] of memory) if (!valid(record, now)) memory.delete(name)
   if (store) try {
     const names = Array.from({ length: store.length }, (_, index) => store.key(index)).filter((name): name is string => !!name?.startsWith(prefix))
@@ -24,20 +25,19 @@ export async function runPartyMutation<T>(principal: string, route: string, payl
       let record: PendingCommand | null = null
       try { record = JSON.parse(store.getItem(name) || 'null') } catch { /* Invalid journal entry. */ }
       if (!valid(record, now)) store.removeItem(name)
+      else pendingKeys.add(name)
     }
   } catch { /* Continue with the in-memory journal when storage is unavailable. */ }
   let pending = memory.get(key) || null
   if (!valid(pending, now) && store) try { pending = JSON.parse(store.getItem(key) || 'null') } catch { /* Use a fresh command. */ }
-  if (!valid(pending, now)) pending = { id: crypto.randomUUID(), createdAt: now }
+  for (const name of memory.keys()) pendingKeys.add(name)
+  if (!valid(pending, now)) {
+    if (pendingKeys.size >= 100) throw new Error('Too many unresolved requests. Retry an earlier request before sending a new one.')
+    pending = { id: crypto.randomUUID(), createdAt: now }
+  }
   const command = pending
-  if (!memory.has(key)) while (memory.size >= 100) memory.delete(memory.keys().next().value!)
   memory.set(key, command)
   try { store?.setItem(key, JSON.stringify(command)) } catch { /* In-memory retries remain safe. */ }
-  if (store) try {
-    const names = Array.from({ length: store.length }, (_, index) => store.key(index))
-      .filter((name): name is string => !!name?.startsWith(prefix) && name !== key)
-    for (const name of names.slice(0, Math.max(0, names.length - 99))) store.removeItem(name)
-  } catch { /* Storage may have become unavailable. */ }
   const clear = () => {
     if (memory.get(key)?.id !== command.id) return
     memory.delete(key)
