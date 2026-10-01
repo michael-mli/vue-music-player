@@ -21,10 +21,14 @@ a private original guide are live and pass a production-build journey
 with three isolated Chrome sessions. Physical audio alignment and streaming remain
 unverified/unimplemented. Required-guide gating/recovery, fair next-turn readiness
 and automatic host-loss transfer are deployed as `323c922` (`main-Ccfld-0j.js`).
-They pass 63 backend tests, eight clock/audio checks, a 20-check Chrome
-production-build journey and 13 public recovery protocol checks. The public checks
-include the default 30-second host grace, waiting without a moderator, co-host
-inheritance and revocation of the former host’s paired control permissions.
+The combined phone/audio-recovery preview is now deployed as `f701e9a`
+(`main-1-asbyg9.js`). It adds persistent Songs/Queue/Sing/People tabs, local invitation
+and pairing QR codes, host-controlled common-screen invitations, fullscreen exit,
+and rendered-drift/output recovery. It passes 65 backend tests, 15 clock/audio
+checks, a 42-check production Chrome journey, 18 public recovery protocol checks
+and 10 public deployment checks. Public checks include the default 30-second host
+grace, pending-next recovery, role revocation, drift/output faults and invitation
+visibility while locked. Physical timing and online/hybrid streaming remain open.
 
 ## 1. How to use this tracker
 
@@ -187,7 +191,7 @@ Exit criteria:
 - [ ] Duplicate requests cannot create duplicate membership or duplicate rooms.
 
 Evidence: `server/ktv-routes.js`, `server/ktv-schema.js`, and `server/ktv.test.js`.
-Twenty KTV integration tests pass for guest names/IDs, approval and visibility,
+Twenty-one KTV integration tests pass for guest names/IDs, approval and visibility,
 rotation/lock/close, persistence, queue commands, realtime tickets, pairing,
 co-host restrictions, demotion, rejection/block/restore, and atomic host transfer.
 Pairing codes are single-use and expire after two minutes; the room grants are
@@ -570,8 +574,7 @@ prototype result is not automatically a release result.
 
 ### Current next action
 
-Finish the combined audio-recovery/phone-UI release verification and deployment.
-Then implement general command receipts, room cleanup/limits and returning-invite
+Implement general command receipts, room cleanup/limits and returning-invite
 recovery, followed by SFU/TURN and online/hybrid capture. Physical phone/screen timing, memory, background and browser
 coverage remain acceptance gates. Remaining P02/P04 work includes general receipts,
 cleanup/abuse limits, QR invitations, phone tabs and accessibility.
@@ -627,6 +630,8 @@ cleanup/abuse limits, QR invitations, phone tabs and accessibility.
 
 | 2026-09-30 | Phone tabs, invitation/pairing QR and common-screen controls | `PartyRoom.vue`, `PartyQrCode.vue`, bilingual UI, additive stage invitation preference and production browser journey | Backend 65/65 plus locked-screen invitation regression; clock/audio 15/15; release-candidate Chrome 42/42; independent OpenCV decodes match both QR links; type-check/build pass | Persistent Songs/Queue/Sing/People panels retain guide audio. Keyboard focus, server request caps, host-only stage invitation visibility/rotation/lock hiding and explicit fullscreen exit verified. Headless foreground flags and separate stage/singer processes used; physical timing, broader a11y, returning-invite recovery and streaming remain open |
 
+| 2026-09-30 | Phone/audio-recovery preview deployment | `f701e9a`, frontend `main-1-asbyg9.js`, QR chunk `browser-BXdiCFWD.js` | Backend 65/65; clock/audio 15/15; exact-release foreground Chrome 42/42; public recovery protocol 18/18; public routes/assets/health/schema 10/10; both QR links independently decoded | Temporary public room closed. Backup `/tmp/ktv-party-phone-predeploy.lurd7md3`; one local connection retry during PM2 restart. Static hashes and embedded SHA match; additive invitation column and zero foreign-key violations verified. Physical audio, general receipts/cleanup, broader browser/PWA/a11y and online/hybrid remain open |
+
 ### Work-session update template
 
 ```text
@@ -654,5 +659,6 @@ Next action:
 | Clock and singer readiness preview | `a7fc3c6` (`main-DZatLVFa.js`) | `https://music.micstec.com/party` | 2026-09-30 | Live API/WSS 13 checks, backend 46/46, clock tests 4/4, release build and public route/assets pass; physical UI check open | Audio scheduling, leases/timeline, lyrics, private guide, general receipts, cleanup, automatic host-loss recovery, online/hybrid |
 | Scheduled playback preview | `f87f0ff` (`main-C0oS5LfE.js`) | `https://music.micstec.com/party` | 2026-09-30 | Backend 54/54, clock/audio 8/8, Chrome journey 13/13, public protocol 11/11, build, static assets and additive schema pass | Physical alignment, required-guide and drift/output recovery, next-turn/host-loss policy, receipts/cleanup, full phone UI, online/hybrid |
 | Playback and recovery preview | `323c922` (`main-Ccfld-0j.js`) | `https://music.micstec.com/party` | 2026-09-30 | Backend 63/63, clock/audio 8/8, Chrome 20/20, public recovery protocol 13/13, release build/assets/additive schema verified | Drift/output changes and physical timing, receipts/cleanup, full phone UI and online/hybrid |
+| Phone/audio-recovery preview | `f701e9a` (`main-1-asbyg9.js`) | `https://music.micstec.com/party` | 2026-09-30 | Backend 65/65, clock/audio 15/15, foreground Chrome 42/42, public protocol 18/18 and deployment checks 10/10; QR decodes, release assets and additive schema verified | Physical timing, receipts/cleanup, returning-invite flow, broad PWA/browser/a11y and online/hybrid |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |

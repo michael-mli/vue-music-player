@@ -82,13 +82,13 @@ test('only the host exposes an invitation on admitted common screens and can hid
   assert.equal((await request('GET', route, display)).body.data.stageInvitationCode, undefined)
 })
 
-function nextSnapshot(ws) {
+function nextSnapshot(ws, accepts = () => true) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => { cleanup(); reject(new Error('snapshot timeout')) }, 3000)
     function cleanup() { clearTimeout(timeout); ws.off('message', onMessage); ws.off('close', onClose) }
     function onMessage(raw) {
       const message = JSON.parse(raw.toString())
-      if (message.type !== 'snapshot') return
+      if (message.type !== 'snapshot' || !accepts(message.data)) return
       cleanup()
       resolve(message.data)
     }
@@ -671,8 +671,8 @@ test('host transfer rolls back failures, updates sockets and paired controls, an
   assert.equal(db.prepare("SELECT id FROM ktv_members WHERE room_id = ? AND role = 'host'").get(created.room.id).id, created.self.id)
   assert.equal(db.prepare('SELECT 1 FROM ktv_command_receipts WHERE command_id = ?').get(transferId), undefined)
   db.exec('DROP TRIGGER fail_transfer')
-  const oldUpdate = nextSnapshot(oldHost.ws)
-  const newUpdate = nextSnapshot(newHost.ws)
+  const oldUpdate = nextSnapshot(oldHost.ws, data => data.self.role === 'member')
+  const newUpdate = nextSnapshot(newHost.ws, data => data.self.role === 'host')
   const transferred = await request('POST', `${root}/members/${next}/transfer-host`, device, { commandId: transferId })
   assert.equal(transferred.status, 200)
   assert.equal(transferred.body.data.self.role, 'member')
