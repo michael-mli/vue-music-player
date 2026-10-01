@@ -191,8 +191,9 @@ try {
   await poll(() => evaluate(receiptPage, "!!document.querySelector('[role=alert]')"), 'lost room reply feedback')
   check(lostReceiptReplies === 1 && db.prepare('SELECT COUNT(*) total FROM ktv_rooms WHERE name = ?').get(receiptRoomName).total === 1,
     'A gateway losing the committed reply leaves one room and visible retry feedback')
+  const beforeReload = await evaluate(receiptPage, 'performance.timeOrigin')
   await cdp('Page.reload', {}, receiptPage)
-  await poll(() => evaluate(receiptPage, "!!document.getElementById('party-room-name')"), 'receipt page reload')
+  await poll(() => evaluate(receiptPage, `performance.timeOrigin !== ${beforeReload} && document.readyState === 'complete' && !!document.getElementById('party-room-name') && !!document.getElementById('party-host-name')`), 'new receipt document after reload')
   await fillReceiptForm(); await click(receiptPage, 'Create room')
   await poll(() => evaluate(receiptPage, "document.body.innerText.includes('Live room updates connected')"), 'room restored after lost reply')
   check(receiptRequests.length === 2 && new Set(receiptRequests).size === 1,

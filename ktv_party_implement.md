@@ -30,12 +30,19 @@ and 10 public deployment checks. Public checks include the default 30-second hos
 grace, pending-next recovery, role revocation, drift/output faults and invitation
 visibility while locked. Physical timing and online/hybrid streaming remain open.
 
-The latest preview is `f1e21da` (`main-l1KzzXwT.js`). General room/device command
+The durable-room milestone was deployed as `f1e21da` (`main-l1KzzXwT.js`). General room/device command
 receipts, encrypted pairing response recovery, returning invitation recovery and
 room lifecycle/retention are live. Release checks pass: backend 76/76, frontend
 19/19, exact-release foreground Chrome 49/49, public protocol 24/24 and deployment
 10/10. P02 room-domain software criteria are complete; physical timing, remaining
 queue/UI/PWA work and online/hybrid streaming still need implementation/acceptance.
+
+The current preview is `49bd4d2` (`main-BLgb8FvF.js`, `main-B17ntvAM.css`). Queue
+request cancellation, nomination decline and priority approval cannot change an
+entry after performance preparation begins. The phone hides request-removal
+controls for that entry; hosts use performance controls. The release passes 77
+backend checks, the unchanged 19 frontend unit checks, an exact-release foreground
+Chrome journey of 50 checks, 25 public protocol checks and 10 deployment checks.
 
 ## 1. How to use this tracker
 
@@ -290,9 +297,9 @@ Likely files: `src/views/party/{PartyHome,PartyJoin,PartyRoom,PartyStage,PartyPa
   assignment, invitation rotation, room locking, and settings.
 - [x] P04.5 Build the Sing tab shell: enable guide, personal volume, timing correction,
   required/optional guide preference, lyric view, and connection status.
-- [ ] P04.6 Add scoped action availability and server-error feedback; a disabled
+- [x] P04.6 Add scoped action availability and server-error feedback; a disabled
   button is presentation, with the server retaining authority.
-- [ ] P04.7 Extract/inject the lyric playback interface so stage rendering uses
+- [x] P04.7 Extract/inject the lyric playback interface so stage rendering uses
   party state and permitted callbacks rather than the solo player store.
 - [ ] P04.8 Add party layout/audio ownership hooks in App; handle global controls,
   keyboard/media-session actions, floating recorder, and solo-player restoration.
@@ -326,6 +333,15 @@ Stage selection, explicit audio enablement, personal guide volume/calibration an
 host prepare/start/pause/resume/seek/skip/lyric-correction controls are wired.
 Three isolated Chrome sessions pass 42 playback/recovery/output and phone-UI checks without runtime exceptions. Stage and singer use separate Chrome 146.0.7680.71 processes with headless foreground scheduling flags.
 The controller has four persistent tabs with arrow/Home/End keyboard focus, a singer turn prompt and server-provided request caps. Local invitation/pairing QR codes have accessible links; an independent OpenCV decoder matches both links. The host controls common-screen invitation visibility, which defaults off, follows rotation and hides when locked. Fullscreen has an explicit exit and a separate refusal state. Broader accessibility, returning-invite recovery and physical acceptance remain open.
+
+Queue action availability now matches the active-performance boundary and typed
+server denials. `PartyPlaybackPanel` receives a typed `usePartyPlayback` interface:
+lyrics/progress come from the authoritative party timeline and pinned assets,
+with `parseLrc`/`singingGuideState` shared helpers. Controls emit permitted callbacks
+to the room API; the panel does not import the solo player store. Scope/error and
+party lyric interface software items are complete. Full audio ownership/media
+session, PWA upgrade, broad accessibility/browser and physical-device checks remain
+open in P04.8/P04.9 and P06.
 
 ## 8. P05 — Production playback and private vocal guide
 
@@ -649,6 +665,7 @@ general receipts, cleanup and returning-invite recovery are now deployed.
 | 2026-09-30 | Phone/audio-recovery preview deployment | `f701e9a`, frontend `main-1-asbyg9.js`, QR chunk `browser-BXdiCFWD.js` | Backend 65/65; clock/audio 15/15; exact-release foreground Chrome 42/42; public recovery protocol 18/18; public routes/assets/health/schema 10/10; both QR links independently decoded | Temporary public room closed. Backup `/tmp/ktv-party-phone-predeploy.lurd7md3`; one local connection retry during PM2 restart. Static hashes and embedded SHA match; additive invitation column and zero foreign-key violations verified. Physical audio, general receipts/cleanup, broader browser/PWA/a11y and online/hybrid remain open |
 | 2026-09-30 | Durable room requests and lifecycle candidate | `server/ktv-receipts.js`, `ktv-lifecycle.js`, `ktv-policy.js`, `ktv-http.js`, invitation resolution, frontend command journal and browser fixture | Backend 76/76; frontend 19/19; production Chrome 48/48; type-check/build and diff check pass | Restart/encrypted reply and rollback, expiry/revocation/socket closure, empty-since persistence, bounded history/configured caps, origin/body/rate guards, duplicate-name guest entry and reload retry verified. Candidate check used a deterministic post-commit gateway 502; bare TCP resets may be transparently retried by Chrome. Exact-release/public gates follow. |
 | 2026-09-30 | Durable-room preview deployment | `f1e21da`, `main-l1KzzXwT.js`, lifecycle/policy/receipt additive schema | Backend 76/76; frontend 19/19; exact-release foreground Chrome 49/49; public protocol 24/24 and deployment 10/10; type-check/build/diff checks pass | Both temporary public rooms closed. Backup `/tmp/ktv-party-durable-predeploy.3p9p3hv8` includes consistent SQLite/static/previous source. One restart connection retry. Schema probe uses SQLite busy timeout; public fault probe captures the silence boundary before expired lease cleanup. Backend test waits for committed state rather than unrelated presence snapshots. Physical timing, remaining queue/UI/PWA and streaming remain open. |
+| 2026-09-30 | Active-performance queue safeguard deployment | `49bd4d2`, `main-BLgb8FvF.js`, `main-B17ntvAM.css` | Backend 77/77; unchanged frontend unit checks 19/19; exact-release foreground Chrome 50/50; public protocol 25/25 and deployment 10/10; type-check/build/diff pass | Temporary public room closed; backup `/tmp/ktv-party-queue-boundary-predeploy.139w_e17`. One health connection retry. Browser reload test waits for a new document time origin, avoiding its old-DOM race. Current-song request actions cannot stop preparation/playback; pending request cancellation remains allowed. Held reassignment, visible host ordering/caps, player/PWA ownership and streaming remain open. |
 
 ### Work-session update template
 
@@ -679,5 +696,6 @@ Next action:
 | Playback and recovery preview | `323c922` (`main-Ccfld-0j.js`) | `https://music.micstec.com/party` | 2026-09-30 | Backend 63/63, clock/audio 8/8, Chrome 20/20, public recovery protocol 13/13, release build/assets/additive schema verified | Drift/output changes and physical timing, receipts/cleanup, full phone UI and online/hybrid |
 | Phone/audio-recovery preview | `f701e9a` (`main-1-asbyg9.js`) | `https://music.micstec.com/party` | 2026-09-30 | Backend 65/65, clock/audio 15/15, foreground Chrome 42/42, public protocol 18/18 and deployment checks 10/10; QR decodes, release assets and additive schema verified | Physical timing, receipts/cleanup, returning-invite flow, broad PWA/browser/a11y and online/hybrid |
 | Durable-room preview | `f1e21da` (`main-l1KzzXwT.js`) | `https://music.micstec.com/party` | 2026-09-30 | Backend 76/76, frontend 19/19, exact-release foreground Chrome 49/49, public protocol 24/24 and deployment 10/10; restart/rollback, guest recovery, bounded cleanup and exact assets/schema verified | Queue/UI/PWA completion, physical timing/broader browsers and online/hybrid |
+| Queue safeguard preview | `49bd4d2` (`main-BLgb8FvF.js`) | `https://music.micstec.com/party` | 2026-09-30 | Backend 77/77, frontend 19/19, exact-release foreground Chrome 50/50, public protocol 25/25 and deployment 10/10; active performance cannot be interrupted through request actions | Remaining queue/player/PWA integration, physical timing/broader browsers and online/hybrid |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |
