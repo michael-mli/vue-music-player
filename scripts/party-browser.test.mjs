@@ -92,7 +92,28 @@ async function page(actor, route) {
   await cdp('Runtime.enable', {}, sessionId); await cdp('Page.enable', {}, sessionId)
   await cdp('Page.addScriptToEvaluateOnNewDocument', { source: `
     localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', 'en');
-    window.__partyAudit = []; window.__partyContexts = [];
+    window.__partyAudit = []; window.__partyContexts = []; window.__partyTimestamps = []; window.__partyClocks = [];
+    const timestamp = AudioContext.prototype.getOutputTimestamp;
+    AudioContext.prototype.getOutputTimestamp = function() {
+      const result = timestamp.call(this);
+      window.__partyTimestamps.push({ ...result, now: performance.now(), currentTime: this.currentTime, outputLatency: this.outputLatency });
+      if (window.__partyTimestamps.length > 256) window.__partyTimestamps.shift();
+      return result;
+    };
+    const NativeSocket = window.WebSocket;
+    window.WebSocket = class extends NativeSocket {
+      constructor(...args) {
+        super(...args);
+        this.addEventListener('message', event => {
+          if (typeof event.data !== 'string') return;
+          let packet; try { packet = JSON.parse(event.data); } catch { return; }
+          if (packet.type === 'clock.reply') {
+            window.__partyClocks.push({ ...packet, received: performance.now() });
+            if (window.__partyClocks.length > 16) window.__partyClocks.shift();
+          }
+        });
+      }
+    };
     const create = AudioContext.prototype.createBufferSource;
     AudioContext.prototype.createBufferSource = function() {
       const node = create.call(this), context = this;
@@ -229,10 +250,13 @@ try {
   console.error('Browser runtime exceptions:', errors)
   if (pathRoom) {
     const current = await api(1, pathRoom)
-    console.error('Playback at failure:', current.playback.state, current.playback.generation,
+    console.error('Playback at failure:', current.playback.state, current.playback.generation, current.playback.recoveryReason,
       current.presence.devices.map(device => ({ purpose: device.purpose, enabled: device.audioEnabled, ready: device.ready, generation: device.readyGeneration })))
   }
-  for (const session of sessions) console.error('UI errors:', await evaluate(session, "[...document.querySelectorAll('[role=alert]')].map(item => item.textContent)").catch(() => []))
+  for (const session of sessions) {
+    console.error('UI errors:', await evaluate(session, "[...document.querySelectorAll('[role=alert]')].map(item => item.textContent)").catch(() => []))
+    console.error('Audio timing evidence:', await evaluate(session, "({sources: window.__partyAudit.map(item => ({starts:item.starts, stops:item.stops.slice(-2), currentTime:item.context.currentTime})), timestamps:window.__partyTimestamps.slice(-8), clocks:window.__partyClocks.slice(-3)})").catch(() => ({})))
+  }
   throw error
 } finally {
   if (pathRoom) await api(closer, `${pathRoom}/close`, {}).catch(() => {})

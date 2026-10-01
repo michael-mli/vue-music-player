@@ -44,6 +44,7 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
 
   function status() {
     if (!connected.value) return
+    if (!healthy.value || document.hidden || blocked.value) readyKeys.clear()
     send({ type: 'device.status', label: purpose.value === 'stage' ? 'Stage' : purpose.value === 'guide' ? 'Singer phone' : 'Controller',
       purpose: purpose.value, audioEnabled: !document.hidden && !blocked.value && enabled.value && engine.enabled,
       clockHealthy: !document.hidden && healthy.value, audioIssue: audioIssue.value })

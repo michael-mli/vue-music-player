@@ -324,11 +324,12 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
       device.audioEnabled = message.audioEnabled; device.clockHealthy = message.clockHealthy
       device.audioIssue = message.audioIssue || null
       const row = read(ws.roomId)
+      const shouldRecover = ['scheduled', 'playing'].includes(row?.state) || Boolean(device.audioIssue)
       if (!device.audioEnabled || !device.clockHealthy || (row?.stage_device_id === device.id && device.purpose !== 'stage') ||
         (row?.guide_device_id === device.id && device.purpose !== 'guide')) {
         device.ready = null; device.nextReady = null
-        if (row?.stage_device_id === device.id) transaction(db, () => recover(ws.roomId, `stage.${device.audioIssue || 'unavailable'}`))
-        else if (row?.guide_required && row.guide_device_id === device.id) transaction(db, () => recover(ws.roomId, `guide.${device.audioIssue || 'unavailable'}`))
+        if (shouldRecover && row?.stage_device_id === device.id) transaction(db, () => recover(ws.roomId, `stage.${device.audioIssue || 'unavailable'}`))
+        else if (shouldRecover && row?.guide_required && row.guide_device_id === device.id) transaction(db, () => recover(ws.roomId, `guide.${device.audioIssue || 'unavailable'}`))
       }
       if (changed) { presenceSequence++; broadcast(ws.roomId) }
     } else if (message.type === 'device.ready') {
