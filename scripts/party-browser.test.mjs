@@ -83,7 +83,14 @@ async function api(actor, route, body) {
 function check(condition, label) { assert.ok(condition, label); passed++; console.log(`PASS ${label}`) }
 async function poll(work, label, timeout = 15000) {
   const deadline = Date.now() + timeout
-  while (Date.now() < deadline) { const result = await work(); if (result) return result; await new Promise(resolve => setTimeout(resolve, 100)) }
+  while (Date.now() < deadline) {
+    try { const result = await work(); if (result) return result } catch (error) {
+      // Reload can destroy the prior context between polling and evaluation.
+      // Retry only that transient CDP condition; assertion/runtime failures still fail.
+      if (!/Inspected target navigated or closed|Execution context was destroyed|Cannot find context with specified id/.test(error.message)) throw error
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
   throw new Error(`Timed out: ${label}`)
 }
 function cdp(method, params = {}, sessionId, socket = sessionSockets.get(sessionId) || debuggerSocket) {
@@ -248,8 +255,8 @@ try {
   await poll(() => evaluate(solo, "location.pathname === '/party' && !!document.getElementById('party-room-name')"), 'party route owns audio')
   await evaluate(solo, 'window.__soloHandlers.play(); window.__soloHandlers.nexttrack()')
   check(await evaluate(solo, "window.__soloAudios[0].paused && navigator.mediaSession.metadata === null"), 'Entering party mode blocks saved solo media controls')
-  await evaluate(solo, "document.querySelector('a[href=\"/music\"]').click()")
-  await poll(() => evaluate(solo, "location.pathname === '/music'"), 'solo route restored')
+  await evaluate(solo, "document.querySelector('a[href=\"/\"]').click()")
+  await poll(() => evaluate(solo, "location.pathname === '/'"), 'solo route restored')
   check(await evaluate(solo, 'window.__soloAudios[0].paused'), 'Returning to solo mode keeps its preserved song paused')
   await cdp('Target.closeTarget', { targetId: (await cdp('Target.getTargetInfo', {}, solo)).targetInfo.targetId })
   const host = await page(1, `/party/${view.room.id}/stage`)
@@ -274,10 +281,11 @@ try {
   await tab(singer, 'people')
   check(await evaluate(singer, "!document.body.innerText.includes('Close room') && !document.body.innerText.includes('Invite people')"), 'Ordinary phone hides host-only controls')
   const controller = await page(1, `/party/${view.room.id}`)
+  view = await api(1, pathRoom)
   const singerId = view.members.find(member => member.displayName === 'Singer').id
-  view = await api(1, `${pathRoom}/queue`, { commandId: crypto.randomUUID(), songId: 1, title: 'Host ordering song' })
+  view = await api(1, `${pathRoom}/queue`, { commandId: crypto.randomUUID(), songId: 1, title: 'Host ordering song', requestNext: false })
   const hostRequestId = view.queue.find(entry => entry.title === 'Host ordering song').id
-  view = await api(3, `${pathRoom}/queue`, { commandId: crypto.randomUUID(), songId: 1, title: 'Viewer ordering song' })
+  view = await api(3, `${pathRoom}/queue`, { commandId: crypto.randomUUID(), songId: 1, title: 'Viewer ordering song', requestNext: false })
   const viewerRequestId = view.queue.find(entry => entry.title === 'Viewer ordering song').id
   await tab(singer, 'songs')
   await poll(() => evaluate(singer, "document.body.innerText.includes('Already requested in this room; another turn is allowed.')"), 'duplicate song warning')
