@@ -340,6 +340,13 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
       : snapshot(db, req.params.id, user(req).id, key, clock, playback, policy)
   }
 
+  function assertUnstarted(roomId, entryId) {
+    const current = playback.read(roomId)
+    if (current?.entry_id === entryId && current.state !== 'idle') {
+      fail(409, 'PERFORMANCE_ACTIVE', 'Use performance controls to change the current song')
+    }
+  }
+
   app.post('/api/ktv/rooms', authMiddleware, handler((req) => {
     const actor = user(req)
     const id = memberCommandId(req)
@@ -735,6 +742,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
           .get(req.params.id, req.params.entryId)
         if (!entry || !['queued', 'held'].includes(entry.state)) fail(409, 'INVALID_QUEUE_STATE', 'Song is not queued')
         if (!isModerator(member) && entry.requester_member_id !== member.id) fail(403, 'FORBIDDEN', 'Cannot remove this song')
+        assertUnstarted(req.params.id, entry.id)
         invalidateReadiness(db, req.params.id, clock, { entryId: entry.id })
         playback.invalidate(req.params.id, { entryId: entry.id })
         db.prepare("UPDATE ktv_queue_entries SET state = 'cancelled', updated_at = ? WHERE id = ?")
@@ -758,6 +766,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
         if (!entry || entry.state !== 'queued' || !entry.priority_requested || entry.priority_approved) {
           fail(409, 'INVALID_QUEUE_STATE', 'Priority request cannot be approved')
         }
+        assertUnstarted(req.params.id, entry.id)
         db.prepare('UPDATE ktv_queue_entries SET priority_approved = 1, updated_at = ? WHERE id = ?')
           .run(new Date().toISOString(), entry.id)
         bump(db, req.params.id)
@@ -779,6 +788,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
             .get(req.params.id, req.params.entryId)
           if (!entry || entry.state !== 'queued') fail(409, 'INVALID_QUEUE_STATE', 'Song is not queued')
           if (entry.singer_member_id !== member.id) fail(403, 'FORBIDDEN', 'Only the nominated singer can respond')
+          if (action === 'decline') assertUnstarted(req.params.id, entry.id)
           if (action === 'accept' && entry.accepted_at) return
           const now = new Date().toISOString()
           if (action === 'accept') {

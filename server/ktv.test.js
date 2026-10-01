@@ -212,6 +212,28 @@ test('HTTP room guard rejects foreign origins and oversized bodies; rate buckets
   assert.equal(passed, 3)
 })
 
+test('request cancellation, nomination decline and priority approval cannot interrupt an active performance', async t => {
+  const { request, db } = await setup(t)
+  const view = (await request('POST', '/rooms', 1, { name: 'Queue performance boundary', displayName: 'Host', approvalRequired: false })).body.data
+  const singer = (await request('POST', '/join', 2, { code: view.invitationCode, displayName: 'Singer' })).body.data.self
+  const route = `/rooms/${view.room.id}`
+  const queued = (await request('POST', `${route}/queue`, 1, { commandId: randomUUID(), songId: 1, title: 'Current nomination', requestNext: true, singerMemberId: singer.id })).body.data.queue[0]
+  await request('POST', `${route}/queue/${queued.id}/accept`, 2, { commandId: randomUUID() })
+  db.prepare(`INSERT INTO ktv_playback (room_id, entry_id, performance_id, generation, clock_id, state, updated_at)
+    VALUES (?, ?, ?, 1, ?, 'preparing', ?)`).run(view.room.id, queued.id, randomUUID(), view.clock.clockId, new Date().toISOString())
+  for (const [action, actor] of [['cancel', 1], ['decline', 2], ['approve-next', 1]]) {
+    const commandId = randomUUID()
+    const denied = await request('POST', `${route}/queue/${queued.id}/${action}`, actor, { commandId })
+    assert.equal(denied.status, 409); assert.equal(denied.body.code, 'PERFORMANCE_ACTIVE')
+    assert.equal(db.prepare('SELECT 1 FROM ktv_command_receipts WHERE command_id = ?').get(commandId), undefined)
+  }
+  assert.equal(db.prepare('SELECT state FROM ktv_queue_entries WHERE id = ?').get(queued.id).state, 'queued')
+  assert.equal(db.prepare('SELECT entry_id FROM ktv_playback WHERE room_id = ?').get(view.room.id).entry_id, queued.id)
+  const pending = (await request('POST', `${route}/queue`, 2, { commandId: randomUUID(), songId: 2, title: 'Unstarted request', requestNext: false })).body.data.queue.find(entry => entry.id !== queued.id)
+  assert.equal((await request('POST', `${route}/queue/${pending.id}/cancel`, 2, { commandId: randomUUID() })).status, 200)
+  assert.equal(db.prepare('SELECT entry_id FROM ktv_playback WHERE room_id = ?').get(view.room.id).entry_id, queued.id)
+})
+
 test('identity receipts prevent duplicate rooms, survive invite rotation, and roll back with mutations', async t => {
   const { request, db } = await setup(t)
   const body = { commandId: randomUUID(), name: 'Receipt room', displayName: 'Host', approvalRequired: false }

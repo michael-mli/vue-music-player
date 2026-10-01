@@ -275,6 +275,8 @@ try {
   check((await audit(singer)).length === 1, 'Singer phone schedules its private original source')
   await tab(singer, 'queue')
   check(await evaluate(singer, "document.body.innerText.includes('Requested by') && document.body.innerText.includes('Singer')"), 'Queue tab shows singer and requester attribution')
+  check(await evaluate(singer, "![...document.querySelectorAll('#party-panel-queue button')].some(button => button.textContent.trim() === 'Remove song')"),
+    'Current performance has no request-removal action in the phone queue')
   check((await audit(singer)).length === 1 && !(await audit(singer))[0].ended, 'Changing phone tabs preserves the active private guide')
   await tab(singer, 'sing')
   check((await audit(viewer)).length === 0, 'Other common screens remain silent during playback')

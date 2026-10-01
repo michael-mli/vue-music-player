@@ -158,13 +158,13 @@
                         <p v-if="party.readiness?.entryId === entry.id" class="mt-1 text-xs text-spotify-green">{{ $t('party.selectedTurn') }}</p>
                       </div>
                       <div class="flex shrink-0 flex-col items-end gap-2 text-xs">
-                        <template v-if="entry.state === 'queued' && entry.singerMemberId === party.self.id && entry.requesterMemberId !== party.self.id">
+                        <template v-if="entry.state === 'queued' && entry.singerMemberId === party.self.id && entry.requesterMemberId !== party.self.id && canEditRequest(entry.id)">
                           <button v-if="!entry.singerAccepted" type="button" :disabled="busy" class="text-spotify-green disabled:opacity-50" @click="acceptSong(entry.id)">{{ $t('party.acceptNomination') }}</button>
                           <button type="button" :disabled="busy" class="text-gray-300 disabled:opacity-50" @click="declineSong(entry.id)">{{ $t('party.declineNomination') }}</button>
                         </template>
                         <button v-if="isModerator && entry.state === 'queued' && entry.singerAccepted && party.readiness?.entryId !== entry.id" type="button" :disabled="busy" class="text-spotify-green disabled:opacity-50" @click="offerSinger(entry.id)">{{ $t('party.inviteSinger') }}</button>
-                        <button v-if="isModerator && entry.priorityRequested && !entry.priorityApproved && entry.state === 'queued'" type="button" :disabled="busy" class="text-spotify-green disabled:opacity-50" @click="approveNext(entry.id)">{{ $t('party.approveNext') }}</button>
-                        <button v-if="isModerator || entry.requesterMemberId === party.self.id" type="button" :disabled="busy" class="text-red-300 disabled:opacity-50" @click="cancelSong(entry.id)">{{ $t('party.removeSong') }}</button>
+                        <button v-if="isModerator && entry.priorityRequested && !entry.priorityApproved && entry.state === 'queued' && canEditRequest(entry.id)" type="button" :disabled="busy" class="text-spotify-green disabled:opacity-50" @click="approveNext(entry.id)">{{ $t('party.approveNext') }}</button>
+                        <button v-if="(isModerator || entry.requesterMemberId === party.self.id) && canEditRequest(entry.id)" type="button" :disabled="busy" class="text-red-300 disabled:opacity-50" @click="cancelSong(entry.id)">{{ $t('party.removeSong') }}</button>
                       </div>
                     </div>
                   </li>
@@ -481,6 +481,9 @@ async function act(work: () => Promise<PartySnapshot>) {
 function canModerateMember(member: PartyMember) {
   return isModerator.value && member.id !== party.value?.self.id && member.role !== 'host' &&
     (isHost.value || member.role !== 'cohost')
+}
+function canEditRequest(entryId: string) {
+  return party.value?.playback?.entryId !== entryId || party.value.playback.state === 'idle'
 }
 function memberLabel(member: PartyMember) {
   return duplicateNames.value.has(member.displayName) ? `${member.displayName} #${member.id.slice(0, 6)}` : member.displayName

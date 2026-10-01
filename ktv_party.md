@@ -129,7 +129,11 @@ Queue and People, with a separate settings panel.
 - Default cap: three pending requests per singer, configurable by the host.
 - Allow the same song for different turns; warn about an existing request.
   Queue entries have unique IDs even when their song IDs match.
-- Members may cancel their own unstarted requests. Only hosts reorder the room
+- Members may cancel their own unstarted requests. Once performance preparation
+  begins, request removal, nomination decline and priority approval cannot change
+  that entry; the phone hides those actions and the server returns
+  `PERFORMANCE_ACTIVE`. Hosts use the performance controls for the current song.
+  Only hosts reorder the room
   queue, remove other requests, or change the current performance.
 - Freeze the selected next entry during its readiness countdown. Any replacement
   cancels that preparation and starts a new one.
