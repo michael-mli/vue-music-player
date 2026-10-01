@@ -7,6 +7,7 @@ import { invalidateReadiness, readinessSnapshot, recoverReadiness } from './ktv-
 import { createKtvPlayback } from './ktv-playback.js'
 import { ktvPolicy } from './ktv-policy.js'
 import { ktvTiming } from './ktv-timing.js'
+import { ktvFeatures, ktvGuideAssets } from './ktv-features.js'
 import { createKtvLifecycle } from './ktv-lifecycle.js'
 import { createKtvHttpGuard } from './ktv-http.js'
 import { identityCommand, resultCommand, payloadHash, assertSamePayload, sealResult, openResult } from './ktv-receipts.js'
@@ -200,6 +201,7 @@ function snapshot(db, roomId, userId, key, clock, playback, policy) {
   if (self.admission !== 'admitted') return result
 
   result.timing = playback.timing
+  result.features = playback.features
   result.limits = { members: policy.members, queue: policy.queue, singerRequests: room.singer_request_limit ?? policy.singerRequests }
 
   result.members = db.prepare(`SELECT id, display_name, role, cohost_at, admission FROM ktv_members
@@ -246,11 +248,27 @@ function grantSnapshot(db, roomId, grantId, key, clock, playback, policy) {
   return result
 }
 
-export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSong, allowedOrigins, resolveAssets, clock = createKtvClock(), hostGraceMs, timing: timingOptions, policy: policyOptions, media }) {
+export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSong, allowedOrigins, resolveAssets, clock = createKtvClock(), hostGraceMs, timing: timingOptions, policy: policyOptions, features: featureOptions, media }) {
   const policy = ktvPolicy(policyOptions)
+  const features = ktvFeatures({ media: Boolean(media), ...featureOptions })
+  if (features.media && !media) throw new Error('Enabled KTV media requires media configuration')
   const timing = ktvTiming({ ...timingOptions, ...(hostGraceMs === undefined ? {} : { hostGraceMs }) })
   app.use('/api/ktv', createKtvHttpGuard({ allowedOrigins }))
+  app.get('/api/ktv/features', (_req, res) => res.set('Cache-Control', 'no-store').json({ success: true, data: features }))
+  app.use('/api/ktv', (_req, res, next) => {
+    res.set('Cache-Control', 'no-store')
+    if (!features.rooms) return res.status(503).json({ success: false, code: 'KTV_DISABLED', message: 'KTV rooms are temporarily unavailable' })
+    next()
+  })
   recoverReadiness(db, clock)
+  if (!features.media && db.prepare('PRAGMA table_info(ktv_rooms)').all().some(column => column.name === 'performance_mode')) {
+    transaction(db, () => {
+      for (const room of db.prepare("SELECT id FROM ktv_rooms WHERE status = 'open' AND performance_mode != 'local'").all()) {
+        db.prepare("UPDATE ktv_rooms SET performance_mode = 'local', revision = revision + 1 WHERE id = ?").run(room.id)
+        event(db, room.id, null, 'room.media_disabled')
+      }
+    })
+  }
   const key = createHash('sha256').update('ktv-invitation-v1\0').update(secret).digest()
   const pairKey = createHash('sha256').update('ktv-pairing-v1\0').update(secret).digest()
   const grantKey = createHash('sha256').update('ktv-grant-v1\0').update(secret).digest()
@@ -263,12 +281,18 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
       ? grantSnapshot(db, roomId, principal.grantId, key, clock, playback, policy)
       : snapshot(db, roomId, principal.userId, key, clock, playback, policy),
     allowedOrigins,
-    clock, timing,
+    clock, timing, enabled: features.rooms,
     onConnected: (ws, view) => playback.connected(ws, view),
     onDisconnected: (ws) => playback.disconnected(ws),
     onDevice: (ws, message, view) => playback.deviceMessage(ws, message, view),
   })
-  playback = createKtvPlayback({ db, clock, transaction, bump, event, broadcast: realtime.broadcast, broadcastLease: realtime.broadcastLease, timing })
+  playback = createKtvPlayback({ db, clock, transaction, bump, event, broadcast: realtime.broadcast, broadcastLease: realtime.broadcastLease, timing, features })
+  realtime.features = features
+  if (!features.media && db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'ktv_media_grants'").get()) {
+    // Leave provider removal pending. A disabled process cannot acknowledge an
+    // SFU removal; a subsequent enabled worker must reconcile before reuse.
+    db.prepare("UPDATE ktv_media_grants SET state = 'revoking' WHERE state = 'active'").run()
+  }
   function closeRoom(roomId, actorId, action, now = new Date().toISOString()) {
     invalidateReadiness(db, roomId, clock)
     playback.invalidate(roomId)
@@ -350,7 +374,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
       : snapshot(db, req.params.id, user(req).id, key, clock, playback, policy)
   }
 
-  if (media) {
+  if (features.media) {
     playback.media = registerKtvMediaRoutes(app, { db, clock, playback, realtime, config: media,
       roomAccess, viewerSnapshot, hostMember, activeRoom, commandId, checkRevision, transaction,
       applyCommand, bump, event, invalidateReadiness })
@@ -1046,7 +1070,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
     try {
       admittedMember(db, req.params.id, user(req).id); activeRoom(db, req.params.id)
       if (!resolveAssets) fail(503, 'ASSETS_UNCONFIGURED', 'Party audio assets are not configured')
-      const assets = await resolveAssets(Number(req.params.songId))
+      const assets = ktvGuideAssets(await resolveAssets(Number(req.params.songId)), features)
       viewerSnapshot(req)
       res.json({ success: true, data: assets })
     } catch (error) { res.status(error.status || 500).json({ success: false, code: error.code || 'ASSET_ERROR', message: error.status ? error.message : 'Song preparation failed' }) }
@@ -1081,6 +1105,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
   })
   for (const action of ['assign-stage', 'start', 'pause', 'seek', 'skip', 'lyrics', 'guide']) {
     app.post(`/api/ktv/rooms/:id/playback/${action}`, roomAccess(true), handler((req) => {
+      if (action === 'guide' && !features.guide) fail(503, 'GUIDE_DISABLED', 'Private vocal guides are temporarily unavailable')
       const actor = user(req), id = commandId(req)
       return transaction(db, () => {
         const room = activeRoom(db, req.params.id), member = admittedMember(db, room.id, actor.id)

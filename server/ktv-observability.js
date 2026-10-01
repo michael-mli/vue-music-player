@@ -78,7 +78,7 @@ export function registerKtvHealthRoute(app, { db, authMiddleware, requireAdmin, 
       const http = metrics.snapshot()
       if (realtime.media && !mediaReady) http.alerts.push('media.unavailable')
       res.json({ success: true, data: { http, sockets: realtime.diagnostics(), rooms, playback, grants,
-        media: { configured: Boolean(realtime.media), ready: mediaReady } } })
+        media: { configured: Boolean(realtime.media), ready: mediaReady }, features: realtime.features } })
     } catch { res.status(503).json({ success: false, code: 'KTV_HEALTH_UNAVAILABLE' }) }
   })
 }

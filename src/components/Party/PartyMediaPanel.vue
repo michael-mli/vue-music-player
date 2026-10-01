@@ -51,7 +51,7 @@
           <p class="mb-2 text-xs text-gray-400">{{ $t('party.audienceLyricPreview') }}</p>
           <div ref="captureMount" />
         </div>
-        <div v-if="captureActive && party.self.id === party.playback?.singerMemberId && party.playback.assets?.original" class="mt-4">
+        <div v-if="party.features?.guide !== false && captureActive && party.self.id === party.playback?.singerMemberId && party.playback.assets?.original" class="mt-4">
           <button type="button" :aria-pressed="originalEnabled" class="min-h-[44px] rounded-lg border border-white/30 px-4 py-2 text-sm" @click="media.toggleOriginal()">{{ $t(originalEnabled ? 'party.disablePrivateOriginal' : 'party.enablePrivateOriginal') }}</button>
           <label v-if="originalEnabled" class="ml-4 inline-flex items-center gap-3 text-sm">{{ $t('party.guideVolume') }} <input v-model.number="originalVolume" type="range" min="0" max="1" step="0.01" class="w-28 accent-green-400" /></label>
           <p class="mt-2 text-xs text-gray-400">{{ $t('party.privateOriginalHint') }}</p>

@@ -14,6 +14,7 @@ import { createDigProvider } from './dig-provider.js'
 import { createDigLibrary } from './dig-library.js'
 import { registerDigRoutes } from './dig-routes.js'
 import { registerKtvRoutes } from './ktv-routes.js'
+import { ktvFeaturesFromEnv } from './ktv-features.js'
 import { createKtvAssets } from './ktv-assets.js'
 import { createKtvMetrics, registerKtvHealthRoute } from './ktv-observability.js'
 import { createDigIngestionWorker } from './dig-ingestion.js'
@@ -166,8 +167,10 @@ function requireAdmin(req, res, next) {
 
 const karaokeManifestPath = process.env.KARAOKE_MANIFEST_PATH || path.join(WEB_ROOT, 'karaoke', 'karaoke_manifest.json')
 const ktvMetrics = createKtvMetrics()
+const ktvFeatures = ktvFeaturesFromEnv(process.env)
 app.use('/api/ktv', ktvMetrics.middleware)
 const ktvRealtime = registerKtvRoutes(app, {
+  features: ktvFeatures,
   db, authMiddleware, secret: JWT_SECRET || 'unconfigured-development-secret',
   allowedOrigins: (process.env.KTV_ALLOWED_ORIGINS || '').split(',').map((origin) => origin.trim()).filter(Boolean),
   hostGraceMs: Number(process.env.KTV_HOST_GRACE_MS || 30_000),
@@ -181,7 +184,7 @@ const ktvRealtime = registerKtvRoutes(app, {
     ticketLifetimeMs: Number(process.env.KTV_TICKET_LIFETIME_MS || 30000),
     socketAuthTimeoutMs: Number(process.env.KTV_SOCKET_AUTH_TIMEOUT_MS || 5000),
   },
-  media: process.env.KTV_MEDIA_ENABLED === 'true' ? {
+  media: ktvFeatures.media ? {
     apiKey: process.env.KTV_MEDIA_API_KEY, apiSecret: process.env.KTV_MEDIA_API_SECRET,
     controlSecret: process.env.KTV_MEDIA_CONTROL_SECRET,
     workerUrl: process.env.KTV_MEDIA_WORKER_URL || 'http://127.0.0.1:3103',

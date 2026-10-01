@@ -605,8 +605,10 @@ has passed; component or toy-room spike evidence does not complete those gates.
 
 Status: In progress. Track local and online releases separately within this phase.
 
-- [ ] P08.1 Add configuration/feature flags for rooms, guide, and online publishing;
+- [x] P08.1 Add configuration/feature flags for rooms, guide, and online publishing;
   validate required runtime values without exposing secrets to frontend builds.
+  Strict startup booleans, room HTTP/WSS denial, guide redaction/recovery, media
+  revocation and local-mode fallback are implemented; public flags are no-store.
 - [x] P08.2 Document database backup/migration, additive compatibility, HTTP/WSS proxy
   configuration, TLS/origin settings, and single room-process ownership.
 - [ ] P08.3 For online release, provision and validate SFU/TURN endpoints, credentials,
@@ -924,6 +926,22 @@ initial probe omitted the admin role claim and was correctly denied before any
 room mutation; the corrected fixture uses the existing app-admin role and DB
 check. Backend warmup required connection retries. There was no active room
 performance at restart. Defaults and the durable bound are 8000/500 ms.
+
+Feature-switch checkpoint (2026-10-01): room, guide and media switches are strict,
+immutable startup booleans. Room disablement blocks actual HTTP actions/socket
+upgrades without closing durable rooms. Guide disablement clears requirements,
+redacts original descriptors and preserves backing. Media disablement returns
+open online/hybrid rooms to local mode and leaves old grants pending provider
+removal; enabling it again does not resume old audio. Entry/join/pairing disabled
+states and guide hints are bilingual. Backend checks pass 126/126
+(`/tmp/ktv-feature-backend-final.log`), party units 49/49
+(`/tmp/ktv-feature-party-final.log`), build/type check, built-app UI 38/38
+(`/tmp/ktv-feature-ui-final.log`) and PWA 8/8 (`/tmp/ktv-feature-pwa.log`), including
+live feature changes and offline refusal of cached flags. An initial UI fixture
+failed because it did not open the Sing tab before checking the visible guide
+hint; the fixture was corrected and final checks pass. P08.1 software is complete;
+physical and integrated streaming acceptance remain open. Private predeployment
+backup: `/home/mli/ktv-party-features-predeploy.r517kc57`.
 
 ```text
 Date:

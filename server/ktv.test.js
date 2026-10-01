@@ -10,6 +10,8 @@ import { initDb } from './db.js'
 import { registerKtvRoutes } from './ktv-routes.js'
 import { ktvPolicy } from './ktv-policy.js'
 import { createKtvHttpGuard } from './ktv-http.js'
+import { ktvFeatures, ktvFeaturesFromEnv } from './ktv-features.js'
+import { createKtvMediaGrants } from './ktv-media-grants.js'
 
 async function setup(t, options = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ktv-test-'))
@@ -61,6 +63,89 @@ async function setup(t, options = {}) {
     async restart() { await stop(); db = initDb(dir); await start() },
   }
 }
+
+test('feature flags use strict booleans, preserve defaults and disable dependent features', () => {
+  assert.deepEqual(ktvFeaturesFromEnv({}), { rooms: true, guide: true, media: false })
+  assert.deepEqual(ktvFeaturesFromEnv({ KTV_ROOMS_ENABLED: 'false', KTV_MEDIA_ENABLED: 'true' }),
+    { rooms: false, guide: false, media: false })
+  assert.deepEqual(ktvFeaturesFromEnv({ KTV_GUIDE_ENABLED: 'false', KTV_MEDIA_ENABLED: 'true' }),
+    { rooms: true, guide: false, media: true })
+  assert.ok(Object.isFrozen(ktvFeatures()))
+  for (const value of ['TRUE', '1', '', 'flase', false]) {
+    assert.throws(() => ktvFeaturesFromEnv({ KTV_ROOMS_ENABLED: value }), /Invalid KTV feature flag/)
+  }
+  assert.throws(() => ktvFeatures({ guide: 0 }), /Invalid KTV feature flag/)
+  assert.throws(() => ktvFeatures({ unknown: true }), /Invalid KTV feature flag/)
+})
+
+test('disabled rooms expose only public flags and deny HTTP actions and actual socket upgrades', async t => {
+  const f = await setup(t, { features: { rooms: false, media: true }, media: {} })
+  const info = await f.request('GET', '/features', 0)
+  assert.equal(info.status, 200)
+  assert.equal(info.headers.get('cache-control'), 'no-store')
+  assert.deepEqual(info.body.data, { rooms: false, guide: false, media: false })
+  for (const [method, route] of [['GET', '/rooms'], ['POST', '/rooms'], ['POST', '/join'],
+    ['POST', '/pairings/redeem'], ['GET', '/rooms/unknown'], ['POST', '/rooms/unknown/socket-ticket'],
+    ['POST', '/rooms/unknown/media-token'], ['POST', '/rooms/unknown/playback/start']]) {
+    const denied = await f.request(method, route, 1, method === 'POST' ? {} : undefined)
+    assert.equal(denied.status, 503, route)
+    assert.equal(denied.body.code, 'KTV_DISABLED', route)
+    assert.equal(denied.headers.get('cache-control'), 'no-store')
+  }
+  assert.equal(f.db.prepare('SELECT COUNT(*) total FROM ktv_rooms').get().total, 0)
+  const ws = new WebSocket(f.socketUrl, { origin: f.origin })
+  ws.on('error', () => {})
+  const status = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { ws.terminate(); reject(new Error('Disabled socket upgrade timeout')) }, 2000)
+    ws.once('unexpected-response', (_req, response) => { clearTimeout(timer); response.resume(); ws.terminate(); resolve(response.statusCode) })
+    ws.once('open', () => { clearTimeout(timer); ws.terminate(); reject(new Error('Disabled socket upgraded')) })
+  })
+  assert.equal(status, 503)
+  assert.equal(f.realtime.media, undefined)
+})
+
+test('disabling media or all rooms persists pending revocation across reenablement', async t => {
+  const options = { features: { rooms: true } }, f = await setup(t, options)
+  const view = (await f.request('POST', '/rooms', 1, { name: 'Feature rollback', displayName: 'Host' })).body.data
+  createKtvMediaGrants({ db: f.db, clock: { id: view.clock.clockId, nowMs: () => 0 },
+    apiKey: 'feature-test', apiSecret: 'feature-test-secret'.repeat(3), getPlayback: () => null, getDevices: () => [] })
+  const identity = `ktv-media-${randomUUID()}`
+  f.db.prepare("UPDATE ktv_rooms SET performance_mode = 'online' WHERE id = ?").run(view.room.id)
+  f.db.prepare(`INSERT INTO ktv_media_grants (identity, room_id, member_id, device_id, scope, expires_at, created_at)
+    VALUES (?, ?, ?, ?, 'audience', ?, ?)`).run(identity, view.room.id, view.self.id, randomUUID(),
+      new Date(Date.now() + 120000).toISOString(), new Date().toISOString())
+  options.features = { rooms: false }
+  await f.restart()
+  assert.equal(f.db.prepare('SELECT state FROM ktv_media_grants WHERE identity = ?').get(identity).state, 'revoking')
+  assert.equal(f.db.prepare('SELECT performance_mode FROM ktv_rooms WHERE id = ?').get(view.room.id).performance_mode, 'local')
+  assert.equal((await f.request('GET', `/rooms/${view.room.id}`, 1)).body.code, 'KTV_DISABLED')
+  const row = f.db.prepare('SELECT revision FROM ktv_rooms WHERE id = ?').get(view.room.id)
+  f.realtime.playback.sweep()
+  assert.deepEqual(f.db.prepare('SELECT revision FROM ktv_rooms WHERE id = ?').get(view.room.id), row)
+  options.features = { rooms: true }
+  await f.restart()
+  assert.equal(f.db.prepare('SELECT state FROM ktv_media_grants WHERE identity = ?').get(identity).state, 'revoking')
+  assert.equal((await f.request('GET', `/rooms/${view.room.id}`, 1)).status, 200)
+  assert.equal(f.db.prepare('SELECT status FROM ktv_rooms WHERE id = ?').get(view.room.id).status, 'open')
+})
+
+test('guide flag redacts resolved assets and denies singer commands without disabling backing', async t => {
+  const assets = { version: 'test-version', instrumental: { url: '/backing' }, original: { url: '/private-guide' },
+    alignmentVerified: true, durationDifferenceMs: 10 }
+  const f = await setup(t, { features: { guide: false }, resolveAssets: async () => assets })
+  const view = (await f.request('POST', '/rooms', 1, { name: 'Backing only', displayName: 'Host' })).body.data
+  const route = `/rooms/${view.room.id}`
+  assert.deepEqual(view.features, { rooms: true, guide: false, media: false })
+  const response = await f.request('GET', `${route}/assets/1`, 1)
+  assert.equal(response.status, 200)
+  assert.equal(response.body.data.original, null)
+  assert.equal(response.body.data.alignmentVerified, false)
+  assert.equal(assets.original.url, '/private-guide')
+  const denied = await f.request('POST', `${route}/playback/guide`, 1, { commandId: randomUUID(), required: true })
+  assert.equal(denied.status, 503)
+  assert.equal(denied.body.code, 'GUIDE_DISABLED')
+  assert.equal(view.playback.guideRequired, false)
+})
 
 test('only the host exposes an invitation on admitted common screens and can hide it again', async t => {
   const { request, db } = await setup(t)

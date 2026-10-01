@@ -85,6 +85,29 @@ function fixture(t, settings = {}) {
     restart: (updated = {}) => { service.close(); clock.id = randomUUID(); Object.assign(options, updated); service = createKtvPlayback(options); return service } }
 }
 
+test('guide disablement clears persisted requirements on restart and rejects guide device readiness', t => {
+  const f = fixture(t)
+  f.prepare()
+  const guide = f.device(); guide.ready()
+  f.service.guide(f.roomId, f.memberId, true, guide.ws.clientDeviceId)
+  assert.equal(f.service.snapshot(f.roomId).guideRequired, true)
+  f.restart({ features: { guide: false } })
+  const recovered = f.service.snapshot(f.roomId)
+  assert.equal(recovered.state, 'paused')
+  assert.equal(recovered.guideRequired, false)
+  assert.equal(recovered.guideDeviceId, null)
+  assert.equal(recovered.guidePrepared, false)
+  assert.equal(recovered.assets.original, null)
+  assert.equal(f.service.read(f.roomId).guide_required, 0)
+  assert.equal(f.service.read(f.roomId).guide_device_id, null)
+  assert.throws(() => f.device(), error => error.code === 'GUIDE_DISABLED')
+  assert.throws(() => f.service.guide(f.roomId, f.memberId, true, guide.ws.clientDeviceId), error => error.code === 'GUIDE_DISABLED')
+  f.prepare()
+  assert.equal(JSON.parse(f.service.read(f.roomId).assets_json).original, null)
+  f.time(9000); f.status(); f.service.start(f.roomId)
+  assert.equal(f.service.snapshot(f.roomId).state, 'scheduled')
+})
+
 test('scheduled timeline holds before its boundary and preserves the old segment before a pause/seek', () => {
   const timeline = { state: 'scheduled', positionMs: 1000, anchorServerMs: 2000, durationMs: 10000,
     generation: 4, pendingTransition: { state: 'paused', positionMs: 4000, anchorServerMs: 5000, effectiveServerMs: 5000, generation: 5 } }

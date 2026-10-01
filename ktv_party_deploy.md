@@ -119,6 +119,25 @@ rules. Verify the advertised public IP maps to this node and that TURN can reach
 the SFU. Keep HTTP/control ports private. Do not run a raw LiveKit process outside
 the supervisor; that would bypass persisted nonce checks and process containment.
 
+### Backend feature switches
+
+The backend's private `.env.server` supports `KTV_ROOMS_ENABLED=true`,
+`KTV_GUIDE_ENABLED=true` and `KTV_MEDIA_ENABLED=false` by default. Only literal
+`true`/`false` values are valid. Keep media disabled until its acceptance gate
+passes. These flags are read at startup; apply changes by restarting the single
+owned `karaoke-auth` process. The public no-store `/api/ktv/features` endpoint and
+admin health report effective booleans without private configuration.
+
+Disabling rooms blocks HTTP commands and socket upgrades. Disabling guides
+clears stored required-guide/device bindings and removes original descriptors
+from KTV assets/snapshots while shared backing remains available. Disabling media
+returns open rooms to local mode and leaves old grants pending provider removal.
+The supervisor stops its SFU when disabled backend policy becomes unavailable.
+Reenablement requires worker reconciliation and fresh human/device readiness;
+it never automatically resumes the old performance. Existing output leases and
+the durable startup-silence bound still apply. Room and queue history remain
+available after reenablement, subject to ordinary expiry/retention.
+
 ## 3. Build and start the owned service
 
 ```bash

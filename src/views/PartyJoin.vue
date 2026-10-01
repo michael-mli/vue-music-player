@@ -11,8 +11,8 @@
       <input id="party-guest-name" v-model="displayName" required maxlength="40" autocomplete="nickname"
         class="mt-2 w-full rounded-lg border border-white/20 bg-black/25 px-3 py-2 text-white" />
       <p v-if="checking" role="status" class="mt-4 text-sm text-gray-300">{{ $t('party.checkingInvitation') }}</p>
-      <p v-if="error" role="alert" class="mt-4 text-sm text-red-300">{{ error }}</p>
-      <button type="submit" :disabled="busy || checking || code.trim().length !== 8 || !displayName.trim()"
+      <p v-if="error || featureError" role="alert" class="mt-4 text-sm text-red-300">{{ error || featureError }}</p>
+      <button type="submit" :disabled="!roomsAvailable || busy || checking || code.trim().length !== 8 || !displayName.trim()"
         class="mt-6 rounded-full bg-spotify-green px-5 py-2 font-semibold text-black disabled:opacity-50">
         {{ busy ? $t('party.working') : $t('party.joinRoom') }}
       </button>
@@ -24,6 +24,7 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { partyErrorMessage } from '@/services/partyErrorMessage'
+import { usePartyFeatures } from '@/composables/usePartyFeatures'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { partyApi } from '@/services/partyApi'
@@ -36,6 +37,7 @@ const displayName = ref('')
 const error = ref('')
 const busy = ref(false)
 const checking = ref(false)
+const { roomsAvailable, featureError, loadFeatures } = usePartyFeatures()
 let mounted = false, alive = true, lookup = 0, timer: ReturnType<typeof setTimeout> | undefined
 
 async function resolveInvitation() {
@@ -74,6 +76,7 @@ onMounted(async () => {
     url.hash = ''; url.searchParams.delete('code'); url.searchParams.delete('invite')
     window.history.replaceState(window.history.state, '', url.pathname + url.search)
   }
+  if (!await loadFeatures() || !alive) return
   await auth.ensureIdentity()
   if (!alive) return
   if (auth.isRegistered) displayName.value = auth.displayName
@@ -82,7 +85,7 @@ onMounted(async () => {
 })
 
 async function joinRoom() {
-  if (busy.value || checking.value) return
+  if (!roomsAvailable.value || busy.value || checking.value) return
   busy.value = true
   error.value = ''
   try {

@@ -105,7 +105,7 @@ broadcast. One Node process runs synchronous SQLite transactions; asynchronous
 asset/provider work must recheck authority around its commit.
 
 Snapshots contain `room`, `self`, `clock`, and, for admitted viewers, `limits`,
-`timing` (operator policy durations in milliseconds),
+`timing` (operator policy durations in milliseconds), `features`,
 `members`, `queue`, `readiness`, `playback`, `presence`. Pending/rejected/removed
 viewers receive only their allowed admission state. Host invitation codes and
 excluded-member history are omitted from paired displays. A room revision owns
@@ -192,6 +192,34 @@ alignment delays published backing; negative alignment delays microphone.
 Neither correction belongs in another member's private guide setting.
 
 ## 7. Limits and policy
+
+### Feature switches
+
+| Environment variable | Default | Effect after backend restart |
+| --- | --- | --- |
+| `KTV_ROOMS_ENABLED` | `true` | `false` denies room HTTP requests and WebSocket upgrades, including pairing and ticket creation |
+| `KTV_GUIDE_ENABLED` | `true` | `false` removes original descriptors from room assets/snapshots, clears persisted guide requirements and denies guide commands/device status |
+| `KTV_MEDIA_ENABLED` | `false` | `true` requires complete private worker/token configuration; `false` returns existing open online/hybrid rooms to local mode |
+
+Only literal `true` and `false` are accepted; invalid values fail startup. Flags
+are immutable within a process. Disabling rooms also disables guides/media.
+`GET /api/ktv/features` is public and `no-store`, and returns only those three
+booleans. Entry, join and pairing pages disable submissions when rooms are
+unavailable, with English/Chinese status text. Admitted snapshots and admin
+health also expose the effective flags; pending viewers do not get admitted data.
+
+Restart recovery pauses active playback, preserves queued requests and requires
+fresh readiness in the new clock epoch. Old output must stop by its existing
+lease deadline; the durable startup silence bound is still enforced. Media
+disablement persists active grant nonces as `revoking`, never as acknowledged
+`revoked`. Disabled internal media policy routes cannot authorize old JWTs; the
+owned worker treats policy loss as fatal and stops its SFU child. On reenablement,
+the worker must reconcile pending provider removal before slots are reusable.
+Media reenablement does not automatically restore an online mode or resume audio.
+The guide switch governs KTV behavior, not access to original songs in the solo
+catalog. Changing these switches never changes existing user accounts.
+
+### Durations and capacity
 
 | Setting | Default | Configuration / bounds |
 | --- | --- | --- |

@@ -9,6 +9,7 @@ import WebSocket from '../server/node_modules/ws/wrapper.mjs'
 const port = Number(process.env.CHROME_DEBUG_URL?.split(':').at(-1) || 9231)
 const appRoot = path.resolve('dist'), pending = new Map()
 let nextId = 0, passed = 0, browser, browserContextId, sessionId, server
+let roomsEnabled = true
 const check = (value, label) => { assert.ok(value, label); passed++; console.log(`PASS ${label}`) }
 const poll = async (work, label, timeout = 30000) => {
   const until = Date.now() + timeout
@@ -55,6 +56,7 @@ try {
   app.get('/api/dig/songs', (req, res) => res.json({ success: true, data: [] }))
   app.get('/api/categories', (req, res) => res.json({ success: true, data: { categories: [], assignments: [], lockedSongIds: [] } }))
   app.get('/api/ktv/rooms/fixture', (req, res) => res.set('Cache-Control', 'no-store').json({ success: true, data: { room: 'fresh' } }))
+  app.get('/api/ktv/features', (_req, res) => res.set('Cache-Control', 'no-store').json({ success: true, data: { rooms: roomsEnabled, guide: roomsEnabled, media: false } }))
   app.get('/data/song_number.txt', (req, res) => res.type('text').send('0'))
   app.get('/data/metadata.json', (req, res) => res.json({}))
   app.get('/karaoke/karaoke_manifest.json', (req, res) => res.json({ version: 1, ids: [] }))
@@ -86,19 +88,25 @@ try {
   const stateUrl = '/api/ktv/rooms/fixture', assetUrl = '/karaoke/fixture.mp3?ktvAsset=fixture'
   check(await evaluate(`Promise.all([fetch('${stateUrl}'),fetch('${assetUrl}')]).then(items=>items.every(item=>item.ok))`),
     'worker-controlled page fetches live room state and party audio')
+  check(await evaluate("fetch('/api/ktv/features').then(async response=>response.headers.get('cache-control')==='no-store' && (await response.json()).data.rooms===true)"),
+    'worker-controlled page receives live no-store feature flags')
+  roomsEnabled = false
+  check(await evaluate("fetch('/api/ktv/features').then(response=>response.json()).then(result=>result.data.rooms===false && result.data.guide===false)"),
+    'operator disablement cannot replay cached feature availability')
+  roomsEnabled = true
   check(await evaluate(`(async () => { const keys = await caches.keys(), entries = (await Promise.all(keys.map(async key => (await caches.open(key)).keys()))).flat();
     return !entries.some(item => new URL(item.url).pathname.startsWith('/api/ktv') || new URL(item.url).searchParams.has('ktvAsset')) })()`),
     'current worker stores no room credentials or party audio')
   await cdp('Network.enable')
   try {
     await cdp('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 })
-    check(await evaluate(`Promise.all(['${stateUrl}','${assetUrl}'].map(async url => {try {await fetch(url); return false} catch{return true}})).then(values=>values.every(Boolean))`),
+    check(await evaluate(`Promise.all(['${stateUrl}','${assetUrl}','/api/ktv/features'].map(async url => {try {await fetch(url); return false} catch{return true}})).then(values=>values.every(Boolean))`),
       'offline worker cannot replay old room authority or party audio')
   } finally { await cdp('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: 0, uploadThroughput: 0 }) }
   const currentWorkerUrl = await evaluate('navigator.serviceWorker.controller.scriptURL')
   await evaluate("navigator.serviceWorker.register('/sw-legacy.js', {scope:'/'})")
   await poll(() => evaluate("navigator.serviceWorker.controller?.scriptURL.includes('/sw-legacy.js')"), 'installed legacy worker controls the page')
-  check(await evaluate(`fetch('${stateUrl}').then(response=>response.ok)`), 'legacy worker can fetch the room')
+  check(await evaluate(`Promise.all([fetch('${stateUrl}'),fetch('/api/ktv/features')]).then(items=>items.every(item=>item.ok))`), 'legacy worker can fetch the room and feature flags')
   check(await evaluate("caches.open('legacy-ktv-test').then(cache=>cache.keys()).then(keys=>keys.some(item=>new URL(item.url).pathname.startsWith('/api/ktv')))"),
     'legacy worker caches a room response in the upgrade fixture')
   await evaluate(`navigator.serviceWorker.register(${JSON.stringify(currentWorkerUrl)}, {updateViaCache:'none'})`)

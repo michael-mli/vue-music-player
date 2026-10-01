@@ -378,6 +378,8 @@
     "mediaErrorMicMissing": "No microphone was found. Connect a microphone and retry.",
     "mediaErrorMicBusy": "The microphone could not be opened. Close other apps using it and retry.",
     "mediaErrorMicConstraint": "The microphone does not support the requested capture settings. Try another input device.",
+    "errorDisabled": "KTV rooms are temporarily unavailable. Please try again later.",
+    "errorGuideDisabled": "Private vocal guides are temporarily unavailable. You can still use the shared backing.",
     "errorRequestFailed": "The room request could not be completed. Check your connection and retry.",
     "errorConflict": "The room changed while you were acting. The latest state has been refreshed; review it and retry.",
     "errorPermission": "You do not have permission for this action. Check your room admission and role.",

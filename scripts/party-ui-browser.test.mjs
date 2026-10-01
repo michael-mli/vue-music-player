@@ -13,6 +13,7 @@ import { registerKtvRoutes } from '../server/ktv-routes.js'
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ktv-ui-')), db = initDb(root)
 const app = express(), contexts = [], pending = new Map(), errors = []
+const extraFixtures = []
 let socket, nextId = 0, passed = 0
 for (let i = 1; i <= 3; i++) db.prepare("INSERT INTO users (username, kind, created_at) VALUES (?, 'guest', ?)").run(`ui-${i}`, new Date().toISOString())
 app.use(express.json())
@@ -55,16 +56,30 @@ async function poll(work, label) {
   for (let i = 0; i < 150; i++) { if (await work()) return; await new Promise(resolve => setTimeout(resolve, 100)) }
   throw new Error('UI timeout: ' + label)
 }
-async function page(actor, route, language = 'en', width = 320) {
+async function page(actor, route, language = 'en', width = 320, siteOrigin = origin) {
   const { browserContextId } = await cdp('Target.createBrowserContext'); contexts.push(browserContextId)
   const { targetId } = await cdp('Target.createTarget', { url: 'about:blank', browserContextId })
   const { sessionId } = await cdp('Target.attachToTarget', { targetId, flatten: true })
   await cdp('Page.enable', {}, sessionId); await cdp('Runtime.enable', {}, sessionId)
   await cdp('Emulation.setDeviceMetricsOverride', { width, height: 740, deviceScaleFactor: 1, mobile: true }, sessionId)
   await cdp('Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', '${language}');` }, sessionId)
-  await cdp('Page.navigate', { url: origin + route }, sessionId)
+  await cdp('Page.navigate', { url: siteOrigin + route }, sessionId)
   await poll(() => evaluate(sessionId, '!!document.querySelector(".party-page")'), 'party page')
   return sessionId
+}
+async function featureFixture(features) {
+  const directory = path.join(root, randomUUID()), database = initDb(directory)
+  database.prepare("INSERT INTO users (username, kind, created_at) VALUES ('ui-1', 'guest', ?)").run(new Date().toISOString())
+  const app = express(); app.use(express.json())
+  app.get('/api/auth/me', auth, (_req, res) => res.json({ success: true, data: user(1) }))
+  app.post('/api/auth/guest', (_req, res) => res.json({ success: true, data: { token: '1', user: user(1) } }))
+  const realtime = registerKtvRoutes(app, { db: database, authMiddleware: auth, features,
+    secret: 'feature-ui-only-secret', isKaraokeSong: () => true })
+  app.get('/api/*', (_req, res) => res.json({ success: true, data: [] }))
+  app.use(express.static(path.resolve('dist'))); app.get('*', (_req, res) => res.sendFile(path.resolve('dist/index.html')))
+  const server = app.listen(0, '127.0.0.1'); await once(server, 'listening'); realtime.attach(server)
+  extraFixtures.push({ database, realtime, server })
+  return { database, realtime, origin: `http://127.0.0.1:${server.address().port}` }
 }
 async function layout(session, label) {
   const result = await evaluate(session, `(() => {
@@ -116,11 +131,34 @@ try {
   const stage = await page(1, `/party/${room.room.id}/stage`, 'en', 1280)
   await poll(() => evaluate(stage, 'document.body.innerText.includes("Shared stage")'), 'common stage')
   await layout(stage, '1280px shared stage')
+  const disabled = await featureFixture({ rooms: false })
+  for (const language of ['en', 'zh']) for (const route of ['/party', '/party/join', '/party/pair']) {
+    const session = await page(1, route, language, 320, disabled.origin)
+    await poll(() => evaluate(session, '!!document.querySelector("[role=alert]")'), 'disabled room status')
+    check(await evaluate(session, `document.querySelector('[role=alert]').textContent.includes(${JSON.stringify(language === 'en' ? 'temporarily unavailable' : '暂时不可用')}) && document.querySelector('form button[type=submit]').disabled`), `${language} ${route}: translated unavailable state and disabled submission`)
+  }
+  check(disabled.database.prepare('SELECT COUNT(*) total FROM ktv_rooms').get().total === 0, 'disabled room pages create no rooms')
+  const noGuide = await featureFixture({ guide: false })
+  const response = await fetch(noGuide.origin + '/api/ktv/rooms', { method: 'POST', headers: { Authorization: 'Bearer 1', 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Backing only', displayName: 'Host' }) })
+  const view = (await response.json()).data
+  for (const language of ['en', 'zh']) {
+    const session = await page(1, `/party/${view.room.id}`, language, 320, noGuide.origin)
+    await poll(() => evaluate(session, '!!document.getElementById("party-tab-sing")'), 'guide flag controller tabs')
+    await evaluate(session, "document.getElementById('party-tab-sing').click()")
+    const text = language === 'en' ? 'Private vocal guides are temporarily unavailable' : '私人原唱提示暂时不可用'
+    await poll(() => evaluate(session, `document.body.innerText.includes(${JSON.stringify(text)})`), 'guide disabled hint')
+    check(await evaluate(session, `!document.body.innerText.includes(${JSON.stringify(language === 'en' ? 'Enable private vocal guide' : '启用私人原唱指导')})`), `${language} controller explains guide unavailability`)
+  }
   check(errors.length === 0, 'no native browser runtime exceptions')
   console.log(`${passed} built-app UI checks passed. Emulated layout and keyboard only; no physical audio/browser matrix claim.`)
 } finally {
   for (const browserContextId of contexts) if (socket?.readyState === WebSocket.OPEN) await cdp('Target.disposeBrowserContext', { browserContextId }).catch(() => {})
   socket?.close(); realtime.close()
+  for (const fixture of extraFixtures) {
+    fixture.realtime.close()
+    await new Promise(resolve => { fixture.server.close(resolve); fixture.server.closeAllConnections() })
+    fixture.database.close()
+  }
   await new Promise(resolve => { server.close(resolve); server.closeAllConnections() })
   db.close(); await fs.rm(root, { recursive: true, force: true })
 }

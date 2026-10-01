@@ -15,6 +15,8 @@ export interface PartyMember {
   admission: 'pending' | 'admitted' | 'rejected' | 'removed'
 }
 
+export interface PartyFeatures { rooms: boolean; guide: boolean; media: boolean }
+
 export interface PartySnapshot {
   room: {
     id: string
@@ -28,6 +30,7 @@ export interface PartySnapshot {
     mediaConfigured?: boolean
   }
   self: PartyMember
+  features?: PartyFeatures
   limits?: { members: number; queue: number; singerRequests: number }
   timing?: { prepareTimeoutMs: number; playbackLeadMs: number; onlineLeadMs: number;
     outputLeaseMs: number; outputMarginMs: number; hostGraceMs: number;
@@ -193,11 +196,11 @@ export interface PartyDeviceSummary {
   expiresAt: string
 }
 
-async function call<T>(method: 'get' | 'post', path: string, body?: Record<string, unknown>, retryOnNetworkError = false, bearerOnly = false): Promise<T> {
+async function call<T>(method: 'get' | 'post', path: string, body?: Record<string, unknown>, retryOnNetworkError = false, bearerOnly = false, anonymous = false): Promise<T> {
   const auth = useAuthStore()
   const roomId = path.match(/^\/rooms\/([^/]+)/)?.[1]
   const paired = !bearerOnly && roomId ? getPartyDevice(decodeURIComponent(roomId)) : null
-  if (!paired) {
+  if (!paired && !anonymous) {
     await auth.ensureIdentity()
     if (!auth.token) throw new Error('Guest identity is unavailable. Please try again.')
   }
@@ -207,7 +210,7 @@ async function call<T>(method: 'get' | 'post', path: string, body?: Record<strin
         method,
         url: `${config.apiBaseUrl}/ktv${path}`,
         data: body,
-        headers: { Authorization: paired ? `KtvDevice ${paired.credential}` : `Bearer ${auth.token}` },
+        headers: anonymous ? {} : { Authorization: paired ? `KtvDevice ${paired.credential}` : `Bearer ${auth.token}` },
         timeout: 10000,
       })
       return response.data.data
@@ -234,6 +237,7 @@ async function mutation<T>(path: string, body: Record<string, unknown>, bearerOn
 }
 
 export const partyApi = {
+  features: () => call<PartyFeatures>('get', '/features', undefined, false, false, true),
   mediaStatus: (roomId: string) => call<{ available: boolean; mode: 'local' | 'online' | 'hybrid'; serverUrl: string }>('get', `/rooms/${encodeURIComponent(roomId)}/media/status`),
   mediaMode: (roomId: string, mode: 'local' | 'online' | 'hybrid', baseRevision: number) =>
     mutation<PartySnapshot>(`/rooms/${encodeURIComponent(roomId)}/media/mode`, { mode, baseRevision }),

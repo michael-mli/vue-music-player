@@ -35,7 +35,7 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
   const lines = computed(() => playback.value?.assets?.lyrics.mode === 'synced' ? parseLrc(playback.value.assets.lyrics.text || '') : [])
   const lyricGuide = computed(() => singingGuideState(lines.value, positionMs.value / 1000,
     (playback.value?.durationMs || 0) / 1000, (playback.value?.lyricOffsetMs || 0) / 1000))
-  const canGuide = computed(() => playback.value?.singerMemberId === party.value?.self.id && party.value?.deviceScope !== 'display' && playback.value?.stageDeviceId !== deviceId)
+  const canGuide = computed(() => party.value?.features?.guide !== false && playback.value?.singerMemberId === party.value?.self.id && party.value?.deviceScope !== 'display' && playback.value?.stageDeviceId !== deviceId)
   const assignedHere = computed(() => playback.value?.stageDeviceId === deviceId)
   const startSafe = computed(() => !!clock.value && serverNowMs.value >= Math.max(playback.value?.restartSafeAfterMs || 0,
     lease.value?.clockId === clock.value.clockId ? lease.value.safeAfterServerMs : playback.value?.lease?.safeAfterServerMs || 0))
@@ -176,6 +176,9 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
     }
   })
   watch(() => playback.value?.lease?.sequence, () => acceptLease(playback.value?.lease))
+  watch(() => party.value?.features?.guide, available => {
+    if (available === false && purpose.value === 'guide') disable()
+  }, { flush: 'sync' })
   watch(volume, value => engine.setVolume(value))
   watch(guideAdvanceMs, value => { guideAdvanceMs.value = Math.max(-2000, Math.min(2000, value)); localStorage.setItem('party-guide-advance-ms', String(guideAdvanceMs.value)); engine.stop() })
   function tick() {

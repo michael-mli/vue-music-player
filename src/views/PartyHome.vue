@@ -21,7 +21,7 @@
             <input v-model="approvalRequired" type="checkbox" class="accent-green-500" />
             {{ $t('party.requireApproval') }}
           </label>
-          <button type="submit" :disabled="busy || !roomName.trim() || !displayName.trim()"
+          <button type="submit" :disabled="!roomsAvailable || busy || !roomName.trim() || !displayName.trim()"
             class="mt-6 rounded-full bg-spotify-green px-5 py-2 font-semibold text-black disabled:opacity-50">
             {{ busy ? $t('party.working') : $t('party.createRoom') }}
           </button>
@@ -40,7 +40,7 @@
         </div>
       </div>
 
-      <p v-if="error" role="alert" class="rounded-lg bg-red-500/10 p-3 text-sm text-red-300">{{ error }}</p>
+      <p v-if="error || featureError" role="alert" class="rounded-lg bg-red-500/10 p-3 text-sm text-red-300">{{ error || featureError }}</p>
 
       <section v-if="rooms.length" class="space-y-3">
         <h2 class="text-xl font-semibold">{{ $t('party.yourRooms') }}</h2>
@@ -58,6 +58,7 @@
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { partyErrorMessage } from '@/services/partyErrorMessage'
+import { usePartyFeatures } from '@/composables/usePartyFeatures'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { partyApi, type PartyRoomSummary } from '@/services/partyApi'
@@ -71,15 +72,17 @@ const approvalRequired = ref(true)
 const rooms = ref<PartyRoomSummary[]>([])
 const busy = ref(false)
 const error = ref('')
+const { roomsAvailable, featureError, loadFeatures } = usePartyFeatures()
 
 onMounted(async () => {
+  if (!await loadFeatures()) return
   await auth.ensureIdentity()
   if (auth.isRegistered) displayName.value = auth.displayName
   try { rooms.value = await partyApi.list() } catch (reason) { error.value = partyErrorMessage(reason, t) }
 })
 
 async function createRoom() {
-  if (busy.value) return
+  if (!roomsAvailable.value || busy.value) return
   busy.value = true
   error.value = ''
   try {

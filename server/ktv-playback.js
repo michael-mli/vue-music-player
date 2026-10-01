@@ -4,10 +4,12 @@ import { invalidateReadiness } from './ktv-readiness.js'
 import { recordTurn, requestNextTurn, offerNextTurn } from './ktv-turns.js'
 import { timelinePosition } from './ktv-timeline.js'
 import { ktvTiming, ktvRestartSilenceMs } from './ktv-timing.js'
+import { ktvFeatures, ktvGuideAssets } from './ktv-features.js'
 
 const stamp = () => new Date().toISOString()
 
-export function createKtvPlayback({ db, clock, transaction, bump, event, broadcast, broadcastLease = () => {}, hostGraceMs, timing: timingOptions }) {
+export function createKtvPlayback({ db, clock, transaction, bump, event, broadcast, broadcastLease = () => {}, hostGraceMs, timing: timingOptions, features: featureOptions }) {
+  const features = ktvFeatures(featureOptions)
   const timing = ktvTiming({ ...timingOptions, ...(hostGraceMs === undefined ? {} : { hostGraceMs }) })
   hostGraceMs = timing.hostGraceMs
   const devices = new Map()
@@ -32,6 +34,13 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
       event(db, row.room_id, null, 'playback.recovered', row.entry_id)
     }
   })
+  if (!features.guide) transaction(db, () => {
+    for (const row of db.prepare('SELECT room_id FROM ktv_playback WHERE guide_required != 0 OR guide_device_id IS NOT NULL').all()) {
+      db.prepare('UPDATE ktv_playback SET guide_required = 0, guide_device_id = NULL WHERE room_id = ?').run(row.room_id)
+      bump(db, row.room_id)
+      event(db, row.room_id, null, 'guide.disabled')
+    }
+  })
 
   function read(roomId) { return db.prepare('SELECT * FROM ktv_playback WHERE room_id = ?').get(roomId) }
   function view(row) {
@@ -44,7 +53,7 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
     return { state: row.state, clockId: row.clock_id, generation: row.generation, entryId: row.entry_id,
       performanceId: row.performance_id, positionMs: row.position_ms, anchorServerMs: row.anchor_server_ms,
       durationMs: row.duration_ms, pendingTransition: row.pending_json ? JSON.parse(row.pending_json) : null,
-      assets: row.assets_json ? JSON.parse(row.assets_json) : null, stageDeviceId: row.stage_device_id,
+      assets: ktvGuideAssets(row.assets_json ? JSON.parse(row.assets_json) : null, features), stageDeviceId: row.stage_device_id,
       stageMemberId: row.stage_member_id, lyricOffsetMs: row.lyric_offset_ms, prepareDeadlineMs: row.prepare_deadline_ms,
       title: entry?.title || null, singerMemberId: entry?.singer_member_id || null, singerName: entry?.display_name || null,
       guideRequired: Boolean(row.guide_required), guideDeviceId: row.guide_device_id, recoveryReason: row.recovery_reason }
@@ -106,6 +115,7 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
       (purpose !== 'guide' || clock.nowMs() - device.ready.atMs <= 4000)
   }
   function guideReady(row) {
+    if (!features.guide) return false
     if (!row.guide_device_id || !row.assets_json || !JSON.parse(row.assets_json).original) return false
     try {
       const device = requireDevice(row.room_id, row.guide_device_id)
@@ -180,6 +190,7 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
     event(db, roomId, null, 'stage.assigned', device.id)
   }
   function prepare(roomId, readiness, assets) {
+    assets = ktvGuideAssets(assets, features)
     const row = ensureRow(roomId)
     requireDevice(roomId, row.stage_device_id)
     if (['playing', 'scheduled'].includes(row.state) || row.pending_json) fail(409, 'PLAYBACK_ACTIVE', 'Pause or skip the active song first')
@@ -233,6 +244,7 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
     // for a transaction that could still roll back.
   }
   function guide(roomId, memberId, required, deviceId) {
+    if (!features.guide) fail(503, 'GUIDE_DISABLED', 'Private vocal guides are temporarily unavailable')
     const row = read(roomId)
     const singer = row?.entry_id && db.prepare('SELECT singer_member_id FROM ktv_queue_entries WHERE id = ?').get(row.entry_id)
     if (!row || row.state === 'idle' || singer?.singer_member_id !== memberId) fail(403, 'FORBIDDEN', 'Only the selected singer can choose required guidance')
@@ -335,6 +347,7 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
         (message.mediaProtocol !== undefined && ![0, 1].includes(message.mediaProtocol)) ||
         (message.audioIssue != null && !['drift', 'output', 'decode', 'suspended'].includes(message.audioIssue))) fail(400, 'INVALID_DEVICE_STATUS', 'Invalid device status')
       if (device.scope === 'display' && message.purpose === 'guide') fail(403, 'FORBIDDEN', 'Display access cannot use a singer guide')
+      if (!features.guide && message.purpose === 'guide') fail(503, 'GUIDE_DISABLED', 'Private vocal guides are temporarily unavailable')
       const changed = device.purpose !== message.purpose || device.label !== (message.label.trim() || 'Device') ||
         device.audioEnabled !== message.audioEnabled || device.clockHealthy !== message.clockHealthy || device.audioIssue !== (message.audioIssue || null) || device.mediaProtocol !== (message.mediaProtocol || 0)
       device.purpose = message.purpose; device.label = message.label.trim() || 'Device'
@@ -416,7 +429,7 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
     broadcast(device.roomId)
   }
   function sweep() {
-    if (closed) return
+    if (closed || !features.rooms) return
     const changed = new Set()
     const nowMs = clock.nowMs()
     const openRooms = db.prepare("SELECT id FROM ktv_rooms WHERE status = 'open' AND expires_at > ?").all(stamp())
@@ -514,6 +527,6 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
     return changed
   }
   const api = { timing, snapshot, presence, connected, disconnected, deviceMessage, current, assign, prepare, start,
-    transition, guide, invalidate, finish, decline, read, sweep, mediaFailed, close: () => { closed = true; clearInterval(timer) } }
+    transition, guide, invalidate, finish, decline, read, sweep, mediaFailed, features, close: () => { closed = true; clearInterval(timer) } }
   return api
 }

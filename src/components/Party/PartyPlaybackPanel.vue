@@ -3,7 +3,7 @@
     <header class="flex flex-wrap items-start justify-between gap-4">
       <div>
         <h2 class="text-xl font-semibold">{{ $t(stage ? 'party.stage' : 'party.playbackTitle') }}</h2>
-        <p class="mt-2 max-w-xl text-sm text-gray-300">{{ $t(stage ? 'party.stageAudioHint' : 'party.guideAudioHint') }}</p>
+        <p class="mt-2 max-w-xl text-sm text-gray-300">{{ $t(stage ? 'party.stageAudioHint' : party.features?.guide === false ? 'party.errorGuideDisabled' : 'party.guideAudioHint') }}</p>
       </div>
       <button v-if="stage && fullscreenSupported" type="button" class="min-h-[44px] rounded-full border border-white/30 px-4 py-2 text-sm" :aria-pressed="isFullscreen" @click="fullscreen">{{ $t(isFullscreen ? 'party.exitFullscreen' : 'party.fullscreen') }}</button>
     </header>

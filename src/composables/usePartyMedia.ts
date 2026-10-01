@@ -169,7 +169,7 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
       audio.volume.value = oldMonitorVolume; return
     }
     const asset = party.value?.playback?.assets?.original
-    if (!asset || !capture.value || party.value?.self.id !== singerId.value) return
+    if (party.value?.features?.guide === false || !asset || !capture.value || party.value?.self.id !== singerId.value) return
     const attempt = epoch, engine = new PartyAudioEngine()
     original = engine; oldMonitorVolume = audio.volume.value; originalEnabled.value = true; audio.volume.value = 0
     engine.onSuspended = () => { if (epoch === attempt && original === engine) fail(new Error('MEDIA_HEADPHONES_PAUSED')) }
@@ -183,6 +183,9 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
     } catch (error) { if (epoch === attempt && original === engine) fail(error) }
   }
   watch(originalVolume, value => original?.setVolume(value))
+  watch(() => party.value?.features?.guide, available => {
+    if (available === false && originalEnabled.value) void toggleOriginal()
+  }, { flush: 'sync' })
   watch([backingLevel, vocalLevel], () => graph?.setPublishLevels(backingLevel.value, vocalLevel.value))
   // Guard microphone promises, current capture and an established publisher on
   // turn/role/mode changes, suspension, membership loss or room disconnection.

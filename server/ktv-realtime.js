@@ -17,7 +17,7 @@ function sameHostOrigin(req, origin) {
   return origin === `https://${req.headers.host}` || origin === `http://${req.headers.host}`
 }
 
-export function createKtvRealtime({ getSnapshot, allowedOrigins = [], clock, onDevice, onConnected, onDisconnected, timing: timingOptions }) {
+export function createKtvRealtime({ getSnapshot, allowedOrigins = [], clock, onDevice, onConnected, onDisconnected, timing: timingOptions, enabled = true }) {
   const timing = ktvTiming(timingOptions)
   const tickets = new Map()
   const pendingBroadcasts = new Map()
@@ -126,6 +126,10 @@ export function createKtvRealtime({ getSnapshot, allowedOrigins = [], clock, onD
       try { pathname = new URL(req.url, 'http://localhost').pathname } catch { pathname = '' }
       if (pathname !== '/api/ktv/ws' || req.url !== '/api/ktv/ws') {
         socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n')
+        return
+      }
+      if (!enabled) {
+        socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n')
         return
       }
       const origin = req.headers.origin
