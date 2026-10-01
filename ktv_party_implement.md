@@ -9,8 +9,8 @@ Design reference: [ktv_party.md](ktv_party.md)
 Implemented contracts: [ktv_party_protocol.md](ktv_party_protocol.md)
 
 Current status: The durable-room preview is deployed at
-`https://music.micstec.com/party` with frontend `3e76e15`
-(`main-B_OYznt7.js`, `main-D0gBov56.css`) and backend `0e0c7aa`. Online media remains disabled.
+`https://music.micstec.com/party` with frontend/backend `9b74e8f`
+(`main-B6kwN6KJ.js`, `main-D0gBov56.css`). Online media remains disabled.
 Members can connect a shared screen or phone
 controller with a short-lived code; a display has read-only room access, and a
 controller inherits the member's current permissions. Hosts can appoint co-hosts,
@@ -943,6 +943,17 @@ hint; the fixture was corrected and final checks pass. P08.1 software is complet
 physical and integrated streaming acceptance remain open. Private predeployment
 backup: `/home/mli/ktv-party-features-predeploy.r517kc57`.
 
+Feature release `9b74e8f` is deployed. Exact-commit build UI checks pass 38/38
+(`/tmp/ktv-feature-release-ui-final.log`) and PWA checks 8/8
+(`/tmp/ktv-feature-release-pwa-final.log`). The first exact-build attempt found
+that the owned Chrome watchdog had expired; a new isolated browser was started,
+then both suites completed. Public release checks pass 18/18
+(`/tmp/ktv-feature-public-release.log`): anonymous no-store flags, admin/HTTP/WSS
+snapshot agreement, original timing defaults, exact asset bytes/SHA, temporary
+room closure and SQLite integrity/FKs. There were no active performances at
+restart, default rooms/guide remain enabled, media remains disabled and no user
+identity was created. Backend warmup required two connection retries.
+
 ```text
 Date:
 Phase and item IDs:
@@ -976,5 +987,6 @@ Next action:
 | Queue fanout backend update | Backend `6c73d58`, frontend `4a216be` | `https://music.micstec.com/party` | 2026-10-01 | Backend 104/104; public queue/WSS/replay/cleanup 4/4; isolated 20-member/60-socket/100-song capacity probe and cap denials pass | Online flag disabled; physical/browser and public media acceptance remain open |
 | Mobile UI/capture preview | Frontend `3e76e15`, backend `09879ac` | `https://music.micstec.com/party` | 2026-10-01 | Party units 49/49; exact-build UI 29/29, PWA 6/6 on both owned Chrome processes; public assets/routes/SHA/health/SQLite 8/8 | Online flag disabled; transient earlier PWA update timeouts recorded; physical/browser and full streaming acceptance open |
 | Timing policy backend | Backend `0e0c7aa`, frontend `3e76e15` | `https://music.micstec.com/party` | 2026-10-01 | Backend 121/121; party units 49/49; type check and UI 29/29; public HTTP/WSS/timing/schema/cleanup 11/11 | Online flag disabled; physical/browser and integrated/different-network streaming acceptance remain open |
+| Feature-switch preview | Frontend/backend `9b74e8f` (`main-B6kwN6KJ.js`) | `https://music.micstec.com/party` | 2026-10-01 | Backend 126/126, party units 49/49, exact-build UI 38/38 and PWA 8/8; public flags/HTTP/WSS/assets/SHA/cleanup 18/18 | Media remains disabled; integrated streaming, physical timing and browser/device acceptance remain open |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |
