@@ -8,7 +8,7 @@ Design reference: [ktv_party.md](ktv_party.md)
 
 Current status: The durable-room preview is deployed at
 `https://music.micstec.com/party` with frontend `1dfa35c`
-(`main-B8OVLbnL.js`) and backend `6c73d58`. Online media remains disabled.
+(`main-B8OVLbnL.js`) and backend `09879ac`. Online media remains disabled.
 Members can connect a shared screen or phone
 controller with a short-lived code; a display has read-only room access, and a
 controller inherits the member's current permissions. Hosts can appoint co-hosts,
@@ -796,6 +796,13 @@ deduplication, aborted requests, alert thresholds, admin-only no-store access,
 disabled-media schema compatibility and private-provider error redaction.
 The installed logrotate rule passes dry-run validation; the existing timer is
 active. No new streaming or physical-device acceptance is claimed.
+
+The diagnostics backend `09879ac` is now deployed, with frontend `1dfa35c`.
+Public checks 6/6 pass: anonymous and ordinary-role operator access denied,
+authenticated no-store aggregate health, media flag disabled, backend health and
+SQLite integrity/foreign keys. No public room or user was changed by these checks.
+The backend restart was performed when no open room had preparing/scheduled/playing
+audio. Backup: `/home/mli/ktv-party-diagnostics-predeploy.qm5g_kj6`.
 
 Latest deployment preparation and audio startup evidence (2026-10-01):
 `652affe` provisions the TURN certificate renewal tooling. Certbot staging renewal
