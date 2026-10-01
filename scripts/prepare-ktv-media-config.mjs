@@ -19,7 +19,7 @@ export async function prepareMediaConfig({ directory, publicIp, turnDomain, orig
     await fs.mkdir(path.join(target, 'tls'), { mode: 0o700 })
     const shared = `KTV_MEDIA_API_KEY=${apiKey}\nKTV_MEDIA_API_SECRET=${apiSecret}\nKTV_MEDIA_CONTROL_SECRET=${controlSecret}\n`
     await fs.writeFile(path.join(target, 'backend.env'), `KTV_MEDIA_ENABLED=true\nKTV_MEDIA_WORKER_URL=http://127.0.0.1:3103\n${shared}`, { flag: 'wx', mode: 0o600 })
-    await fs.writeFile(path.join(target, 'worker.env'), `${shared}KTV_SFU_CONFIG=/run/ktv/livekit.yaml\nKTV_SFU_URL=http://127.0.0.1:7880\nKTV_MEDIA_WORKER_PORT=3103\nKTV_MEDIA_BACKEND_URL=http://127.0.0.1:3101\nKTV_MEDIA_ORIGINS=${origin}\n`, { flag: 'wx', mode: 0o600 })
+    await fs.writeFile(path.join(target, 'worker.env'), `${shared}KTV_SFU_CONFIG=/run/ktv/livekit.yaml\nKTV_SFU_URL=http://127.0.0.1:7880\nKTV_MEDIA_WORKER_PORT=3103\nKTV_MEDIA_BACKEND_URL=http://127.0.0.1:3101\nKTV_MEDIA_ORIGINS=${origin}\nKTV_MEDIA_TURN_DOMAIN=${turnDomain}\nKTV_MEDIA_TURN_TLS_PORT=5349\n`, { flag: 'wx', mode: 0o600 })
     await fs.writeFile(path.join(target, 'livekit.yaml'), `port: 7880
 bind_addresses: [127.0.0.1]
 rtc:

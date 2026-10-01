@@ -43,7 +43,7 @@ async function launch() {
   await exec('docker', ['run', '-d', '--name', owned, '--network', 'host', '--read-only', '--cap-drop=ALL',
     '--user', `${process.getuid()}:${process.getgid()}`,
     '--security-opt=no-new-privileges', '--tmpfs', '/tmp:rw,noexec,nosuid,size=16m', '--env-file', env,
-    '-v', `${config}:/run/ktv/livekit.yaml:ro`, 'ktv-party-media:prototype'], { timeout: 30000 })
+    '-v', `${config}:/run/ktv/livekit.yaml:ro`, process.env.KTV_MEDIA_TEST_IMAGE || 'ktv-party-media:prototype'], { timeout: 30000 })
   try { await poll(async () => {
     try { const response = await fetch(control + '/control/health', { method: 'POST', headers: { Authorization: `Bearer ${controlSecret}` }, signal: AbortSignal.timeout(300) }); return (await response.json()).data?.ready }
     catch { return false }

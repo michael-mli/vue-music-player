@@ -9,8 +9,8 @@ Design reference: [ktv_party.md](ktv_party.md)
 Implemented contracts: [ktv_party_protocol.md](ktv_party_protocol.md)
 
 Current status: The durable-room preview is deployed at
-`https://music.micstec.com/party` with frontend `1dfa35c`
-(`main-B8OVLbnL.js`) and backend `09879ac`. Online media remains disabled.
+`https://music.micstec.com/party` with frontend `3e76e15`
+(`main-B_OYznt7.js`, `main-D0gBov56.css`) and backend `09879ac`. Online media remains disabled.
 Members can connect a shared screen or phone
 controller with a short-lived code; a display has read-only room access, and a
 controller inherits the member's current permissions. Hosts can appoint co-hosts,
@@ -41,7 +41,7 @@ room lifecycle/retention are live. Release checks pass: backend 76/76, frontend
 10/10. P02 room-domain software criteria are complete; physical timing, remaining
 queue/UI/PWA work and online/hybrid streaming still need implementation/acceptance.
 
-The current preview is `49bd4d2` (`main-BLgb8FvF.js`, `main-B17ntvAM.css`). Queue
+The queue safeguard preview was `49bd4d2` (`main-BLgb8FvF.js`, `main-B17ntvAM.css`). Queue
 request cancellation, nomination decline and priority approval cannot change an
 entry after performance preparation begins. The phone hides request-removal
 controls for that entry; hosts use performance controls. The release passes 77
@@ -58,7 +58,7 @@ DB/static/previous-code backup: `/tmp/ktv-party-queue-controls-predeploy.6j7f1h_
 (previous live build `49bd4d2`). Physical timing/browser acceptance and online/hybrid
 remain open; the next work continues into streaming rather than ending here.
 
-The current preview uses backend `6c73d58` and frontend `4a216be`
+The streaming-foundation preview used backend `6c73d58` and frontend `4a216be`
 (`main-D4pM4JGY.js`, `main-Be17GLqV.css`) at the same URL. It includes the streaming code and room
 cache protection with online media disabled. The release build, PWA upgrade
 check 6/6, public HTTP/room/WSS smoke checks 10/10, SQLite integrity and foreign
@@ -100,7 +100,7 @@ The isolated PWA check installs a synthetic legacy caching worker, upgrades it,
 and confirms old cached room authority is purged; an actual field-installed
 older PWA is still part of release acceptance.
 `ktv_party_deploy.md` records the configuration and release procedure. The public
-frontend is `4a216be` and backend is `6c73d58`, with online mode unavailable until relay and physical gates pass.
+frontend at that milestone was `4a216be` and backend was `6c73d58`, with online mode unavailable until relay and physical gates pass.
 
 TURN deployment preparation now uses `ktv-turn.3.219.116.105.sslip.io`, resolving
 directly to this server. A trusted Let's Encrypt certificate, restricted ACME
@@ -123,8 +123,8 @@ The next UI/capture checkpoint adds cancellation before microphone acquisition,
 English/Chinese recovery messages that omit arbitrary provider error text, 44 px
 touch controls, keyboard focus and wrapping of long room/member/song names.
 Party units pass 49/49 and the built-app UI checker passes 29/29. Protocol and
-reference contracts now live in `ktv_party_protocol.md`. This checkpoint is being
-prepared for deployment; it does not resolve streaming/device acceptance.
+reference contracts now live in `ktv_party_protocol.md`. This checkpoint is
+deployed; it does not resolve streaming/device acceptance.
 
 ## 1. How to use this tracker
 
@@ -744,8 +744,8 @@ those checks pass. Complete remaining local/browser/PWA release gates alongside
 streaming.
 Physical phone/screen timing, memory, background behavior, broad browser coverage
 and real streaming remain acceptance gates. Phone tabs and QR invitations are live;
-general receipts, cleanup and returning-invite recovery are now deployed. Release
-the verified UI/capture checkpoint, then continue supervised public transport
+general receipts, cleanup and returning-invite recovery are now deployed. The
+UI/capture checkpoint is deployed. Continue supervised public transport
 validation while the public online flag stays disabled.
 
 ### Decision log
@@ -826,7 +826,7 @@ disabled-media schema compatibility and private-provider error redaction.
 The installed logrotate rule passes dry-run validation; the existing timer is
 active. No new streaming or physical-device acceptance is claimed.
 
-The diagnostics backend `09879ac` is now deployed, with frontend `1dfa35c`.
+The diagnostics backend `09879ac` was deployed with frontend `1dfa35c`.
 Public checks 6/6 pass: anonymous and ordinary-role operator access denied,
 authenticated no-store aggregate health, media flag disabled, backend health and
 SQLite integrity/foreign keys. No public room or user was changed by these checks.
@@ -855,6 +855,39 @@ stay open. Neither an exactly silent output node nor temporarily raising the
 owned PulseAudio process priority resolved virtual render-clock stalls; both
 experiments were reverted. The integrated SFU guide/handover journey still fails
 its real drift guard (`/tmp/ktv-pulse-priority-room-media-final.log`).
+
+UI/capture release `3e76e15` is now deployed (`main-B_OYznt7.js`,
+`main-D0gBov56.css`), backend unchanged at `09879ac`. Exact-release UI checks pass
+29/29 and PWA checks pass 6/6 on both owned Chrome processes after two update
+timeouts during earlier runs; failure-state diagnostics were added to the PWA
+checker, without claiming a product fix for those transient failures. Public
+route/asset/SHA/health/SQLite checks pass 8/8; no public users/rooms were mutated.
+Private backup: `/home/mli/ktv-party-ui-predeploy.ha8yz1jq`. Old hashed assets
+remain available. The three nginx media locations are installed and validated;
+isolated supervised transport checks follow below; this is not a live media release.
+
+Public-origin transport validation found and fixed a deployment error: the pinned
+LiveKit server advertises integrated TURN TLS at 443 regardless of its 5349
+listener. `ktv-media-ice.js` now corrects only the configured URL in provider
+join/reconnect replies, preserving temporary credentials and unknown fields.
+Backend checks pass 115/115 (including binary/JSON and real WebSocket adapter
+checks), party units 49/49, and the supervised same-host public-origin transport
+probe passes 14/14: direct media, forced TLS relay (`relayProtocol: tls`, TLS-only
+ICE servers), decoded video and provider-acknowledged revocation. The public
+gateway also rejects revoked unexpired audience/publisher JWTs. Evidence:
+`/tmp/ktv-public-transport-final.log`, `/tmp/ktv-ice-backend-tests.log`,
+`/tmp/ktv-ice-party-tests.log`. The rebuilt release image also passes supervisor
+process/SFU failure checks 9/9 (`/tmp/ktv-ice-supervisor-final.log`); TLS tooling
+checks pass 4/4. Image ID:
+`sha256:aa9ca968d91ba5f021d1986d3b1065e38f5a4419dd0de71f87cbef39aceb7811`.
+The public
+5349 certificate handshake validates with TLS 1.3. Production nginx exact media
+routes are installed, private worker flags updated and the media image built;
+the public room flag is still disabled and temporary containers are removed.
+This does not establish different-network or physical/integrated-room acceptance.
+The read-only inventory attempt against the other EC2 Linux host stopped at a
+changed SSH host key; AWS console output provided no fingerprint to verify it.
+No trust record, remote service or host was changed.
 
 ```text
 Date:
@@ -887,5 +920,6 @@ Next action:
 | Queue/ownership preview | `34fc55c` (`main-7EC2G4Bt.js`) | `https://music.micstec.com/party` | 2026-09-30 | Backend 81/81, party units 20/20, solo units 10/10, foreground Chrome 59/59, public protocol 30/30 and deployment 10/10; exact assets/schema/FKs verified | Physical timing, broad PWA/browser/a11y and online/hybrid |
 | Streaming-foundation preview | `4a216be` (`main-D4pM4JGY.js`, `main-Be17GLqV.css`) | `https://music.micstec.com/party` | 2026-10-01 | Backend 104/104; party units 40/40; solo 10/10; local Chrome 59/59 on same source before SHA build; exact-build PWA 6/6; public release checks 10/10; DB integrity/FKs and assets/SHA verified | Online flag disabled; exact-build audio journey stalled on host virtual output; public relay and physical phone/network acceptance open |
 | Queue fanout backend update | Backend `6c73d58`, frontend `4a216be` | `https://music.micstec.com/party` | 2026-10-01 | Backend 104/104; public queue/WSS/replay/cleanup 4/4; isolated 20-member/60-socket/100-song capacity probe and cap denials pass | Online flag disabled; physical/browser and public media acceptance remain open |
+| Mobile UI/capture preview | Frontend `3e76e15`, backend `09879ac` | `https://music.micstec.com/party` | 2026-10-01 | Party units 49/49; exact-build UI 29/29, PWA 6/6 on both owned Chrome processes; public assets/routes/SHA/health/SQLite 8/8 | Online flag disabled; transient earlier PWA update timeouts recorded; physical/browser and full streaming acceptance open |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |

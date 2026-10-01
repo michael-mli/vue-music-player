@@ -47,7 +47,10 @@ try {
   }
   if (!up) throw new Error('SFU startup failed')
   worker = createKtvMediaWorker({ backendUrl: process.env.KTV_MEDIA_BACKEND_URL || 'http://127.0.0.1:3101',
-    upstreamUrl, apiKey, apiSecret, controlSecret, origins, stopSfu })
+    upstreamUrl, apiKey, apiSecret, controlSecret, origins, stopSfu,
+    turnTls: process.env.KTV_MEDIA_TURN_DOMAIN || process.env.KTV_MEDIA_TURN_TLS_PORT ? {
+      domain: required('KTV_MEDIA_TURN_DOMAIN'), port: Number(required('KTV_MEDIA_TURN_TLS_PORT')),
+    } : undefined })
   const port = Number(process.env.KTV_MEDIA_WORKER_PORT || 3103)
   if (!Number.isSafeInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid worker port')
   worker.server.listen(port, '127.0.0.1')

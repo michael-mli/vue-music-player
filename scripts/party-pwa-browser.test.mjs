@@ -111,6 +111,16 @@ try {
   check(await evaluate("caches.open('legacy-ktv-test').then(cache=>cache.keys()).then(keys=>!keys.some(item=>new URL(item.url).pathname.startsWith('/api/ktv')))"),
     'upgraded party page removes cached room authority')
   console.log(`${passed} PWA browser checks passed. Isolated synthetic legacy worker and local frontend only.`)
+} catch (error) {
+  const state = await evaluate(`(async () => {
+    const registration = await navigator.serviceWorker?.getRegistration();
+    return { timeOrigin: performance.timeOrigin, controller: navigator.serviceWorker?.controller?.scriptURL,
+      active: registration?.active?.state, waiting: registration?.waiting?.state, installing: registration?.installing?.state,
+      entry: !!document.getElementById('party-room-name'),
+      updateButton: !![...document.querySelectorAll('button')].find(item=>item.textContent.trim()==='Update') };
+  })()`).catch(() => null)
+  console.error('PWA failure state:', JSON.stringify(state))
+  throw error
 } finally {
   if (browser?.readyState === WebSocket.OPEN && browserContextId) await cdp('Target.disposeBrowserContext', { browserContextId }, null).catch(() => {})
   browser?.close()

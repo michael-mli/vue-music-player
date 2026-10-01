@@ -30,6 +30,16 @@ proxying does not carry these media transports. The initial same-host recipe use
 TURN listener/address or an appropriate layer 4 deployment. This recipe makes no
 claim of support on those networks.
 
+The pinned LiveKit v1.13.7 implementation advertises its integrated TURN TLS
+endpoint on port 443 even when `tls_port` is 5349. The gateway's
+`ktv-media-ice.js` adapter changes only that exact operator-configured TURN URL
+in join/reconnect replies to port 5349. It preserves provider-generated temporary
+credentials, unrelated URLs, SDP and unknown protobuf/JSON fields. Worker settings
+`KTV_MEDIA_TURN_DOMAIN` and `KTV_MEDIA_TURN_TLS_PORT` enable the adapter; both must
+be present and valid. Generated files include them. A listener/certificate check
+alone cannot establish that browsers received the correct endpoint. The source
+behavior is in [the pinned room manager](https://github.com/livekit/livekit/blob/v1.13.7/pkg/service/roommanager.go).
+
 The network settings follow [LiveKit deployment guidance](https://docs.livekit.io/transport/self-hosting/deployment/)
 and its [port reference](https://docs.livekit.io/transport/self-hosting/ports-firewall/).
 The generated configuration targets the [pinned v1.13.7 configuration](https://github.com/livekit/livekit/blob/v1.13.7/config-sample.yaml).
@@ -125,12 +135,41 @@ disables their URL logging. Media access tokens appear in signaling query string
 Keep them out of CDN/request inspection logs too. Private `/control/`, `/internal/`
 and raw LiveKit `/twirp/` routes must not be routed publicly.
 
+The three exact locations are now included from
+`/etc/nginx/snippets/ktv-media.conf` on this host. They were validated with
+`nginx -t` and nginx was reloaded. Production room media remains disabled; no
+persistent media container is running. Temporary probes own and remove their
+supervised container rather than using production room policy.
+
 Room snapshots expose `mediaConfigured`; the host sees the mode selector only
 when configured, and cannot change modes during a performance. Worker readiness
 is checked separately. A configured service with a failed worker cannot issue
 media credentials or start an online song.
 
 ## 4. Verification before public release
+
+### Isolated public-origin transport probe
+
+With the exact nginx routes installed, trusted private TLS files and unused media
+ports, run the supervised transport checker:
+
+```bash
+KTV_TRANSPORT_IP=3.219.116.105 \
+KTV_TRANSPORT_DOMAIN=ktv-turn.3.219.116.105.sslip.io \
+KTV_TRANSPORT_INTERFACE=ens5 \
+KTV_TRANSPORT_TLS=/home/mli/ktv-media-private/tls \
+npm run test:party:public-transport
+```
+
+The checker creates separate temporary provider/control keys and a bounded
+loopback policy fixture. It owns the SFU through the normal PID 1 supervisor,
+uses the actual public HTTPS/WSS nginx/CDN path, checks decoded synthetic media,
+forces TLS-only TURN through both initial and updated ICE configuration, and
+checks provider-acknowledged revocation. It does not create app users/rooms or
+change the production flag. Cleanup removes its browser contexts, container and
+private files. Its default Chrome client is on the media host, so a passing probe
+does not establish different-network, physical microphone or integrated-room
+acceptance. Do not run it alongside a persistent service on the same ports.
 
 Run builds and CPU-heavy suites before browser audio journeys:
 

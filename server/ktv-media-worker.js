@@ -14,7 +14,7 @@ function loopback(value) {
 // This process must own the SFU process. Its fatal callback kills that child;
 // merely dropping WebSockets would leave established RTP flows running.
 export function createKtvMediaWorker({ backendUrl, upstreamUrl, apiKey, apiSecret, controlSecret,
-  origins, stopSfu, pollMs = 250, timeoutMs = 1000, provider: suppliedProvider }) {
+  origins, stopSfu, turnTls, pollMs = 250, timeoutMs = 1000, provider: suppliedProvider }) {
   const backend = loopback(backendUrl), upstream = loopback(upstreamUrl)
   if (!apiKey || !apiSecret || apiSecret.length < 32 || !controlSecret || controlSecret.length < 32 ||
     !Array.isArray(origins) || !origins.length || typeof stopSfu !== 'function' ||
@@ -39,7 +39,7 @@ export function createKtvMediaWorker({ backendUrl, upstreamUrl, apiKey, apiSecre
     if (!fatalTask) fatalTask = Promise.resolve().then(stopSfu)
     await fatalTask
   }
-  const gateway = createKtvMediaGateway({ upstreamUrl: upstream.toString(), apiKey, apiSecret, pollMs,
+  const gateway = createKtvMediaGateway({ upstreamUrl: upstream.toString(), apiKey, apiSecret, pollMs, turnTls,
     // Same-origin validation GETs may omit Origin. They still require the exact
     // signed token and current persisted nonce; supplied browser origins must match.
     allowedOrigin: origin => !origin || (typeof origin === 'string' && origins.includes(origin)),

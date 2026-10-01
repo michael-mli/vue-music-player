@@ -15,6 +15,7 @@ test('media configuration stays private, shares the exact provider keys and cann
   const keys = Object.fromEntries(backend.trim().split('\n').map(line => line.split('=')))
   assert.match(keys.KTV_MEDIA_API_SECRET, /^[0-9a-f]{64}$/); assert.notEqual(keys.KTV_MEDIA_API_SECRET, keys.KTV_MEDIA_CONTROL_SECRET)
   for (const key of ['KTV_MEDIA_API_KEY', 'KTV_MEDIA_API_SECRET', 'KTV_MEDIA_CONTROL_SECRET']) assert.ok(worker.includes(`${key}=${keys[key]}\n`))
+  assert.ok(worker.includes(`KTV_MEDIA_TURN_DOMAIN=${network.turnDomain}\nKTV_MEDIA_TURN_TLS_PORT=5349\n`))
   assert.ok((await fs.readFile(path.join(directory, 'livekit.yaml'), 'utf8')).includes(keys.KTV_MEDIA_API_SECRET))
   assert.equal((await fs.stat(directory)).mode & 0o777, 0o700)
   for (const file of ['backend.env', 'worker.env', 'livekit.yaml']) assert.equal((await fs.stat(path.join(directory, file))).mode & 0o777, 0o600)

@@ -6,12 +6,13 @@ import { randomUUID } from 'node:crypto'
 import { WebSocket, WebSocketServer } from 'ws'
 import { AccessToken, TrackSource } from 'livekit-server-sdk'
 import { createKtvMediaGateway } from './ktv-media-gateway.js'
+import { SignalResponse, JoinResponse, ICEServer } from '@livekit/protocol'
 
 const wait = async (work, label) => {
   for (let count = 0; count < 100; count++) { const value = work(); if (value) return value; await new Promise(resolve => setTimeout(resolve, 10)) }
   throw new Error(`Timed out: ${label}`)
 }
-async function fixture(t) {
+async function fixture(t, turnTls) {
   const apiKey = 'media-unit', apiSecret = 'test-only-media-secret-with-more-than-thirty-two-bytes', identity = randomUUID()
   const grant = { identity, scope: 'audience', room: 'room' }, removed = [], fatal = [], clients = []
   let admitted = true, removal = async () => {}
@@ -20,7 +21,7 @@ async function fixture(t) {
   upstreamSockets.on('connection', socket => { socket.on('message', (data, binary) => socket.send(data, { binary })) })
   upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening')
   const upstreamUrl = `http://127.0.0.1:${upstream.address().port}`
-  const gateway = createKtvMediaGateway({ upstreamUrl, apiKey, apiSecret, pollMs: 20,
+  const gateway = createKtvMediaGateway({ upstreamUrl, apiKey, apiSecret, pollMs: 20, turnTls,
     authorize: claims => admitted && claims.sub === identity ? grant : null,
     allowedOrigin: origin => !origin || origin === 'http://room.local',
     removeParticipant: async (room, id) => { removed.push([room, id]); await removal() }, onFatal: async error => { fatal.push(error) } })
@@ -57,6 +58,24 @@ test('media gateway forwards authorized binary signaling and removes RTP permiss
   socket.terminate()
   await wait(() => f.removed.length === 1, 'provider removal after signal loss')
   assert.deepEqual(f.removed[0], ['room', f.grant.identity]); assert.equal(f.fatal.length, 0)
+})
+
+test('configured gateway corrects provider TURN advertisement over an actual authorized WebSocket', async t => {
+  const f = await fixture(t, { domain: 'turn.example.com', port: 5349 }), socket = await f.join(await f.token())
+  const payload = new SignalResponse({ message: { case: 'join', value: new JoinResponse({ iceServers: [new ICEServer({
+    urls: ['turns:turn.example.com:443?transport=tcp'], username: 'fixture-user', credential: 'fixture-secret',
+  })] }) } })
+  const reply = once(socket, 'message'); socket.send(payload.toBinary())
+  const [bytes, binary] = await reply, server = SignalResponse.fromBinary(bytes).message.value.iceServers[0]
+  assert.equal(binary, true); assert.deepEqual(server.urls, ['turns:turn.example.com:5349?transport=tcp'])
+  assert.equal(server.username, 'fixture-user'); assert.equal(server.credential, 'fixture-secret')
+  assert.equal(f.fatal.length, 0)
+})
+
+test('malformed upstream signaling invokes supervisor failure and closes the configured gateway connection', async t => {
+  const f = await fixture(t, { domain: 'turn.example.com', port: 5349 }), socket = await f.join(await f.token())
+  const closed = once(socket, 'close'); socket.send(Buffer.from([255])); await closed
+  assert.equal(f.fatal.length, 1); assert.equal(f.fatal[0].message, 'MEDIA_SIGNAL_INVALID')
 })
 
 test('audience tokens cannot inherit default publish/data grants, publish sources, or room administration', async t => {

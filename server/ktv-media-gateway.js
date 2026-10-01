@@ -1,12 +1,14 @@
 import { WebSocket, WebSocketServer } from 'ws'
 import { TokenVerifier } from 'livekit-server-sdk'
+import { createKtvIceRewrite } from './ktv-media-ice.js'
 
 // Self-hosted LiveKit does not revoke old JWTs when a participant is removed.
 // Keep its signaling port private and validate the immutable identity/nonce at
 // this gateway on every join, including refreshed tokens. Media authorization
 // comes from the application's persisted grant/lease policy, never JWT TTL alone.
 export function createKtvMediaGateway({ upstreamUrl, apiKey, apiSecret, authorize, removeParticipant,
-  allowedOrigin, onFatal, prefix = '/api/ktv/media', pollMs = 250 }) {
+  allowedOrigin, onFatal, turnTls, prefix = '/api/ktv/media', pollMs = 250 }) {
+  const rewriteIce = createKtvIceRewrite(turnTls)
   const verifier = new TokenVerifier(apiKey, apiSecret)
   const server = new WebSocketServer({ noServer: true, maxPayload: 512 * 1024 })
   const connections = new Set()
@@ -90,7 +92,11 @@ export function createKtvMediaGateway({ upstreamUrl, apiKey, apiSecret, authoriz
           else void revoke(grant).catch(() => {})
         })
         upstream.on('open', () => { for (const [data, binary] of buffered) upstream.send(data, { binary }); buffered = []; bufferedBytes = 0 })
-        upstream.on('message', (data, binary) => { if (client.readyState === WebSocket.OPEN) client.send(data, { binary }) })
+        upstream.on('message', (data, binary) => {
+          if (client.readyState !== WebSocket.OPEN) return
+          try { client.send(rewriteIce(data, binary), { binary }) }
+          catch { void onFatal(new Error('MEDIA_SIGNAL_INVALID')).finally(() => close(connection)) }
+        })
         const ended = () => {
           if (connections.has(connection)) void revoke(grant).catch(() => {})
         }

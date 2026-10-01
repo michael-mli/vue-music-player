@@ -17,6 +17,7 @@
     "test:party:pwa": "node scripts/party-pwa-browser.test.mjs",
     "test:party:media": "node scripts/party-media-browser.test.mjs",
     "test:party:supervisor": "node scripts/party-media-supervisor.test.mjs",
+    "test:party:public-transport": "node scripts/party-public-transport.test.mjs",
     "test:party:room-media": "node scripts/party-room-media-browser.test.mjs"
   },
   "dependencies": {

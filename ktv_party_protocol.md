@@ -234,6 +234,9 @@ is required before online playback enters `playing`. Replacement waits for
 provider removal acknowledgment. The private gateway authorizes persisted nonces;
 raw LiveKit signaling/admin routes are not exposed. Its supervisor owns the SFU
 process and terminates it on policy/provider failure, including established RTP.
+The pinned server advertises integrated TURN TLS at 443. For this deployment's
+5349 listener, the gateway corrects only the exact configured TLS URL in
+join/reconnect messages, preserving dynamic credentials and other signaling.
 
 ## 9. UI and requirement coverage
 
