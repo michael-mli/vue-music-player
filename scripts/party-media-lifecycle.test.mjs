@@ -20,7 +20,15 @@ const stubs = {
 let compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText
 compiled = compiled.replace("'vue'", JSON.stringify(vueModule))
 for (const [name, module] of Object.entries(stubs)) compiled = compiled.replace(JSON.stringify(name), JSON.stringify(dataModule(module))).replace(`'${name}'`, JSON.stringify(dataModule(module)))
-const { usePartyMedia } = await import(dataModule(compiled))
+const { usePartyMedia, partyMediaFailureCode } = await import(dataModule(compiled))
+
+test('media failures provide actionable message keys without exposing provider URLs or tokens', () => {
+  assert.equal(partyMediaFailureCode(new Error('wss://provider/rtc?access_token=private')), 'mediaErrorUnavailable')
+  assert.equal(partyMediaFailureCode(Object.assign(new Error('private-body'), { code: 'MEDIA_REVOKED' })), 'mediaErrorPermission')
+  assert.equal(partyMediaFailureCode(Object.assign(new Error('private-label'), { name: 'NotAllowedError' })), 'mediaErrorMicPermission')
+  assert.equal(partyMediaFailureCode(new Error('MEDIA_HEADPHONES_CHANGED')), 'mediaErrorHeadphonesChanged')
+  assert.equal(partyMediaFailureCode(null), 'mediaErrorUnavailable')
+})
 function deferred() { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
 function stream() {
   const track = Object.assign(new EventTarget(), { readyState: 'live', stop() { this.readyState = 'ended' } })
@@ -76,6 +84,20 @@ test('hiding the page cancels pending capture without accepting a later micropho
   f.document.hidden = true; f.document.dispatchEvent(new Event('visibilitychange'))
   const input = stream(); f.micRequests[0].resolve(input); await pending
   assert.equal(input.getAudioTracks()[0].readyState, 'ended'); assert.equal(f.media.captureActive.value, false)
+})
+
+test('stopping capture during audio startup disables the pending output before a microphone request', async t => {
+  const f = fixture(t), startup = deferred()
+  f.audio.enable = () => startup.promise
+  const pending = f.media.prepareCapture()
+  for (let attempt = 0; attempt < 10 && f.media.status.value !== 'preparing'; attempt++) await nextTick()
+  assert.equal(f.media.status.value, 'preparing')
+  await f.media.stop()
+  assert.equal(f.disabled, 1)
+  assert.equal(f.media.captureActive.value, false)
+  startup.resolve(); await pending
+  assert.equal(f.micRequests.length, 0)
+  assert.equal(f.media.status.value, 'off')
 })
 
 test('room connection loss releases an already acquired microphone before a network await', async t => {

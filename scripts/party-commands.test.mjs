@@ -7,6 +7,24 @@ import ts from 'typescript'
 const source = await fs.readFile(new URL('../src/services/partyCommandJournal.ts', import.meta.url), 'utf8')
 const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText
 const reload = () => import(`data:text/javascript;base64,${Buffer.from(compiled + '\n//' + randomUUID()).toString('base64')}`)
+const errorSource = await fs.readFile(new URL('../src/services/partyErrorMessage.ts', import.meta.url), 'utf8')
+const errorCode = ts.transpileModule(errorSource, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText
+const { partyErrorMessage } = await import(`data:text/javascript;base64,${Buffer.from(errorCode).toString('base64')}`)
+
+test('room conflict and identity failures have English and Chinese recovery text without exposing unknown request details', async () => {
+  for (const language of ['en', 'zh']) {
+    const locale = JSON.parse(await fs.readFile(new URL(`../src/locales/${language}.json`, import.meta.url), 'utf8'))
+    const translate = key => { const value = locale.party[key.replace(/^party\./, '')]; assert.equal(typeof value, 'string'); return value }
+    const conflict = partyErrorMessage({ code: 'REVISION_CONFLICT', message: 'private-response' }, translate)
+    const identity = partyErrorMessage({ response: { status: 401 } }, translate)
+    const unknown = partyErrorMessage(new Error('wss://provider/rtc?access_token=private-token'), translate)
+    assert.ok(conflict.length > 10 && identity.length > 10 && unknown.length > 10)
+    assert.doesNotMatch([conflict, identity, unknown].join(' '), /private|access_token|wss:/)
+    assert.notEqual(conflict, unknown)
+    assert.equal(partyErrorMessage({ code: '__proto__' }, translate), unknown)
+    assert.equal(partyErrorMessage({ code: 'toString' }, translate), unknown)
+  }
+})
 class SessionStorage {
   values = new Map()
   get length() { return this.values.size }

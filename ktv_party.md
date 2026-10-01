@@ -10,6 +10,9 @@ deployment evidence and remaining work.
 
 Progress tracker: [ktv_party_implement.md](ktv_party_implement.md)
 
+Implemented protocol, identities, permissions and timing contracts:
+[ktv_party_protocol.md](ktv_party_protocol.md)
+
 ## 1. Product goal
 
 Create an invitation-based KTV party with one shared stage, a shared song queue,

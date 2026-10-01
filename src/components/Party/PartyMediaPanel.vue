@@ -14,7 +14,7 @@
     <p v-if="!available" role="status" class="mt-3 text-sm text-amber-200">{{ $t('party.streamingUnavailable') }}</p>
     <template v-if="online">
       <p role="status" class="mt-4 text-sm text-sky-200" data-party-media-status>{{ $t(`party.media_${status}`) }}</p>
-      <p v-if="failure" role="alert" class="mt-3 text-sm text-red-300">{{ failure }}</p>
+      <p v-if="failure" role="alert" class="mt-3 text-sm text-red-300">{{ $t(`party.${failure}`) }}</p>
       <div class="mt-4 flex flex-wrap gap-3">
         <button v-if="!isAudience && !captureActive" type="button" :disabled="!available || !connected || status === 'connecting'" class="min-h-[44px] rounded-full bg-sky-200 px-5 py-2 font-semibold text-black disabled:opacity-40" @click="media.listen()">{{ $t('party.connectAudience') }}</button>
         <button v-if="isAudience" type="button" class="min-h-[44px] rounded-full border border-white/30 px-4 py-2 text-sm" @click="media.enableAudio()">{{ $t('party.enableReceivedAudio') }}</button>

@@ -91,10 +91,15 @@ export class PartyAudioEngine {
     this.stop()
     this.outputReady = false
     const context = this.context, attempt = ++this.enableId
-    await context.resume()
-    if (context.state !== 'running') throw new Error('AUDIO_GESTURE_REQUIRED')
-    await waitForPartyAudioClock(context, () => this.context === context && attempt === this.enableId)
-    this.outputReady = true
+    try {
+      await context.resume()
+      if (context.state !== 'running') throw new Error('AUDIO_GESTURE_REQUIRED')
+      await waitForPartyAudioClock(context, () => this.context === context && attempt === this.enableId)
+      this.outputReady = true
+    } catch (error) {
+      if (attempt === this.enableId) this.cancelEnable()
+      throw error
+    }
   }
   cancelEnable() { this.enableId++; this.outputReady = false }
   resetRecovery() {

@@ -9,6 +9,25 @@ import type { usePartyPlayback } from './usePartyPlayback'
 import type { PartyClockEstimate } from '@/utils/partyClock'
 
 type Transport = Awaited<ReturnType<typeof createPartyMediaTransport>>
+const mediaErrors: Record<string, string> = {
+  MEDIA_UNAVAILABLE: 'mediaErrorUnavailable', MEDIA_REVOKED: 'mediaErrorPermission', MEDIA_PERMISSION: 'mediaErrorPermission',
+  AUDIO_GESTURE_REQUIRED: 'mediaErrorOutput', AUDIO_OUTPUT_NOT_READY: 'mediaErrorOutput', MEDIA_OUTPUT: 'mediaErrorOutput',
+  MEDIA_MIC_DISCONNECTED: 'mediaErrorMicDisconnected', MEDIA_PERFORMER_ENDED: 'mediaErrorPerformerEnded',
+  MEDIA_AUDIENCE_ENDED: 'mediaErrorAudienceEnded', MEDIA_HEADPHONES_PAUSED: 'mediaErrorHeadphonesPaused',
+  MEDIA_HEADPHONES_CHANGED: 'mediaErrorHeadphonesChanged', MEDIA_CLOCK_LOST: 'mediaErrorClockLost',
+  AUDIO_MEMORY_LIMIT: 'mediaErrorMemory', AUDIO_ASSET_UNAVAILABLE: 'mediaErrorAsset', AUDIO_ASSET_CHANGED: 'mediaErrorAsset',
+  LYRIC_CAPTURE_UNSUPPORTED: 'mediaErrorVideo', MEDIA_CAPTURE_UNAVAILABLE: 'mediaErrorCapture',
+  PUBLISH_BACKING_UNAVAILABLE: 'mediaErrorAsset',
+}
+export function partyMediaFailureCode(reason: unknown) {
+  if (!reason || typeof reason !== 'object') return 'mediaErrorUnavailable'
+  const error = reason as { code?: unknown; message?: unknown; name?: unknown }
+  if (typeof error.code === 'string' && typeof mediaErrors[error.code] === 'string') return mediaErrors[error.code]
+  if (typeof error.message === 'string' && typeof mediaErrors[error.message] === 'string') return mediaErrors[error.message]
+  const names: Record<string, string> = { NotAllowedError: 'mediaErrorMicPermission', SecurityError: 'mediaErrorMicPermission',
+    NotFoundError: 'mediaErrorMicMissing', NotReadableError: 'mediaErrorMicBusy', OverconstrainedError: 'mediaErrorMicConstraint' }
+  return typeof error.name === 'string' && typeof names[error.name] === 'string' ? names[error.name] : 'mediaErrorUnavailable'
+}
 export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<boolean>, clock: Ref<PartyClockEstimate | null>,
   audio: ReturnType<typeof usePartyPlayback>) {
   const available = ref(false), status = ref('off'), failure = ref(''), capture = shallowRef<MediaStream | null>(null)
@@ -44,6 +63,7 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
       permit.expiresServerMs > performance.now() + estimate.offsetMs + estimate.uncertaintyMs + 100)
   }
   async function stop() {
+    const hadCapture = Boolean(capture.value || captureBinding)
     epoch++; starting = false; publisherReady = false; captureBinding = ''; originalReady = false; captureSawActive = false
     const previous = grant.value, previousRoomId = previous?.room.replace(/^ktv-/, ''), oldTransport = transport, oldOriginal = original
     grant.value = null; transport = null; original = null
@@ -55,13 +75,13 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
     if (originalEnabled.value) audio.volume.value = oldMonitorVolume
     originalEnabled.value = false
     oldOriginal?.stop(); if (oldOriginal) void oldOriginal.close()
-    if (mic) audio.disable()
+    if (hadCapture) audio.disable()
     elements.value = []; status.value = 'off'
     await oldTransport?.close().catch(() => {})
     if (previous && previousRoomId) await partyApi.mediaRevoke(previousRoomId, previous.identity).catch(() => {})
   }
   function fail(reason: unknown) {
-    void stop(); failure.value = reason instanceof Error ? reason.message : 'Online audio is unavailable'; status.value = 'error'
+    void stop(); failure.value = partyMediaFailureCode(reason); status.value = 'error'
   }
   async function prepareCapture() {
     if (!canCapture.value || !connected.value || !audio.healthy.value || !binding() || (inputMode.value === 'clean-mic' && !headphones.value)) return
@@ -73,11 +93,11 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
     try {
       await audio.enable('stage')
       if (disposed || epoch !== attempt) return
-      if (!audio.enabled.value) throw new Error('Enable headphone audio before preparing capture.')
+      if (!audio.enabled.value) throw new Error('MEDIA_OUTPUT')
       const stream = await getMicStream({ echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 })
       if (disposed || epoch !== attempt || !canCapture.value || binding() !== expected || document.hidden) { releaseMicStream(stream); return }
       capture.value = stream
-      for (const track of stream.getAudioTracks()) track.addEventListener('ended', () => { if (capture.value === stream) fail(new Error('Microphone disconnected. Prepare capture again.')) }, { once: true })
+      for (const track of stream.getAudioTracks()) track.addEventListener('ended', () => { if (capture.value === stream) fail(new Error('MEDIA_MIC_DISCONNECTED')) }, { once: true })
       status.value = 'ready'
     } catch (error) { if (epoch === attempt && !disposed) fail(error) }
   }
@@ -90,7 +110,7 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
       issued = await partyApi.mediaGrant(roomId, audio.deviceId, 'publisher')
       if (disposed || epoch !== attempt || !capture.value) { await partyApi.mediaRevoke(roomId, issued.identity); return }
       grant.value = issued; lastRenewMs = performance.now()
-      if (!issued.permit) throw new Error('Performance permission is unavailable')
+      if (!issued.permit) throw new Error('MEDIA_PERMISSION')
       tap = audio.createPublisherTap(party.value!.playback!.assets!.instrumental.sha256, issued.permit.generation)
       graph = new PartyPublishGraph(tap.context, tap.instrumental, capture.value, issued.permit, inputMode.value, false)
       graph.setAlignment(alignmentMs.value); graph.setPublishLevels(backingLevel.value, vocalLevel.value)
@@ -102,7 +122,7 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
         return { title: playback.title || '', singer: playback.singerName || '', renderPositionMs: position,
           backingDelayMs: Math.max(0, alignmentMs.value), lyricOffsetMs: playback.lyricOffsetMs, lines: audio.lines.value }
       })
-      connection = await createPartyMediaTransport(issued, { attached() {}, detached() {}, ended: () => { if (epoch === attempt) fail(new Error('Performance connection ended. Prepare capture again.')) } })
+      connection = await createPartyMediaTransport(issued, { attached() {}, detached() {}, ended: () => { if (epoch === attempt) fail(new Error('MEDIA_PERFORMER_ENDED')) } })
       if (disposed || epoch !== attempt) { await connection.close(); return }
       transport = connection
       await connection.connect()
@@ -130,7 +150,7 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
         attached: element => { if (epoch === attempt) elements.value = [...new Set([...elements.value, element])] },
         detached: element => { elements.value = elements.value.filter(item => item !== element) },
         playbackBlocked: () => { if (epoch === attempt) status.value = 'audio-blocked' },
-        ended: () => { if (epoch === attempt) fail(new Error('Audience connection ended. Connect again to listen.')) },
+        ended: () => { if (epoch === attempt) fail(new Error('MEDIA_AUDIENCE_ENDED')) },
       })
       if (disposed || epoch !== attempt) { await connection.close(); return }
       transport = connection; await connection.connect()
@@ -152,8 +172,8 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
     if (!asset || !capture.value || party.value?.self.id !== singerId.value) return
     const attempt = epoch, engine = new PartyAudioEngine()
     original = engine; oldMonitorVolume = audio.volume.value; originalEnabled.value = true; audio.volume.value = 0
-    engine.onSuspended = () => { if (epoch === attempt && original === engine) fail(new Error('Headphone audio paused. Prepare capture again.')) }
-    engine.onRecovery = () => { if (epoch === attempt && original === engine) fail(new Error('Headphone output changed. Prepare capture again.')) }
+    engine.onSuspended = () => { if (epoch === attempt && original === engine) fail(new Error('MEDIA_HEADPHONES_PAUSED')) }
+    engine.onRecovery = () => { if (epoch === attempt && original === engine) fail(new Error('MEDIA_HEADPHONES_CHANGED')) }
     try {
       await engine.enable()
       if (epoch !== attempt || original !== engine) { await engine.close(); return }
@@ -182,8 +202,8 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
     if (disposed || document.hidden) return
     const now = performance.now(), playback = party.value?.playback
     if (now - lastStatusMs >= 5000) { lastStatusMs = now; void refreshStatus() }
-    if (capture.value && (!capture.value.getAudioTracks().some(track => track.readyState === 'live') || !audio.healthy.value)) { fail(new Error('Capture or room clock was lost. Prepare capture again.')); return }
-    if (grant.value?.scope === 'publisher' && (!currentPermit() || !tap?.active)) { fail(new Error('Performance permission ended. Prepare capture again.')); return }
+    if (capture.value && (!capture.value.getAudioTracks().some(track => track.readyState === 'live') || !audio.healthy.value)) { fail(new Error('MEDIA_CLOCK_LOST')); return }
+    if (grant.value?.scope === 'publisher' && (!currentPermit() || !tap?.active)) { fail(new Error('MEDIA_PERMISSION')); return }
     if (capture.value && !grant.value && playback && ['scheduled', 'playing'].includes(playback.state)) void startPublisher()
     if (captureBinding && playback && ['scheduled', 'playing'].includes(playback.state)) captureSawActive = true
     else if (captureBinding && captureSawActive) { void stop(); return }

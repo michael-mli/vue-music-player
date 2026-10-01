@@ -39,7 +39,7 @@
       </div>
       
       <!-- Main View -->
-      <main class="flex-1 flex flex-col bg-gradient-to-b from-light-surface to-light-bg dark:from-spotify-dark dark:to-spotify-black" :class="isPartyRoute ? 'pb-0' : 'pb-36 sm:pb-0'">
+      <main class="flex-1 flex flex-col bg-gradient-to-b from-light-surface to-light-bg dark:from-spotify-dark dark:to-spotify-black" :class="isPartyRoute ? 'pb-0 min-w-0' : 'pb-36 sm:pb-0'">
         <!-- Header -->
         <Header v-if="!isPartyStage" @toggle-sidebar="showMobileSidebar = !showMobileSidebar" />
         

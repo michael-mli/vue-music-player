@@ -1,5 +1,5 @@
 <template>
-  <div class="h-full overflow-y-auto p-5 sm:p-8">
+  <div class="party-page h-full overflow-y-auto p-5 sm:p-8">
     <form class="mx-auto max-w-lg rounded-2xl border border-white/10 bg-white/5 p-6" @submit.prevent="redeem">
       <RouterLink to="/party" class="text-sm text-spotify-green">← {{ $t('party.back') }}</RouterLink>
       <h1 class="mt-4 text-3xl font-bold">{{ $t('party.pairDevice') }}</h1>
@@ -18,11 +18,14 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { partyErrorMessage } from '@/services/partyErrorMessage'
 import { useRouter } from 'vue-router'
 import { partyApi } from '@/services/partyApi'
 import { savePartyDevice } from '@/services/partyDevice'
 
 const router = useRouter()
+const { t } = useI18n()
 const code = ref('')
 const error = ref('')
 const busy = ref(false)
@@ -46,7 +49,7 @@ async function redeem() {
     savePartyDevice(grant)
     await router.replace(`/party/${grant.roomId}${grant.scope === 'display' ? '/stage' : ''}`)
   } catch (reason) {
-    error.value = String((reason as Error).message)
+    error.value = partyErrorMessage(reason, t)
   } finally {
     busy.value = false
   }

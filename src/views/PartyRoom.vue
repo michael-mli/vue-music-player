@@ -1,5 +1,5 @@
 <template>
-  <div class="party-room h-full overflow-y-auto p-5 sm:p-8" :class="stage ? 'bg-[#101820]' : ''">
+  <div class="party-page party-room h-full overflow-y-auto p-5 sm:p-8" :class="stage ? 'bg-[#101820]' : ''">
     <div class="mx-auto" :class="stage ? 'max-w-6xl' : 'max-w-4xl'">
       <div v-if="loading && !party" class="text-gray-400">{{ $t('party.loading') }}</div>
       <div v-else-if="error && !party" role="alert" class="rounded-xl bg-red-500/10 p-5 text-red-300">
@@ -210,8 +210,8 @@
                 <p class="mt-2 text-sm text-gray-400">{{ $t('party.pairHint') }}</p>
                 <fieldset class="mt-4 flex flex-wrap gap-4 text-sm">
                   <legend class="mb-2 font-medium">{{ $t('party.deviceAccess') }}</legend>
-                  <label class="flex items-center gap-2"><input v-model="pairScope" type="radio" value="display" class="accent-green-500" />{{ $t('party.displayScope') }}</label>
-                  <label class="flex items-center gap-2"><input v-model="pairScope" type="radio" value="controller" class="accent-green-500" />{{ $t('party.controllerScope') }}</label>
+                  <label class="party-touch-label flex items-center gap-2"><input v-model="pairScope" type="radio" value="display" class="accent-green-500" />{{ $t('party.displayScope') }}</label>
+                  <label class="party-touch-label flex items-center gap-2"><input v-model="pairScope" type="radio" value="controller" class="accent-green-500" />{{ $t('party.controllerScope') }}</label>
                 </fieldset>
                 <p class="mt-2 text-xs text-gray-400">{{ pairScope === 'display' ? $t('party.displayScopeHint') : $t('party.controllerScopeHint') }}</p>
                 <button type="button" :disabled="pairBusy" class="mt-4 rounded-full border border-spotify-green px-4 py-2 text-sm text-spotify-green disabled:opacity-50" @click="createPairing">
@@ -319,6 +319,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { partyErrorMessage } from '@/services/partyErrorMessage'
 import { partyApi, type PartyDeviceSummary, type PartyMember, type PartyPairing, type PartySnapshot, type PartyTurnCommand } from '@/services/partyApi'
 import { subscribeParty } from '@/services/partyRealtime'
 import type { PartySubscription } from '@/services/partyRealtime'
@@ -419,7 +420,7 @@ function formatTime(value: string) { return new Date(value).toLocaleString() }
 async function loadDevices() {
   if (party.value?.deviceScope || party.value?.self.admission !== 'admitted') return
   try { pairedDevices.value = await partyApi.devices(roomId.value) }
-  catch (reason) { error.value = String((reason as Error).message) }
+  catch (reason) { error.value = partyErrorMessage(reason, t) }
 }
 
 async function createPairing() {
@@ -433,7 +434,7 @@ async function createPairing() {
     pairExpireTimer = window.setTimeout(() => { pairing.value = null },
       Math.max(0, Date.parse(pairing.value.expiresAt) - Date.now()))
   }
-  catch (reason) { error.value = String((reason as Error).message) }
+  catch (reason) { error.value = partyErrorMessage(reason, t) }
   finally { pairBusy.value = false }
 }
 
@@ -442,7 +443,7 @@ async function revokeDevice(deviceId: string) {
   pairBusy.value = true
   error.value = ''
   try { await partyApi.revokeDevice(roomId.value, deviceId); await loadDevices() }
-  catch (reason) { error.value = String((reason as Error).message) }
+  catch (reason) { error.value = partyErrorMessage(reason, t) }
   finally { pairBusy.value = false }
 }
 
@@ -476,7 +477,7 @@ async function refresh() {
   } catch (reason) {
     if (requestedRoom !== roomId.value) return
     party.value = null
-    error.value = String((reason as Error).message)
+    error.value = partyErrorMessage(reason, t)
   } finally {
     loading.value = false
   }
@@ -506,7 +507,7 @@ async function act(work: () => Promise<PartySnapshot>) {
   error.value = ''
   try { applySnapshot(await work()) }
   catch (reason) {
-    const message = String((reason as Error).message)
+    const message = partyErrorMessage(reason, t)
     await refresh()
     error.value = message
   }
@@ -611,7 +612,7 @@ async function closeRoom() {
   if (!window.confirm(t('party.confirmClose')) || busy.value) return
   busy.value = true
   try { await partyApi.close(roomId.value); await router.push('/party') }
-  catch (reason) { error.value = String((reason as Error).message); busy.value = false }
+  catch (reason) { error.value = partyErrorMessage(reason, t); busy.value = false }
 }
 async function copyLink() {
   if (!party.value?.invitationCode) return

@@ -6,6 +6,8 @@ Last updated: 2026-10-01
 
 Design reference: [ktv_party.md](ktv_party.md)
 
+Implemented contracts: [ktv_party_protocol.md](ktv_party_protocol.md)
+
 Current status: The durable-room preview is deployed at
 `https://music.micstec.com/party` with frontend `1dfa35c`
 (`main-B8OVLbnL.js`) and backend `09879ac`. Online media remains disabled.
@@ -117,6 +119,13 @@ guide-free audience audio, then the native virtual output loses seconds and
 correctly enters drift recovery. A separately owned PulseAudio sink reproduces
 the same failure; complete guide/handover and physical acceptance remain open.
 
+The next UI/capture checkpoint adds cancellation before microphone acquisition,
+English/Chinese recovery messages that omit arbitrary provider error text, 44 px
+touch controls, keyboard focus and wrapping of long room/member/song names.
+Party units pass 49/49 and the built-app UI checker passes 29/29. Protocol and
+reference contracts now live in `ktv_party_protocol.md`. This checkpoint is being
+prepared for deployment; it does not resolve streaming/device acceptance.
+
 ## 1. How to use this tracker
 
 - Mark work items `[x]` only when implemented and verified. Documentation of an
@@ -135,7 +144,7 @@ the same failure; complete guide/handover and physical acceptance remain open.
 
 | Phase | Deliverable | Depends on | Status | Evidence |
 | --- | --- | --- | --- | --- |
-| P00 | Scope baseline and technical contracts | Design | In progress | Baseline tag and source inventory; contracts remain open |
+| P00 | Scope baseline and technical contracts | Design | In progress | Implemented protocol/reference inventory documented; configurable timing policy remains open |
 | P01 | Two-device audio feasibility prototype | P00 minimum timing contract | In progress | Monotonic clock estimator tested; audio prototype and acoustic measurements open |
 | P02 | Rooms, identities, invitations, permissions, persistence | P00 | Complete | Transactional general/encrypted receipts, restart/rollback, guest recovery, expiry/retention, permissions and configured bounds pass backend/browser/public checks |
 | P03 | Realtime state, commands, queue, leases | P02 | In progress | Versioned playback timeline, checkpoints, presence, renewable stage leases and turn history tested; fair automatic next turns and host-loss grace/transfer tested |
@@ -168,25 +177,36 @@ Deliverables: implementation baseline, precise terminology, protocol/schema draf
 and reference device setup. Use the design's defaults where a routine decision is
 needed; record assumptions without presenting them as user-confirmed decisions.
 
-- [ ] P00.1 Record whether the first public release is local, online, or hybrid;
+- [x] P00.1 Record whether the first public release is local, online, or hybrid;
   retain all required later modes in the milestone list.
-- [ ] P00.2 Record reference desktop/phone browsers, speaker path, headphone path,
+- [x] P00.2 Record reference desktop/phone browsers, speaker path, headphone path,
   network setup, sample tracks, and existing deployment topology.
-- [ ] P00.3 Confirm the source inventory, Node runtime required by current SQLite
+- [x] P00.3 Confirm the source inventory, Node runtime required by current SQLite
   usage, migration conventions, auth flow, media URL/CORS/Range behavior, and PWA cache.
-- [ ] P00.4 Specify command/snapshot schemas, room vs member vs device IDs,
+- [x] P00.4 Specify command/snapshot schemas, room vs member vs device IDs,
   permission matrix, queue states, playback generations, clock IDs, and error codes.
 - [ ] P00.5 Finalize default limits, readiness/grace/lease timeouts, queue fairness,
   invitation/pairing lifetime, and retention policy as configurable values.
-- [ ] P00.6 Sketch create/join/waiting, stage, Songs/Queue/Sing/People, and host flows,
+- [x] P00.6 Sketch create/join/waiting, stage, Songs/Queue/Sing/People, and host flows,
   including audio enablement, loading, rejection, removal, and reconnect states.
 
 Exit criteria:
 
-- [ ] The contracts cover R01–R14 and identify which release supplies each one.
-- [ ] No room control path relies on global app-admin privileges or client-only checks.
-- [ ] Every timing field has a unit and clock origin; role and device capability
+- [x] The contracts cover R01–R14 and identify which release supplies each one.
+- [x] No room control path relies on global app-admin privileges or client-only checks.
+- [x] Every timing field has a unit and clock origin; role and device capability
   rules are unambiguous enough to implement.
+
+Evidence: `ktv_party_protocol.md` records the deployed local milestone, required
+online/hybrid delivery, chosen desktop/phone/headphone reference and unverified
+physical matrix, identities, permissions, schemas and clock origins. Node 25.2.1,
+additive SQLite migrations and scoped auth are verified in this deployment.
+A read-only production instrumental probe returned HTTP 206, an exact 16-byte
+body and matching Content-Range; party assets use same-origin URLs. PWA/cache
+behavior has the separate six-check upgrade test. Synthetic fixtures use a
+45-second 440 Hz local track and 60-second streaming tones (backing 440 Hz,
+mic 880 Hz, private guide 1729 Hz); these are not acoustic evidence. P00.5 stays
+open because several coordinated timing constants are not runtime settings.
 
 Evidence: `ktv-party-baseline-2026-09-29` points to `6e8504b` on main and was
 pushed to origin before implementation. The current work is on `feat/ktv-party`.
@@ -380,8 +400,15 @@ Likely files: `src/views/party/{PartyHome,PartyJoin,PartyRoom,PartyStage,PartyPa
   party state and permitted callbacks rather than the solo player store.
 - [x] P04.8 Add party layout/audio ownership hooks in App; handle global controls,
   keyboard/media-session actions, floating recorder, and solo-player restoration.
-- [ ] P04.9 Complete Chinese/English strings, keyboard/focus support, touch targets,
+- [x] P04.9 Complete Chinese/English strings, keyboard/focus support, touch targets,
   small-screen layout, large-screen readability, and fullscreen fallback.
+
+Software evidence: the built-app UI checker passes 29/29 with English/Chinese,
+320 px entry/pairing/host/guest pages, long names/song titles, 1280 px stage,
+44 px controls, native keyboard tab focus and accessible names. Fullscreen exit
+and fallback were exercised in the earlier 59-check Chrome journey. These are
+desktop Chrome/viewport checks; physical readability, assistive technology and
+the broader browser/device matrix remain phase exit gates.
 
 Exit criteria:
 
@@ -717,7 +744,9 @@ those checks pass. Complete remaining local/browser/PWA release gates alongside
 streaming.
 Physical phone/screen timing, memory, background behavior, broad browser coverage
 and real streaming remain acceptance gates. Phone tabs and QR invitations are live;
-general receipts, cleanup and returning-invite recovery are now deployed.
+general receipts, cleanup and returning-invite recovery are now deployed. Release
+the verified UI/capture checkpoint, then continue supervised public transport
+validation while the public online flag stays disabled.
 
 ### Decision log
 
@@ -815,6 +844,17 @@ Integrated default and isolated-sink journeys remain failed at rendered drift,
 with provider-confirmed mixed audio/lyric video verified before recovery
 (`/tmp/ktv-audio-readiness-room-media-final.log`,
 `/tmp/ktv-audio-readiness-room-media-sink.log`). No physical alignment claim.
+
+UI/capture and protocol checkpoint (2026-10-01): party units 49/49
+(`/tmp/ktv-ui-errors-units.log`), build/type check
+(`/tmp/ktv-ui-layout-build.log`) and real built-app Chrome UI checks 29/29
+(`/tmp/ktv-ui-layout-browser.log`). Owned temporary SQLite rooms and browser
+contexts were removed. P00.1–4/P00.6 contract documentation and P04.9 software
+work are complete; P00.5 runtime timing policy and physical/browser phase exits
+stay open. Neither an exactly silent output node nor temporarily raising the
+owned PulseAudio process priority resolved virtual render-clock stalls; both
+experiments were reverted. The integrated SFU guide/handover journey still fails
+its real drift guard (`/tmp/ktv-pulse-priority-room-media-final.log`).
 
 ```text
 Date:

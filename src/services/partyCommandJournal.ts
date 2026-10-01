@@ -32,7 +32,7 @@ export async function runPartyMutation<T>(principal: string, route: string, payl
   if (!valid(pending, now) && store) try { pending = JSON.parse(store.getItem(key) || 'null') } catch { /* Use a fresh command. */ }
   for (const name of memory.keys()) pendingKeys.add(name)
   if (!valid(pending, now)) {
-    if (pendingKeys.size >= 100) throw new Error('Too many unresolved requests. Retry an earlier request before sending a new one.')
+    if (pendingKeys.size >= 100) throw Object.assign(new Error('Too many unresolved requests. Retry an earlier request before sending a new one.'), { code: 'COMMAND_JOURNAL_FULL' })
     pending = { id: crypto.randomUUID(), createdAt: now }
   }
   const command = pending

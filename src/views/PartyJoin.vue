@@ -1,5 +1,5 @@
 <template>
-  <div class="h-full overflow-y-auto p-5 sm:p-8">
+  <div class="party-page h-full overflow-y-auto p-5 sm:p-8">
     <form class="mx-auto max-w-lg rounded-2xl border border-white/10 bg-white/5 p-6" @submit.prevent="joinRoom">
       <RouterLink to="/party" class="text-sm text-spotify-green">← {{ $t('party.back') }}</RouterLink>
       <h1 class="mt-4 text-3xl font-bold">{{ $t('party.joinRoom') }}</h1>
@@ -22,11 +22,14 @@
 
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { partyErrorMessage } from '@/services/partyErrorMessage'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { partyApi } from '@/services/partyApi'
 
 const router = useRouter()
+const { t } = useI18n()
 const auth = useAuthStore()
 const code = ref('')
 const displayName = ref('')
@@ -49,7 +52,7 @@ async function resolveInvitation() {
       document.getElementById('party-guest-name')?.focus()
     }
   } catch (reason) {
-    if (current === lookup) error.value = String((reason as Error).message)
+    if (current === lookup) error.value = partyErrorMessage(reason, t)
   } finally { if (current === lookup) checking.value = false }
 }
 
@@ -86,7 +89,7 @@ async function joinRoom() {
     const result = await partyApi.join(code.value, displayName.value)
     await router.push(`/party/${result.room.id}`)
   } catch (reason) {
-    error.value = String((reason as Error).message)
+    error.value = partyErrorMessage(reason, t)
   } finally {
     busy.value = false
   }

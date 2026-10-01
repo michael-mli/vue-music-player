@@ -1,5 +1,5 @@
 <template>
-  <div class="h-full overflow-y-auto p-5 sm:p-8">
+  <div class="party-page h-full overflow-y-auto p-5 sm:p-8">
     <div class="mx-auto max-w-4xl space-y-7">
       <div>
         <p class="text-sm font-semibold uppercase tracking-widest text-spotify-green">{{ $t('party.eyebrow') }}</p>
@@ -17,7 +17,7 @@
           <label class="mt-4 block text-sm" for="party-host-name">{{ $t('party.yourName') }}</label>
           <input id="party-host-name" v-model="displayName" maxlength="40" required
             class="mt-2 w-full rounded-lg border border-white/20 bg-black/25 px-3 py-2 text-white" />
-          <label class="mt-4 flex items-center gap-3 text-sm">
+          <label class="party-touch-label mt-4 flex items-center gap-3 text-sm">
             <input v-model="approvalRequired" type="checkbox" class="accent-green-500" />
             {{ $t('party.requireApproval') }}
           </label>
@@ -56,11 +56,14 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { partyErrorMessage } from '@/services/partyErrorMessage'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { partyApi, type PartyRoomSummary } from '@/services/partyApi'
 
 const router = useRouter()
+const { t } = useI18n()
 const auth = useAuthStore()
 const roomName = ref('')
 const displayName = ref('')
@@ -72,7 +75,7 @@ const error = ref('')
 onMounted(async () => {
   await auth.ensureIdentity()
   if (auth.isRegistered) displayName.value = auth.displayName
-  try { rooms.value = await partyApi.list() } catch (reason) { error.value = String((reason as Error).message) }
+  try { rooms.value = await partyApi.list() } catch (reason) { error.value = partyErrorMessage(reason, t) }
 })
 
 async function createRoom() {
@@ -83,7 +86,7 @@ async function createRoom() {
     const result = await partyApi.create(roomName.value, displayName.value, approvalRequired.value)
     await router.push(`/party/${result.room.id}`)
   } catch (reason) {
-    error.value = String((reason as Error).message)
+    error.value = partyErrorMessage(reason, t)
   } finally {
     busy.value = false
   }

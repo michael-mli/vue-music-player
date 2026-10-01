@@ -181,6 +181,7 @@ try {
   await poll(() => evaluate(host, "[...document.querySelectorAll('select')].some(item => [...item.options].some(option => option.value === 'online') && !item.disabled)"), 'host mode selector ready')
   await evaluate(host, "(() => { const item = [...document.querySelectorAll('select')].find(item => [...item.options].some(option => option.value === 'online')); item.value = 'online'; item.dispatchEvent(new Event('change', {bubbles:true})); })()")
   await poll(async () => (await api(1, pathRoom)).room.performanceMode === 'online', 'room switches online')
+  await poll(() => evaluate(audience, "![...document.querySelectorAll('button')].some(item => item.textContent.trim() === 'Enable stage audio')"), 'common screen applies online snapshot')
   check(await evaluate(audience, "![...document.querySelectorAll('button')].some(item => item.textContent.trim() === 'Enable stage audio')"), 'online common screen cannot independently enable backing')
   check(await evaluate(phone, "![...document.querySelectorAll('select')].some(item => [...item.options].some(option => option.value === 'online'))"), 'ordinary singer has no room-mode admin selector')
   const request = await api(2, `${pathRoom}/queue`, { commandId: randomUUID(), songId: 1, title: 'Live stream test', requestNext: false, singerMemberId: singer.self.id })
