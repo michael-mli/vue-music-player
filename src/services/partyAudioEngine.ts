@@ -2,7 +2,9 @@ import type { PartyAudioAsset, PartyLease, PartyPlayback, PartySegment } from '.
 import type { PartyClockEstimate } from '@/utils/partyClock'
 import { serverToAudioTime, partyOutputClock, partyPosition } from '@/utils/partyTimeline'
 
-interface Source { node: AudioBufferSourceNode; gain: GainNode; generation: number; deadlineMs: number; when: number; offsetMs: number; stopAt?: number }
+interface PublisherTap { output: GainNode; sources: Set<Source>; closed: boolean; generation: number }
+interface Source { node: AudioBufferSourceNode; gain: GainNode; generation: number; deadlineMs: number; when: number; offsetMs: number; stopAt?: number;
+  leaseStopAt: number; publish: { tap: PublisherTap; gain: GainNode } | null }
 export interface PartyAudioDiagnostics {
   contextState: string
   sampleRate: number
@@ -19,6 +21,8 @@ export class PartyAudioEngine {
   private context: AudioContext | null = null
   private buffer: AudioBuffer | null = null
   private assetHash = ''
+  private assetRole: 'instrumental' | 'original' = 'instrumental'
+  private publisherTap: PublisherTap | null = null
   private source: Source | null = null
   private next: Source | null = null
   private loadId = 0
@@ -39,6 +43,14 @@ export class PartyAudioEngine {
   get enabled() { return this.context?.state === 'running' }
   get preparedHash() { return this.assetHash }
   get durationMs() { return (this.buffer?.duration || 0) * 1000 }
+  // Capture uses the rendered source clock, before the device's output delay.
+  // This differs from the wall-clock lyric position used on independent viewers.
+  get renderPositionMs(): number | null {
+    const source = this.source, context = this.context
+    if (!source || !context || context.state !== 'running' || context.currentTime < source.when ||
+      context.currentTime >= Math.min(source.stopAt ?? Infinity, source.leaseStopAt)) return null
+    return Math.min(this.durationMs, source.offsetMs + (context.currentTime - source.when) * 1000)
+  }
   get decodedBytes() { return this.estimatedBytes }
   get sampleRate() { return this.context?.sampleRate || 0 }
   get diagnostics() { return { ...this.stats, contextState: this.context?.state || 'closed', sampleRate: this.sampleRate,
@@ -69,9 +81,9 @@ export class PartyAudioEngine {
     this.stop(20); this.releaseBuffer(); this.onRecovery?.(reason)
   }
 
-  async prepare(asset: PartyAudioAsset) {
+  async prepare(asset: PartyAudioAsset, role: 'instrumental' | 'original' = 'instrumental') {
     if (!this.context || !this.enabled) throw new Error('AUDIO_GESTURE_REQUIRED')
-    if (this.assetHash === asset.sha256 && this.buffer) return
+    if (this.assetHash === asset.sha256 && this.assetRole === role && this.buffer) return
     this.releaseBuffer()
     const loadId = ++this.loadId
     const context = this.context
@@ -92,8 +104,39 @@ export class PartyAudioEngine {
       if (loadId !== this.loadId || context !== this.context) return
       const size = buffer.length * buffer.numberOfChannels * 4
       if (size > this.maxDecodedBytes || Math.abs(buffer.duration * 1000 - asset.durationMs) > 250) throw new Error('AUDIO_DECODE_MISMATCH')
-      this.buffer = buffer; this.assetHash = asset.sha256; this.estimatedBytes = size
+      this.buffer = buffer; this.assetHash = asset.sha256; this.assetRole = role; this.estimatedBytes = size
     } finally { window.clearTimeout(timeout); if (this.abort === abort) this.abort = null }
+  }
+
+  createPublisherTap(expectedHash: string, generation: number) {
+    if (!this.enabled || !this.buffer || !expectedHash || expectedHash !== this.assetHash || this.assetRole !== 'instrumental' ||
+      !Number.isSafeInteger(generation) || generation < 1) throw new Error('PUBLISH_BACKING_UNAVAILABLE')
+    if (this.publisherTap && !this.publisherTap.closed) throw new Error('PUBLISH_BACKING_IN_USE')
+    const context = this.context!
+    const tap: PublisherTap = { output: context.createGain(), sources: new Set(), closed: false, generation }
+    tap.output.gain.value = 1; this.publisherTap = tap
+    for (const source of [this.source, this.next]) if (source && source.stopAt === undefined && source.generation === generation) this.attachPublish(source, tap)
+    return { context, instrumental: tap.output, get active() { return !tap.closed }, close: () => this.closePublisherTap(tap) }
+  }
+  private attachPublish(source: Source, tap: PublisherTap) {
+    const gain = this.context!.createGain(), when = Math.max(this.context!.currentTime, source.when)
+    gain.gain.setValueAtTime(0, when); gain.gain.linearRampToValueAtTime(1, when + .02)
+    source.node.connect(gain); gain.connect(tap.output)
+    source.publish = { gain, tap }; tap.sources.add(source)
+  }
+  private closePublisherTap(tap: PublisherTap) {
+    if (tap.closed) return
+    tap.closed = true
+    for (const source of tap.sources) if (source.publish?.tap === tap) {
+      try { source.node.disconnect(source.publish.gain) } catch { /* Source already released. */ }
+      source.publish.gain.disconnect(); source.publish = null
+    }
+    tap.sources.clear(); tap.output.disconnect()
+    if (this.publisherTap === tap) this.publisherTap = null
+  }
+  private clearSource(source: Source) {
+    source.node.disconnect(); source.gain.disconnect()
+    if (source.publish) { source.publish.gain.disconnect(); source.publish.tap.sources.delete(source); source.publish = null }
   }
 
   setVolume(value: number) {
@@ -109,19 +152,26 @@ export class PartyAudioEngine {
     const now = this.context.currentTime
     const time = Math.max(now, when ?? now) + (source.when <= now ? fadeMs / 1000 : 0)
     source.stopAt = time
-    source.node.onended = time > now ? () => { source.node.disconnect(); source.gain.disconnect() } : null
+    source.node.onended = time > now ? () => this.clearSource(source) : null
     if (fadeMs && source.when <= now) {
       source.gain.gain.cancelScheduledValues(now)
       source.gain.gain.setValueAtTime(source.gain.gain.value, now)
       source.gain.gain.linearRampToValueAtTime(0, time)
     } else { source.gain.gain.cancelScheduledValues(time); source.gain.gain.setValueAtTime(0, time) }
+    if (source.publish) {
+      const gain = source.publish.gain.gain
+      gain.cancelScheduledValues(now)
+      if (fadeMs && source.when <= now) { gain.setValueAtTime(gain.value, now); gain.linearRampToValueAtTime(0, time) }
+      else gain.setValueAtTime(0, time)
+    }
     try { source.node.stop(time) } catch { /* Already ended. */ }
-    if (time <= this.context.currentTime) { source.node.disconnect(); source.gain.disconnect() }
+    if (time <= this.context.currentTime) this.clearSource(source)
   }
 
   stop(fadeMs = 0) { this.cancel(this.source, undefined, fadeMs); this.cancel(this.next, undefined, fadeMs); this.source = null; this.next = null; this.stats.phaseErrorMs = null }
   releaseBuffer() {
     this.loadId++; this.abort?.abort(); this.abort = null
+    if (this.publisherTap) this.closePublisherTap(this.publisherTap)
     this.stop(); this.buffer = null; this.assetHash = ''; this.estimatedBytes = 0
   }
 
@@ -139,9 +189,10 @@ export class PartyAudioEngine {
     const node = context.createBufferSource(), gain = context.createGain()
     node.buffer = buffer; node.connect(gain); gain.connect(context.destination)
     gain.gain.setValueAtTime(0, when); gain.gain.linearRampToValueAtTime(this.volume, when + 0.02)
-    const source: Source = { node, gain, generation: segment.generation, deadlineMs, when, offsetMs: Math.max(0, positionMs) }
+    const source: Source = { node, gain, generation: segment.generation, deadlineMs, when, offsetMs: Math.max(0, positionMs), leaseStopAt: Infinity, publish: null }
+    if (this.publisherTap?.generation === source.generation && this.assetRole === 'instrumental') this.attachPublish(source, this.publisherTap)
     node.onended = () => {
-      node.disconnect(); gain.disconnect()
+      this.clearSource(source)
       if (this.source === source) this.source = null
       if (this.next === source) this.next = null
       if (!source.stopAt) this.onEnded?.(source.generation)
@@ -158,6 +209,7 @@ export class PartyAudioEngine {
     // backing audible indefinitely. Later stop() calls replace an earlier
     // scheduled stop only for a current, renewed generation.
     const deadline = Math.max(this.context.currentTime, serverToAudioTime(this.context, deadlineMs - clock.uncertaintyMs - 50, clock.offsetMs))
+    source.leaseStopAt = deadline
     try { source.node.stop(deadline) } catch { /* Source already ended. */ }
   }
 
@@ -168,7 +220,7 @@ export class PartyAudioEngine {
       lease.expiresServerMs <= performance.now() + clock.offsetMs + clock.uncertaintyMs + 100) { this.stop(); return }
     const nowMs = performance.now() + clock.offsetMs
     const asset = role === 'stage' ? playback.assets?.instrumental : playback.assets?.original
-    if (!asset || asset.sha256 !== this.assetHash) { this.stop(); return }
+    if (!asset || asset.sha256 !== this.assetHash || this.assetRole !== (role === 'stage' ? 'instrumental' : 'original')) { this.stop(); return }
     const pending = playback.pendingTransition
     let segment: PartySegment = playback
     if (pending && nowMs >= pending.effectiveServerMs) {

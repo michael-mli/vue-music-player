@@ -9,14 +9,19 @@
     "preview": "vite preview",
     "type-check": "vue-tsc --noEmit",
     "test:lyrics": "node --test scripts/lyrics-timing.test.mjs",
-    "test:party": "node --test scripts/party-clock.test.mjs scripts/party-audio.test.mjs scripts/party-commands.test.mjs",
-    "test:party:browser": "node scripts/party-browser.test.mjs"
+    "test:party": "node --test scripts/party-clock.test.mjs scripts/party-audio.test.mjs scripts/party-commands.test.mjs scripts/party-publish.test.mjs scripts/party-capture.test.mjs scripts/party-media-lifecycle.test.mjs scripts/party-media-config.test.mjs",
+    "test:party:browser": "node scripts/party-browser.test.mjs",
+    "test:party:pwa": "node scripts/party-pwa-browser.test.mjs",
+    "test:party:media": "node scripts/party-media-browser.test.mjs",
+    "test:party:supervisor": "node scripts/party-media-supervisor.test.mjs",
+    "test:party:room-media": "node scripts/party-room-media-browser.test.mjs"
   },
   "dependencies": {
     "@breezystack/lamejs": "^1.2.7",
     "@headlessui/vue": "^1.7.16",
     "@heroicons/vue": "^2.0.18",
     "axios": "^1.6.2",
+    "livekit-client": "2.22.3",
     "opencc-js": "^1.4.1",
     "pinia": "^2.1.7",
     "qrcode": "1.5.4",

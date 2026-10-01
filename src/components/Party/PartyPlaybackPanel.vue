@@ -8,8 +8,8 @@
       <button v-if="stage && fullscreenSupported" type="button" class="min-h-[44px] rounded-full border border-white/30 px-4 py-2 text-sm" :aria-pressed="isFullscreen" @click="fullscreen">{{ $t(isFullscreen ? 'party.exitFullscreen' : 'party.fullscreen') }}</button>
     </header>
     <div class="mt-4 flex flex-wrap items-center gap-3">
-      <button v-if="stage && !enabled" type="button" class="rounded-full bg-spotify-green px-5 py-3 font-semibold text-black" @click="audio.enable('stage')">{{ $t('party.enableStageAudio') }}</button>
-      <button v-if="!stage && canGuide && !enabled" type="button" class="rounded-full bg-spotify-green px-5 py-3 font-semibold text-black" @click="audio.enable('guide')">{{ $t('party.enableGuide') }}</button>
+      <button v-if="stage && !enabled && !audience && (party.room.performanceMode || 'local') === 'local'" type="button" class="rounded-full bg-spotify-green px-5 py-3 font-semibold text-black" @click="audio.enable('stage')">{{ $t('party.enableStageAudio') }}</button>
+      <button v-if="!stage && canGuide && !enabled && !audience && party.room.performanceMode !== 'online'" type="button" class="rounded-full bg-spotify-green px-5 py-3 font-semibold text-black" @click="audio.enable('guide')">{{ $t('party.enableGuide') }}</button>
       <button v-if="enabled" type="button" class="rounded-full border border-white/30 px-4 py-3 text-sm" @click="audio.disable()">{{ $t('party.disableAudio') }}</button>
       <p class="text-sm text-gray-300" role="status">{{ $t(blocked ? 'party.audioRecoveryWaiting' : preparing ? 'party.audioLoading' : prepared ? 'party.audioPrepared' : enabled ? 'party.audioEnabled' : 'party.audioMuted') }}</p>
       <p v-if="stage && enabled" class="text-sm text-spotify-green">{{ $t(assignedHere ? 'party.stageAssignedHere' : 'party.stageAwaitingAssignment') }}</p>
@@ -19,7 +19,7 @@
     <button v-if="failure && enabled" type="button" class="mt-2 min-h-[44px] text-sm text-spotify-green underline" @click="retryAudio">{{ $t(failure === 'audioOutputChanged' ? 'party.confirmOutputAndRetry' : 'party.retryAudio') }}</button>
     <div v-if="enabled" class="mt-5 flex flex-wrap items-center gap-4">
       <label class="flex items-center gap-3 text-sm">{{ $t(purpose === 'guide' ? 'party.guideVolume' : 'party.stageVolume') }}
-        <input v-model.number="volume" type="range" min="0" max="1" step="0.01" class="w-32 accent-green-400" />
+        <input v-model.number="volume" :disabled="privateOriginal" type="range" min="0" max="1" step="0.01" class="w-32 accent-green-400" />
       </label>
       <div v-if="purpose === 'guide'" class="flex flex-wrap items-center gap-2 text-sm">
         <span>{{ $t('party.guideTiming') }}</span>
@@ -31,7 +31,7 @@
     </div>
     <p v-if="purpose === 'guide'" class="mt-2 text-xs text-gray-400">{{ $t('party.guideCalibrationHint') }}</p>
     <p v-if="calibrationInvalidated && purpose === 'guide'" class="mt-2 text-xs text-amber-200">{{ $t('party.calibrationReset') }}</p>
-    <details v-if="enabled" class="mt-4 rounded-xl border border-white/10 p-3 text-xs text-gray-300">
+    <details v-if="enabled || failure" class="mt-4 rounded-xl border border-white/10 p-3 text-xs text-gray-300">
       <summary class="min-h-[32px] cursor-pointer">{{ $t('party.audioDiagnostics') }}</summary>
       <p class="mt-2">{{ $t('party.audioDiagnosticsHint') }}</p>
       <dl class="mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
@@ -81,7 +81,7 @@
       </div>
       <p v-if="stagePrepared && !startSafe" class="mt-2 text-sm text-gray-400" role="status">{{ $t('party.waitingForSilence') }}</p>
     </div>
-    <div v-if="playback?.assets" class="mt-7 border-t border-white/10 pt-6 text-center">
+    <div v-if="playback?.assets && !audience" class="mt-7 border-t border-white/10 pt-6 text-center">
       <p class="text-sm text-emerald-200" role="status">{{ $t(`party.playback_${segment?.state || playback.state}`) }}</p>
       <p v-if="countdown" class="mt-4 text-5xl font-bold tabular-nums text-spotify-green" role="status">{{ countdown }}</p>
       <h3 class="mt-3 text-2xl font-bold sm:text-4xl">{{ playback.title }}</h3>
@@ -95,7 +95,7 @@
       <p v-else class="mt-8 text-gray-400">{{ $t('party.noPartyLyrics') }}</p>
       <div class="mx-auto mt-8 flex max-w-xl items-center gap-3 text-xs text-gray-300">
         <time class="tabular-nums">{{ elapsed(positionMs) }}</time>
-        <input type="range" min="0" :max="Math.max(0, playback.durationMs - 1)" step="1000" :value="positionMs" :disabled="!canManage || busy || !!playback.pendingTransition || playback.state === 'preparing'"
+        <input type="range" min="0" :max="Math.max(0, playback.durationMs - 1)" step="1000" :value="positionMs" :disabled="!canManage || busy || !!playback.pendingTransition || playback.state === 'preparing' || (party.room.performanceMode !== 'local' && party.room.performanceMode && ['scheduled', 'playing'].includes(playback.state))"
           :aria-label="$t('party.songPosition')" class="w-full accent-green-400" @change="seek" />
         <time class="tabular-nums">{{ elapsed(playback.durationMs) }}</time>
       </div>
@@ -112,7 +112,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { PartySnapshot } from '@/services/partyApi'
 import type { usePartyPlayback } from '@/composables/usePartyPlayback'
-const props = defineProps<{ party: PartySnapshot; audio: ReturnType<typeof usePartyPlayback>; stage: boolean; canManage: boolean; busy: boolean }>()
+const props = defineProps<{ party: PartySnapshot; audio: ReturnType<typeof usePartyPlayback>; stage: boolean; canManage: boolean; busy: boolean; audience?: boolean; privateOriginal?: boolean }>()
 const emit = defineEmits<{ action: [action: string, payload: Record<string, unknown>]; prepare: [] }>()
 const { t } = useI18n()
 const { enabled, purpose, preparing, prepared, failure, volume, guideAdvanceMs, canGuide, assignedHere,

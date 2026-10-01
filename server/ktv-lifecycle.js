@@ -1,6 +1,6 @@
 // Lifecycle time uses persisted UTC timestamps, so expiry survives a service
 // restart. Audio deadlines continue to use the separate monotonic room clock.
-export function createKtvLifecycle({ db, policy, transaction, closeRoom, broadcast, occupied }) {
+export function createKtvLifecycle({ db, policy, transaction, closeRoom, broadcast, occupied, cleanup = () => {} }) {
   let closed = false
   function sweep(now = Date.now()) {
     if (closed) return
@@ -21,6 +21,7 @@ export function createKtvLifecycle({ db, policy, transaction, closeRoom, broadca
         }
       }
       const receiptCutoff = new Date(now - policy.receiptRetentionMs).toISOString()
+      cleanup(receiptCutoff)
       for (const table of ['ktv_command_receipts', 'ktv_identity_receipts', 'ktv_pairing_receipts']) {
         db.prepare(`DELETE FROM ${table} WHERE created_at < ?`).run(receiptCutoff)
       }

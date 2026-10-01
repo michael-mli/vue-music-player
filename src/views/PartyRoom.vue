@@ -65,7 +65,9 @@
 
         <div v-if="party.self.admission === 'admitted'" id="party-panel-sing" v-show="stage || activeTab === 'sing'"
           :role="stage ? undefined : 'tabpanel'" :aria-labelledby="stage ? undefined : 'party-tab-sing'" :tabindex="stage ? undefined : 0">
-          <PartyPlaybackPanel :party="party" :audio="roomAudio" :stage="stage" :can-manage="isModerator" :busy="busy"
+          <PartyMediaPanel v-if="party.room.mediaConfigured" :party="party" :media="roomMedia" :audio="roomAudio" :busy="busy" :connected="liveConnected"
+            @mode="changePerformanceMode" />
+          <PartyPlaybackPanel :party="party" :audio="roomAudio" :stage="stage" :can-manage="isModerator" :busy="busy" :audience="roomMedia.isAudience.value" :private-original="roomMedia.originalEnabled.value"
             @prepare="preparePlayback" @action="playbackAction" />
               <section v-if="!stage && party.readiness?.entryId" class="rounded-2xl border border-spotify-green/30 bg-emerald-900/10 p-5">
                 <h2 class="text-lg font-semibold">{{ $t('party.singerInvitation') }}</h2>
@@ -321,6 +323,8 @@ import { partyApi, type PartyDeviceSummary, type PartyMember, type PartyPairing,
 import { subscribeParty } from '@/services/partyRealtime'
 import type { PartySubscription } from '@/services/partyRealtime'
 import { usePartyPlayback } from '@/composables/usePartyPlayback'
+import { usePartyMedia } from '@/composables/usePartyMedia'
+import PartyMediaPanel from '@/components/Party/PartyMediaPanel.vue'
 import PartyPlaybackPanel from '@/components/Party/PartyPlaybackPanel.vue'
 import PartyQrCode from '@/components/Party/PartyQrCode.vue'
 import { useSongsStore } from '@/stores/songs'
@@ -391,6 +395,10 @@ let timer: number | undefined
 let pairExpireTimer: number | undefined
 let stopRealtime: PartySubscription | undefined
 const roomAudio = usePartyPlayback(party, liveConnected, clockEstimate, message => stopRealtime?.send(message) || false)
+const roomMedia = usePartyMedia(party, liveConnected, clockEstimate, roomAudio)
+function changePerformanceMode(mode: 'local' | 'online' | 'hybrid') {
+  if (party.value) void act(() => partyApi.mediaMode(roomId.value, mode, party.value!.room.revision))
+}
 let realtimeEnded = false
 
 function applySnapshot(next: PartySnapshot) {

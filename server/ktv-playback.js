@@ -59,7 +59,7 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
   }
   function presence(roomId) {
     return { sequence: presenceSequence, host: hostPresence(roomId), devices: [...devices.values()].filter(device => device.roomId === roomId)
-      .map(device => ({ id: device.id, memberId: device.memberId, label: device.label, purpose: device.purpose,
+      .map(device => ({ id: device.id, memberId: device.memberId, scope: device.scope, deviceGrantId: device.grantId, mediaProtocol: device.mediaProtocol || 0, label: device.label, purpose: device.purpose,
         audioEnabled: device.audioEnabled, clockHealthy: device.clockHealthy, ready: Boolean(device.ready),
         readyGeneration: device.ready?.generation ?? null, connected: device.ws.readyState === 1 })) }
   }
@@ -201,6 +201,16 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
       fail(409, 'SINGER_NOT_READY', 'The singer must confirm readiness for this performance')
     }
     const device = requireDevice(roomId, row.stage_device_id)
+    const mode = db.prepare('SELECT * FROM ktv_rooms WHERE id = ?').get(roomId).performance_mode || 'local'
+    if (mode !== 'local') {
+      if (!api.media) fail(503, 'MEDIA_UNAVAILABLE', 'Online audio is not configured')
+      if (device.mediaProtocol !== 1) fail(409, 'MEDIA_CLIENT_UPDATE', 'Update the performing device before using online audio')
+      const singer = db.prepare('SELECT singer_member_id FROM ktv_queue_entries WHERE id = ?').get(row.entry_id)?.singer_member_id
+      const member = db.prepare('SELECT * FROM ktv_members WHERE id = ?').get(device.memberId)
+      if (device.scope === 'display' || (device.memberId !== singer && !(mode === 'hybrid' && (member.role === 'host' || member.cohost_at)))) {
+        fail(403, 'MEDIA_FORBIDDEN', 'Select the singer’s performing device or a hybrid host mixer')
+      }
+    }
     if (!ready(device, row)) fail(409, 'DEVICE_NOT_READY', 'The designated stage is still preparing audio')
     if (row.guide_required && !guideReady(row)) fail(409, 'GUIDE_NOT_READY', 'The singer requires a prepared vocal guide before starting')
     if (!hostPresence(roomId).controlAvailable) fail(409, 'HOST_UNAVAILABLE', 'Reconnect a host or co-host controller before starting')
@@ -212,7 +222,7 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
     leases.delete(roomId)
     // The prepared generation is the scheduled generation. Requiring another
     // ready response after changing it would create an unnecessary race.
-    const anchor = clock.nowMs() + PLAYBACK_LEAD_MS
+    const anchor = clock.nowMs() + (mode === 'local' ? PLAYBACK_LEAD_MS : 6000)
     db.prepare(`UPDATE ktv_playback SET state = 'scheduled', anchor_server_ms = ?, prepare_deadline_ms = NULL, recovery_reason = NULL,
       updated_at = ? WHERE room_id = ?`).run(anchor, stamp(), roomId)
     bump(db, roomId)
@@ -243,6 +253,10 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
     if (!row || row.state === 'idle' || row.state === 'preparing' || row.pending_json) fail(409, 'INVALID_PLAYBACK', 'Playback cannot change now')
     const nowMs = clock.nowMs()
     if (action === 'pause' && !['playing', 'scheduled'].includes(row.state)) fail(409, 'INVALID_PLAYBACK', 'Playback is already paused')
+    const mode = db.prepare('SELECT * FROM ktv_rooms WHERE id = ?').get(roomId)?.performance_mode || 'local'
+    if (mode !== 'local' && action === 'seek' && ['playing', 'scheduled'].includes(row.state)) {
+      fail(409, 'MEDIA_PAUSE_REQUIRED', 'Pause the online performance before seeking, then prepare capture again')
+    }
     if (action === 'seek' && (!Number.isFinite(positionMs) || positionMs < 0 || positionMs >= row.duration_ms)) {
       fail(400, 'INVALID_POSITION', 'Choose a position inside the song')
     }
@@ -316,12 +330,14 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
       if (!['viewer', 'stage', 'guide'].includes(message.purpose) || typeof message.audioEnabled !== 'boolean' ||
         typeof message.clockHealthy !== 'boolean' || typeof message.label !== 'string' || message.label.length > 40 ||
         /[\u0000-\u001f]/.test(message.label) ||
+        (message.mediaProtocol !== undefined && ![0, 1].includes(message.mediaProtocol)) ||
         (message.audioIssue != null && !['drift', 'output', 'decode', 'suspended'].includes(message.audioIssue))) fail(400, 'INVALID_DEVICE_STATUS', 'Invalid device status')
       if (device.scope === 'display' && message.purpose === 'guide') fail(403, 'FORBIDDEN', 'Display access cannot use a singer guide')
       const changed = device.purpose !== message.purpose || device.label !== (message.label.trim() || 'Device') ||
-        device.audioEnabled !== message.audioEnabled || device.clockHealthy !== message.clockHealthy || device.audioIssue !== (message.audioIssue || null)
+        device.audioEnabled !== message.audioEnabled || device.clockHealthy !== message.clockHealthy || device.audioIssue !== (message.audioIssue || null) || device.mediaProtocol !== (message.mediaProtocol || 0)
       device.purpose = message.purpose; device.label = message.label.trim() || 'Device'
       device.audioEnabled = message.audioEnabled; device.clockHealthy = message.clockHealthy
+      device.mediaProtocol = message.mediaProtocol || 0
       device.audioIssue = message.audioIssue || null
       const row = read(ws.roomId)
       const shouldRecover = ['scheduled', 'playing'].includes(row?.state) || Boolean(device.audioIssue)
@@ -462,6 +478,10 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
             changed.add(row.room_id)
           }
           if (row.state === 'scheduled' && nowMs >= row.anchor_server_ms) {
+            const mode = db.prepare('SELECT * FROM ktv_rooms WHERE id = ?').get(row.room_id)?.performance_mode || 'local'
+            if (mode !== 'local' && !api.media?.grants.publisherReady(row.room_id)) {
+              recover(row.room_id, 'media.not_ready'); changed.add(row.room_id); return
+            }
             db.prepare("UPDATE ktv_playback SET state = 'playing', updated_at = ? WHERE room_id = ?").run(stamp(), row.room_id)
             bump(db, row.room_id); changed.add(row.room_id)
           }
@@ -484,6 +504,14 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
   }
   const timer = setInterval(sweep, 250)
   timer.unref()
-  return { snapshot, presence, connected, disconnected, deviceMessage, current, assign, prepare, start,
-    transition, guide, invalidate, finish, decline, read, sweep, close: () => { closed = true; clearInterval(timer) } }
+  function mediaFailed(roomId, performanceId, generation) {
+    const row = read(roomId)
+    if (!row || row.performance_id !== performanceId || row.generation !== generation) return false
+    const changed = transaction(db, () => recover(roomId, 'media.disconnected'))
+    if (changed) broadcast(roomId)
+    return changed
+  }
+  const api = { snapshot, presence, connected, disconnected, deviceMessage, current, assign, prepare, start,
+    transition, guide, invalidate, finish, decline, read, sweep, mediaFailed, close: () => { closed = true; clearInterval(timer) } }
+  return api
 }

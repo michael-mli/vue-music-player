@@ -47,6 +47,7 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
     if (!healthy.value || document.hidden || blocked.value) readyKeys.clear()
     send({ type: 'device.status', label: purpose.value === 'stage' ? 'Stage' : purpose.value === 'guide' ? 'Singer phone' : 'Controller',
       purpose: purpose.value, audioEnabled: !document.hidden && !blocked.value && enabled.value && engine.enabled,
+      mediaProtocol: typeof RTCPeerConnection === 'function' ? 1 : 0,
       clockHealthy: !document.hidden && healthy.value, audioIssue: audioIssue.value })
     lastStatusMs = performance.now()
   }
@@ -81,7 +82,7 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
     const attempt = ++loadAttempt
     preparing.value = true; prepared.value = false
     try {
-      await engine.prepare(asset)
+      await engine.prepare(asset, purpose.value === 'guide' ? 'original' : 'instrumental')
       if (disposed || attempt !== loadAttempt || engine.preparedHash !== asset.sha256) return
       prepared.value = true; failure.value = ''
       sendReady(current.generation)
@@ -212,6 +213,7 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
     void engine.close()
   })
   return { deviceId, purpose, enabled, preparing, prepared, failure, volume, guideAdvanceMs, positionMs,
+    createPublisherTap: (hash: string, generation: number) => engine.createPublisherTap(hash, generation), renderPosition: () => engine.renderPositionMs,
     segment, countdown, lines, lyricGuide, canGuide, assignedHere, startSafe, healthy, serverNowMs, blocked, diagnostics,
     calibrationInvalidated, resetOutput: () => engine.outputChanged(), enable, disable, message,
     retry: () => { blocked.value = false; audioIssue.value = null; failure.value = ''; engine.resetRecovery(); failedKey = ''; readyKeys.clear(); status(); void prepare() } }

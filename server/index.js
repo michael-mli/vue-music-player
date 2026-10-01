@@ -168,6 +168,11 @@ const ktvRealtime = registerKtvRoutes(app, {
   db, authMiddleware, secret: JWT_SECRET || 'unconfigured-development-secret',
   allowedOrigins: (process.env.KTV_ALLOWED_ORIGINS || '').split(',').map((origin) => origin.trim()).filter(Boolean),
   hostGraceMs: Number(process.env.KTV_HOST_GRACE_MS || 30_000),
+  media: process.env.KTV_MEDIA_ENABLED === 'true' ? {
+    apiKey: process.env.KTV_MEDIA_API_KEY, apiSecret: process.env.KTV_MEDIA_API_SECRET,
+    controlSecret: process.env.KTV_MEDIA_CONTROL_SECRET,
+    workerUrl: process.env.KTV_MEDIA_WORKER_URL || 'http://127.0.0.1:3103',
+  } : undefined,
   policy: {
     members: Number(process.env.KTV_MAX_MEMBERS || 20),
     queue: Number(process.env.KTV_MAX_QUEUE || 100),

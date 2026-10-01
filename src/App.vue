@@ -231,6 +231,7 @@ onUnmounted(() => {
   window.removeEventListener('focus', refreshPlaylistsOnResume)
   window.removeEventListener('online', refreshPlaylistsOnResume)
   document.removeEventListener('visibilitychange', refreshPlaylistsWhenVisible)
+  window.removeEventListener('party:sw-update-available', showAvailableUpdate)
 })
 
 function isDirectSongAccess(): boolean {
@@ -302,15 +303,26 @@ async function handleInstall() {
 }
 
 function checkForUpdates() {
-  // Listen for SW updates
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      updateAvailable.value = true
+    window.addEventListener('party:sw-update-available', showAvailableUpdate)
+    void navigator.serviceWorker.getRegistration().then(registration => {
+      if (navigator.serviceWorker.controller && registration?.waiting) showAvailableUpdate()
     })
   }
 }
 
-function handleUpdate() {
+function showAvailableUpdate() { updateAvailable.value = true }
+
+async function handleUpdate() {
+  const waiting = (await navigator.serviceWorker?.getRegistration())?.waiting
+  if (waiting) {
+    await new Promise<void>(resolve => {
+      const done = () => { clearTimeout(timeout); resolve() }
+      const timeout = window.setTimeout(done, 8000)
+      if (waiting.state === 'activated') done()
+      else { waiting.addEventListener('statechange', () => { if (waiting.state === 'activated') done() }); waiting.postMessage({ type: 'SKIP_WAITING' }) }
+    })
+  }
   window.location.reload()
 }
 

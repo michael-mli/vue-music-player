@@ -36,17 +36,23 @@ function fixture(t) {
   const originalPerformance = globalThis.performance
   let nowMs = 1000, context
   globalThis.performance = { now: () => nowMs }
-  const nodes = []
+  const nodes = [], gains = []
   class Context {
-    state = 'suspended'; currentTime = 100; sampleRate = 44100; baseLatency = 0.01; outputLatency = 0.05
+    state = 'suspended'; currentTime = 100; sampleRate = 44100; baseLatency = 0.01; outputLatency = 0.05; destination = {}
     constructor() { context = this }
     resume() { this.state = 'running'; return Promise.resolve() }
     close() { this.state = 'closed'; return Promise.resolve() }
     getOutputTimestamp() { return { contextTime: this.currentTime - 0.05, performanceTime: performance.now() } }
     decodeAudioData() { return Promise.resolve({ duration: 60, length: 60 * 44100, numberOfChannels: 2 }) }
-    createGain() { return { gain: { setValueAtTime() {}, linearRampToValueAtTime() {}, cancelScheduledValues() {}, setTargetAtTime() {} }, connect() {}, disconnect() {} } }
+    createGain() {
+      const outputs = new Set(), gain = { value: 1, setValueAtTime(value) { this.value = value }, linearRampToValueAtTime(value) { this.value = value },
+        cancelScheduledValues() {}, setTargetAtTime(value) { this.value = value } }
+      const node = { context: this, gain, outputs, connect(target) { outputs.add(target) }, disconnect(target) { if (target) outputs.delete(target); else outputs.clear() } }
+      gains.push(node); return node
+    }
     createBufferSource() {
-      const node = { starts: [], stops: [], onended: null, connect() {}, disconnect() {},
+      const outputs = new Set()
+      const node = { starts: [], stops: [], outputs, onended: null, connect(target) { outputs.add(target) }, disconnect(target) { if (target) outputs.delete(target); else outputs.clear() },
         start(...args) { this.starts.push(args) }, stop(...args) { this.stops.push(args) } }
       nodes.push(node); return node
     }
@@ -64,7 +70,7 @@ function fixture(t) {
     positionMs: 0, anchorServerMs: now + 2000, durationMs: 60000, pendingTransition: null, assets: { instrumental: asset, original: asset } }
   const lease = { id: 'lease', generation: 1, clockId: 'clock', performanceId: 'performance', expiresServerMs: now + 8000, sequence: 1 }
   t.after(async () => { await engine.close(); globalThis.AudioContext = originalContext; globalThis.window = originalWindow; globalThis.fetch = originalFetch; globalThis.performance = originalPerformance })
-  return { engine, nodes, asset, playback, clock, lease, get context() { return context },
+  return { engine, nodes, gains, asset, playback, clock, lease, get context() { return context },
     advance: ms => { nowMs += ms; context.currentTime += ms / 1000 } }
 }
 
@@ -190,4 +196,55 @@ test('loss of previously available output timestamps recovers an active device i
   f.context.getOutputTimestamp = () => ({ contextTime: 0, performanceTime: 0 })
   f.advance(1000); f.engine.sync(f.playback, f.clock, f.lease, 'stage')
   assert.deepEqual(recoveries, ['output'])
+})
+
+test('publisher capture reads the rendered source position rather than the physical-output wall clock', async t => {
+  const f = fixture(t)
+  await f.engine.enable(); await f.engine.prepare(f.asset)
+  assert.equal(f.engine.renderPositionMs, null)
+  f.engine.sync(f.playback, f.clock, f.lease, 'stage')
+  assert.equal(f.engine.renderPositionMs, null)
+  f.advance(2100)
+  const [when, offset] = f.nodes[0].starts[0]
+  assert.ok(Math.abs(f.engine.renderPositionMs - (offset + f.context.currentTime - when) * 1000) < 0.01)
+  f.engine.stop(); assert.equal(f.engine.renderPositionMs, null)
+})
+
+test('the integrated backing tap is independent of monitor volume and shares the source’s lease stop', async t => {
+  const f = fixture(t)
+  await f.engine.enable(); await f.engine.prepare(f.asset)
+  const tap = f.engine.createPublisherTap(f.asset.sha256, 1)
+  assert.equal(tap.active, true); assert.throws(() => f.engine.createPublisherTap(f.asset.sha256, 1), /PUBLISH_BACKING_IN_USE/)
+  f.engine.sync(f.playback, f.clock, f.lease, 'stage')
+  const [monitor, publish] = [...f.nodes[0].outputs]
+  assert.equal(monitor.outputs.has(f.context.destination), true); assert.equal(publish.outputs.has(tap.instrumental), true)
+  f.engine.setVolume(0)
+  assert.equal(monitor.gain.value, 0); assert.equal(publish.gain.value, 1)
+  f.advance(9000)
+  // Even a delayed onended callback cannot report a still-rendering lyric frame.
+  assert.equal(f.engine.renderPositionMs, null)
+  f.engine.releaseBuffer(); assert.equal(tap.active, false); assert.equal(publish.outputs.size, 0)
+})
+
+test('an original guide cannot obtain a backing tap or be scheduled as an instrumental', async t => {
+  const f = fixture(t)
+  await f.engine.enable(); await f.engine.prepare(f.asset, 'original')
+  assert.throws(() => f.engine.createPublisherTap(f.asset.sha256, 1), /PUBLISH_BACKING_UNAVAILABLE/)
+  f.engine.sync(f.playback, f.clock, f.lease, 'stage'); assert.equal(f.nodes.length, 0)
+  f.engine.sync(f.playback, f.clock, f.lease, 'guide'); assert.equal(f.nodes.length, 1)
+  await f.engine.prepare(f.asset, 'instrumental')
+  assert.equal(f.engine.createPublisherTap(f.asset.sha256, 1).active, true)
+})
+
+test('a publisher tap never adopts a future seek generation under an old permit', async t => {
+  const f = fixture(t)
+  await f.engine.enable(); await f.engine.prepare(f.asset)
+  const tap = f.engine.createPublisherTap(f.asset.sha256, 1)
+  f.engine.sync(f.playback, f.clock, f.lease, 'stage')
+  const boundary = performance.now() + f.clock.offsetMs + 1500
+  const pending = { state: 'playing', generation: 2, positionMs: 20000, anchorServerMs: boundary, effectiveServerMs: boundary }
+  f.engine.sync({ ...f.playback, pendingTransition: pending }, f.clock, { ...f.lease, nextGeneration: 2 }, 'stage')
+  assert.equal(f.nodes[0].outputs.size, 2); assert.equal(f.nodes[1].outputs.size, 1)
+  tap.close()
+  assert.equal(f.nodes[0].outputs.size, 1) // Personal monitor remains attached.
 })

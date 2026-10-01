@@ -2,7 +2,7 @@
 
 Created: 2026-09-29
 
-Last updated: 2026-09-30
+Last updated: 2026-10-01
 
 Design reference: [ktv_party.md](ktv_party.md)
 
@@ -19,7 +19,7 @@ from a paired phone. Readiness is a human confirmation; it does not start audio.
 Scheduled stage playback, pinned lyrics, pause/resume/seek/skip, output leases and
 a private original guide are live and pass a production-build journey
 with three isolated Chrome sessions. Physical audio alignment and streaming remain
-unverified/unimplemented. Required-guide gating/recovery, fair next-turn readiness
+unverified for physical devices and public streaming. Required-guide gating/recovery, fair next-turn readiness
 and automatic host-loss transfer were first deployed as `323c922` (`main-Ccfld-0j.js`).
 The preceding combined phone/audio-recovery preview was deployed as `f701e9a`
 (`main-1-asbyg9.js`). It adds persistent Songs/Queue/Sing/People tabs, local invitation
@@ -54,6 +54,37 @@ DB/static/previous-code backup: `/tmp/ktv-party-queue-controls-predeploy.6j7f1h_
 (previous live build `49bd4d2`). Physical timing/browser acceptance and online/hybrid
 remain open; the next work continues into streaming rather than ending here.
 
+P07 streaming implementation is now in progress in the working branch. A real
+loopback LiveKit/Chrome spike passed 23 checks: one mixed backing/mic track, private
+guide exclusion, captured lyric video, two receivers, client silence deadlines,
+forced TURN relay, provider removal, publisher replacement, server lease expiry, old-token denial,
+persisted revocation and room close. The negative control confirms that an old JWT
+can rejoin the private SFU directly after removal; production signaling must go
+through the authorization gateway. This is synthetic browser evidence, not a
+public-network or physical microphone acceptance result.
+
+Room media grants and HTTP routes now use actual admission, paired-device scope,
+the selected singer, generation and live output lease. A separate supervisor owns
+the SFU and stops it if backend authorization or provider revocation fails. The
+media container builds successfully. The backing engine now exposes a scoped
+pre-monitor instrumental tap; original-guide buffers cannot obtain that tap.
+The integrated room UI now offers host-controlled local, online, and hybrid modes,
+performer microphone capture, an isolated original-vocal guide, captured lyric
+video and audience playback. The publisher and audience use one synchronized
+received media stream; lost publisher connections enter room recovery. The mode
+is still disabled in production. Current checks: backend 104/104, frontend 40/40,
+private-config 2/2, real process/SFU failure 9/9, local built-app Chrome 59/59,
+PWA upgrade/offline Chrome 6/6, production build and type check pass. A built-app loopback journey has confirmed
+provider-ready audio/video tracks, a public mix with microphone and backing only,
+and decoded lyric video. Its complete guide/handover run remains open; the host's
+virtual audio output stalled in the test and the safety recovery stopped capture.
+Direct ICE/TURN, physical alignment and the browser support matrix remain open.
+The isolated PWA check installs a synthetic legacy caching worker, upgrades it,
+and confirms old cached room authority is purged; an actual field-installed
+older PWA is still part of release acceptance.
+`ktv_party_deploy.md` records the configuration and release procedure. The public
+release remains `34fc55c`.
+
 ## 1. How to use this tracker
 
 - Mark work items `[x]` only when implemented and verified. Documentation of an
@@ -79,8 +110,8 @@ remain open; the next work continues into streaming rather than ending here.
 | P04 | Stage, phone controller, host UI | P02–P03 | In progress | Entry/join/pairing, Songs/Queue/Sing/People tabs, local invitation/pairing QR, moderation, readiness and guide controls; broad accessibility/physical coverage open |
 | P05 | Scheduled playback, private guide, shared lyrics | P01, P03–P04 | In progress | Stage/guide/lyrics/controls pass Chrome journey; required-guide and rendered-drift/output recovery tested; physical timing open |
 | P06 | Recovery, browser coverage, local release readiness | P02–P05 | In progress | Guide/stage loss, host transfer, restart and revocation have automated evidence; physical/device coverage open |
-| P07 | Online performance streaming and hybrid operation | P01, stable P03/P05 contracts | Not started | — |
-| P08 | Deployment, monitoring, and release verification | P06 for local; P07 for online | In progress | Intermediate previews deployed and checked; operational and release acceptance gates open |
+| P07 | Online performance streaming and hybrid operation | P01, stable P03/P05 contracts | In progress | SFU/capture spike, room authorization and mode/capture/audience UI implemented; full app handover, public network and device acceptance open |
+| P08 | Deployment, monitoring, and release verification | P06 for local; P07 for online | In progress | Intermediate previews deployed; private config generator, nginx snippet and runbook added; public media and release acceptance open |
 | P09 | Optional enhancements | Released foundation | Not started | — |
 
 P01 is an early risk gate. P02 can proceed while audio experiments run because its
@@ -422,6 +453,8 @@ Status: In progress
   changes, Bluetooth, low-memory decode, and long songs on physical devices.
 - [ ] P06.6 Add explicit no-store/service-worker exclusions for all room state,
   tickets, grants, and media tokens; validate upgrades with an installed old PWA.
+  Software exclusions, offline behavior and a synthetic installed-old-worker
+  upgrade pass 6/6 locally; field-installed old PWA validation remains open.
 - [ ] P06.7 Run permission/admission abuse cases, origin validation, bounded message
   sizes/rates, and escaped user-supplied room/member text.
 - [ ] P06.8 Measure the planning load of 20 members and bounded device/queue counts;
@@ -444,7 +477,7 @@ next readiness and declined-turn receipts. Physical and broader browser gates re
 
 ## 10. P07 — Online and hybrid performance
 
-Status: Not started
+Status: In progress
 
 Deliverables: a media transport decision, performance capture/publishing, remote
 audience playback, and tested performer handover. This phase implements R12–R13.
@@ -483,7 +516,22 @@ Exit criteria:
 - [ ] Publish supported-device limits and measured streaming latency; no claim of
   simultaneous remote duet support.
 
-Evidence: Pending.
+Evidence: `npm run test:party:media` passes 23 synthetic foreground Chrome/SFU
+checks with `livekit-client` 2.22.3, server SDK 2.19.1 and LiveKit server v1.13.7
+pinned to digest `sha256:6fd3b7088874c4d119160dd688798dfec852bc014786d392caad15f6f63912a3`.
+The harness creates and removes an owned loopback-only container, temporary
+credentials/database and isolated browser contexts. Separate graph/capture tests
+cover private-guide isolation, monitor independence, venue mix, calibration
+invalidation and deadline blanking. Room-policy tests cover admission, paired
+displays, atomic revocation triggers, lost issuance replies and publisher handover
+blocked until provider acknowledgment. HTTP/worker checks cover mode receipt
+replay, actor/device impersonation, provider failure and backend failure.
+Repeatable commands: `npm test --prefix server`, `npm run test:party`,
+`npm run type-check`, and `CHROME_DEBUG_URL=http://127.0.0.1:9231
+CHROME_SINGER_DEBUG_URL=http://127.0.0.1:9230 npm run test:party:media`.
+The Docker build uses a whitelisted context and copies no credential files.
+P07 checklist items remain open until their integrated UI/network/device scope
+has passed; component or toy-room spike evidence does not complete those gates.
 
 ## 11. P08 — Deployment and release verification
 
@@ -491,7 +539,7 @@ Status: In progress. Track local and online releases separately within this phas
 
 - [ ] P08.1 Add configuration/feature flags for rooms, guide, and online publishing;
   validate required runtime values without exposing secrets to frontend builds.
-- [ ] P08.2 Document database backup/migration, additive compatibility, HTTP/WSS proxy
+- [x] P08.2 Document database backup/migration, additive compatibility, HTTP/WSS proxy
   configuration, TLS/origin settings, and single room-process ownership.
 - [ ] P08.3 For online release, provision and validate SFU/TURN endpoints, credentials,
   allowed origins, network paths, and media-server revocation integration.
@@ -620,9 +668,12 @@ prototype result is not automatically a release result.
 
 ### Current next action
 
-Continue the SFU/TURN spike, private-monitor versus publish mixing, scoped media
-authorization/revocation and online/hybrid capture. Complete remaining UI/PWA
-software gates alongside streaming.
+The room UI, publisher tap, lifecycle and supervisor shutdown are implemented and
+verified in local checks. Complete the integrated guide/handover journey on a
+real output device, provision a direct public DNS/certificate/ICE/TURN path, and
+run physical phone and network acceptance. Keep the online flag disabled until
+those checks pass. Complete remaining local/browser/PWA release gates alongside
+streaming.
 Physical phone/screen timing, memory, background behavior, broad browser coverage
 and real streaming remain acceptance gates. Phone tabs and QR invitations are live;
 general receipts, cleanup and returning-invite recovery are now deployed.
@@ -648,8 +699,8 @@ general receipts, cleanup and returning-invite recovery are now deployed.
 | B02 | Whole-song decoding may exceed phone memory budget | P01 memory/decode study | Open risk |
 | B03 | Mobile background audio/capture may suspend | P01/P06 support matrix | Open risk |
 | B04 | Original and instrumental alignment/lyrics coverage vary | Asset validation and versioned descriptors | Open risk |
-| B05 | SFU/TURN hosting and remote lyric capture support unknown | P07 deployment/device spike | Open decision |
-| B06 | Existing player/PWA can conflict with party authority | P04 ownership and P06 upgrade/cache tests | Open integration risk |
+| B05 | Public relay DNS/certificate and physical lyric capture support remain unverified | Point the chosen direct DNS hostname at this app server, install a trusted TURN certificate, then run P07 network/device acceptance | Open deployment gate; `turn.micstec.com` currently resolves elsewhere |
+| B06 | An older installed PWA may retain cached room authority | Field-upgrade an existing installation after the 6/6 synthetic upgrade/offline checks | Open field acceptance gate; new worker uses NetworkOnly |
 
 ### Evidence log
 
@@ -684,6 +735,8 @@ general receipts, cleanup and returning-invite recovery are now deployed.
 | 2026-09-30 | Active-performance queue safeguard deployment | `49bd4d2`, `main-BLgb8FvF.js`, `main-B17ntvAM.css` | Backend 77/77; unchanged frontend unit checks 19/19; exact-release foreground Chrome 50/50; public protocol 25/25 and deployment 10/10; type-check/build/diff pass | Temporary public room closed; backup `/tmp/ktv-party-queue-boundary-predeploy.139w_e17`. One health connection retry. Browser reload test waits for a new document time origin, avoiding its old-DOM race. Current-song request actions cannot stop preparation/playback; pending request cancellation remains allowed. Held reassignment, visible host ordering/caps, player/PWA ownership and streaming remain open. |
 
 | 2026-09-30 | Queue controls and party ownership release | `34fc55c`, host-order/reassignment/caps routes and UI, solo epoch guards, retained recorder result and bounded command journal | Backend 81/81; party units 20/20; solo units 10/10; Chrome 146 foreground release journey 59/59; public protocol 30/30; deployment 10/10; exact assets/additive schema/FKs verified | Backup `/tmp/ktv-party-queue-controls-predeploy.6j7f1h_o`; temporary room closed. Navigation polling retries only destroyed CDP contexts, uses actual Home link and fresh member snapshots. Physical audio/browser and online streaming gates remain open; continue implementation. |
+
+| 2026-10-01 | P07 streaming implementation and P06.6 software upgrade gate | Local P07 branch code, `ktv_party_deploy.md`, private config generator and isolated PWA fixture | Backend 104/104; party units 40/40; media Chrome/SFU 23/23 including forced TURN; supervisor/process 9/9; private config 2/2; existing-app Chrome 59/59; PWA upgrade/offline 6/6; build/type-check pass | Full integrated guide/handover browser journey is incomplete because the host virtual audio output stalled and capture recovery correctly stopped publication. Synthetic loopback and legacy-worker checks are not public network, field-installed PWA or physical phone acceptance. Online remains disabled. `turn.micstec.com` resolves to `54.165.17.203`, not this host's observed public `3.219.116.105`. |
 
 ### Work-session update template
 

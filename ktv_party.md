@@ -824,8 +824,12 @@ performance timeline. Changing performance source requires a fresh readiness cyc
 Use an established WebRTC SFU for distribution; it forwards the already mixed
 performance. Provision TURN for networks that require relaying.
 [WebRTC TURN documentation](https://webrtc.org/getting-started/turn-server)
-LiveKit is a candidate, pending a deployment/cost/device spike. Server-issued room
-tokens can scope publish and subscribe permissions.
+The implementation uses LiveKit client 2.22.3, server SDK 2.19.1 and a pinned
+v1.13.7 self-hosted server for the loopback spike. A forced relay browser joined
+the owned loopback SFU through embedded TURN/UDP; real network routing, TLS and
+capacity remain deployment gates. The initial deployment recipe is in
+[ktv_party_deploy.md](ktv_party_deploy.md). Server-issued room
+tokens scope publish and subscribe permissions.
 [LiveKit authentication](https://docs.livekit.io/frontends/build/authentication/)
 
 The room service grants publishing only to the current performer/device/generation.
@@ -833,10 +837,24 @@ Audience tokens subscribe only. Kick, room close, performer replacement, or leas
 expiry must call the media server to remove/restrict the participant and invalidate
 future joins; waiting for token expiry is insufficient. No peer mesh is planned.
 
-Verify those revocation semantics for the chosen provider and hosting mode. If an
-old token can reconnect after removal, require a supported admission/revocation
-mechanism or revise the media deployment before release; application-side token
-issuance checks alone cannot prevent direct reuse against the media server.
+The spike verified that self-hosted participant removal permits direct reuse of
+an old JWT. Keep the SFU signaling and administrative APIs private. A gateway
+verifies JWT grants and the persisted identity nonce on every join and watchdog
+check. Database triggers permanently revoke nonces when membership, paired scope,
+room mode or the active generation changes. A publisher nonce expires within five
+seconds and its current output lease; a replacement waits for provider removal
+acknowledgment. Audience access expires within two minutes and rechecks admission.
+A separate supervisor owns the SFU process and stops it on backend or revocation
+failure; closing signaling sockets alone cannot stop established RTP. Public
+streaming stays disabled until this deployment and failure path are verified.
+
+The backing engine exposes an instrumental-only tap before personal monitor gain.
+The original guide is decoded in a separate engine and cannot obtain a publish
+tap. Publish mixing and the render-thread expiry gate operate independently of
+personal volume. Captured lyrics use the rendered source position minus any
+publish backing delay. Audio and video carry the same named WebRTC stream and
+attach to one audience video element so its media clock governs both tracks.
+Headphone audio and publisher render timing still require physical checks.
 
 Remote audiences hear a delayed performance. Their lyrics must follow the received
 media, not the current control-server playhead. Proposed first approach: render
@@ -907,8 +925,10 @@ new path. Online transport may need separate SFU/TURN endpoints and network port
 the ordinary HTTP proxy alone does not provide media connectivity.
 
 Party snapshots, tickets, media tokens, and grants use `Cache-Control: no-store`;
-exclude their paths explicitly from service-worker runtime caching. Audit existing
-API/audio cache rules, including versioned asset URLs and Range/CORS behavior.
+exclude their paths and versioned party assets explicitly from service-worker
+runtime caching. On room entry, remove old cached room responses before mounting.
+An installed worker update prompts the user, activates the waiting worker on
+request and reloads with current room authority.
 Defer user-triggered app reloads during performances where possible and handle
 controller changes/reloads as reconnects. Browsers may suspend background audio;
 publish a measured support matrix rather than promise lock-screen operation.

@@ -1,0 +1,9 @@
+**
+!server/
+server/**
+!server/package.json
+!server/package-lock.json
+!server/Dockerfile.ktv-media
+!server/ktv-media-gateway.js
+!server/ktv-media-worker.js
+!server/ktv-media-supervisor.js

@@ -9,6 +9,7 @@ import { ktvPolicy } from './ktv-policy.js'
 import { createKtvLifecycle } from './ktv-lifecycle.js'
 import { createKtvHttpGuard } from './ktv-http.js'
 import { identityCommand, resultCommand, payloadHash, assertSamePayload, sealResult, openResult } from './ktv-receipts.js'
+import { registerKtvMediaRoutes } from './ktv-media-routes.js'
 
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 const PAIR_LIFETIME_MS = 2 * 60 * 1000
@@ -191,6 +192,7 @@ function snapshot(db, roomId, userId, key, clock, playback, policy) {
     room: {
       id: room.id, name: room.name, approvalRequired: Boolean(room.approval_required),
       locked: Boolean(room.locked), stageInviteVisible: Boolean(room.stage_invite_visible), revision: room.revision, expiresAt: room.expires_at,
+      performanceMode: room.performance_mode || 'local', mediaConfigured: Boolean(playback?.media),
     },
     self: publicMember(self),
     clock: { clockId: clock.id, serverNowMs: clock.nowMs() },
@@ -243,7 +245,7 @@ function grantSnapshot(db, roomId, grantId, key, clock, playback, policy) {
   return result
 }
 
-export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSong, allowedOrigins, resolveAssets, clock = createKtvClock(), hostGraceMs, policy: policyOptions }) {
+export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSong, allowedOrigins, resolveAssets, clock = createKtvClock(), hostGraceMs, policy: policyOptions, media }) {
   const policy = ktvPolicy(policyOptions)
   app.use('/api/ktv', createKtvHttpGuard({ allowedOrigins }))
   recoverReadiness(db, clock)
@@ -276,6 +278,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
     event(db, roomId, actorId, action)
   }
   const lifecycle = createKtvLifecycle({ db, policy, transaction, closeRoom, broadcast: realtime.broadcast,
+    cleanup: cutoff => playback.media?.grants.prune(cutoff),
     occupied: roomId => playback.presence(roomId).devices.some(device => device.connected) })
   const closeRealtime = realtime.close
   realtime.close = () => { lifecycle.close(); playback.close(); closeRealtime() }
@@ -339,6 +342,13 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
     return req.ktvGrant
       ? grantSnapshot(db, req.params.id, req.ktvGrant.id, key, clock, playback, policy)
       : snapshot(db, req.params.id, user(req).id, key, clock, playback, policy)
+  }
+
+  if (media) {
+    playback.media = registerKtvMediaRoutes(app, { db, clock, playback, realtime, config: media,
+      roomAccess, viewerSnapshot, hostMember, activeRoom, commandId, checkRevision, transaction,
+      applyCommand, bump, event, invalidateReadiness })
+    realtime.media = playback.media
   }
 
   function assertUnstarted(roomId, entryId) {

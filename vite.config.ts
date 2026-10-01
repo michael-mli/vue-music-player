@@ -67,7 +67,13 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
+        navigateFallbackDenylist: [/^\/api\//, /^\/internal\//],
         runtimeCaching: [
+          {
+            urlPattern: ({ url }) => url.origin === self.location.origin &&
+              (/^\/api\/ktv(?:\/|$)/.test(url.pathname) || url.searchParams.has('ktvAsset')),
+            handler: 'NetworkOnly'
+          },
           {
             // KTV membership, invitations and future socket/media credentials must
             // never be served from an offline API response.

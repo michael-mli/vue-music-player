@@ -24,6 +24,8 @@ export interface PartySnapshot {
     stageInviteVisible?: boolean
     revision: number
     expiresAt: string
+    performanceMode?: 'local' | 'online' | 'hybrid'
+    mediaConfigured?: boolean
   }
   self: PartyMember
   limits?: { members: number; queue: number; singerRequests: number }
@@ -44,6 +46,7 @@ export interface PartySnapshot {
 export interface PartyLiveDevice {
   id: string
   memberId: string
+  scope?: 'display' | 'controller'
   label: string
   purpose: 'viewer' | 'stage' | 'guide'
   audioEnabled: boolean
@@ -51,6 +54,16 @@ export interface PartyLiveDevice {
   ready: boolean
   readyGeneration: number | null
   connected: boolean
+}
+
+export interface PartyMediaGrant {
+  identity: string
+  scope: 'audience' | 'publisher'
+  room: string
+  token: string
+  serverUrl: string
+  expiresAt: string
+  permit?: { clockId: string; performanceId: string; generation: number; expiresServerMs: number }
 }
 
 export interface PartyAudioAsset {
@@ -218,6 +231,17 @@ async function mutation<T>(path: string, body: Record<string, unknown>, bearerOn
 }
 
 export const partyApi = {
+  mediaStatus: (roomId: string) => call<{ available: boolean; mode: 'local' | 'online' | 'hybrid'; serverUrl: string }>('get', `/rooms/${encodeURIComponent(roomId)}/media/status`),
+  mediaMode: (roomId: string, mode: 'local' | 'online' | 'hybrid', baseRevision: number) =>
+    mutation<PartySnapshot>(`/rooms/${encodeURIComponent(roomId)}/media/mode`, { mode, baseRevision }),
+  mediaGrant: (roomId: string, deviceId: string, scope: 'audience' | 'publisher') =>
+    mutation<PartyMediaGrant>(`/rooms/${encodeURIComponent(roomId)}/media-token`, { deviceId, scope }),
+  mediaRenew: (roomId: string, identity: string, deviceId: string) =>
+    call<PartyMediaGrant>('post', `/rooms/${encodeURIComponent(roomId)}/media/${encodeURIComponent(identity)}/renew`, { deviceId }),
+  mediaReady: (roomId: string, identity: string, deviceId: string) =>
+    call<{ ready: true }>('post', `/rooms/${encodeURIComponent(roomId)}/media/${encodeURIComponent(identity)}/ready`, { deviceId }),
+  mediaRevoke: (roomId: string, identity: string) =>
+    call<{ state: 'revoked' }>('post', `/rooms/${encodeURIComponent(roomId)}/media/${encodeURIComponent(identity)}/revoke`, {}),
   list: () => call<PartyRoomSummary[]>('get', '/rooms'),
   get: (id: string) => call<PartySnapshot>('get', `/rooms/${encodeURIComponent(id)}`),
   socketTicket: (id: string, deviceId?: string) => call<PartySocketTicket>('post', `/rooms/${encodeURIComponent(id)}/socket-ticket`, { deviceId }),
