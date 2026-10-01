@@ -151,7 +151,7 @@ deployed; it does not resolve streaming/device acceptance.
 | P04 | Stage, phone controller, host UI | P02–P03 | In progress | Entry/join/pairing, Songs/Queue/Sing/People tabs, local invitation/pairing QR, moderation, readiness and guide controls; broad accessibility/physical coverage open |
 | P05 | Scheduled playback, private guide, shared lyrics | P01, P03–P04 | In progress | Stage/guide/lyrics/controls pass Chrome journey; required-guide and rendered-drift/output recovery tested; physical timing open |
 | P06 | Recovery, browser coverage, local release readiness | P02–P05 | In progress | Guide/stage loss, host transfer, restart and revocation have automated evidence; physical/device coverage open |
-| P07 | Online performance streaming and hybrid operation | P01, stable P03/P05 contracts | In progress | SFU/capture spike, room authorization and mode/capture/audience UI implemented; full app handover, public network and device acceptance open |
+| P07 | Online performance streaming and hybrid operation | P01, stable P03/P05 contracts | In progress | SFU/capture spike, room authorization and mode/capture/audience UI implemented; online and hybrid software handover verified; physical/network/device acceptance open |
 | P08 | Deployment, monitoring, and release verification | P06 for local; P07 for online | In progress | Intermediate previews deployed; private config generator, nginx snippet and runbook added; public media and release acceptance open |
 | P09 | Optional enhancements | Released foundation | Not started | — |
 
@@ -564,7 +564,7 @@ audience playback, and tested performer handover. This phase implements R12–R1
   mix; validate mobile capture support and received A/V sync under jitter.
 - [x] P07.7 Build audience connection/playback states, audio enablement, and recovery;
   prevent an independently playing instrumental under the received performance.
-- [ ] P07.8 Implement local-to-remote and remote-to-local performer handover with
+- [x] P07.8 Implement local-to-remote and remote-to-local performer handover with
   readiness, generation change, old-publisher stop/revocation, and stage routing.
 - [ ] P07.9 Validate venue-mixer versus clean-mic capture, headphone leakage, feedback,
   no duplicate backing, and monitor/publish volume independence.
@@ -1003,8 +1003,33 @@ integrity/FKs. No public user was added. The private predeployment backup is
 `/home/mli/ktv-party-stream-predeploy.srose93n`; old hashed assets remain. Owned
 local/remote browsers/profiles, SSH forwards and media fixtures were removed.
 P07.2/P07.4/P07.5/P07.7 software items are complete. Physical alignment, mobile
-capture/jitter, local/online stage-route handover and wider network/load scope
-remain open; public media stays disabled.
+capture/jitter and wider network/load scope remain open; public media stays disabled.
+Hybrid software stage-route handover is verified in the following checkpoint.
+
+
+Hybrid handover checkpoint (2026-10-01): the deployed `d6d4041` frontend and
+current unchanged backend sources pass the extended built-app journey **38/38**
+(`/tmp/ktv-hybrid-room-final.log`, process exit 0). An owned Chrome 137 browser
+on the second EC2 runs a venue → remote → venue sequence against isolated actual
+room policy, SQLite and SFU. Each turn requires readiness, a new generation,
+a fresh provider-confirmed nonce and terminal old-publisher revocation before
+replacement. The common-screen host captures synthetic venue input, switches to
+received remote audio/video with every previous native backing source stopped,
+and restores native local backing on the return venue turn. Each receiver has
+one decoded video player. Venue input has no added digital backing/private-vocal
+tone; remote input contains backing and microphone while private vocals stay absent.
+Final capture stop leaves no publisher capability active. No runtime exceptions.
+The initial extension passed 37/37 (`/tmp/ktv-hybrid-room-first.log`); the final run
+adds actual native source-stop verification. Owned remote browser/profile, SSH
+forwards, SFU and temporary database/assets were removed; no production state was
+mutated. Repeat with the documented remote fixture configuration and
+`KTV_ROOM_TEST_ROUTE_HANDOVER=1`.
+
+P07.8 software implementation is complete. Physical venue feedback, headphone
+leakage, actual mixer/input alignment, mobile capture, access-network impairments
+and one-to-many streaming measurements remain required gates. Synthetic EC2
+capture and separate browser contexts do not prove those criteria. No application
+change or deployment was required; public media remains disabled.
 
 ```text
 Date:

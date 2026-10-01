@@ -22,6 +22,8 @@ import { createOwnedRemoteBrowser } from './party-remote-browser.mjs'
 const clientLocation = process.env.KTV_ROOM_TEST_CLIENT || 'same-host'
 assert.ok(['same-host', 'remote-ec2'].includes(clientLocation), 'Unknown room-test client topology')
 const remoteMode = clientLocation === 'remote-ec2'
+const routeHandover = process.env.KTV_ROOM_TEST_ROUTE_HANDOVER === '1'
+assert.ok(!routeHandover || remoteMode, 'Hybrid fixture requires the owned remote fake-microphone browser')
 if (remoteMode) {
   assert.equal(net.isIP(process.env.KTV_ROOM_TEST_PUBLIC_IP || ''), 4, 'Remote fixture requires the SFU public IPv4')
   assert.match(process.env.KTV_ROOM_TEST_INTERFACE || '', /^[A-Za-z0-9_-]+$/, 'Remote fixture requires its network interface')
@@ -195,10 +197,14 @@ try {
       const getMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
       navigator.mediaDevices.getUserMedia = async (...args) => { const stream = await getMedia(...args); window.__micStreams.push(stream); return stream; };
       const source = AudioContext.prototype.createBufferSource;
-      AudioContext.prototype.createBufferSource = function() { const item = source.call(this), start = item.start.bind(item); item.start = (...args) => {
+      AudioContext.prototype.createBufferSource = function() { const item = source.call(this), start = item.start.bind(item), stop = item.stop.bind(item);
+        item.__state = { started: false, ended: false, stopAt: null, context: this };
+        item.addEventListener('ended', () => { item.__state.ended = true; });
+        item.stop = (...args) => { const result = stop(...args); item.__state.stopAt = args[0] ?? this.currentTime; return result; };
+        item.start = (...args) => {
         const samples = item.buffer?.getChannelData(0), length = Math.min(samples?.length || 0, 4096); let crossings = 0;
         for (let index = 1; index < length; index++) if (samples[index-1] <= 0 && samples[index] > 0) crossings++;
-        window.__sourceEvidence.push({when:args[0],offset:args[1],now:performance.now(),render:this.currentTime,output:this.getOutputTimestamp(),
+        item.__state.started = true; window.__sourceEvidence.push({when:args[0],offset:args[1],now:performance.now(),render:this.currentTime,output:this.getOutputTimestamp(),
           frequency: length ? Math.round(crossings * item.buffer.sampleRate / length) : null}); return start(...args);
       }; window.__bufferSources.push(item); return item; };
       window.confirm = () => true;` }, sessionId)
@@ -285,6 +291,86 @@ try {
   check(await evaluate(audience, "document.querySelectorAll('[data-party-media-screen] video').length === 1"), 'handover presents exactly one current audience player with decoded replacement video')
   await click(nextPhone, 'Stop streaming on this device')
   check(await evaluate(nextPhone, "window.__micStreams.every(stream => stream.getTracks().every(track => track.readyState === 'ended'))"), 'replacement capture also releases its microphone')
+  if (routeHandover) {
+    // Use a real common-screen capture device for venue turns, then route that
+    // same screen to received remote media. Synthetic venue input contains only
+    // 880 Hz: this detects duplicate digital backing, not acoustic leakage.
+    async function skipAfterRemoval(previous) {
+      await poll(async () => db.prepare('SELECT state FROM ktv_media_grants WHERE identity = ?').get(previous.identity)?.state === 'revoked', 'previous publisher revocation acknowledged')
+      await poll(async () => !(await provider.listParticipants(`ktv-${room.room.id}`)).some(item => item.identity === previous.identity), 'previous publisher absent at provider')
+      await click(host, 'Skip song')
+      await poll(async () => (await api(1, pathRoom)).playback.state === 'idle', 'hybrid skip commits')
+    }
+    async function offerTurn(actor, member, title) {
+      const queued = await api(actor, `${pathRoom}/queue`, { commandId: randomUUID(), songId: 1, title, requestNext: false, singerMemberId: member.id })
+      let current = await api(1, pathRoom)
+      if (current.readiness.state === 'idle') current = await api(1, `${pathRoom}/readiness/offer`, { commandId: randomUUID(), entryId: queued.queue[0].id, clockId: current.clock.clockId, baseRevision: current.room.revision })
+      current = await poll(async () => { const value = await api(1, pathRoom); return value.readiness.entryId === queued.queue[0].id && value.readiness.singerMemberId === member.id ? value : false }, 'hybrid singer readiness offer')
+      await api(actor, `${pathRoom}/readiness/respond`, { commandId: randomUUID(), clockId: current.readiness.clockId, performanceId: current.readiness.performanceId, generation: current.readiness.generation, baseRevision: current.room.revision, ready: true })
+    }
+    async function stopAudience(session) {
+      if (await evaluate(session, "[...document.querySelectorAll('button')].some(item => item.textContent.trim() === 'Stop streaming on this device')")) await click(session, 'Stop streaming on this device')
+      await poll(() => evaluate(session, "document.querySelectorAll('[data-party-media-screen] video').length === 0"), 'old audience player removed')
+    }
+    async function received(session, venue) {
+      await poll(() => evaluate(session, "(() => { const video = document.querySelector('[data-party-media-screen] video'); return video?.srcObject?.getAudioTracks().length === 1 && video.srcObject.getVideoTracks().length === 1 && video.getVideoPlaybackQuality().totalVideoFrames >= 10; })()"), 'hybrid received audio and decoded lyric video')
+      check(await evaluate(session, "document.querySelectorAll('[data-party-media-screen] video').length === 1"), 'hybrid route has exactly one decoded audience player')
+      await evaluate(session, `(async () => {
+        if (window.__routeContext) await __routeContext.close();
+        const video = document.querySelector('[data-party-media-screen] video'); window.__routeContext = new AudioContext(); await __routeContext.resume();
+        const source = __routeContext.createMediaStreamSource(video.srcObject); window.__routeAnalyser = __routeContext.createAnalyser(); __routeAnalyser.fftSize = 8192; __routeAnalyser.smoothingTimeConstant = 0;
+        const silent = __routeContext.createGain(); silent.gain.value = 0; source.connect(__routeAnalyser); __routeAnalyser.connect(silent); silent.connect(__routeContext.destination);
+      })()`)
+      const peaks = await poll(async () => {
+        const values = await evaluate(session, `(() => { const data = new Float32Array(__routeAnalyser.frequencyBinCount); __routeAnalyser.getFloatFrequencyData(data);
+          return [440,880,1729].map(frequency => { const center = Math.round(frequency * __routeAnalyser.fftSize / __routeContext.sampleRate); const value = Math.max(...data.slice(center-2,center+3)); return Number.isFinite(value) ? value : -120; }); })()`)
+        return values[1] > -55 && (venue ? values[0] < values[1] - 25 : values[0] > -55) ? values : false
+      }, 'hybrid received spectrum')
+      check(venue ? peaks[0] < peaks[1] - 25 && peaks[2] < peaks[1] - 25 : peaks[2] < Math.min(peaks[0], peaks[1]) - 25,
+        venue ? 'venue input is published without adding digital backing or private vocals' : 'remote clean microphone and backing are present while private vocals stay absent')
+    }
+    async function startTurn(session, stageLabel, previous, member) {
+      await click(session, 'Enable microphone and prepare')
+      await poll(() => evaluate(session, "document.querySelector('[data-party-media-status]')?.textContent.includes('Microphone ready')"), 'hybrid capture ready')
+      await click(host, stageLabel); await click(host, 'Prepare selected song'); await click(host, 'Start countdown')
+      await poll(() => evaluate(session, "document.querySelector('[data-party-media-status]')?.textContent.includes('Sending live singing')"), 'hybrid provider acknowledges publisher')
+      await poll(async () => (await api(1, pathRoom)).playback.state === 'playing', 'hybrid playing')
+      const active = db.prepare("SELECT * FROM ktv_media_grants WHERE scope = 'publisher' AND state = 'active'").get()
+      check(active.identity !== previous.identity && active.member_id === member && active.generation !== previous.generation && Boolean(active.ready_at), 'hybrid handover grants a fresh generation and provider-confirmed nonce')
+      check(db.prepare("SELECT COUNT(*) total FROM ktv_media_grants WHERE scope = 'publisher' AND state != 'revoked'").get().total === 1, 'hybrid handover preserves one publisher after provider acknowledgment')
+      return active
+    }
+    await skipAfterRemoval(secondPublisher)
+    await stopAudience(audience)
+    await evaluate(host, "(() => { const item = [...document.querySelectorAll('select')].find(item => [...item.options].some(option => option.value === 'hybrid')); item.value = 'hybrid'; item.dispatchEvent(new Event('change', {bubbles:true})); })()")
+    await poll(async () => (await api(1, pathRoom)).room.performanceMode === 'hybrid', 'hybrid mode committed')
+    await offerTurn(2, singer.self, 'First venue turn')
+    await poll(() => evaluate(audience, "[...document.querySelectorAll('select')].some(item => [...item.options].some(option => option.value === 'venue-mix'))"), 'venue capture option')
+    await evaluate(audience, "(() => { const item = [...document.querySelectorAll('select')].find(item => [...item.options].some(option => option.value === 'venue-mix')); item.value = 'venue-mix'; item.dispatchEvent(new Event('change', {bubbles:true})); })()")
+    await click(host, 'Watch and listen')
+    const venuePublisher = await startTurn(audience, 'Stage · Host', secondPublisher, room.self.id)
+    check(await evaluate(audience, 'window.__sourceEvidence.some(item => item.frequency > 400 && item.frequency < 480)'), 'venue common screen renders local instrumental for the room')
+    await received(host, true)
+    await click(audience, 'Stop streaming on this device')
+    check(await evaluate(audience, "window.__micStreams.every(stream => stream.getTracks().every(track => track.readyState === 'ended'))"), 'venue-to-remote handover immediately releases venue capture')
+    await skipAfterRemoval(venuePublisher)
+    await offerTurn(3, nextSinger.self, 'Hybrid remote turn')
+    const previousStageSources = await evaluate(audience, 'window.__sourceEvidence.length')
+    await click(audience, 'Watch and listen')
+    const remotePublisher = await startTurn(nextPhone, 'Stage · Next singer', venuePublisher, nextSinger.self.id)
+    await received(audience, false)
+    check(await evaluate(audience, 'window.__bufferSources.every(item => !item.__state.started || item.__state.ended || (item.__state.stopAt !== null && item.__state.stopAt <= item.__state.context.currentTime))'), 'all previous venue backing sources have stopped before remote media plays')
+    check(await evaluate(audience, 'window.__sourceEvidence.length') === previousStageSources, 'venue common screen switches to received remote media without restarting local backing')
+    await click(nextPhone, 'Stop streaming on this device'); await skipAfterRemoval(remotePublisher)
+    await offerTurn(2, singer.self, 'Return venue turn')
+    await stopAudience(audience)
+    const returnPublisher = await startTurn(audience, 'Stage · Host', remotePublisher, room.self.id)
+    await received(host, true)
+    check(await evaluate(audience, 'window.__sourceEvidence.length') > previousStageSources, 'remote-to-venue handover restores native local backing on the common screen')
+    await click(audience, 'Stop streaming on this device')
+    await poll(async () => db.prepare('SELECT state FROM ktv_media_grants WHERE identity = ?').get(returnPublisher.identity)?.state === 'revoked', 'final venue publisher revoked')
+    check(db.prepare("SELECT COUNT(*) total FROM ktv_media_grants WHERE scope = 'publisher' AND state != 'revoked'").get().total === 0, 'hybrid journey leaves no publisher capability active')
+  }
   check(errors.length === 0, `no browser runtime exceptions (${errors.length})`)
   console.log(`${passed} built-app streaming checks passed. Client: ${clientLocation}; synthetic microphone, foreground Chrome, isolated policy/SFU. Remote HTTP/CDP use loopback SSH forwards; physical and distinct access-network acceptance remains open.`)
 } catch (error) {

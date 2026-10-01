@@ -240,6 +240,12 @@ KTV_ROOM_TEST_KNOWN_HOSTS=/path/to/already-trusted-known_hosts \
 npm run test:party:room-media
 ```
 
+For the venue → remote → venue route journey, also set
+`KTV_ROOM_TEST_ROUTE_HANDOVER=1`. It uses the common-screen device as a synthetic
+venue mixer, then as a remote audience, and checks readiness, fresh generations,
+provider-acknowledged revocation, microphone release, native backing stop, received
+video and spectra. It does not measure a physical mixer or acoustic feedback.
+
 The target must already have a trusted SSH key and `/usr/bin/google-chrome`.
 The fixture does not change trust records or existing profiles/services. It
 uploads only its synthetic microphone, creates a private temporary profile,
