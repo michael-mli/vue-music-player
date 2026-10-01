@@ -12,7 +12,8 @@ but the production media flag remains disabled while acceptance is incomplete.
 
 | Reference | Current evidence | Remaining acceptance |
 | --- | --- | --- |
-| App server | EC2 `us-east-1`, Express/SQLite, nginx, PM2; Node 25.2.1 | Public media service and different-network transport |
+| App server | EC2 `us-east-1`, Express/SQLite, nginx, PM2; Node 25.2.1 | Persistent public media service and distinct access-network acceptance |
+| Remote EC2 Chrome 137.0.7151.68 | Separate-host public HTTPS/WSS, direct media and strict TURN TLS relay; transport probe 14/14 | Integrated room/guide/handover journey, physical audio and Wi-Fi/LTE |
 | Chrome 146.0.7680.71 on Linux | Isolated browser contexts/processes, Web Audio, room/PWA/SFU checks | Native virtual output stalls in the full streaming journey; no physical audio claim |
 | Desktop stage + phone controller + wired headphones | Selected physical reference setup for local acceptance | Five-minute acoustic recording, pause/seek/late-guide and device-loss checks |
 | Android Chrome and iOS Safari phones | Required device/browser evaluation | Permission/autoplay, canvas capture, decode/memory, foreground/background and physical alignment |

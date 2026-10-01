@@ -889,9 +889,18 @@ The public
 routes are installed, private worker flags updated and the media image built;
 the public room flag is still disabled and temporary containers are removed.
 This does not establish different-network or physical/integrated-room acceptance.
-The read-only inventory attempt against the other EC2 Linux host stopped at a
-changed SSH host key; AWS console output provided no fingerprint to verify it.
-No trust record, remote service or host was changed.
+The initial inventory of a second EC2 host stopped at a changed IP host-key
+entry. The identical key was subsequently found in the existing trusted SSH
+records; a scoped temporary known-hosts file pinned that already trusted key
+without changing the original trust records. A temporary, isolated Chrome
+137.0.7151.68 client on that host passed the public-origin transport probe
+14/14 (`/tmp/ktv-public-transport-remote-first.log`): direct media, strictly
+TLS-only relay, received audio/video bytes, ten decoded video frames, provider
+revocation and rejection of revoked unexpired JWTs. Both media endpoints were
+browser contexts on the second EC2 host, separate from the SFU host. This is
+separate-host evidence, not Wi-Fi/LTE, acoustic or integrated-room acceptance.
+The owned browser/profile, SSH forward, temporary SFU and private fixture files
+were removed; existing services and production users/rooms were unchanged.
 
 Timing policy checkpoint (2026-10-01): `ktv-timing.js` centralizes bounded
 preparation/start/output/host/pairing/ticket/authentication durations; admitted

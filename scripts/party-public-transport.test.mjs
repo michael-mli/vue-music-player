@@ -21,6 +21,8 @@ const publicIp = process.env.KTV_TRANSPORT_IP, turnDomain = process.env.KTV_TRAN
 const networkInterface = process.env.KTV_TRANSPORT_INTERFACE, tlsRoot = process.env.KTV_TRANSPORT_TLS
 assert.ok(publicIp && turnDomain && networkInterface && tlsRoot, 'Supply KTV_TRANSPORT_IP/DOMAIN/INTERFACE/TLS')
 const image = process.env.KTV_TRANSPORT_IMAGE || 'ktv-party-media:release'
+const clientLocation = process.env.KTV_TRANSPORT_CLIENT_LOCATION || 'same-host'
+assert.ok(['same-host', 'remote-ec2'].includes(clientLocation), 'Unknown client location')
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ktv-public-transport-'))
 const configRoot = path.join(root, 'private'), container = `ktv-transport-${randomUUID().slice(0, 8)}`
 const room = `ktv-${randomUUID()}`, grants = new Map(), contexts = [], pending = new Map()
@@ -150,7 +152,7 @@ try {
   const info = await (await fetch((process.env.CHROME_DEBUG_URL || 'http://127.0.0.1:9230') + '/json/version')).json()
   browser = new WebSocket(info.webSocketDebuggerUrl); await once(browser, 'open')
   browser.on('message', raw => { const message = JSON.parse(raw); if (!message.id) return; const task = pending.get(message.id); if (!task) return; pending.delete(message.id); message.error ? task.reject(new Error('CDP command failed')) : task.resolve(message.result) })
-  console.log('Browser:', info.Browser, '; client location: same media host')
+  console.log('Browser:', info.Browser, '; client location:', clientLocation)
   const singer = await page('direct')
   probeStep = 'publisher credential'
   const publisher = await issue('publisher')
@@ -189,7 +191,7 @@ try {
   await poll(() => evaluate(singer, "performanceRoom.state==='disconnected'"), 'publisher revoked')
   check(grants.get(publisher.identity).removed, 'publisher revoked by provider through supervisor gateway')
   check(await denied(singer, publisher), 'revoked publisher JWT cannot restore public media access')
-  console.log(`${passed} supervised public-origin transport checks passed. Same-host, synthetic policy/media only; room/physical/different-network acceptance remains open.`)
+  console.log(`${passed} supervised public-origin transport checks passed. Client: ${clientLocation}; synthetic policy/media only; integrated room, physical and access-network acceptance remains open.`)
 } catch (error) {
   if (lastSession) console.error('ICE configuration:', JSON.stringify(await evaluate(lastSession, `({mode:transportMode,
     offeredTls:offeredUrls.filter(url=>url.startsWith('turns:')).length,

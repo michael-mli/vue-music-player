@@ -186,7 +186,14 @@ checks provider-acknowledged revocation. It does not create app users/rooms or
 change the production flag. Cleanup removes its browser contexts, container and
 private files. Its default Chrome client is on the media host, so a passing probe
 does not establish different-network, physical microphone or integrated-room
-acceptance. Do not run it alongside a persistent service on the same ports.
+acceptance. For an owned remote Chrome client, forward its loopback CDP port
+through pinned SSH, set `CHROME_DEBUG_URL` to the local forward and set
+`KTV_TRANSPORT_CLIENT_LOCATION=remote-ec2`. This label records the operator's
+chosen topology; it does not detect or certify distinct access networks. The
+2026-10-01 remote EC2 Chrome 137 run passed 14/14, including strict TLS-only
+relay and revocation (`/tmp/ktv-public-transport-remote-first.log`). Its temporary
+browser and forward were removed. Do not run the checker alongside a persistent
+media service on the same ports.
 
 Run builds and CPU-heavy suites before browser audio journeys:
 
