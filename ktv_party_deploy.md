@@ -248,8 +248,9 @@ checks that Chrome and both forwards bind loopback, and owns cleanup plus a
 7881/TCP + 7882/UDP free. The public IP/interface must describe this SFU host.
 The backend, accounts, rooms and grants are isolated temporary fixtures;
 production configuration stays unchanged. Native clocks and drift/readiness
-checks are retained. The remote 2026-10-01 candidate passes the full singing,
-private guide and handover journey 18/18, including spectral guide separation.
+checks are retained. The remote 2026-10-01 exact frontend `d6d4041` passes the full singing,
+private guide and handover journey 20/20, including spectral guide separation,
+old unexpired room-token rejection and exactly one decoded replacement player.
 All scripts remove their owned fixtures. This does not measure physical acoustic
 alignment or distinct Wi-Fi/LTE networks. Failed journeys remain recorded in the
 tracker until their concrete defect is resolved.

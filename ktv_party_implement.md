@@ -9,8 +9,8 @@ Design reference: [ktv_party.md](ktv_party.md)
 Implemented contracts: [ktv_party_protocol.md](ktv_party_protocol.md)
 
 Current status: The durable-room preview is deployed at
-`https://music.micstec.com/party` with frontend/backend `9b74e8f`
-(`main-B6kwN6KJ.js`, `main-D0gBov56.css`). Online media remains disabled.
+`https://music.micstec.com/party` with frontend `d6d4041`
+(`main-Df1mhgtD.js`, `main-D0gBov56.css`) and backend `9b74e8f`. Online media remains disabled.
 Members can connect a shared screen or phone
 controller with a short-lived code; a display has read-only room access, and a
 controller inherits the member's current permissions. Hosts can appoint co-hosts,
@@ -552,17 +552,17 @@ audience playback, and tested performer handover. This phase implements R12–R1
 
 - [ ] P07.1 Spike an established SFU, initially evaluate LiveKit; record hosted or
   self-hosted choice, cost/capacity assumptions, region, TURN, and network requirements.
-- [ ] P07.2 Build separate local-monitor and publish graphs: guide remains private;
+- [x] P07.2 Build separate local-monitor and publish graphs: guide remains private;
   published audio contains instrumental plus microphone exactly once.
 - [ ] P07.3 Measure microphone/input/output delay and calibrate published backing
   alignment; verify actual singing alignment rather than only matching graph clocks.
-- [ ] P07.4 Generate scoped media tokens from room authorization; audience subscribes,
+- [x] P07.4 Generate scoped media tokens from room authorization; audience subscribes,
   the current generation's performer publishes, and other members cannot publish.
-- [ ] P07.5 Integrate active revocation with the media server for removal, room close,
+- [x] P07.5 Integrate active revocation with the media server for removal, room close,
   lease expiry, performer replacement, and reconnect using an old unexpired token.
 - [ ] P07.6 Implement publisher-captured lyric video synchronized with the published
   mix; validate mobile capture support and received A/V sync under jitter.
-- [ ] P07.7 Build audience connection/playback states, audio enablement, and recovery;
+- [x] P07.7 Build audience connection/playback states, audio enablement, and recovery;
   prevent an independently playing instrumental under the received performance.
 - [ ] P07.8 Implement local-to-remote and remote-to-local performer handover with
   readiness, generation change, old-publisher stop/revocation, and stage routing.
@@ -598,8 +598,15 @@ Repeatable commands: `npm test --prefix server`, `npm run test:party`,
 `npm run type-check`, and `CHROME_DEBUG_URL=http://127.0.0.1:9231
 CHROME_SINGER_DEBUG_URL=http://127.0.0.1:9230 npm run test:party:media`.
 The Docker build uses a whitelisted context and copies no credential files.
-P07 checklist items remain open until their integrated UI/network/device scope
-has passed; component or toy-room spike evidence does not complete those gates.
+P07.2/P07.4/P07.5/P07.7 software scope is complete: exact frontend `d6d4041`
+passes the full built-app remote Chrome journey 20/20 with actual isolated room
+policy/SFU, a native private-guide source, received mix/video, room-issued old-JWT
+denial, provider-acknowledged nonce handover and one current audience player.
+Evidence: `/tmp/ktv-stream-release-room-media.log`; party units 53/53 include lease
+arrival/cancellation and delayed SDK unsubscribe/subscription regressions. The
+app/CDP route uses loopback SSH forwards; direct media connects to the SFU host.
+Other P07 items and physical/network exit criteria remain open; this does not
+prove mobile support, acoustic alignment or distinct access networks.
 
 ## 11. P08 — Deployment and release verification
 
@@ -978,7 +985,26 @@ Owned remote profile/browser, SSH forwards, SFU and private fixtures were remove
 This closes the earlier virtual-host stall as a software test-environment limit;
 it does not establish physical alignment, mobile support or Wi-Fi/LTE acceptance.
 The original host's failed native-clock journeys remain historical evidence.
-Final exact-commit release verification follows; public media remains disabled.
+Final exact-commit release verification is complete: `d6d4041` build/type check,
+UI 38/38 (`/tmp/ktv-stream-release-ui.log`), PWA 8/8
+(`/tmp/ktv-stream-release-pwa.log`), and full remote room-media 20/20
+(`/tmp/ktv-stream-release-room-media.log`). The final journey additionally denies
+an unexpired room-issued publisher JWT after provider removal and requires ten
+decoded replacement-video frames with exactly one audience player. Candidate
+failure logs remain `/tmp/ktv-room-media-remote-first.log` (fixture Skip race),
+`...-second.log`/`...-third.log` (scheduled-without-lease token race), and
+`...-lease-fixed.log` (empty old player after replacement).
+
+Frontend `d6d4041` is deployed, backend remains `9b74e8f`; no backend restart was
+needed for these client fixes. Public release checks pass 18/18
+(`/tmp/ktv-stream-public-release.log`): HTTP/WSS/default flags/timing, exact
+`main-Df1mhgtD.js`/CSS bytes, source SHA, temporary room closure and database
+integrity/FKs. No public user was added. The private predeployment backup is
+`/home/mli/ktv-party-stream-predeploy.srose93n`; old hashed assets remain. Owned
+local/remote browsers/profiles, SSH forwards and media fixtures were removed.
+P07.2/P07.4/P07.5/P07.7 software items are complete. Physical alignment, mobile
+capture/jitter, local/online stage-route handover and wider network/load scope
+remain open; public media stays disabled.
 
 ```text
 Date:
@@ -1014,5 +1040,6 @@ Next action:
 | Mobile UI/capture preview | Frontend `3e76e15`, backend `09879ac` | `https://music.micstec.com/party` | 2026-10-01 | Party units 49/49; exact-build UI 29/29, PWA 6/6 on both owned Chrome processes; public assets/routes/SHA/health/SQLite 8/8 | Online flag disabled; transient earlier PWA update timeouts recorded; physical/browser and full streaming acceptance open |
 | Timing policy backend | Backend `0e0c7aa`, frontend `3e76e15` | `https://music.micstec.com/party` | 2026-10-01 | Backend 121/121; party units 49/49; type check and UI 29/29; public HTTP/WSS/timing/schema/cleanup 11/11 | Online flag disabled; physical/browser and integrated/different-network streaming acceptance remain open |
 | Feature-switch preview | Frontend/backend `9b74e8f` (`main-B6kwN6KJ.js`) | `https://music.micstec.com/party` | 2026-10-01 | Backend 126/126, party units 49/49, exact-build UI 38/38 and PWA 8/8; public flags/HTTP/WSS/assets/SHA/cleanup 18/18 | Media remains disabled; integrated streaming, physical timing and browser/device acceptance remain open |
+| Streaming lease/handover preview | Frontend `d6d4041` (`main-Df1mhgtD.js`), backend `9b74e8f` | `https://music.micstec.com/party` | 2026-10-01 | Party units 53/53; exact-build UI 38/38, PWA 8/8, full remote Chrome room-media 20/20; public HTTP/WSS/assets/SHA/cleanup 18/18 | Public media disabled; physical/mobile/jitter, local/online route handover and distinct access-network/load acceptance remain open |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |
