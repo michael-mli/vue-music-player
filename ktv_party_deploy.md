@@ -58,8 +58,34 @@ keys. No secret belongs in a `VITE_` variable or frontend build.
 Install a browser-trusted certificate and its private key as
 `tls/fullchain.pem` and `tls/privkey.pem`, readable by the UID used for the container.
 Keep the key private. A Cloudflare Origin CA certificate is unsuitable for direct
-browser TURN TLS. Renew certificates and restart this container during an agreed
-maintenance window; existing streams stop and require fresh capture consent.
+browser TURN TLS. The renewal service below defers a restart while an online song
+is active. A restart stops existing streams and requires fresh capture consent.
+
+### TURN certificate renewal
+
+The current direct hostname is `ktv-turn.3.219.116.105.sslip.io`, resolving to the
+app server. This IP-derived hostname is the deployment default; a server IP change
+requires a new hostname, certificate and media configuration. The existing
+`turn.micstec.com` DNS record was left unchanged.
+
+`server/nginx-ktv-acme.conf.example` serves only HTTP ACME challenges from
+`/var/www/ktv-acme`. The certificate is issued with the pinned Certbot 5.8.0 image
+and kept under the private configuration directory. Certificate expiry is
+2026-12-30 16:50:37 UTC. The AWS security group `ktv-party-media` and IPv4 UFW rules
+permit the five media transports in section 1; private HTTP/control ports remain
+unexposed. This prepares network access, without establishing public ICE acceptance.
+
+Install the service/timer templates after substituting their paths, owner and
+hostname. `scripts/renew-ktv-media-tls.mjs` renews, validates the hostname/key/expiry,
+copies files with mode 0600 and records a durable restart marker. It reads room
+state before restarting an idle media container. Active performances defer the
+restart until a later timer run; provider or database failures retain the marker.
+The idle check and restart are separate operations, so a new performance can
+start between them. The timer runs every six hours with a randomized delay.
+
+The installed service passed an actual run and Certbot's staging renewal dry run
+passed on 2026-10-01. Tests cover mismatched keys/hosts, active-song deferral, an
+idle restart and retained markers on failure. See the [Certbot renewal guide](https://eff-certbot.readthedocs.io/en/stable/using.html#renewing-certificates).
 
 Enable only the documented media ports in the host firewall and upstream network
 rules. Verify the advertised public IP maps to this node and that TURN can reach

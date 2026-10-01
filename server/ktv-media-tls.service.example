@@ -1,0 +1,16 @@
+[Unit]
+Description=Renew KTV Party TURN certificate
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=__USER__
+ExecStart=__NODE__ __REPO__/scripts/renew-ktv-media-tls.mjs --directory __PRIVATE_ROOT__ --webroot /var/www/ktv-acme --hostname __TURN_DOMAIN__ --database __ROOM_DB__
+TimeoutStartSec=240
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=__PRIVATE_ROOT__
+

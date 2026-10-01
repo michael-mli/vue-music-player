@@ -717,7 +717,7 @@ general receipts, cleanup and returning-invite recovery are now deployed.
 | B02 | Whole-song decoding may exceed phone memory budget | P01 memory/decode study | Open risk |
 | B03 | Mobile background audio/capture may suspend | P01/P06 support matrix | Open risk |
 | B04 | Original and instrumental alignment/lyrics coverage vary | Asset validation and versioned descriptors | Open risk |
-| B05 | Public relay DNS/certificate and physical lyric capture support remain unverified | Point the chosen direct DNS hostname at this app server, install a trusted TURN certificate, then run P07 network/device acceptance | Open deployment gate; `turn.micstec.com` currently resolves elsewhere |
+| B05 | Public relay transport and physical lyric capture support remain unverified | Start the supervised media service and verify public ICE/TURN and physical capture | Direct IP-derived DNS, trusted certificate, renewal timer and AWS/UFW rules installed; public transport/device gate open |
 | B06 | An older installed PWA may retain cached room authority | Field-upgrade an existing installation after the 6/6 synthetic upgrade/offline checks | Open field acceptance gate; new worker uses NetworkOnly |
 
 ### Evidence log
