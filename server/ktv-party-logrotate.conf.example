@@ -1,0 +1,12 @@
+"__HOME__/.pm2/logs/karaoke-auth-out.log" "__HOME__/.pm2/logs/karaoke-auth-error.log" {
+    daily
+    maxsize 10M
+    rotate 14
+    maxage 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su __USER__ __GROUP__
+}

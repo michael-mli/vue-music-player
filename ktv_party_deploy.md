@@ -166,6 +166,56 @@ Before enabling online rooms publicly, record these results:
 - PWA update/offline behavior: KTV state, credentials and pinned party assets use
   NetworkOnly; reload stops old capture and reconnects with current room authority.
 
+### Operational diagnostics and troubleshooting
+
+`GET /api/admin/ktv-health` requires an authenticated application admin and returns
+`Cache-Control: no-store`. This is an operations endpoint; room hosts continue to
+use room permissions for normal controls. It returns aggregate room/playback/grant
+counts, socket/ticket/buffer counts, media readiness, memory and event-loop delay.
+HTTP measurements have five fixed categories and eight latency buckets; no
+request path, name, member/room ID, body, token or invitation is retained. The
+recent window resets every five minutes; process totals reset on restart. The
+reported p95 is a bucket ceiling, with `>2500` for requests beyond 2.5 seconds.
+
+Review these alert codes during operations:
+
+| Alert | Threshold | Action |
+| --- | --- | --- |
+| `*.latency` | At least 20 requests in the current window, p95 bucket above 500 ms | Inspect process CPU, memory, event-loop delay and SQLite/WAL pressure before increasing room limits |
+| `*.errors` | At least five HTTP 5xx responses and at least 5% of category requests | Check backend logs and dependency availability; aborted requests are counted separately |
+| `eventLoop.delay` | Last-minute event-loop p95 above 100 ms | Move CPU work away from the room process and inspect host load |
+| `media.unavailable` | Configured worker fails its private readiness check | Keep online performances stopped; inspect supervisor status, policy connectivity and provider configuration |
+
+Backend log rotation is installed from `server/ktv-party-logrotate.conf.example`.
+The existing daily timer keeps 14 rotations with compression, a 10 MiB maximum
+size trigger and 14-day expiry. Size checks occur when the scheduler runs; this
+is not an instantaneous disk cap. Only the two karaoke backend PM2 logs are
+covered. `copytruncate` lets PM2 retain its open descriptors, but may lose lines
+written during truncation; diagnostic counters do not depend on those lines.
+Logs have mode 0600. Database room audits already have configured per-room caps,
+receipt retention and closed-room expiry.
+
+For a room problem:
+
+1. Confirm the current build and open the device's **Audio timing and health**
+   panel. Distinguish calculated sample phase from measured acoustic alignment.
+2. If startup fails, tap enable again after confirming browser playback permission.
+   Startup waits for a moving audio clock and times out after eight seconds. It
+   never marks a stalled output ready merely because `resume()` returned.
+3. For drift, suspension or an output change, confirm headphones/output and retry
+   explicitly. Required-device failures pause the room; optional-guide failure
+   leaves a healthy local backing device playing.
+4. Check the room connection and clock status. Reconnect fetches fresh authority;
+   stale tickets/grants must not be copied or replayed. A reload releases capture.
+5. For online failure, inspect the private media readiness and supervisor status.
+   Verify direct TURN DNS, certificate expiry and the documented firewall ports.
+   Restore the service before obtaining fresh microphone consent and a new grant.
+6. For pending guests or removed devices, use host admission/device controls.
+   An application admin role is unnecessary for those room actions.
+
+Share only diagnostic values and symptoms. Do not copy tokens, invitation/pairing
+codes, private keys, environment files or raw signaling URLs into support logs.
+
 ## 5. Backup, release and rollback
 
 Before changing the backend, capture the deployed frontend asset names and build

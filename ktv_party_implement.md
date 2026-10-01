@@ -7,7 +7,9 @@ Last updated: 2026-10-01
 Design reference: [ktv_party.md](ktv_party.md)
 
 Current status: The durable-room preview is deployed at
-`https://music.micstec.com/party`. Members can connect a shared screen or phone
+`https://music.micstec.com/party` with frontend `1dfa35c`
+(`main-B8OVLbnL.js`) and backend `6c73d58`. Online media remains disabled.
+Members can connect a shared screen or phone
 controller with a short-lived code; a display has read-only room access, and a
 controller inherits the member's current permissions. Hosts can appoint co-hosts,
 transfer ownership, reject or block guests, and restore access. Co-hosts can manage
@@ -578,8 +580,11 @@ Status: In progress. Track local and online releases separately within this phas
   configuration, TLS/origin settings, and single room-process ownership.
 - [ ] P08.3 For online release, provision and validate SFU/TURN endpoints, credentials,
   allowed origins, network paths, and media-server revocation integration.
-- [ ] P08.4 Add bounded metrics/logs, readiness and drift diagnostics, alert thresholds,
+- [x] P08.4 Add bounded metrics/logs, readiness and drift diagnostics, alert thresholds,
   room expiry cleanup, and a practical support troubleshooting flow.
+  Aggregate admin health, fixed-label HTTP histograms, socket counts and private
+  media readiness pass backend checks; log rotation is installed and validated.
+  Deployment/support procedure and thresholds are in `ktv_party_deploy.md`.
 - [ ] P08.5 Run release checks, validate the built PWA and old-client upgrade flow,
   and document rollback to the prior build without destructive schema rollback.
 - [ ] P08.6 Deploy to a test environment and complete a real multi-device party session.
@@ -778,6 +783,19 @@ general receipts, cleanup and returning-invite recovery are now deployed.
 | 2026-10-01 | P06.8 bounded load and queue fanout deployment | Backend `6c73d58`; `scripts/party-load.test.mjs` and separate server fixture; public frontend remains `4a216be` | Backend 104/104; public queue/WSS/idempotent replay/cleanup 4/4; separate-process local capacity probe passes at 20 members/60 sockets/100 songs, cap excess denied, no foreign-key errors | At capacity, 80 command samples in bursts of 20: p50 217 ms, p95 623 ms, max 972 ms; server RSS 114.7 MiB/heap 17.6 MiB; 420 queue snapshots/18,165,047 bytes; DB/WAL 368,640 bytes, 102 receipts and 122 events. Local control only, no streaming/media or internet capacity claim. Backend rollback backup `/tmp/ktv-party-queue-fanout-predeploy.2dFKHO`; public test room closed. |
 
 ### Work-session update template
+
+Audio startup preview `1dfa35c` was deployed on 2026-10-01 with frontend
+`main-B8OVLbnL.js`, retaining previous assets. Party checks 46/46, type check,
+production build, exact-build PWA checks 6/6 and public deployment checks 7/7 pass.
+Backend remains `6c73d58`, online flag off. Consistent backup:
+`/home/mli/ktv-party-audio-predeploy.kb3dou1p`.
+
+P08.4 diagnostics candidate passes backend 107/107
+(`/tmp/ktv-observability-backend-final.log`): bounded counters/windows, completion
+deduplication, aborted requests, alert thresholds, admin-only no-store access,
+disabled-media schema compatibility and private-provider error redaction.
+The installed logrotate rule passes dry-run validation; the existing timer is
+active. No new streaming or physical-device acceptance is claimed.
 
 Latest deployment preparation and audio startup evidence (2026-10-01):
 `652affe` provisions the TURN certificate renewal tooling. Certbot staging renewal

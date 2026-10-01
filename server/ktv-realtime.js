@@ -211,5 +211,10 @@ export function createKtvRealtime({ getSnapshot, allowedOrigins = [], clock, onD
     wss.close()
   }
 
-  return { issueTicket, broadcast, scheduleBroadcast, broadcastLease, revokeMember, attach, close }
+  function diagnostics() {
+    return { connected: wss.clients.size, authenticated: [...wss.clients].filter(ws => Boolean(ws.principal)).length,
+      pendingTickets: tickets.size, pendingBroadcasts: pendingBroadcasts.size,
+      bufferedBytes: [...wss.clients].reduce((total, ws) => total + ws.bufferedAmount, 0) }
+  }
+  return { issueTicket, broadcast, scheduleBroadcast, broadcastLease, revokeMember, attach, diagnostics, close }
 }

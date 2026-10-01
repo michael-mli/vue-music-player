@@ -164,5 +164,5 @@ export function registerKtvMediaRoutes(app, { db, clock, playback, realtime, con
       return viewerSnapshot(req)
     })
   }, true))
-  return { grants }
+  return { grants, health: async () => (await control('/control/health')).ready === true }
 }

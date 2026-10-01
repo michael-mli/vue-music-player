@@ -15,6 +15,7 @@ import { createDigLibrary } from './dig-library.js'
 import { registerDigRoutes } from './dig-routes.js'
 import { registerKtvRoutes } from './ktv-routes.js'
 import { createKtvAssets } from './ktv-assets.js'
+import { createKtvMetrics, registerKtvHealthRoute } from './ktv-observability.js'
 import { createDigIngestionWorker } from './dig-ingestion.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -164,6 +165,8 @@ function requireAdmin(req, res, next) {
 }
 
 const karaokeManifestPath = process.env.KARAOKE_MANIFEST_PATH || path.join(WEB_ROOT, 'karaoke', 'karaoke_manifest.json')
+const ktvMetrics = createKtvMetrics()
+app.use('/api/ktv', ktvMetrics.middleware)
 const ktvRealtime = registerKtvRoutes(app, {
   db, authMiddleware, secret: JWT_SECRET || 'unconfigured-development-secret',
   allowedOrigins: (process.env.KTV_ALLOWED_ORIGINS || '').split(',').map((origin) => origin.trim()).filter(Boolean),
@@ -198,6 +201,8 @@ const ktvRealtime = registerKtvRoutes(app, {
     } catch { return false }
   },
 })
+
+registerKtvHealthRoute(app, { db, authMiddleware, requireAdmin, metrics: ktvMetrics, realtime: ktvRealtime })
 
 registerDigRoutes(app, {
   authMiddleware,
