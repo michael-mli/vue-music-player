@@ -44,7 +44,7 @@ controls for that entry; hosts use performance controls. The release passes 77
 backend checks, the unchanged 19 frontend unit checks, an exact-release foreground
 Chrome journey of 50 checks, 25 public protocol checks and 10 deployment checks.
 
-The current queue/audio-ownership preview is `34fc55c` (`main-7EC2G4Bt.js`,
+The previous queue/audio-ownership preview is `34fc55c` (`main-7EC2G4Bt.js`,
 `main-CsXF3blB.css`) at the same URL. It adds persistent host ordering/fair-order
 restoration, held-song reassignment, per-room singer caps, duplicate warnings, and
 solo/party audio ownership. Verified: backend 81/81 (54 KTV + 27 dig), party units
@@ -54,7 +54,17 @@ DB/static/previous-code backup: `/tmp/ktv-party-queue-controls-predeploy.6j7f1h_
 (previous live build `49bd4d2`). Physical timing/browser acceptance and online/hybrid
 remain open; the next work continues into streaming rather than ending here.
 
-P07 streaming implementation is now in progress in the working branch. A real
+The current streaming-foundation preview is `4a216be` (`main-D4pM4JGY.js`,
+`main-Be17GLqV.css`) at the same URL. It includes the streaming code and room
+cache protection with online media disabled. The release build, PWA upgrade
+check 6/6, public HTTP/room/WSS smoke checks 10/10, SQLite integrity and foreign
+keys passed. The local browser journey passed 59/59 with the same source before
+the release-SHA build; two exact-build reruns encountered the host's virtual
+audio clock stalling at different steps, so exact-build audio acceptance is not
+claimed. Public rooms from release checks were closed. Backup:
+`/tmp/ktv-party-media-predeploy.sSNSC8`.
+
+P07 streaming implementation is now in progress. A real
 loopback LiveKit/Chrome spike passed 23 checks: one mixed backing/mic track, private
 guide exclusion, captured lyric video, two receivers, client silence deadlines,
 forced TURN relay, provider removal, publisher replacement, server lease expiry, old-token denial,
@@ -83,7 +93,7 @@ The isolated PWA check installs a synthetic legacy caching worker, upgrades it,
 and confirms old cached room authority is purged; an actual field-installed
 older PWA is still part of release acceptance.
 `ktv_party_deploy.md` records the configuration and release procedure. The public
-release remains `34fc55c`.
+release is `4a216be`, with online mode unavailable until relay and physical gates pass.
 
 ## 1. How to use this tracker
 
@@ -737,6 +747,7 @@ general receipts, cleanup and returning-invite recovery are now deployed.
 | 2026-09-30 | Queue controls and party ownership release | `34fc55c`, host-order/reassignment/caps routes and UI, solo epoch guards, retained recorder result and bounded command journal | Backend 81/81; party units 20/20; solo units 10/10; Chrome 146 foreground release journey 59/59; public protocol 30/30; deployment 10/10; exact assets/additive schema/FKs verified | Backup `/tmp/ktv-party-queue-controls-predeploy.6j7f1h_o`; temporary room closed. Navigation polling retries only destroyed CDP contexts, uses actual Home link and fresh member snapshots. Physical audio/browser and online streaming gates remain open; continue implementation. |
 
 | 2026-10-01 | P07 streaming implementation and P06.6 software upgrade gate | Local P07 branch code, `ktv_party_deploy.md`, private config generator and isolated PWA fixture | Backend 104/104; party units 40/40; media Chrome/SFU 23/23 including forced TURN; supervisor/process 9/9; private config 2/2; existing-app Chrome 59/59; PWA upgrade/offline 6/6; build/type-check pass | Full integrated guide/handover browser journey is incomplete because the host virtual audio output stalled and capture recovery correctly stopped publication. Synthetic loopback and legacy-worker checks are not public network, field-installed PWA or physical phone acceptance. Online remains disabled. `turn.micstec.com` resolves to `54.165.17.203`, not this host's observed public `3.219.116.105`. |
+| 2026-10-01 | Streaming-foundation preview deployment | `4a216be`, `main-D4pM4JGY.js`, `main-Be17GLqV.css`, `https://music.micstec.com/party` | Backend 104/104; frontend 40/40; solo 10/10; same-source local Chrome 59/59; exact-build isolated PWA 6/6; public HTTP/room checks 8/8 and WSS/cleanup 2/2; SQLite backup and live integrity/foreign keys pass; embedded SHA/assets verified | Online flag remains off and media routes return 404. Two exact-build Chrome audio reruns encountered unstable virtual output timing at different steps; full exact-build audio journey is not claimed. Both temporary public rooms closed. Backup `/tmp/ktv-party-media-predeploy.sSNSC8`; public TURN DNS/cert and physical phone/network acceptance remain open. |
 
 ### Work-session update template
 
@@ -769,5 +780,6 @@ Next action:
 | Durable-room preview | `f1e21da` (`main-l1KzzXwT.js`) | `https://music.micstec.com/party` | 2026-09-30 | Backend 76/76, frontend 19/19, exact-release foreground Chrome 49/49, public protocol 24/24 and deployment 10/10; restart/rollback, guest recovery, bounded cleanup and exact assets/schema verified | Queue/UI/PWA completion, physical timing/broader browsers and online/hybrid |
 | Queue safeguard preview | `49bd4d2` (`main-BLgb8FvF.js`) | `https://music.micstec.com/party` | 2026-09-30 | Backend 77/77, frontend 19/19, exact-release foreground Chrome 50/50, public protocol 25/25 and deployment 10/10; active performance cannot be interrupted through request actions | Remaining queue/player/PWA integration, physical timing/broader browsers and online/hybrid |
 | Queue/ownership preview | `34fc55c` (`main-7EC2G4Bt.js`) | `https://music.micstec.com/party` | 2026-09-30 | Backend 81/81, party units 20/20, solo units 10/10, foreground Chrome 59/59, public protocol 30/30 and deployment 10/10; exact assets/schema/FKs verified | Physical timing, broad PWA/browser/a11y and online/hybrid |
+| Streaming-foundation preview | `4a216be` (`main-D4pM4JGY.js`, `main-Be17GLqV.css`) | `https://music.micstec.com/party` | 2026-10-01 | Backend 104/104; party units 40/40; solo 10/10; local Chrome 59/59 on same source before SHA build; exact-build PWA 6/6; public release checks 10/10; DB integrity/FKs and assets/SHA verified | Online flag disabled; exact-build audio journey stalled on host virtual output; public relay and physical phone/network acceptance open |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |
