@@ -37,8 +37,9 @@ function stream() {
 }
 function fixture(t) {
   const previous = { window: globalThis.window, document: globalThis.document, state: globalThis.__partyMediaLifecycle }
+  const retryTimers = new Map()
   const timers = new Map(), micRequests = [], removals = [], cleanups = []
-  const window = Object.assign(new EventTarget(), { setInterval(fn) { timers.set(timers.size + 1, fn); return timers.size }, clearInterval(id) { timers.delete(id) } })
+  const window = Object.assign(new EventTarget(), { setInterval(fn) { timers.set(timers.size + 1, fn); return timers.size }, clearInterval(id) { timers.delete(id) }, setTimeout(fn) { retryTimers.set(retryTimers.size + 1, fn); return retryTimers.size }, clearTimeout(id) { retryTimers.delete(id) } })
   const document = Object.assign(new EventTarget(), { hidden: false })
   globalThis.window = window; globalThis.document = document
   const engines = []
@@ -59,11 +60,12 @@ function fixture(t) {
     async enable() { this.enabled.value = true }, disable() { disabled++; this.enabled.value = false }, createPublisherTap() { throw new Error('Unexpected tap') }, renderPosition() { return null } }
   const media = usePartyMedia(party, connected, clock, audio); media.headphones.value = true
   t.after(async () => {
+    await media.stop()
     for (const cleanup of cleanups) cleanup()
     await nextTick()
     globalThis.window = previous.window; globalThis.document = previous.document; globalThis.__partyMediaLifecycle = previous.state
   })
-  return { media, party, connected, clock, audio, document, window, timers, micRequests, state, removals, engines, get disabled() { return disabled } }
+  return { retryTimers, media, party, connected, clock, audio, document, window, timers, micRequests, state, removals, engines, get disabled() { return disabled } }
 }
 async function permissionRequested(f) {
   for (let attempt = 0; attempt < 10 && !f.micRequests.length; attempt++) await nextTick()
@@ -177,4 +179,83 @@ test('turning off a private guide while audio starts keeps the microphone and sk
   assert.equal(input.getAudioTracks()[0].readyState, 'live')
   assert.equal(f.audio.volume.value, .7)
   assert.equal(f.media.failure.value, '')
+})
+
+test('an audio-enable promise completing after user Stop cannot restore audience listening state', async t => {
+  const f = fixture(t), pending = deferred()
+  let enableWork = async () => {}
+  f.state.api.mediaGrant = async () => ({identity:'audience',scope:'audience',room:'ktv-first-room',token:'test-only',serverUrl:'/api/ktv/media'})
+  f.state.transport = async () => ({async connect() {}, enableAudio: () => enableWork(), async close() {}})
+  await f.media.listen(); enableWork = () => pending.promise
+  const enabling = f.media.enableAudio(); await f.media.stop(); pending.resolve(); await enabling
+  assert.equal(f.media.status.value, 'off'); assert.equal(f.media.isAudience.value, false)
+})
+
+async function flush() { for (let index = 0; index < 16; index++) await Promise.resolve(); await nextTick() }
+function audienceFixture(f) {
+  const connections = []
+  f.state.api.mediaGrant = async () => ({identity:'audience-'+connections.length,scope:'audience',room:'ktv-first-room',token:'test-only',serverUrl:'/api/ktv/media'})
+  f.state.transport = async (grant, callbacks) => {
+    const connection = { grant, callbacks, async connect() {}, async enableAudio() {}, async close() {} }
+    connections.push(connection); return connection
+  }
+  return connections
+}
+
+test('audience link loss revokes the previous nonce before connecting a newly authorized session', async t => {
+  const f = fixture(t), connections = audienceFixture(f), removal = deferred()
+  f.state.api.mediaRevoke = async (...args) => { f.removals.push(args); await removal.promise }
+  await f.media.listen(); connections[0].callbacks.ended(true); await flush()
+  assert.equal(f.media.status.value, 'reconnecting'); assert.equal(connections.length, 1)
+  await f.media.enableAudio(); assert.equal(f.media.status.value, 'reconnecting')
+  assert.deepEqual(f.removals, [['first-room','audience-0']])
+  removal.resolve(); await flush()
+  assert.equal(connections.length, 2); assert.equal(connections[1].grant.identity, 'audience-1')
+  assert.equal(f.media.status.value, 'listening')
+  connections[0].callbacks.ended(true); await flush(); assert.equal(connections.length, 2)
+})
+
+test('user Stop during provider removal cancels audience recovery and any late grant', async t => {
+  const f = fixture(t), connections = audienceFixture(f), removal = deferred()
+  f.state.api.mediaRevoke = () => removal.promise
+  await f.media.listen(); connections[0].callbacks.ended(true); await flush()
+  await f.media.stop(); removal.resolve(); await flush()
+  assert.equal(connections.length, 1); assert.equal(f.media.status.value, 'off')
+})
+
+test('audience recovery cannot restart after room loss or an explicit provider removal', async t => {
+  const f = fixture(t), connections = audienceFixture(f)
+  await f.media.listen(); connections[0].callbacks.ended(false); await flush()
+  assert.equal(f.media.status.value, 'error'); assert.equal(connections.length, 1)
+  await f.media.listen(); connections[1].callbacks.ended(true); f.connected.value = false; await flush()
+  assert.equal(connections.length, 2); assert.equal(f.media.status.value, 'off')
+})
+
+test('transient grant errors retry with bounded fresh requests, but authorization denial is terminal', async t => {
+  const f = fixture(t), connections = audienceFixture(f)
+  await f.media.listen()
+  let requests = 0
+  f.state.api.mediaGrant = async () => { requests++; throw Object.assign(new Error('private-body'),{code: requests < 3 ? 'MEDIA_REVOCATION_PENDING' : 'MEDIA_FORBIDDEN'}) }
+  connections[0].callbacks.ended(true); await flush()
+  assert.equal(requests, 1); assert.equal(f.media.status.value, 'reconnecting')
+  for (let index=0;index<2;index++) { for (const [id, tick] of [...f.retryTimers]) {f.retryTimers.delete(id); tick()} await flush() }
+  assert.equal(requests, 3); assert.equal(f.media.status.value, 'error'); assert.equal(f.media.failure.value, 'mediaErrorPermission')
+  assert.equal(f.retryTimers.size, 0)
+})
+
+test('a failed initial connect does not start nested recovery or bypass its retry limit', async t => {
+  const f = fixture(t), connections = audienceFixture(f)
+  await f.media.listen()
+  f.state.transport = async (grant, callbacks) => ({async connect() {callbacks.ended(true); throw new Error('temporary network failure')},async close(){},async enableAudio(){}})
+  connections[0].callbacks.ended(true); await flush()
+  assert.equal(f.retryTimers.size, 1); assert.equal(f.media.status.value, 'reconnecting')
+  await f.media.stop(); await flush(); assert.equal(f.retryTimers.size, 0); assert.equal(f.media.status.value, 'off')
+})
+
+test('an undocumented HTTP authorization denial stops audience recovery without retrying', async t => {
+  const f = fixture(t), connections = audienceFixture(f)
+  await f.media.listen(); let requests = 0
+  f.state.api.mediaGrant = async () => {requests++; throw Object.assign(new Error('private provider body'), {status:403,code:'OTHER_DENIAL'})}
+  connections[0].callbacks.ended(true); await flush()
+  assert.equal(requests, 1); assert.equal(f.retryTimers.size, 0); assert.equal(f.media.status.value, 'error')
 })

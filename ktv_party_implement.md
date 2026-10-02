@@ -1084,6 +1084,32 @@ required. This one-browser separate-EC2 workload is not 19 physical devices or a
 production support claim. No application deployment was needed; public media
 remains disabled.
 
+
+Audience recovery implementation checkpoint (2026-10-01): network loss now removes
+the old audience player and requests fresh authorization after revocation, with
+bounded attempts and a localized reconnecting state. SDK nonce reuse stays off;
+the gateway still revokes a signaling connection's nonce and requires provider
+acknowledgment. Stop/navigation/hidden page, admission/control loss, mode change,
+explicit provider removal and HTTP authorization denial cancel recovery. Singer
+loss still releases capture and enters explicit room recovery. Transport guards
+reject terminal late tracks and prevent an audio-enable reply after Stop from
+playing an old element. Recovery attempts do not nest when initial connect fails.
+
+Candidate native remote integrated journey passes **46/46**
+(`/tmp/ktv-room-reconnect-fresh.log`, exit 0), including actual audience and singer
+signaling socket interruption, fresh audience nonce, old unexpired JWT denial,
+automatic decoded playback and subsequent venue → remote → venue handover.
+Party units pass **64/64** (`/tmp/ktv-reconnect-release-units.log`), including
+provider-acknowledgment waits, Stop cancellation, bounded pending-removal retries,
+undocumented HTTP denial and late audio-enable/connection replies. The initial
+SDK-retry candidate failed (`/tmp/ktv-room-reconnect-first.log`): reconnecting with
+a revoked nonce is intentionally denied; the final approach obtains a fresh nonce.
+A test teardown originally restored its mocked API before pending revocation
+finished; the fixture now awaits Stop before cleanup. Final release build/browser
+checks, an additional post-recovery spectral audio assertion and deployment are
+pending. Physical, access-network outage, imposed jitter/loss and A/V gates remain
+open. Public media remains disabled.
+
 ```text
 Date:
 Phase and item IDs:

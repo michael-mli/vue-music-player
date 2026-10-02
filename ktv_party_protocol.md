@@ -287,6 +287,19 @@ The pinned server advertises integrated TURN TLS at 443. For this deployment's
 5349 listener, the gateway corrects only the exact configured TLS URL in
 join/reconnect messages, preserving dynamic credentials and other signaling.
 
+Audience media-link recovery uses a **fresh nonce**, not SDK token reuse: the
+gateway revokes a nonce on signaling close and acknowledges provider removal.
+The client removes its old player, waits for revoke completion, and makes at most
+three new grant/connect attempts with 0/500/1500 ms delays; no new attempt starts
+more than 10 seconds after loss is detected. Individual network requests retain
+their existing timeouts, so that is not a total recovery-duration promise.
+Room control connectivity, admission, mode and visibility must remain current.
+Stop, navigation, mode/role loss and authorization denial cancel the sequence;
+non-transient HTTP 4xx ends recovery, except the provider-removal-pending conflict.
+Provider-requested removal/room deletion/explicit leave are terminal. Publisher
+connections never recover automatically: capture stops and room readiness must
+be established again. All SDK connections retain their no-retry policy.
+
 ## 9. UI and requirement coverage
 
 Create: choose room/name/settings → receive invite → People controls. Join:

@@ -268,6 +268,15 @@ venue mixer, then as a remote audience, and checks readiness, fresh generations,
 provider-acknowledged revocation, microphone release, native backing stop, received
 video and spectra. It does not measure a physical mixer or acoustic feedback.
 
+Add `KTV_ROOM_TEST_NETWORK_RECOVERY=1` to interrupt actual audience and singer
+media signaling sockets independently. The audience must visibly recover without
+a click using a fresh provider-acknowledged nonce, receive decoded audio/video,
+and keep the old unexpired token denied. Singer loss must release capture and
+enter room recovery. Combine with `KTV_ROOM_TEST_ROUTE_HANDOVER=1` to verify the
+venue → remote → venue sequence afterward. This is a signaling interruption;
+RTP packet loss, access-network outage, imposed jitter and physical A/V delay
+remain separate gates.
+
 The target must already have a trusted SSH key and `/usr/bin/google-chrome`.
 The fixture does not change trust records or existing profiles/services. It
 uploads only its synthetic microphone, creates a private temporary profile,

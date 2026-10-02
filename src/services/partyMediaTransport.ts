@@ -3,15 +3,15 @@ import type { PartyMediaGrant } from './partyApi'
 export async function createPartyMediaTransport(grant: PartyMediaGrant, callbacks: {
   attached: (element: HTMLMediaElement) => void
   detached: (element: HTMLMediaElement) => void
-  ended: () => void
+  ended: (recoverable: boolean) => void
   playbackBlocked?: () => void
 }) {
   // Load WebRTC only when someone explicitly enables an online media role.
-  const { Room, RoomEvent, Track } = await import('livekit-client')
+  const { Room, RoomEvent, Track, DisconnectReason } = await import('livekit-client')
   const room = new Room({ adaptiveStream: false, dynacast: false, disconnectOnPageLeave: true,
     reconnectPolicy: { nextRetryDelayInMs: () => null } })
   const received = new Map<string, { participant: string; element: HTMLVideoElement; track: import('livekit-client').RemoteTrack; publication: import('livekit-client').RemoteTrackPublication }>()
-  let stopped = false
+  let stopped = false, terminalNotified = false
   function removeElement(element: HTMLMediaElement) {
     element.pause(); element.srcObject = null; element.remove(); callbacks.detached(element)
   }
@@ -27,7 +27,7 @@ export async function createPartyMediaTransport(grant: PartyMediaGrant, callback
     const source = track.kind === Track.Kind.Audio ? Track.Source.Microphone : Track.Source.Camera
     // Receive one performance mix and one captured lyric track. A second audio
     // publication must never become a competing instrumental or vocal guide.
-    if (stopped || grant.scope !== 'audience' || publication.source !== source ||
+    if (stopped || terminalNotified || grant.scope !== 'audience' || publication.source !== source ||
       publication.trackName !== (track.kind === Track.Kind.Audio ? 'performance-mix' : 'performance-lyrics')) {
       publication.setSubscribed(false); return
     }
@@ -56,7 +56,16 @@ export async function createPartyMediaTransport(grant: PartyMediaGrant, callback
       else removeElement(element)
     }
   })
-  room.on(RoomEvent.Disconnected, () => { if (!stopped) callbacks.ended() })
+  room.on(RoomEvent.Disconnected, reason => {
+    if (stopped || terminalNotified) return
+    terminalNotified = true
+    for (const element of new Set([...received.values()].map(item => item.element))) element.pause()
+    // Gateway disconnects revoke this nonce. Recovery must obtain a fresh grant;
+    // provider removals, room close and explicit leave must remain terminal.
+    const recoverable = grant.scope === 'audience' && (reason === undefined ||
+      reason === DisconnectReason.UNKNOWN_REASON || reason === DisconnectReason.SIGNAL_CLOSE)
+    callbacks.ended(recoverable)
+  })
   const server = new URL(grant.serverUrl, window.location.origin)
   server.protocol = server.protocol === 'https:' ? 'wss:' : 'ws:'
   return {
@@ -71,8 +80,13 @@ export async function createPartyMediaTransport(grant: PartyMediaGrant, callback
         degradationPreference: 'maintain-resolution', simulcast: false, videoEncoding: { maxBitrate: 350000, maxFramerate: 25 } })
     },
     async enableAudio() {
+      if (stopped || terminalNotified) return
       await room.startAudio()
-      await Promise.all([...new Set([...received.values()].map(item => item.element))].map(element => element.play()))
+      if (stopped || terminalNotified) return
+      for (const element of new Set([...received.values()].map(item => item.element))) {
+        if (stopped || terminalNotified) return
+        await element.play()
+      }
     },
     async close() {
       stopped = true

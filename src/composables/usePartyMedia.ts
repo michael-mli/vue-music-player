@@ -49,6 +49,7 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
   let originalReady = false, oldMonitorVolume = .7, captureBinding = '', epoch = 0, disposed = false
   let starting = false, renewing = false, publisherReady = false, lastRenewMs = 0, lastStatusMs = 0
   let captureSawActive = false
+  let retryWait: { id: number; finish: () => void } | null = null
 
   function binding() {
     const view = party.value, playback = view?.playback
@@ -62,7 +63,20 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
       permit.clockId === playback.clockId && permit.performanceId === playback.performanceId && permit.generation === playback.generation &&
       permit.expiresServerMs > performance.now() + estimate.offsetMs + estimate.uncertaintyMs + 100)
   }
+  function cancelRetryWait() {
+    if (!retryWait) return
+    const previous = retryWait; retryWait = null
+    window.clearTimeout(previous.id); previous.finish()
+  }
+  function waitRetry(ms: number) {
+    if (!ms) return Promise.resolve()
+    return new Promise<void>(resolve => {
+      const finish = () => { retryWait = null; resolve() }
+      retryWait = { id: window.setTimeout(finish, ms), finish }
+    })
+  }
   async function stop() {
+    cancelRetryWait()
     const hadCapture = Boolean(capture.value || captureBinding)
     epoch++; starting = false; publisherReady = false; captureBinding = ''; originalReady = false; captureSawActive = false
     const previous = grant.value, previousRoomId = previous?.room.replace(/^ktv-/, ''), oldTransport = transport, oldOriginal = original
@@ -143,33 +157,66 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
     } catch (error) { if (epoch === attempt && !disposed) fail(error) }
     finally { if (epoch === attempt) starting = false }
   }
+  async function connectAudience(roomId: string, attempt: number) {
+    const issued = await partyApi.mediaGrant(roomId, audio.deviceId, 'audience')
+    if (disposed || epoch !== attempt) { await partyApi.mediaRevoke(roomId, issued.identity); return }
+    grant.value = issued; lastRenewMs = performance.now()
+    let established = false
+    const connection = await createPartyMediaTransport(issued, {
+      attached: element => { if (epoch === attempt) elements.value = [...new Set([...elements.value, element])] },
+      detached: element => { elements.value = elements.value.filter(item => item !== element) },
+      playbackBlocked: () => { if (epoch === attempt) status.value = 'audio-blocked' },
+      ended: recoverable => {
+        if (epoch !== attempt || !established) return
+        if (recoverable) void recoverAudience()
+        else fail(new Error('MEDIA_AUDIENCE_ENDED'))
+      },
+    })
+    if (disposed || epoch !== attempt) { await connection.close(); return }
+    transport = connection; await connection.connect()
+    if (epoch !== attempt) return
+    established = true
+    status.value = 'listening'; await enableAudio()
+  }
   async function listen() {
     if (!online.value || !connected.value || party.value?.self.admission !== 'admitted') return
     const intendedRoom = party.value.room.id
     await stop(); audio.disable(); failure.value = ''
     if (disposed || !online.value || !connected.value || party.value?.room.id !== intendedRoom) return
-    const attempt = epoch, roomId = party.value!.room.id
+    const attempt = epoch
     status.value = 'connecting'
-    try {
-      const issued = await partyApi.mediaGrant(roomId, audio.deviceId, 'audience')
-      if (disposed || epoch !== attempt) { await partyApi.mediaRevoke(roomId, issued.identity); return }
-      grant.value = issued; lastRenewMs = performance.now()
-      const connection = await createPartyMediaTransport(issued, {
-        attached: element => { if (epoch === attempt) elements.value = [...new Set([...elements.value, element])] },
-        detached: element => { elements.value = elements.value.filter(item => item !== element) },
-        playbackBlocked: () => { if (epoch === attempt) status.value = 'audio-blocked' },
-        ended: () => { if (epoch === attempt) fail(new Error('MEDIA_AUDIENCE_ENDED')) },
-      })
-      if (disposed || epoch !== attempt) { await connection.close(); return }
-      transport = connection; await connection.connect()
-      if (epoch !== attempt) return
-      status.value = 'listening'
-      await enableAudio()
-    } catch (error) { if (epoch === attempt && !disposed) fail(error) }
+    try { await connectAudience(intendedRoom, attempt) }
+    catch (error) { if (epoch === attempt && !disposed) fail(error) }
+  }
+  async function recoverAudience() {
+    const intendedRoom = party.value?.room.id, intendedMode = mode.value, started = performance.now()
+    const stopping = stop(); let attempt = epoch
+    status.value = 'reconnecting'; failure.value = ''
+    const eligible = () => !disposed && epoch === attempt && online.value && connected.value && !document.hidden &&
+      party.value?.room.id === intendedRoom && mode.value === intendedMode && party.value?.self.admission === 'admitted'
+    await stopping
+    for (const delay of [0, 500, 1500]) {
+      if (!eligible()) return
+      await waitRetry(delay)
+      if (!eligible()) return
+      if (performance.now() - started > 10000) break
+      try { await connectAudience(intendedRoom!, attempt); return }
+      catch (error) {
+        if (!eligible()) return
+        const problem = error as { code?: string; status?: number; response?: { status?: number } }
+        const code = problem?.code, httpStatus = problem?.status || problem?.response?.status
+        if ((httpStatus && httpStatus >= 400 && httpStatus < 500 && code !== 'MEDIA_REVOCATION_PENDING') || ['MEDIA_FORBIDDEN', 'MEDIA_REVOKED', 'FORBIDDEN', 'KTV_DISABLED', 'ROOM_CLOSED', 'NOT_FOUND'].includes(code || '')) { fail(error); return }
+        const cleaning = stop(); attempt = epoch; status.value = 'reconnecting'
+        await cleaning
+      }
+    }
+    if (eligible()) fail(new Error('MEDIA_AUDIENCE_ENDED'))
   }
   async function enableAudio() {
-    try { await transport?.enableAudio(); if (isAudience.value) status.value = 'listening' }
-    catch { status.value = 'audio-blocked' }
+    if (status.value === 'reconnecting') return
+    const attempt = epoch
+    try { await transport?.enableAudio(); if (epoch === attempt && isAudience.value && status.value !== 'reconnecting') status.value = 'listening' }
+    catch { if (epoch === attempt && status.value !== 'reconnecting') status.value = 'audio-blocked' }
   }
   async function toggleOriginal() {
     if (originalEnabled.value) {
@@ -201,6 +248,7 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
     if (!connected.value || party.value?.self.admission !== 'admitted' || (captureBinding &&
       (!canCapture.value || binding() !== captureBinding || audio.blocked.value))) void stop()
   }, { flush: 'sync' })
+  watch(mode, () => { if (grant.value?.scope === 'audience' || status.value === 'reconnecting') void stop() }, { flush: 'sync' })
   watch(() => party.value?.room.id, () => { void stop(); available.value = false; lastStatusMs = 0 }, { flush: 'sync' })
   async function refreshStatus() {
     const roomId = party.value?.room.id

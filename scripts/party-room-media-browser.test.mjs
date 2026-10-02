@@ -22,6 +22,7 @@ import { createOwnedRemoteBrowser } from './party-remote-browser.mjs'
 const clientLocation = process.env.KTV_ROOM_TEST_CLIENT || 'same-host'
 assert.ok(['same-host', 'remote-ec2'].includes(clientLocation), 'Unknown room-test client topology')
 const remoteMode = clientLocation === 'remote-ec2'
+const networkRecovery = process.env.KTV_ROOM_TEST_NETWORK_RECOVERY === '1'
 const routeHandover = process.env.KTV_ROOM_TEST_ROUTE_HANDOVER === '1'
 assert.ok(!routeHandover || remoteMode, 'Hybrid fixture requires the owned remote fake-microphone browser')
 if (remoteMode) {
@@ -189,6 +190,7 @@ try {
     await cdp(socket, 'Page.enable', {}, sessionId); await cdp(socket, 'Runtime.enable', {}, sessionId)
     await cdp(socket, 'Network.enable', {}, sessionId)
     await cdp(socket, 'Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', 'en');
+      window.__sockets = []; const Socket = window.WebSocket; window.WebSocket = class extends Socket { constructor(...args) { super(...args); window.__sockets.push(this); } };
       window.__micStreams = []; window.__bufferSources = []; window.__sourceEvidence = []; window.__outputEvidence = []; window.__peers = []; window.__contexts = [];
       const Context = window.AudioContext; window.AudioContext = class extends Context { constructor(...args) { super(...args); window.__contexts.push(this); } };
       const Peer = window.RTCPeerConnection; window.RTCPeerConnection = class extends Peer { constructor(...args) { super(...args); window.__peers.push(this); } };
@@ -259,8 +261,45 @@ try {
   peaks = await poll(async () => { const value = await spectrum(); return value[0] > -55 && value[1] > -55 ? value : false }, 'private guide keeps public backing intact')
   check(peaks[2] < Math.min(peaks[0], peaks[1]) - 25, `enabling the original guide in the built app keeps it outside the public mix (${peaks.map(value => value.toFixed(1)).join(', ')} dB)`)
   check(await evaluate(audience, 'window.__bufferSources.length === 0'), 'remote common screen creates no independent instrumental player')
+  if (networkRecovery) {
+    await evaluate(audience, `(() => {
+      window.__mediaHistory=[];
+      new MutationObserver(()=>{const value=document.querySelector('[data-party-media-status]')?.textContent;
+        if(value&&__mediaHistory.at(-1)!==value)__mediaHistory.push(value)}).observe(document.body,{subtree:true,childList:true,characterData:true});
+    })()`)
+    const oldAudience = db.prepare("SELECT * FROM ktv_media_grants WHERE scope = 'audience' AND state = 'active'").get()
+    const oldAudienceGrant = await api(1, `${pathRoom}/media/${oldAudience.identity}/renew`, { deviceId: oldAudience.device_id })
+    await evaluate(audience, "window.__previousAudienceVideo = document.querySelector('[data-party-media-screen] video')")
+    const drop = await evaluate(audience, `(() => {
+      const sockets=__sockets.filter(socket=>socket.readyState===WebSocket.OPEN&&new URL(socket.url).pathname.startsWith('/api/ktv/media/rtc'));
+      sockets.forEach(socket=>socket.close(4000,'owned test signaling interruption'));return sockets.length;
+    })()`)
+    check(drop === 1, 'fixture interrupts only the audience media signaling socket')
+    await poll(() => evaluate(audience, "__mediaHistory.some(value=>value.includes('Reconnecting live performance'))"), 'visible audience recovery state')
+    await poll(() => evaluate(audience, "document.querySelector('[data-party-media-status]')?.textContent.includes('Connected to the live performance')"), 'audience automatically returns to listening')
+    await poll(() => evaluate(audience, "(() => { const video=document.querySelector('[data-party-media-screen] video'); return video && video!==window.__previousAudienceVideo && video.getVideoPlaybackQuality().totalVideoFrames>=10 })()"), 'new player decodes after audience signaling recovery')
+    const newAudience = db.prepare("SELECT * FROM ktv_media_grants WHERE scope = 'audience' AND state = 'active'").get()
+    check(newAudience.identity !== oldAudience.identity && db.prepare('SELECT state FROM ktv_media_grants WHERE identity = ?').get(oldAudience.identity).state === 'revoked', 'automatic audience recovery uses a fresh nonce after old-provider acknowledgment')
+    const oldAudienceClaims=JSON.parse(Buffer.from(oldAudienceGrant.token.split('.')[1], 'base64url').toString())
+    const audienceDenied=await fetch(origin + '/api/ktv/media/rtc/validate?access_token=' + encodeURIComponent(oldAudienceGrant.token))
+    check(oldAudienceClaims.exp*1000>Date.now() && audienceDenied.status===403, 'the old unexpired audience token stays denied after automatic recovery')
+    check(await evaluate(audience, "(() => {const video=document.querySelector('[data-party-media-screen] video');return document.querySelectorAll('[data-party-media-screen] video').length===1&&!video.paused&&video.srcObject.getAudioTracks().length===1&&video.srcObject.getVideoTracks().length===1})()"), 'audience resumes one actual audio/video player without a user click')
+    await evaluate(audience, `(async () => { await __receiveContext.close(); const video=document.querySelector('[data-party-media-screen] video');
+      window.__receiveContext=new AudioContext(); await __receiveContext.resume(); const source=__receiveContext.createMediaStreamSource(video.srcObject);
+      window.__analyser=__receiveContext.createAnalyser(); __analyser.fftSize=8192; __analyser.smoothingTimeConstant=0;
+      const silent=__receiveContext.createGain(); silent.gain.value=0; source.connect(__analyser); __analyser.connect(silent); silent.connect(__receiveContext.destination); })()`)
+    const recoveredPeaks=await poll(async()=>{const value=await spectrum();return value[0]>-55&&value[1]>-55?value:false}, 'new audience receives actual backing and microphone audio')
+    check(recoveredPeaks[2]<Math.min(recoveredPeaks[0],recoveredPeaks[1])-25, 'recovered audience hears backing and microphone while private original remains excluded')
+    check((await api(1, pathRoom)).playback.state === 'playing' && db.prepare('SELECT state FROM ktv_media_grants WHERE identity = ?').get(firstPublisher.identity).state === 'active', 'audience recovery does not replace or interrupt the current singer')
+    check(await evaluate(audience, 'window.__bufferSources.length===0'), 'audience recovery never starts competing digital backing')
+  }
   const oldPublisherGrant = await api(2, `${pathRoom}/media/${firstPublisher.identity}/renew`, { deviceId: device.id })
-  await click(phone, 'Stop streaming on this device')
+  if (networkRecovery) {
+    const dropped = await evaluate(phone, `(() => { const sockets=__sockets.filter(socket=>socket.readyState===WebSocket.OPEN&&new URL(socket.url).pathname.startsWith('/api/ktv/media/rtc'));sockets.forEach(socket=>socket.close(4000,'owned test publisher interruption'));return sockets.length })()`)
+    check(dropped === 1, 'fixture interrupts only the singer media signaling socket')
+    await poll(() => evaluate(phone, "window.__micStreams.every(stream=>stream.getTracks().every(track=>track.readyState==='ended'))"), 'publisher disconnect releases capture')
+    check(await evaluate(phone, "!document.querySelector('[data-party-media-status]')?.textContent.includes('Sending live singing')"), 'interrupted publisher requires explicit fresh readiness instead of reconnecting')
+  } else await click(phone, 'Stop streaming on this device')
   check(await evaluate(phone, "window.__micStreams.every(stream => stream.getTracks().every(track => track.readyState === 'ended'))"), 'stop releases the actual microphone immediately')
   await poll(async () => !(await provider.listParticipants(`ktv-${room.room.id}`)).some(item => item.identity === firstPublisher.identity), 'old publisher removed at SFU')
   check(db.prepare('SELECT state FROM ktv_media_grants WHERE identity = ?').get(firstPublisher.identity).state === 'revoked', 'provider removal commits terminal nonce revocation')

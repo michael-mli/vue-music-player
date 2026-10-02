@@ -5,18 +5,21 @@ import { EventEmitter } from 'node:events'
 import ts from 'typescript'
 
 const moduleUrl = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
-const sdk = moduleUrl(`export class Room { constructor() { return globalThis.__partyTransport.room } }
+const sdk = moduleUrl(`export class Room { constructor(options) { globalThis.__partyTransport.options = options; return globalThis.__partyTransport.room } }
   export const RoomEvent = { TrackSubscribed:'subscribe', TrackUnsubscribed:'unsubscribe', Disconnected:'disconnect',
-    AudioPlaybackStatusChanged:'audio-status', VideoPlaybackStatusChanged:'video-status' };
+    SignalReconnecting:'signal-reconnecting', Reconnecting:'reconnecting', Reconnected:'reconnected', AudioPlaybackStatusChanged:'audio-status', VideoPlaybackStatusChanged:'video-status' };
+  export const DisconnectReason = { UNKNOWN_REASON:0, CLIENT_INITIATED:1, DUPLICATE_IDENTITY:2, SERVER_SHUTDOWN:3, PARTICIPANT_REMOVED:4, ROOM_DELETED:5, STATE_MISMATCH:6, JOIN_FAILURE:7, SIGNAL_CLOSE:9 };
   export const Track = { Kind:{Audio:'audio',Video:'video'}, Source:{Microphone:'mic',Camera:'camera'} };`)
 const source = await fs.readFile(new URL('../src/services/partyMediaTransport.ts', import.meta.url), 'utf8')
 const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText
 const { createPartyMediaTransport } = await import(moduleUrl(compiled.replace("'livekit-client'", JSON.stringify(sdk))))
 
-async function fixture(t) {
+async function fixture(t, scope = 'audience') {
   const previous = { window: globalThis.window, document: globalThis.document, state: globalThis.__partyTransport }
+  const disconnected = []
   const room = new EventEmitter(), elements = new Set(), created = [], rejected = [], detached = []
-  room.startAudio = async () => {}; room.disconnect = async () => room.emit('disconnect')
+  let started = 0, recovering = 0, recovered = 0, ended = 0, blocked = 0
+  room.startAudio = async () => { started++ }; room.disconnect = async () => room.emit('disconnect')
   globalThis.__partyTransport = { room }
   globalThis.window = { location: { origin: 'https://party.example' } }
   globalThis.document = { createElement() {
@@ -24,8 +27,8 @@ async function fixture(t) {
       pause() { this.paused = true }, remove() { this.removed = true }, async play() { this.paused = false } }
     created.push(element); return element
   } }
-  const transport = await createPartyMediaTransport({ scope: 'audience', serverUrl: '/api/ktv/media', token: 'test-only' }, {
-    attached: element => elements.add(element), detached: element => { detached.push(element); elements.delete(element) }, ended() {} })
+  const transport = await createPartyMediaTransport({ scope, serverUrl: '/api/ktv/media', token: 'test-only' }, {
+    attached: element => elements.add(element), detached: element => { detached.push(element); elements.delete(element) }, ended(recoverable) { ended++; disconnected.push(recoverable) }, recovering() { recovering++ }, recovered() { recovered++ }, playbackBlocked() { blocked++ } })
   t.after(async () => {
     await transport.close()
     globalThis.window = previous.window; globalThis.document = previous.document; globalThis.__partyTransport = previous.state
@@ -38,7 +41,8 @@ async function fixture(t) {
     room.emit('subscribe', track, publication, { identity: participant })
     return track
   }
-  return { room, elements, created, rejected, detached, transport, subscribe }
+  return { disconnected, room, elements, created, rejected, detached, transport, subscribe, options: globalThis.__partyTransport.options,
+    get recovering() { return recovering }, get recovered() { return recovered }, get ended() { return ended }, get blocked() { return blocked }, get started() { return started } }
 }
 
 test('SDK unsubscribe with an empty detach result still removes the final owned media element', async t => {
@@ -78,4 +82,34 @@ test('unexpected publications and late subscriptions after close cannot attach a
   assert.equal(f.elements.size, 0)
   const late = f.subscribe('audio', 'late')
   assert.ok(f.rejected.includes(late)); assert.equal(f.created.length, 1)
+})
+
+const settled = async () => { for (let index = 0; index < 6; index++) await Promise.resolve() }
+
+test('unexpected audience link loss pauses output and asks the owner for fresh authorization', async t => {
+  const f = await fixture(t), audio = f.subscribe('audio'); f.subscribe('video')
+  assert.equal(f.options.reconnectPolicy.nextRetryDelayInMs({retryCount:0,elapsedMs:0}), null)
+  f.room.emit('disconnect')
+  assert.equal(audio.element.paused, true); assert.deepEqual(f.disconnected, [true])
+  const late = f.subscribe('video', 'late'); assert.ok(f.rejected.includes(late))
+  f.room.emit('disconnect'); assert.equal(f.ended, 1)
+})
+
+test('a terminal provider removal or intentional leave cannot request automatic audience recovery', async t => {
+  const f = await fixture(t); f.subscribe('audio'); f.subscribe('video')
+  f.room.emit('disconnect', 4); assert.deepEqual(f.disconnected, [false])
+  assert.equal(f.ended, 1)
+})
+
+test('a publisher never retries or requests automatic recovery after transport loss', async t => {
+  const f = await fixture(t, 'publisher')
+  assert.equal(f.options.reconnectPolicy.nextRetryDelayInMs({retryCount:0,elapsedMs:0}), null)
+  f.room.emit('disconnect'); assert.deepEqual(f.disconnected, [false])
+})
+
+test('user Stop cancels an in-flight audio enable before its late reply can play an old element', async t => {
+  const f = await fixture(t), audio = f.subscribe('audio'); f.subscribe('video')
+  let resolve; f.room.startAudio = () => new Promise(done => { resolve = done })
+  const enabling = f.transport.enableAudio(); await f.transport.close(); resolve(); await enabling; await settled()
+  assert.equal(f.elements.size, 0); assert.equal(audio.element, null); assert.equal(f.ended, 0)
 })

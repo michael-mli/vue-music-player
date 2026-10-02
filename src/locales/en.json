@@ -340,6 +340,7 @@
     "media_ready": "Microphone ready. The host can assign this device, prepare the song and start.",
     "media_connecting": "Connecting performance media…",
     "media_publishing": "Sending live singing and lyric video.",
+    "media_reconnecting": "Reconnecting live performance… Playback is paused until the connection returns.",
     "media_listening": "Connected to the live performance.",
     "media_audio-blocked": "Tap Enable received audio to hear the performance.",
     "media_error": "Streaming stopped. Review the message and connect or prepare again.",

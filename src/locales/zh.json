@@ -340,6 +340,7 @@
     "media_ready": "麦克风已就绪，房主可指定此设备、准备歌曲并开始。",
     "media_connecting": "正在连接演唱音视频…",
     "media_publishing": "正在发送现场演唱及歌词视频。",
+    "media_reconnecting": "正在重新连接现场演唱…连接恢复前暂停播放。",
     "media_listening": "已连接现场演唱。",
     "media_audio-blocked": "点击启用接收音频即可收听。",
     "media_error": "流媒体已停止，请查看提示后重新连接或准备。",
