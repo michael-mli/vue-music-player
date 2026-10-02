@@ -14,10 +14,11 @@ The core room, invitation/guest, moderation, queue, shared-screen, phone-control
 scheduled playback and private-guide software is implemented. The deployed app
 is a preview; public online media is still disabled.
 
-1. **Audio reliability:** extend sustained native and physical coverage of the
-   deployed encoded publisher lease gate and bounded source-phase correction.
-   Independent Chrome 137/154 lease checks and the full-room journey pass; physical
-   output acceptance and the earlier larger render-clock stall remain open.
+1. **Audio reliability:** enforce the source deadline at the receiver after native
+   buffering. A new independent Chrome 154 test with a 1000-ms receiver target
+   stays audible until expiry +273.08 ms, exceeding the unchanged 150-ms margin.
+   Default-buffer source lease checks pass; they do not establish buffered-receiver
+   safety. Sustained/physical coverage and the earlier render-clock stall remain open.
 2. **Streaming timing:** resolve impaired-network A/V timing, measure handover
    timing and longer outages, and verify source-clock stability. Functional
    reconnect/handover passes do not establish acceptable audible/video alignment.
@@ -46,7 +47,8 @@ Exact `d33b209` build/type-check, UI **45/45**, PWA **10/10**, full clean native
 streaming/recovery/handover **56/56** and public release **23/23** pass; party units
 **105/105** pass. The same stage engine in committed `28bde60` also passes **41/41**
 integrated native stage replacement checks: two independent outputs, actual room
-backend and blocked/frozen/resumed clocks. Physical output acceptance is open.
+backend and blocked/frozen/resumed clocks. Physical output acceptance is open. A subsequent buffered-receiver test fails
+the same expiry boundary; receiver output enforcement remains unimplemented.
 The PWA activation fix is deployed: failed updates retain the current page and
 allow retry; empty catalogs no longer trigger phantom song downloads. Exact-build
 UI/PWA checks also reject malformed room responses without losing the form.
@@ -2632,6 +2634,72 @@ and infrastructure are unchanged. All candidates retain the nominal measured
 quality and original 150-ms p95 / 250-ms maximum received A/V gates. Physical,
 mobile, post-handover timing, longer outages, full audience/multi-room capacity,
 distinct access networks and persistent online/hybrid release remain open.
+
+### 2026-10-02 — Private transport comparisons and buffered receiver expiry regression
+
+The fixture now supports a scoped private REMB feedback comparison and an actual
+SDK dual-peer transport build. Neither option changes production sources or the
+published `dist`. Private artifacts retain the non-release marker and all original
+measured cadence, dimension, bitrate and A/V timing gates.
+
+The REMB rewrite targets only an explicit publisher `sendonly` video section,
+requires existing REMB and absolute-send-time capabilities, and preserves all
+other SDP bytes. Owned offer/answer wrappers preserve native arguments and close
+without removing another owner's wrapper. Fixtures pass **36/36**
+(`/tmp/ktv-publisher-remb-fixtures-20261002.log`). Actual negotiation in
+`/tmp/ktv-vp8-publisher-remb-continuous-udp-20261002.log` fails the strict gate:
+the local offer drops transport-cc feedback, but the provider answer retains it.
+There is no measured estimator comparison or baseline A/V result in this run.
+Capability advertisements do not prove an active REMB estimator.
+
+`--transport dual` inserts the SDK's supported `singlePeerConnection: false`
+option into a private build. Artifact
+`/tmp/ktv-codec-candidate-vp8-dual-20261002` records codec VP8, backup disabled,
+SDK 2.22.3, source commit `80880e0` and the unchanged encoded lease worker.
+Its build verifies production source and `dist` digests remain unchanged.
+The native run observes exactly two peers, one with the audio/video sender pair.
+
+All comparisons retain continuous UDP impairment of 150-ms delay, up to 40-ms
+jitter and 5% loss on each leg, plus functional recovery and both hybrid directions:
+
+| Private run | Baseline | Impaired result | Outcome |
+| --- | --- | --- | --- |
+| Dual peers, default buffers/policy | Six pairs, no unmatched edges; p95/max 73.41 ms; source/receiver 24.98/24.99 fps | 40 pairs, one unmatched edge each; p95 325.73 ms, max 374.16 ms; source/receiver 22.25/22.12 fps | Nominal quality and functional recovery pass; impaired timing fails |
+| Dual peers, both native targets 1000 ms, SFU hints off | Six pairs, one unmatched edge each; p95/max 593.09 ms; source/receiver 24.97/23.44 fps | 40 pairs, no unmatched edges; p95 274.96 ms, max 333.82 ms; source/receiver 18.81/18.62 fps | Startup/impaired timing and impaired nominal quality fail; functional recovery finishes |
+
+Logs: `/tmp/ktv-vp8-dual-continuous-udp-20261002.log` and
+`/tmp/ktv-vp8-dual-fixed1000-nohint-continuous-udp-20261002.log`. Both report zero
+browser exceptions. Packet loss is random; these runs do not prove dual transport
+causes better bandwidth estimation. Equal requested audio/video buffer targets
+do not establish equal actual playout, particularly during initial buffer growth.
+No longer settling window or omitted startup markers were used to hide failures.
+
+A distinct native expiry regression sets the independent WebRTC receiver's actual
+`jitterBufferTarget` to 1000 ms. This receiver is separate from the blocked or
+suspended publisher page, with continuous native PulseAudio output observation.
+`/tmp/ktv-cft154-buffered-receiver-lease-20261002.log` exits 1:
+
+- Both direct stage-output cases pass their unchanged expiry boundary.
+- Publisher/task-stall remains continuously audible at expiry +150 ms. Its quiet
+  edge arrives at **expiry +273.08 ms**. The capture call is 0.005 ms, queue
+  approximately -0.75 ms, analysis window 23.22 ms: a delayed observer does not
+  account for the violation. Counting only later positive heartbeat events would
+  miss the continuous audible state and is not a valid pass criterion.
+- The native receiver getter verifies the 1000-ms target. Measured audio buffer
+  counters show actual buffering; the requested target is not the measured delay.
+- All four profiles are recorded before assertions. The assertion loop stops at
+  publisher/task-stall, so the later suspended publisher record is not a completed
+  final gate. Browser runtime exceptions are zero.
+
+The source PCM and encoded-frame guards remain unchanged. Source transmission
+expiry cannot remove samples already in a receiver's native buffer. The next
+implementation must enforce the authoritative source deadline at receiver output,
+including blocked tasks, frozen/resumed audio clocks, nonce/performance changes
+and stale renewal rejection. Increasing buffering cannot be released without it.
+
+Public frontend `d33b209`, backend `f58a8f3`, media disabled and no persistent SFU
+remain unchanged. These results do not close P06/P07/P08, physical/device,
+post-handover timing, sustained/capacity, real access-network or final release gates.
 
 ### Release record
 

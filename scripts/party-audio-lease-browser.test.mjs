@@ -9,6 +9,10 @@ import ts from 'typescript'
 import WebSocket from '../server/node_modules/ws/wrapper.mjs'
 import { createOwnedRemoteBrowser } from './party-remote-browser.mjs'
 
+const receiverTargetMs = process.env.KTV_LEASE_TEST_RECEIVER_TARGET_MS === undefined ? null : Number(process.env.KTV_LEASE_TEST_RECEIVER_TARGET_MS)
+assert.ok(receiverTargetMs === null || Number.isInteger(receiverTargetMs) && receiverTargetMs >= 0 && receiverTargetMs <= 1000,
+  'Native receiver buffering experiment requires a 0–1000 ms target')
+
 const source = await fs.readFile('src/services/partyAudioEngine.ts', 'utf8')
 const compile = text => ts.transpileModule(text, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
@@ -151,7 +155,13 @@ async function connectPublisherReceiver() {
     window.receiverPeer?.close();window.receiverAudio?.remove();
     window.receiverPeer=new RTCPeerConnection();window.receiverAudio=document.createElement('audio');
     receiverAudio.autoplay=true;document.body.append(receiverAudio);
-    receiverPeer.ontrack=event=>{receiverAudio.srcObject=event.streams[0];};
+    receiverPeer.ontrack=event=>{
+      if (${receiverTargetMs !== null}) {
+        if (!('jitterBufferTarget' in event.receiver)) throw new Error('LEASE_RECEIVER_TARGET_UNSUPPORTED');
+        event.receiver.jitterBufferTarget=${receiverTargetMs};
+      }
+      receiverAudio.srcObject=event.streams[0];
+    };
     await receiverPeer.setRemoteDescription(${JSON.stringify(offer)});
     await receiverPeer.setLocalDescription(await receiverPeer.createAnswer());
     await (${gather})(receiverPeer);return receiverPeer.localDescription.toJSON();
@@ -160,6 +170,11 @@ async function connectPublisherReceiver() {
   await poll(()=>evaluate("publisherPeer.connectionState==='connected'"),'native publisher peer connected')
   await poll(()=>receiverEvaluate("receiverAudio.srcObject?.getAudioTracks().length===1"),'independent receiver audio track')
   await receiverEvaluate('receiverAudio.play()')
+  if (receiverTargetMs !== null) {
+    const targets = await receiverEvaluate("receiverPeer.getReceivers().filter(receiver=>receiver.track.kind==='audio').map(receiver=>receiver.jitterBufferTarget)")
+    assert.deepEqual(targets, [receiverTargetMs], 'Native publisher expiry fixture applies the actual receiver buffering target')
+    console.log('Native publisher expiry receiver target:', receiverTargetMs)
+  }
 }
 try {
   server.listen(0, '127.0.0.1'); await once(server, 'listening')
@@ -202,7 +217,12 @@ try {
     const evidence = observed.filter(item => (item.captureHeartbeat || typeof item.audible==='boolean') && item.time >= timing.start && item.time <= frozen.finish + 100)
     const expired = evidence.filter(item => item.time > timing.expiry + 150)
     const activityAtBoundary = observed.filter(item=>typeof item.audible==='boolean'&&item.time<=timing.expiry+150).at(-1)
-    console.log('Native lease measurement:', JSON.stringify({ profile, mode, output:profile==='publisher'?'independent native WebRTC receiver':'native stage',timing, frozen, evidence, stateEvents: await evaluate('stateEvents') }))
+    const receiverBuffer = profile === 'publisher' ? await receiverEvaluate(`(async()=>{
+      const rows=[...(await receiverPeer.getStats()).values()].filter(row=>row.type==='inbound-rtp'&&row.kind==='audio');
+      return rows.map(row=>Object.fromEntries(['jitterBufferDelay','jitterBufferTargetDelay','jitterBufferEmittedCount',
+        'totalSamplesReceived','concealedSamples'].filter(key=>Number.isFinite(row[key])).map(key=>[key,row[key]])));
+    })()`) : undefined
+    console.log('Native lease measurement:', JSON.stringify({ profile, mode, output:profile==='publisher'?'independent native WebRTC receiver':'native stage',timing, frozen, evidence, receiverTargetMs, receiverBuffer, stateEvents: await evaluate('stateEvents') }))
     check(expired.filter(item=>item.captureHeartbeat).length >= 2&&typeof activityAtBoundary?.audible==='boolean', `${label}: actual output is observed after the wall-clock lease boundary`)
     measurements.push({ label, expiredAudible: expired.filter(item => item.onAmplitude > .015 || item.audible===true),
       activeAtBoundary:activityAtBoundary?.audible===true })

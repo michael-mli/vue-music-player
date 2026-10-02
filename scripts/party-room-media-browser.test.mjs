@@ -27,6 +27,7 @@ import { installEncodedLeaseObserver } from './party-encoded-lease-observer.mjs'
 import { installSenderKeyframeExperiment } from './party-sender-keyframes.mjs'
 import { keyframeRecoveryStep } from './party-keyframe-recovery.mjs'
 import { collectRtcFeedback } from './party-rtc-feedback.mjs'
+import { publisherRembSdp, installPublisherRembExperiment } from './party-publisher-feedback.mjs'
 import { nativeSyncTargetStep, nativeNetworkTargetStep, nativeRepairTargetStep, installNativeSyncExperiment } from './party-av-native-sync.mjs'
 
 const clientLocation = process.env.KTV_ROOM_TEST_CLIENT || 'same-host'
@@ -41,12 +42,18 @@ if (codecExperiment) {
   assert.ok(codecExperiment.version===1&&codecExperiment.privateCodecExperiment===true&&
     ['vp8','vp9','h264'].includes(codecExperiment.codec)&&codecExperiment.backupCodec===false&&
     codecExperiment.width===1280&&codecExperiment.height===720&&codecExperiment.fps===25&&codecExperiment.maxBitrate===350000&&
+    (codecExperiment.transport==null||['default','dual'].includes(codecExperiment.transport))&&
     (codecExperiment.keyframeMs==null||(Number.isInteger(codecExperiment.keyframeMs)&&codecExperiment.keyframeMs>=250&&codecExperiment.keyframeMs<=5000)),
     'Malformed private codec experiment marker')
   assert.equal(process.env.KTV_ROOM_TEST_AV_TIMING,'1','Codec comparisons require actual native A/V evidence')
   console.log('Private codec comparison:',JSON.stringify(codecExperiment))
 }
 const avTiming = process.env.KTV_ROOM_TEST_AV_TIMING === '1'
+const publisherFeedback = process.env.KTV_ROOM_TEST_PUBLISHER_FEEDBACK || 'default'
+assert.ok(['default', 'remb'].includes(publisherFeedback) && (publisherFeedback === 'default' || avTiming && codecExperiment),
+  'Publisher feedback comparison requires a marked private build and native A/V evidence')
+assert.ok(publisherFeedback === 'default' || codecExperiment.transport !== 'dual',
+  'Legacy dual-peer publisher feedback must retain its negotiated TWCC estimator')
 const senderKeyframeMs = process.env.KTV_ROOM_TEST_SENDER_KEYFRAME_MS === undefined ? null : Number(process.env.KTV_ROOM_TEST_SENDER_KEYFRAME_MS)
 const demandKeyframes = process.env.KTV_ROOM_TEST_DEMAND_KEYFRAMES === '1'
 assert.ok(!demandKeyframes || avTiming && codecExperiment && codecExperiment.keyframeMs == null && senderKeyframeMs === null,
@@ -311,6 +318,7 @@ try {
       window.__iceEvidence = [];
       const Peer = window.RTCPeerConnection; window.RTCPeerConnection = class extends Peer { constructor(...args) { super(...args); window.__peers.push(this);
         this.addEventListener('iceconnectionstatechange',()=>window.__iceEvidence.push({state:this.iceConnectionState,now:performance.now()})); } };
+      ${publisherFeedback === 'remb' && (actor === 2 || actor === 3) ? `(${installPublisherRembExperiment.toString()})(${publisherRembSdp.toString()});` : ''}
       if (${mediaImpairment}) {
         // Only fixture remote candidates are routed through the owned relay.
         // Native media clocks, source timing, permissions and drift gates remain unchanged.
@@ -395,7 +403,28 @@ try {
   const participants = await provider.listParticipants(`ktv-${room.room.id}`)
   check(participants.filter(item => item.identity === firstPublisher.identity).length === 1 && participants.find(item => item.identity === firstPublisher.identity).tracks.length === 2, 'actual SFU has one publisher with one mix and one lyric video')
   check(participants.find(item => item.identity === firstPublisher.identity).tracks.every(track=>track.stream==='performance'), 'SFU places performance audio and lyric video in the same synchronization stream')
-  console.log('Publisher negotiated feedback:', JSON.stringify(await evaluate(phone, `(${collectRtcFeedback.toString()})()`)))
+  const publisherNegotiation = await evaluate(phone, `(${collectRtcFeedback.toString()})()`)
+  console.log('Publisher negotiated feedback:', JSON.stringify(publisherNegotiation))
+  if (codecExperiment?.transport === 'dual') {
+    const topology = await evaluate(phone, `__peers.map(peer => ({
+      senders:peer.getSenders().filter(sender=>sender.track?.readyState==='live').map(sender=>sender.track.kind)
+    }))`)
+    console.log('Private native publisher topology:', JSON.stringify(topology))
+    const publishing = topology.filter(peer => peer.senders.length > 0)
+    check(topology.length === 2 && publishing.length === 1 && publishing[0].senders.length === 2 &&
+      ['audio', 'video'].every(kind => publishing[0].senders.includes(kind)),
+      'private dual topology has two native peers and exactly one audio/video publisher')
+  }
+  if (publisherFeedback === 'remb') {
+    const state = await evaluate(phone, 'window.__publisherRembExperiment.snapshot()')
+    console.log('Private publisher feedback rewrite counts:', JSON.stringify(state))
+    const local = publisherNegotiation.filter(row => row.side === 'local' && row.kind === 'video' && row.direction === 'sendonly')
+    const remote = publisherNegotiation.filter(row => row.side === 'remote' && row.kind === 'video' && row.direction === 'recvonly')
+    check(local.length === 1 && remote.length === 1 && [...local, ...remote].every(row =>
+      row.rembFeedback && row.absoluteSendTimeExtension && !row.transportCcFeedback && !row.transportCcExtension),
+      'private publisher negotiates REMB and absolute-send-time without TWCC on the actual sending video')
+    check(state.modified > 0, 'private feedback experiment changes an actual native offer or answer')
+  }
   console.log('Audience negotiated feedback:', JSON.stringify(await evaluate(audience, `(${collectRtcFeedback.toString()})()`)))
   const receiverGroups = await evaluate(audience, `(() => __peers.flatMap(peer => {
     const sdp=peer.remoteDescription?.sdp||'';
@@ -812,7 +841,7 @@ try {
     'TypeError','RangeError','ReferenceError','NetworkError','AbortError','InvalidStateError','OperationError']
   console.error('Runtime error categories:',JSON.stringify(errors.slice(0,8).map(message=>known.find(code=>message.includes(code))||'RuntimeError')))
   console.error('Media HTTP status (paths only):', JSON.stringify(mediaHttp))
-  for (const session of sessionSockets.keys()) console.error('UI state:', JSON.stringify(await evaluate(session, ` (async () => ({status:document.querySelector('[data-party-media-status]')?.textContent,encodedLeaseEvents:window.__encodedLeaseEvents,senderKeyframes:window.__avSenderKeyframes?.snapshot(),
+  for (const session of sessionSockets.keys()) console.error('UI state:', JSON.stringify(await evaluate(session, ` (async () => ({status:document.querySelector('[data-party-media-status]')?.textContent,encodedLeaseEvents:window.__encodedLeaseEvents,publisherFeedback:window.__publisherRembExperiment?.snapshot(),senderKeyframes:window.__avSenderKeyframes?.snapshot(),
     errors:[...document.querySelectorAll('[role=alert]')].map(item=>item.textContent), diagnostics:[...document.querySelectorAll('dl')].map(item=>item.textContent),
     av:window.__avObserver?.evidence,avSources:window.__avSources,phase:window.__phaseEvidence,clocks:window.__partyClocks,playbacks:window.__partyPlaybacks,gains:window.__gainNodes.map(node=>({gain:node.gain.value,context:window.__contexts.indexOf(node.context),automation:node.__automation})),receivedPeaks:window.__analyser?(()=>{const data=new Float32Array(__analyser.frequencyBinCount);__analyser.getFloatFrequencyData(data);return [440,660,880].map(frequency=>{const center=Math.round(frequency*__analyser.fftSize/__receiveContext.sampleRate);const value=Math.max(...data.slice(center-2,center+3));return Number.isFinite(value)?value:-120})})():null,ice:window.__iceEvidence, output:window.__outputEvidence, sources:window.__sourceEvidence, contexts:window.__contexts.map(item=>({state:item.state,time:item.currentTime})), canvas:[...document.querySelectorAll('canvas')].map(item=>({width:item.width,height:item.height,connected:item.isConnected})),
     video:[...document.querySelectorAll('video')].map(item=>({width:item.videoWidth,height:item.videoHeight,ready:item.readyState,paused:item.paused,muted:item.muted,tracks:item.srcObject?.getTracks().map(track=>({kind:track.kind,state:track.readyState,muted:track.muted,settings:track.getSettings()}))})),
