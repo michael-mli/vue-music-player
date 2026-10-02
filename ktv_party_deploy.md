@@ -430,7 +430,7 @@ publication used zero active audio rooms. Actual backend health is
 Public HTTP/WSS, feature flags, exact asset bytes/SHA, SQLite and temporary-room
 cleanup pass. See the implementation tracker for individual evidence paths.
 
-Current frontend is **`fe4f216`**, backend remains **`f58a8f3`**; assets are
+The preceding PWA activation frontend is **`fe4f216`**, backend remains **`f58a8f3`**; assets are
 **`main-9fvbdGW2.js` / `main-DnE6rWx5.css`**. This frontend-only release fixes PWA
 activation/retry and authoritative empty catalogs. Exact build/type check, UI
 42/42, PWA 10/10, clean native A/V 26/26 (40 matched transitions, no unmatched;
@@ -449,6 +449,31 @@ Common receiver-buffer experiments remain fixture-only. The TCP experiment
 passes, but UDP fails at p95 349.68 ms and maximum 699.93 ms. Physical/mobile,
 installed-PWA, handover timing, distinct networks and capacity acceptance are
 still open; this release does not enable online singing.
+
+Current frontend is **`ca6c757`**, backend stays **`f58a8f3`**. Assets:
+**`main-CgZ1TyOk.js`**, **`main-DnE6rWx5.css`** and
+**`partyLeaseGuard.worklet-5od8dAEf.js`**. The rendering guard prevents expired
+stage and published mic/backing from resuming while page tasks remain blocked.
+It covers the existing 15-second stage-lease ceiling; publishing retains its
+existing permit validation. Audio enablement requires loading and verifying the
+hashed native module, which is precached with this app version. Invalid room API
+payloads now produce recovery text while retaining the entry form.
+
+Exact committed build/type check, party units 90/90, UI 45/45, PWA 10/10,
+native lease 15/15 and full clean streaming/recovery/handover 53/53 pass.
+All 40 clean marker transitions match without unmatched edges (p95 59.73 ms,
+maximum 99.50 ms). Public release 21/21 verifies exact app/CSS/worklet/worker
+bytes, worklet MIME and precaching, flags and HTTP/WSS, SQLite integrity/FKs,
+source SHA and own-room cleanup. Individual logs are in the tracker.
+
+Private rollback backup **`/home/mli/ktv-party-lease-guard-predeploy.073ojqew`**
+contains consistent SQLite, previous frontend and private backend config. Previous
+frontend/backend were `fe4f216` / `f58a8f3`. Old assets remain; HTML and worker
+were atomically replaced with zero preparing/scheduled/playing rooms and no backend
+restart. Rooms/guide remain enabled, media disabled, no persistent SFU. Physical
+stage replacement, mobile/field PWA, impaired A/V and source drift, handover timing,
+distinct networks and representative capacity remain open. Receiver buffering
+experiments are fixture-only; prepared SFU policy is unchanged.
 
 Before enabling online rooms publicly, record these results:
 

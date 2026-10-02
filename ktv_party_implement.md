@@ -9,13 +9,18 @@ Design reference: [ktv_party.md](ktv_party.md)
 Implemented contracts: [ktv_party_protocol.md](ktv_party_protocol.md)
 
 Current status: The durable-room preview is deployed at
-`https://music.micstec.com/party` with frontend `fe4f216`, backend `f58a8f3`
-(`main-9fvbdGW2.js`, `main-DnE6rWx5.css`). Online media remains disabled.
+`https://music.micstec.com/party` with frontend `ca6c757`, backend `f58a8f3`
+(`main-CgZ1TyOk.js`, `main-DnE6rWx5.css`,
+`partyLeaseGuard.worklet-5od8dAEf.js`). Online media remains disabled.
+Native rendering guards now keep expired stage and published mic/backing silent
+after a frozen audio clock resumes while page tasks remain blocked. Exact native
+lease checks 15/15, UI 45/45, PWA 10/10, full clean streaming/recovery/handover
+53/53 and public release 21/21 pass; party units 90/90 pass.
 The PWA activation fix is deployed: failed updates retain the current page and
 allow retry; empty catalogs no longer trigger phantom song downloads. Exact-build
-UI 42/42, PWA 10/10 and public release 18/18 pass.
+UI/PWA checks also reject malformed room responses without losing the form.
 Lyric capture cadence and authorized screen-content classification are deployed;
-clean sustained native A/V passes 40 transitions, with p95 **58.98 ms**.
+clean sustained native A/V passes 40 transitions, with p95 **59.73 ms**.
 Impaired timing still fails. Matching worker image `ktv-party-media:f58a8f3`
 passes supervisor and public direct/TLS-TURN revocation checks; no persistent
 media container is running.
@@ -783,14 +788,18 @@ prototype result is not automatically a release result.
 
 ### Current next action
 
-Current preview is frontend `fe4f216`, backend `f58a8f3`; rooms and private guide
-are enabled, public media remains disabled. PWA activation/retry and empty-catalog
-fixes pass exact-build UI 42/42, PWA 10/10 and public release 18/18. Clean native
-A/V passes all 40 transitions (p95 58.98 ms, maximum 75.70 ms).
+Current preview is frontend `ca6c757`, backend `f58a8f3`; rooms and private guide
+are enabled, public media remains disabled. Native lease guards pass blocked-task
+and suspended-render-clock output checks 15/15. Exact UI 45/45, PWA 10/10,
+full clean streaming/recovery/handover 53/53 and public release 21/21 pass.
+Clean native A/V passes all 40 transitions (p95 59.73 ms, maximum 99.50 ms).
 
-Investigate UDP repair stalls and source cadence. The fixture-only common native
-buffer experiment passes TCP but fails UDP: p95 349.68 ms, maximum 699.93 ms,
-against unchanged 150/250 ms limits. Do not ship this controller from TCP evidence.
+Investigate UDP repair stalls, conflicting sender/receiver delay hints and source
+cadence/drift. Network-minimum hints fail UDP (p95 349.68 ms, maximum 699.93 ms);
+repair-budget hints also fail (p95 445.47 ms, maximum 470.41 ms). Removing only
+the isolated SFU hint resolves the video clamp but source drift stops the run
+before 40 transitions. Keep unchanged 150/250 ms limits and prepared SFU policy.
+Do not ship these fixture-only controllers from partial evidence.
 Measure A/V timing through handover, longer outages and sustained representative
 load, including the full device ceiling and nominal frame rate.
 
@@ -1931,6 +1940,56 @@ failed PWA evidence remains recorded; real installed-PWA acceptance stays open.
 Public frontend/backend remain **`fe4f216` / `f58a8f3`** until exact committed
 verification and publication. Online media remains disabled; no persistent SFU.
 
+
+### 2026-10-02 — Exact native lease-guard preview published
+
+Application commit **`ca6c757`** is pushed and published at
+`https://music.micstec.com/party`. Assets: **`main-CgZ1TyOk.js`**,
+**`main-DnE6rWx5.css`**, **`partyLeaseGuard.worklet-5od8dAEf.js`**. Backend stays
+**`f58a8f3`**, without restart. Rooms and private guide remain enabled; online
+media remains disabled, with no persistent SFU. The matching worker contract is
+unchanged. The original main rollback tag remains intact.
+
+Exact source/build checks:
+
+- Party units **90/90** (`/tmp/ktv-lease-guard-final-units.log`), including native
+  processor expiry/clock/renewal rules and the configured 15-second stage ceiling.
+- Type check and exact committed build pass (`/tmp/ktv-lease-guard-exact-build.log`).
+- UI **45/45** (`/tmp/ktv-lease-guard-exact-pwa-ui.log`), including malformed HTML
+  and non-array room payloads, retained form and valid-response reload recovery.
+- Native PWA **10/10** (`/tmp/ktv-lease-guard-exact-pwa.log`), with the corrected
+  no-store room-list fixture; blocked activation/retry and authority-cache purge
+  remain covered. Real installed-PWA acceptance stays open.
+- Exact-source native lease **15/15** (`/tmp/ktv-lease-guard-exact-native-lease.log`):
+  private stage and published-mic output remain silent past expiry while page
+  tasks are blocked, including actual frozen/resumed render clocks.
+- Exact built full streaming/recovery/handover **53/53**
+  (`/tmp/ktv-lease-guard-exact-clean-av.log`). All **40** clean transitions match,
+  with no unmatched edges: skew p50 **29.34 ms**, p95 **59.73 ms**, maximum
+  **99.50 ms**; source-to-video p95 **131.40 ms**, maximum **164.90 ms**. Handover
+  has functional evidence here, not a measured handover-timing pass.
+- Receiver diagnostic fixture checks **13/13**
+  (`/tmp/ktv-native-repair-final-fixtures.log`); the repair experiments remain off
+  in production and their failed UDP evidence remains above.
+
+Public release **21/21** (`/tmp/ktv-lease-guard-public-release.log`) verifies
+HTTP/WSS, effective flags, no-store diagnostics, unchanged timing/pair/ticket
+lifetimes, exact app/CSS/worklet bytes, worklet JavaScript MIME, exact worker bytes
+and worklet precaching, committed source SHA, SQLite integrity/FKs and no new
+account. The probe's temporary room is closed. Private rollback backup
+**`/home/mli/ktv-party-lease-guard-predeploy.073ojqew`** contains consistent
+SQLite, preceding frontend and private backend configuration; files are 0600 in
+a 0700 directory. Previous frontend/backend are `fe4f216` / `f58a8f3`.
+Old hashed assets remain available; entry HTML and worker use atomic replacement,
+with zero preparing/scheduled/playing rooms. Local owned listener ports are free
+and no owned SFU container remains.
+
+This closes the identified native suspended-clock source leak in software.
+P05.8/A10 still require integrated replacement/physical output evidence. UDP and
+handover timing, source drift under impairment, physical/microphone alignment,
+Safari/iOS/Android and field PWA behavior, real access networks, full representative
+capacity and persistent online release remain open.
+
 ```text
 Date:
 Phase and item IDs:
@@ -1972,5 +2031,6 @@ Next action:
 | Capture cadence preview | Frontend `ea986cd` (`main-1zcZhmf9.js`), backend `e88783a` | `https://music.micstec.com/party` | 2026-10-02 | Party 84/84, fixture 9/9, exact UI 42/42, PWA 8/8, native clean 40-transition journey 26/26, public 18/18; P06.7 software acceptance complete | Media disabled; impaired A/V still fails; physical/mobile, longer outages, representative/multi-room load and distinct networks open |
 | Lyric screen source preview | Frontend/backend `f58a8f3` (`main-CedlFAY-.js`); matching worker image `ktv-party-media:f58a8f3` | `https://music.micstec.com/party` | 2026-10-02 | Party 84/84, backend 128/128, exact UI 42/42, PWA 8/8, clean native 40-transition journey 26/26, supervisor 9/9, public direct/TLS-TURN 14/14, public release 18/18 | Media disabled, no persistent SFU; TCP/UDP impaired timing fails, intermittent PWA reload remains unresolved; physical/mobile, longer outages, representative/multi-room load and distinct networks open |
 | PWA activation preview | Frontend `fe4f216` (`main-9fvbdGW2.js`), backend `f58a8f3` | `https://music.micstec.com/party` | 2026-10-02 | Exact UI 42/42, PWA 10/10, clean native 40-transition journey 26/26, public release 18/18; party 84/84, update 3/3, catalog 2/2, fixture 12/12 | Media disabled, no persistent SFU; UDP impaired timing fails; physical/mobile, installed PWA, handover timing, representative capacity and distinct networks open |
+| Native lease guard preview | Frontend `ca6c757` (`main-CgZ1TyOk.js`, `partyLeaseGuard.worklet-5od8dAEf.js`), backend `f58a8f3` | `https://music.micstec.com/party` | 2026-10-02 | Party 90/90; exact UI 45/45, PWA 10/10, native lease 15/15, full clean 40-transition streaming/recovery/handover 53/53, public release 21/21; fixture 13/13 | Media disabled, no persistent SFU; UDP timing and impaired source drift, integrated/physical replacement, mobile/field PWA, timing through handover, representative capacity and distinct networks remain open |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |
