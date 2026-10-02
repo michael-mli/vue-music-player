@@ -227,6 +227,7 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
   })
   return { deviceId, purpose, enabled, enabling, preparing, prepared, failure, volume, guideAdvanceMs, positionMs,
     createPublisherTap: (hash: string, generation: number) => engine.createPublisherTap(hash, generation), renderPosition: () => engine.renderPositionMs,
+    outputLease: computed(() => lease.value),
     segment, countdown, lines, lyricGuide, canGuide, assignedHere, startSafe, healthy, serverNowMs, blocked, diagnostics,
     calibrationInvalidated, resetOutput: () => engine.outputChanged(), enable, disable, message,
     retry: () => { blocked.value = false; audioIssue.value = null; failure.value = ''; engine.resetRecovery(); failedKey = ''; readyKeys.clear(); status(); void prepare() } }

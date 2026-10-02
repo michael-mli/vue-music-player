@@ -57,11 +57,13 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
     return performanceId && view ? JSON.stringify([view.room.id, mode.value, performanceId, singerId.value, view.self.role]) : ''
   }
   function currentPermit() {
-    const permit = grant.value?.permit, playback = party.value?.playback, estimate = clock.value
+    const permit = grant.value?.permit, playback = party.value?.playback, estimate = clock.value, lease = audio.outputLease.value
     return Boolean(permit && estimate?.status === 'healthy' && connected.value && !document.hidden && !audio.blocked.value &&
       playback && ['scheduled', 'playing'].includes(playback.state) && playback.stageDeviceId === audio.deviceId &&
       permit.clockId === playback.clockId && permit.performanceId === playback.performanceId && permit.generation === playback.generation &&
-      permit.expiresServerMs > performance.now() + estimate.offsetMs + estimate.uncertaintyMs + 100)
+      lease && lease.deviceId === audio.deviceId && lease.clockId === permit.clockId &&
+      lease.performanceId === permit.performanceId && lease.generation === permit.generation &&
+      Math.min(permit.expiresServerMs, lease.expiresServerMs) > performance.now() + estimate.offsetMs + estimate.uncertaintyMs + 100)
   }
   function cancelRetryWait() {
     if (!retryWait) return
@@ -120,7 +122,7 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
     // The scheduled snapshot can arrive before sweep() commits and publishes
     // its lease. Wait for that capability instead of sending a forbidden token
     // request and tearing down a microphone that is already prepared.
-    const playback = party.value.playback, lease = playback.lease, estimate = clock.value
+    const playback = party.value.playback, lease = audio.outputLease.value, estimate = clock.value
     if (!lease || !estimate || estimate.status !== 'healthy' || !['scheduled', 'playing'].includes(playback.state) ||
       lease.deviceId !== audio.deviceId || lease.clockId !== playback.clockId || lease.clockId !== estimate.clockId ||
       lease.performanceId !== playback.performanceId || lease.generation !== playback.generation ||
@@ -266,9 +268,13 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
     if (capture.value && !grant.value && playback && ['scheduled', 'playing'].includes(playback.state)) void startPublisher()
     if (captureBinding && playback && ['scheduled', 'playing'].includes(playback.state)) captureSawActive = true
     else if (captureBinding && captureSawActive) { void stop(); return }
-    if (publisherReady && graph && grant.value?.permit && clock.value) graph.renew({ ...grant.value.permit,
-      expiresServerMs: Math.min(grant.value.permit.expiresServerMs, playback?.lease?.expiresServerMs || 0) }, clock.value)
-    if (originalReady && original && publisherReady && playback && clock.value && currentPermit()) original.sync(playback, clock.value, playback.lease, 'guide')
+    // Heartbeat leases arrive independently of room snapshots. Use the same
+    // validated current lease as the backing engine and stop on gate rejection.
+    if (publisherReady && graph && grant.value?.permit && clock.value && !graph.renew({ ...grant.value.permit,
+      expiresServerMs: Math.min(grant.value.permit.expiresServerMs, audio.outputLease.value?.expiresServerMs || 0) }, clock.value)) {
+      fail(new Error('MEDIA_PERMISSION')); return
+    }
+    if (originalReady && original && publisherReady && playback && clock.value && currentPermit()) original.sync(playback, clock.value, audio.outputLease.value, 'guide')
     else original?.stop()
     const current = grant.value
     if (current && !renewing && now - lastRenewMs >= (current.scope === 'publisher' ? 1000 : 30000)) {

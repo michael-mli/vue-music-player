@@ -12,8 +12,8 @@ const vueModule = dataModule(`import * as Vue from ${JSON.stringify(import.meta.
 const stubs = {
   '@/services/partyApi': 'export const partyApi = new Proxy({}, {get: (_, key) => (...args) => globalThis.__partyMediaLifecycle.api[key](...args)});',
   '@/services/partyMediaTransport': 'export const createPartyMediaTransport = (...args) => globalThis.__partyMediaLifecycle.transport(...args);',
-  '@/services/partyPublishGraph': 'export class PartyPublishGraph {}',
-  '@/services/partyLyricCapture': 'export class PartyLyricCapture {}',
+  '@/services/partyPublishGraph': 'export class PartyPublishGraph { constructor(...args) { return globalThis.__partyMediaLifecycle.publishGraph(...args) } }',
+  '@/services/partyLyricCapture': 'export class PartyLyricCapture { constructor(...args) { return globalThis.__partyMediaLifecycle.lyricCapture(...args) } }',
   '@/services/partyAudioEngine': 'export class PartyAudioEngine { constructor() { return globalThis.__partyMediaLifecycle.audioEngine(); } }',
   './useMicDevices': 'export const getMicStream = () => globalThis.__partyMediaLifecycle.mic(); export const releaseMicStream = stream => {for (const track of stream?.getTracks() || []) track.stop();};',
 }
@@ -40,14 +40,14 @@ function fixture(t) {
   const retryTimers = new Map()
   const timers = new Map(), micRequests = [], removals = [], cleanups = []
   const window = Object.assign(new EventTarget(), { setInterval(fn) { timers.set(timers.size + 1, fn); return timers.size }, clearInterval(id) { timers.delete(id) }, setTimeout(fn) { retryTimers.set(retryTimers.size + 1, fn); return retryTimers.size }, clearTimeout(id) { retryTimers.delete(id) } })
-  const document = Object.assign(new EventTarget(), { hidden: false })
+  const document = Object.assign(new EventTarget(), { hidden: false, createElement() { return { style: {}, remove() {} } } })
   globalThis.window = window; globalThis.document = document
   const engines = []
   const state = { cleanups, api: { async mediaStatus() { return { available: true } }, async mediaRevoke(...args) { removals.push(args) } },
     audioEngine() {
       const ready = deferred()
       const engine = { ready, prepared: 0, closed: false, enable: () => ready.promise,
-        async prepare() { this.prepared++ }, stop() {}, async close() { this.closed = true }, setVolume() {} }
+        syncCalls: [], sync(...args) { this.syncCalls.push(args) }, async prepare() { this.prepared++ }, stop() {}, async close() { this.closed = true }, setVolume() {} }
       engines.push(engine); return engine
     },
     mic() { const request = deferred(); micRequests.push(request); return request.promise }, transport() { throw new Error('Unexpected transport creation') } }
@@ -56,7 +56,7 @@ function fixture(t) {
     readiness: { performanceId: 'first-performance', singerMemberId: 'singer' }, playback: { state: 'idle', performanceId: null, assets: null } })
   const connected = ref(true), clock = ref({ status: 'healthy', clockId: 'clock', offsetMs: 0, uncertaintyMs: 10 })
   let disabled = 0
-  const audio = { deviceId: 'device', enabled: ref(false), healthy: ref(true), blocked: ref(false), prepared: ref(false), assignedHere: ref(false), volume: ref(.7), lines: ref([]),
+  const audio = { deviceId: 'device', enabled: ref(false), healthy: ref(true), blocked: ref(false), prepared: ref(false), assignedHere: ref(false), volume: ref(.7), lines: ref([]), outputLease: ref(null),
     async enable() { this.enabled.value = true }, disable() { disabled++; this.enabled.value = false }, createPublisherTap() { throw new Error('Unexpected tap') }, renderPosition() { return null } }
   const media = usePartyMedia(party, connected, clock, audio); media.headphones.value = true
   t.after(async () => {
@@ -85,14 +85,14 @@ test('a scheduled snapshot waits for its matching output lease before requesting
     expiresServerMs: performance.now() + 8000 }
   for (const candidate of [null, { ...lease, deviceId: 'other' }, { ...lease, clockId: 'old-clock' },
     { ...lease, performanceId: 'old-performance' }, { ...lease, generation: 3 }, { ...lease, expiresServerMs: performance.now() }]) {
-    f.party.value.playback.lease = candidate
+    f.audio.outputLease.value = candidate
     for (const tick of f.timers.values()) tick()
     await nextTick()
     assert.equal(requests, 0)
     assert.equal(input.getAudioTracks()[0].readyState, 'live')
     assert.equal(f.media.status.value, 'ready')
   }
-  f.party.value.playback.lease = lease
+  f.audio.outputLease.value = lease
   for (const tick of f.timers.values()) tick()
   await nextTick()
   assert.equal(requests, 1)
@@ -258,4 +258,74 @@ test('an undocumented HTTP authorization denial stops audience recovery without 
   f.state.api.mediaGrant = async () => {requests++; throw Object.assign(new Error('private provider body'), {status:403,code:'OTHER_DENIAL'})}
   connections[0].callbacks.ended(true); await flush()
   assert.equal(requests, 1); assert.equal(f.retryTimers.size, 0); assert.equal(f.media.status.value, 'error')
+})
+
+async function publisherFixture(f) {
+  const capture = f.media.prepareCapture()
+  await permissionRequested(f)
+  const input = stream(); f.micRequests[0].resolve(input); await capture
+  const identity = {clockId:'clock',performanceId:'first-performance',generation:4}
+  const snapshotLease = {id:'lease',deviceId:'device',...identity,sequence:1,expiresServerMs:performance.now()-1000}
+  const renewedLease = {...snapshotLease,sequence:8,expiresServerMs:performance.now()+8000}
+  f.party.value.playback = {state:'playing',...identity,singerMemberId:'singer',stageDeviceId:'device',lease:snapshotLease,
+    assets:{instrumental:{sha256:'backing'},original:{sha256:'guide'}}}
+  f.audio.outputLease.value = renewedLease
+  f.audio.prepared.value = true; f.audio.assignedHere.value = true
+  const graph = {stream:{},renewals:[],accepted:true,closed:false,setAlignment(){},setPublishLevels(){},
+    renew(permit, clock) {this.renewals.push({permit,clock});return this.accepted},close(){this.closed=true}}
+  f.state.publishGraph = () => graph
+  f.state.lyricCapture = () => ({stream:{},close(){}})
+  f.audio.createPublisherTap = () => ({context:{},instrumental:{},active:true,close(){}})
+  f.state.api.mediaGrant = async () => ({identity:'publisher',scope:'publisher',room:'ktv-first-room',
+    permit:{...identity,expiresServerMs:performance.now()+5000}})
+  f.state.api.mediaReady = async () => ({})
+  f.state.transport = async () => ({async connect(){},async publish(){},async close(){}})
+  for(const tick of f.timers.values()) tick()
+  await flush()
+  assert.equal(f.media.status.value,'publishing')
+  return {graph,input,snapshotLease,renewedLease}
+}
+
+test('publisher and private guide follow renewed WebSocket leases after the snapshot lease expires', async t => {
+  const f = fixture(t), {graph,snapshotLease} = await publisherFixture(f)
+  const pending = f.media.toggleOriginal()
+  f.engines[0].ready.resolve(); await pending
+  for(let sequence=9;sequence<15;sequence++) {
+    const next = {...f.audio.outputLease.value,sequence,expiresServerMs:performance.now()+2000+sequence*10}
+    f.audio.outputLease.value = next
+    for(const tick of f.timers.values()) tick()
+    assert.equal(f.media.status.value,'publishing')
+    assert.equal(graph.renewals.at(-1).permit.expiresServerMs,next.expiresServerMs)
+    assert.equal(f.engines[0].syncCalls.at(-1)[2].sequence,sequence)
+  }
+  assert.ok(snapshotLease.expiresServerMs<performance.now())
+  assert.equal(graph.closed,false)
+})
+
+for(const [name,change] of [
+  ['device',lease=>({...lease,deviceId:'other'})],
+  ['clock',lease=>({...lease,clockId:'old-clock'})],
+  ['performance',lease=>({...lease,performanceId:'old-performance'})],
+  ['generation',lease=>({...lease,generation:3})],
+  ['expiry',lease=>({...lease,expiresServerMs:performance.now()})],
+  ['missing',()=>null],
+]) test(`publisher fails closed when its current output lease has invalid ${name}`,async t=>{
+  const f=fixture(t),{graph,input}=await publisherFixture(f)
+  // A valid room snapshot must not mask a revoked or mismatched current lease.
+  f.party.value.playback.lease={...f.audio.outputLease.value}
+  f.audio.outputLease.value=change(f.audio.outputLease.value)
+  for(const tick of f.timers.values()) tick()
+  assert.equal(f.media.status.value,'error')
+  assert.equal(f.media.failure.value,'mediaErrorPermission')
+  assert.equal(graph.closed,true)
+  assert.equal(input.getAudioTracks()[0].readyState,'ended')
+})
+
+test('render gate rejection tears down capture instead of leaving a silent publishing state',async t=>{
+  const f=fixture(t),{graph,input}=await publisherFixture(f)
+  graph.accepted=false
+  for(const tick of f.timers.values()) tick()
+  assert.equal(f.media.status.value,'error')
+  assert.equal(graph.closed,true)
+  assert.equal(input.getAudioTracks()[0].readyState,'ended')
 })
