@@ -9,10 +9,13 @@ Design reference: [ktv_party.md](ktv_party.md)
 Implemented contracts: [ktv_party_protocol.md](ktv_party_protocol.md)
 
 Current status: The durable-room preview is deployed at
-`https://music.micstec.com/party` with frontend/backend `f58a8f3`
-(`main-CedlFAY-.js`, `main-D0gBov56.css`). Online media remains disabled.
+`https://music.micstec.com/party` with frontend `fe4f216`, backend `f58a8f3`
+(`main-9fvbdGW2.js`, `main-DnE6rWx5.css`). Online media remains disabled.
+The PWA activation fix is deployed: failed updates retain the current page and
+allow retry; empty catalogs no longer trigger phantom song downloads. Exact-build
+UI 42/42, PWA 10/10 and public release 18/18 pass.
 Lyric capture cadence and authorized screen-content classification are deployed;
-clean sustained native A/V passes 40 transitions, with p95 **58.48 ms**.
+clean sustained native A/V passes 40 transitions, with p95 **58.98 ms**.
 Impaired timing still fails. Matching worker image `ktv-party-media:f58a8f3`
 passes supervisor and public direct/TLS-TURN revocation checks; no persistent
 media container is running.
@@ -778,22 +781,22 @@ prototype result is not automatically a release result.
 
 ### Current next action
 
-Local room controls, guide/lease recovery, online capture, hybrid stage handover,
-public direct/TLS relay, synthetic 19-audience fanout and automatic audience
-reauthorization after media-signaling loss have software evidence. Frontend
-`29a62cf` is deployed with renewed output-lease handling, backend remains
-`9b74e8f`; public media stays disabled.
-Short controlled TCP/UDP media delay, UDP packet loss and audience-only outages
-have functional evidence in isolated fixtures. A/V markers now reveal a failed
-TCP/UDP impairment timing gate (285/357 ms worst observed skew). Investigate
-receiver playout and validate that measurement on representative devices, then
-continue end-to-end measurements, longer outages, handover under continuing impairment,
-and long-run/sustained load, including publisher/receiver resource attribution
-and nominal frame-rate checks.
-Complete acoustic stage/guide and input/output alignment, Android/iOS/Safari,
-background/lock/output-switch/Bluetooth and real Wi-Fi/LTE acceptance. Preserve
-those physical and access-network gates; a synthetic EC2 run does not close them.
-Enable persistent online/hybrid media only after the P07/P08 release gates pass.
+Current preview is frontend `fe4f216`, backend `f58a8f3`; rooms and private guide
+are enabled, public media remains disabled. PWA activation/retry and empty-catalog
+fixes pass exact-build UI 42/42, PWA 10/10 and public release 18/18. Clean native
+A/V passes all 40 transitions (p95 58.98 ms, maximum 75.70 ms).
+
+Investigate UDP repair stalls and source cadence. The fixture-only common native
+buffer experiment passes TCP but fails UDP: p95 349.68 ms, maximum 699.93 ms,
+against unchanged 150/250 ms limits. Do not ship this controller from TCP evidence.
+Measure A/V timing through handover, longer outages and sustained representative
+load, including the full device ceiling and nominal frame rate.
+
+Complete acoustic stage/guide and microphone/backing alignment, stale-stage
+silence at the replacement boundary, Android/iOS/Safari, background/lock,
+output-switch/Bluetooth, field-installed PWA and real Wi-Fi/LTE acceptance.
+Synthetic EC2 runs do not close physical or access-network gates. Enable
+persistent online/hybrid media only after the P07/P08 release gates pass.
 
 ### Decision log
 
@@ -1812,10 +1815,41 @@ Primary semantics: [native jitter buffer target](https://w3c.github.io/webrtc-pc
 Targets are hints; the browser may clamp them and synchronized tracks should use
 the larger target. Estimated playout timestamps are sender NTP time and can
 extrapolate when no audio is playing. Fixture units **12/12** pass, including the
-final finite-counter guard; final exact-commit verification/release is next. Public
-preview remains frontend/backend `f58a8f3`, media disabled. P01/P05 physical
+final finite-counter guard. The exact release results are recorded below. Public
+preview is frontend `fe4f216`, backend `f58a8f3`, media disabled. P01/P05 physical
 alignment, P06 physical/mobile/installed-PWA, UDP and handover timing, representative
 capacity and persistent online release remain open.
+
+
+### 2026-10-02 — PWA activation preview published
+
+Committed and pushed application build **`fe4f216`** is published at
+`https://music.micstec.com/party`, with **`main-9fvbdGW2.js`** and
+**`main-DnE6rWx5.css`**. Backend remains **`f58a8f3`**, without a restart;
+rooms/guide are enabled, media is disabled, and no persistent SFU is running.
+
+Exact committed build/type check passes (`/tmp/ktv-pwa-activation-release-build.log`).
+Built-app UI **42/42** (`/tmp/ktv-pwa-activation-release-ui.log`), native PWA
+blocked-activation/retry/cache isolation **10/10**
+(`/tmp/ktv-pwa-activation-release.log`) and clean native A/V **26/26**
+(`/tmp/ktv-pwa-activation-release-clean-av.log`) pass. A/V matches all **40**
+transitions, with no unmatched edges: absolute skew p50 **2.97 ms**, p95
+**58.98 ms**, maximum **75.70 ms**; source-to-video p95 **112.40 ms**, maximum
+**131.50 ms**. Source checks pass: party **84/84**, update helper **3/3**, catalog
+**2/2**, A/V fixture **12/12**. Earlier failures and candidate evidence remain
+recorded above; physical installed-PWA acceptance is still open.
+
+Public release **18/18** (`/tmp/ktv-pwa-activation-public-release.log`) verifies
+HTTP/WSS admission, effective flags, no-store diagnostics, default timing,
+pair/ticket lifetimes, exact asset bytes and committed source SHA. The probe's
+own temporary room is closed; no account is added; SQLite integrity and foreign
+keys pass. Private rollback backup
+**`/home/mli/ktv-party-pwa-activation-predeploy.4pj04fvs`** includes consistent
+SQLite, previous static frontend and private backend configuration. Previous
+frontend/backend were `f58a8f3`; old hashed assets remain available. Entry HTML
+and service worker were atomically replaced with zero preparing/scheduled/playing
+rooms. Native buffering experiments remain fixture-only; impaired UDP timing,
+physical/mobile, handover timing, capacity and online release remain open.
 
 ```text
 Date:
@@ -1857,5 +1891,6 @@ Next action:
 | Provider confirmation preview | Frontend/backend `e88783a` (`main-CXsosxfb.js`) | `https://music.micstec.com/party` | 2026-10-02 | Backend 127/127, party 81/81, exact UI 38/38, PWA 8/8, continuous TCP handover 63/63, same-source UDP candidate 65/65, public 18/18 | Media disabled; sustained native drift/A/V, physical/mobile, longer outages, representative/multi-room load and distinct networks open; 59-audience setup failed |
 | Capture cadence preview | Frontend `ea986cd` (`main-1zcZhmf9.js`), backend `e88783a` | `https://music.micstec.com/party` | 2026-10-02 | Party 84/84, fixture 9/9, exact UI 42/42, PWA 8/8, native clean 40-transition journey 26/26, public 18/18; P06.7 software acceptance complete | Media disabled; impaired A/V still fails; physical/mobile, longer outages, representative/multi-room load and distinct networks open |
 | Lyric screen source preview | Frontend/backend `f58a8f3` (`main-CedlFAY-.js`); matching worker image `ktv-party-media:f58a8f3` | `https://music.micstec.com/party` | 2026-10-02 | Party 84/84, backend 128/128, exact UI 42/42, PWA 8/8, clean native 40-transition journey 26/26, supervisor 9/9, public direct/TLS-TURN 14/14, public release 18/18 | Media disabled, no persistent SFU; TCP/UDP impaired timing fails, intermittent PWA reload remains unresolved; physical/mobile, longer outages, representative/multi-room load and distinct networks open |
+| PWA activation preview | Frontend `fe4f216` (`main-9fvbdGW2.js`), backend `f58a8f3` | `https://music.micstec.com/party` | 2026-10-02 | Exact UI 42/42, PWA 10/10, clean native 40-transition journey 26/26, public release 18/18; party 84/84, update 3/3, catalog 2/2, fixture 12/12 | Media disabled, no persistent SFU; UDP impaired timing fails; physical/mobile, installed PWA, handover timing, representative capacity and distinct networks open |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |

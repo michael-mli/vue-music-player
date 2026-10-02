@@ -402,7 +402,7 @@ The fixture now follows timing events over one bounded owned SSH channel;
 `KTV_ROOM_TEST_PLAYOUT_MAX_MS` changes only the isolated SFU (50–500, default 500).
 It changes neither prepared production policy nor the timing acceptance thresholds.
 
-Current frontend/backend preview is **`f58a8f3`**, assets
+The preceding lyric-source frontend/backend preview is **`f58a8f3`**, assets
 **`main-CedlFAY-.js` / `main-D0gBov56.css`**. Lyrics now use the authorized
 `screen_share` source, explicitly retaining 1280×720, 350 kbit/s and 25 fps.
 JWT sources, gateway validation, provider readiness and audience filtering share
@@ -429,6 +429,26 @@ publication used zero active audio rooms. Actual backend health is
 **`http://127.0.0.1:3101/api/health`**; do not infer this port from other applications.
 Public HTTP/WSS, feature flags, exact asset bytes/SHA, SQLite and temporary-room
 cleanup pass. See the implementation tracker for individual evidence paths.
+
+Current frontend is **`fe4f216`**, backend remains **`f58a8f3`**; assets are
+**`main-9fvbdGW2.js` / `main-DnE6rWx5.css`**. This frontend-only release fixes PWA
+activation/retry and authoritative empty catalogs. Exact build/type check, UI
+42/42, PWA 10/10, clean native A/V 26/26 (40 matched transitions, no unmatched;
+p95 58.98 ms, maximum 75.70 ms) and public release 18/18 pass. See the tracker
+for evidence paths. The backend and matching media-worker contract are unchanged.
+Rooms/guide remain enabled; online media is disabled and no persistent SFU runs.
+
+Private rollback backup **`/home/mli/ktv-party-pwa-activation-predeploy.4pj04fvs`**
+contains consistent SQLite, previous static frontend and private backend config;
+integrity and foreign keys pass. Previous frontend/backend were `f58a8f3`. Old
+hashed assets remain; HTML and worker publication used atomic replacement with
+zero preparing/scheduled/playing rooms, without backend restart. The public
+probe verifies exact bytes/source SHA and closes its temporary room.
+
+Common receiver-buffer experiments remain fixture-only. The TCP experiment
+passes, but UDP fails at p95 349.68 ms and maximum 699.93 ms. Physical/mobile,
+installed-PWA, handover timing, distinct networks and capacity acceptance are
+still open; this release does not enable online singing.
 
 Before enabling online rooms publicly, record these results:
 
