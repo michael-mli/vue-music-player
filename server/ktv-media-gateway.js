@@ -29,7 +29,7 @@ export function createKtvMediaGateway({ upstreamUrl, apiKey, apiSecret, authoriz
       claims.video?.roomAdmin || claims.video?.roomCreate || claims.video?.roomList || claims.video?.roomRecord ||
       claims.video?.ingressAdmin || claims.video?.destinationRoom || claims.video?.canPublishData !== false ||
       (grant.scope === 'audience' && claims.video?.canPublishSources?.length) ||
-      (grant.scope === 'publisher' && (!claims.video?.canPublishSources?.length || claims.video.canPublishSources.some(source => !['microphone', 'camera'].includes(source)))) ||
+      (grant.scope === 'publisher' && (!claims.video?.canPublishSources?.length || claims.video.canPublishSources.some(source => !['microphone', 'screen_share'].includes(source)))) ||
       claims.video?.canPublish !== (grant.scope === 'publisher') || claims.video?.canSubscribe !== (grant.scope === 'audience') ||
       revoking.has(keyOf(grant))) throw new Error('MEDIA_ACCESS_DENIED')
     return { url, token, claims, grant }

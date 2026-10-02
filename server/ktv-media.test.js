@@ -94,6 +94,19 @@ test('audience tokens cannot inherit default publish/data grants, publish source
   assert.equal((await fetch(`${f.origin}/twirp/livekit.RoomService/ListParticipants`)).status, 403)
 })
 
+test('publisher source grants allow microphone and lyric screens but deny declared camera or screen audio', async t => {
+  const f = await fixture(t); f.grant.scope = 'publisher'
+  const publisher = { canPublish: true, canSubscribe: false,
+    canPublishSources: [TrackSource.MICROPHONE, TrackSource.SCREEN_SHARE] }
+  const validate = async options => fetch(`${f.origin}/api/ktv/media/rtc/validate?access_token=${encodeURIComponent(await f.token(options))}`)
+  assert.equal((await validate(publisher)).status, 200)
+  for (const sources of [[], [TrackSource.MICROPHONE, TrackSource.CAMERA],
+    [TrackSource.MICROPHONE, TrackSource.SCREEN_SHARE_AUDIO],
+    [TrackSource.MICROPHONE, TrackSource.SCREEN_SHARE, TrackSource.CAMERA]]) {
+    assert.equal((await validate({ ...publisher, canPublishSources: sources })).status, 403)
+  }
+})
+
 test('revoked admission removes an open participant and rejects its old and refreshed JWTs', async t => {
   const f = await fixture(t), oldToken = await f.token(), socket = await f.join(oldToken)
   f.revokeAdmission()

@@ -70,7 +70,7 @@ async function token(identity, scope, generation = 1) {
 async function renewedToken(identity, scope, overrides = {}) {
   const access = new AccessToken(apiKey, apiSecret, { identity, ttl: 120 })
   access.addGrant({ roomJoin: true, room: roomName, canPublish: scope === 'publisher', canSubscribe: scope === 'audience',
-    canPublishData: false, canPublishSources: scope === 'publisher' ? [TrackSource.MICROPHONE, TrackSource.CAMERA] : [], ...overrides })
+    canPublishData: false, canPublishSources: scope === 'publisher' ? [TrackSource.MICROPHONE, TrackSource.SCREEN_SHARE] : [], ...overrides })
   return access.toJwt()
 }
 const roomScript = (url, credential, relay = false) => `(() => {
@@ -156,8 +156,8 @@ try {
     window.lyricCapture = new PartyLyricCapture(canvas, () => performance.now() < graph.diagnostics.expiresServerMs - 100 ?
       { title: 'Captured performance', singer: 'Synthetic singer', renderPositionMs: context.currentTime * 1000,
         backingDelayMs: 0, lyricOffsetMs: 0, lines: [{ time: 0, text: 'First line' }, { time: 2, text: 'Second line' }] } : null);
-    await room.localParticipant.publishTrack(lyricCapture.stream.getVideoTracks()[0], { name: 'performance-lyrics', stream: 'performance', source: LivekitClient.Track.Source.Camera,
-      simulcast: false, videoEncoding: { maxBitrate: 350000, maxFramerate: 25 } });
+    await room.localParticipant.publishTrack(lyricCapture.stream.getVideoTracks()[0], { name: 'performance-lyrics', stream: 'performance', source: LivekitClient.Track.Source.ScreenShare,
+      simulcast: false, screenShareEncoding: { maxBitrate: 350000, maxFramerate: 25 } });
   })()`)
   await publish(1)
   await poll(async () => { const values = await energies(audience); return values && values[0] > -50 && values[1] > -50 }, 'received backing plus mic')

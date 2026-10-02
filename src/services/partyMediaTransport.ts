@@ -24,7 +24,7 @@ export async function createPartyMediaTransport(grant: PartyMediaGrant, callback
   room.on(RoomEvent.AudioPlaybackStatusChanged, allowed => { if (!allowed && !stopped) callbacks.playbackBlocked?.() })
   room.on(RoomEvent.VideoPlaybackStatusChanged, allowed => { if (!allowed && !stopped) callbacks.playbackBlocked?.() })
   room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
-    const source = track.kind === Track.Kind.Audio ? Track.Source.Microphone : Track.Source.Camera
+    const source = track.kind === Track.Kind.Audio ? Track.Source.Microphone : Track.Source.ScreenShare
     // Receive one performance mix and one captured lyric track. A second audio
     // publication must never become a competing instrumental or vocal guide.
     if (stopped || terminalNotified || grant.scope !== 'audience' || publication.source !== source ||
@@ -76,8 +76,10 @@ export async function createPartyMediaTransport(grant: PartyMediaGrant, callback
       await room.localParticipant.publishTrack(mix, { name: 'performance-mix', stream: 'performance', source: Track.Source.Microphone,
         audioPreset: { maxBitrate: 64000 }, dtx: false, red: true })
       if (stopped) throw new Error('MEDIA_CAPTURE_UNAVAILABLE')
-      await room.localParticipant.publishTrack(lyrics, { name: 'performance-lyrics', stream: 'performance', source: Track.Source.Camera,
-        degradationPreference: 'maintain-resolution', simulcast: false, videoEncoding: { maxBitrate: 350000, maxFramerate: 25 } })
+      // Captured lyrics are screen content. Camera classification causes the SFU
+      // to apply a jitter-driven video delay to low-rate canvas traffic.
+      await room.localParticipant.publishTrack(lyrics, { name: 'performance-lyrics', stream: 'performance', source: Track.Source.ScreenShare,
+        degradationPreference: 'maintain-resolution', simulcast: false, screenShareEncoding: { maxBitrate: 350000, maxFramerate: 25 } })
     },
     async enableAudio() {
       if (stopped || terminalNotified) return

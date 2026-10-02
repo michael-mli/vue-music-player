@@ -9,7 +9,7 @@ const sdk = moduleUrl(`export class Room { constructor(options) { globalThis.__p
   export const RoomEvent = { TrackSubscribed:'subscribe', TrackUnsubscribed:'unsubscribe', Disconnected:'disconnect',
     SignalReconnecting:'signal-reconnecting', Reconnecting:'reconnecting', Reconnected:'reconnected', AudioPlaybackStatusChanged:'audio-status', VideoPlaybackStatusChanged:'video-status' };
   export const DisconnectReason = { UNKNOWN_REASON:0, CLIENT_INITIATED:1, DUPLICATE_IDENTITY:2, SERVER_SHUTDOWN:3, PARTICIPANT_REMOVED:4, ROOM_DELETED:5, STATE_MISMATCH:6, JOIN_FAILURE:7, SIGNAL_CLOSE:9 };
-  export const Track = { Kind:{Audio:'audio',Video:'video'}, Source:{Microphone:'mic',Camera:'camera'} };`)
+  export const Track = { Kind:{Audio:'audio',Video:'video'}, Source:{Microphone:'mic',Camera:'camera',ScreenShare:'screen_share'} };`)
 const source = await fs.readFile(new URL('../src/services/partyMediaTransport.ts', import.meta.url), 'utf8')
 const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText
 const { createPartyMediaTransport } = await import(moduleUrl(compiled.replace("'livekit-client'", JSON.stringify(sdk))))
@@ -33,10 +33,10 @@ async function fixture(t, scope = 'audience') {
     await transport.close()
     globalThis.window = previous.window; globalThis.document = previous.document; globalThis.__partyTransport = previous.state
   })
-  function subscribe(kind, participant = 'first', name = kind === 'audio' ? 'performance-mix' : 'performance-lyrics') {
+  function subscribe(kind, participant = 'first', name = kind === 'audio' ? 'performance-mix' : 'performance-lyrics', source = kind === 'audio' ? 'mic' : 'screen_share') {
     const track = { kind, element: null, attach(element) { this.element = element; element.srcObject = { participant } },
       detach() { this.element = null; return [] } }
-    const publication = { source: kind === 'audio' ? 'mic' : 'camera', trackName: name,
+    const publication = { source, trackName: name,
       setSubscribed(value) { if (!value) rejected.push(track) } }
     room.emit('subscribe', track, publication, { identity: participant })
     return track
@@ -77,6 +77,8 @@ test('unexpected publications and late subscriptions after close cannot attach a
   const f = await fixture(t)
   const unexpected = f.subscribe('audio', 'first', 'original-vocals')
   assert.deepEqual(f.rejected, [unexpected]); assert.equal(f.created.length, 0)
+  const camera = f.subscribe('video', 'first', 'performance-lyrics', 'camera')
+  assert.ok(f.rejected.includes(camera)); assert.equal(f.created.length, 0)
   f.subscribe('audio'); f.subscribe('video')
   await f.transport.close()
   assert.equal(f.elements.size, 0)
@@ -122,4 +124,6 @@ test('performance audio and lyric video publish in the same receiver synchroniza
   assert.deepEqual(published.map(item=>item.track),[mix,lyrics])
   assert.deepEqual(published.map(item=>item.options.stream),['performance','performance'])
   assert.deepEqual(published.map(item=>item.options.name),['performance-mix','performance-lyrics'])
+  assert.deepEqual(published.map(item=>item.options.source),['mic','screen_share'])
+  assert.deepEqual(published[1].options.screenShareEncoding,{maxBitrate:350000,maxFramerate:25})
 })

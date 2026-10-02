@@ -88,7 +88,7 @@ async function issue(scope) {
   grants.set(identity, { identity, room, scope, expires: Date.now() + credentialSeconds * 1000, revoked: false, removed: false })
   const access = new AccessToken('ktv-party', provider.secret, { identity, ttl: credentialSeconds })
   access.addGrant({ roomJoin: true, room, canPublish: scope === 'publisher', canSubscribe: scope === 'audience', canPublishData: false,
-    canPublishSources: scope === 'publisher' ? [TrackSource.MICROPHONE, TrackSource.CAMERA] : [] })
+    canPublishSources: scope === 'publisher' ? [TrackSource.MICROPHONE, TrackSource.SCREEN_SHARE] : [] })
   return { identity, token: await access.toJwt() }
 }
 const stats = session => evaluate(session, `(async()=>{
@@ -201,7 +201,7 @@ try {
     const ctx=canvas.getContext('2d');window.videoTimer=setInterval(()=>{ctx.fillStyle='#102030';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.fillStyle='#28aa60';ctx.fillRect(Date.now()%1000,240,180,40);ctx.fillStyle='white';ctx.font='32px sans-serif';ctx.fillText('KTV transport '+Date.now(),20,180)},load?40:100);
     const video=canvas.captureStream(load?25:10);
     await performanceRoom.localParticipant.publishTrack(destination.stream.getAudioTracks()[0],{name:'performance-mix',source:LivekitClient.Track.Source.Microphone,stream:'performance',...(load?{audioPreset:{maxBitrate:64000},dtx:false,red:true}:{})});
-    await performanceRoom.localParticipant.publishTrack(video.getVideoTracks()[0],{name:'performance-lyrics',source:LivekitClient.Track.Source.Camera,stream:'performance',...(load?{degradationPreference:'maintain-resolution',simulcast:false,videoEncoding:{maxBitrate:350000,maxFramerate:25}}:{})});return true;
+    await performanceRoom.localParticipant.publishTrack(video.getVideoTracks()[0],{name:'performance-lyrics',source:LivekitClient.Track.Source.ScreenShare,stream:'performance',...(load?{degradationPreference:'maintain-resolution',simulcast:false,screenShareEncoding:{maxBitrate:350000,maxFramerate:25}}:{})});return true;
   })()`)
   probeStep = 'provider publisher tracks'
   await poll(async () => (await provider.listParticipants(room)).some(item => item.identity === publisher.identity && item.tracks.length === 2), 'provider reports published audio/video')

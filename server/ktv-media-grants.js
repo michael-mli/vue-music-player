@@ -113,7 +113,7 @@ export function createKtvMediaGrants({ db, clock, getPlayback, getDevices, apiKe
     const access = new AccessToken(apiKey, apiSecret, { identity: row.identity, ttl: 120 })
     access.addGrant({ roomJoin: true, room: ktvMediaRoom(row.room_id), canPublish: row.scope === 'publisher',
       canSubscribe: row.scope === 'audience', canPublishData: false,
-      canPublishSources: row.scope === 'publisher' ? [TrackSource.MICROPHONE, TrackSource.CAMERA] : [] })
+      canPublishSources: row.scope === 'publisher' ? [TrackSource.MICROPHONE, TrackSource.SCREEN_SHARE] : [] })
     const token = await access.toJwt()
     // Permission can change during asynchronous signing; never return a newly
     // signed credential for a revoked membership, lease or performance.

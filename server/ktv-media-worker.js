@@ -87,7 +87,7 @@ export function createKtvMediaWorker({ backendUrl, upstreamUrl, apiKey, apiSecre
         catch (error) { if (error.code === 'not_found') { res.writeHead(409); res.end(); return } throw error }
         const tracks = participant.tracks || []
         if (tracks.length !== 2 || !tracks.some(track => track.type === TrackType.AUDIO && track.source === TrackSource.MICROPHONE && track.name === 'performance-mix') ||
-          !tracks.some(track => track.type === TrackType.VIDEO && track.source === TrackSource.CAMERA && track.name === 'performance-lyrics')) {
+          !tracks.some(track => track.type === TrackType.VIDEO && track.source === TrackSource.SCREEN_SHARE && track.name === 'performance-lyrics')) {
           res.writeHead(409); res.end(); return
         }
         try { await backendRequest('/internal/ktv/media/ready', data) }

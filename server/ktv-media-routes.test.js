@@ -196,6 +196,10 @@ test('online startup requires provider-confirmed mix and lyrics before entering 
   assert.equal(f.db.prepare('SELECT ready_at FROM ktv_media_grants WHERE identity = ?').get(publisher.data.identity).ready_at, null)
   f.setTracks([{ type: TrackType.AUDIO, source: TrackSource.MICROPHONE, name: 'performance-mix' },
     { type: TrackType.VIDEO, source: TrackSource.CAMERA, name: 'performance-lyrics' }])
+  assert.equal((await f.request('POST', path, 2, { deviceId: f.devices[1].id })).status, 409)
+  assert.equal(f.db.prepare('SELECT ready_at FROM ktv_media_grants WHERE identity = ?').get(publisher.data.identity).ready_at, null)
+  f.setTracks([{ type: TrackType.AUDIO, source: TrackSource.MICROPHONE, name: 'performance-mix' },
+    { type: TrackType.VIDEO, source: TrackSource.SCREEN_SHARE, name: 'performance-lyrics' }])
   assert.equal((await f.request('POST', path, 2, { deviceId: f.devices[1].id })).status, 200)
   f.time(26000); f.realtime.playback.sweep()
   assert.equal(f.realtime.playback.snapshot(f.views[0].room.id).state, 'playing')

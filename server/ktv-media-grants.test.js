@@ -38,7 +38,7 @@ test('room media grants recover lost issuance replies across restart without sto
   const claims = await f.verifier.verify(first.token)
   assert.equal(claims.sub, first.identity); assert.equal(claims.video.room, ktvMediaRoom(f.roomId))
   assert.equal(claims.video.canPublish, true); assert.equal(claims.video.canSubscribe, false); assert.equal(claims.video.canPublishData, false)
-  assert.deepEqual(claims.video.canPublishSources, ['microphone', 'camera'])
+  assert.deepEqual(claims.video.canPublishSources, ['microphone', 'screen_share'])
   assert.ok(first.permit.expiresServerMs <= 6000)
   f.restart()
   const retry = await f.issue(1, 'publisher', { commandId })

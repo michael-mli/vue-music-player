@@ -274,7 +274,13 @@ The publisher tap is taken from the instrumental before personal monitor gain.
 Original-guide engines cannot obtain that tap. Clean capture mixes one backing
 and microphone with limiting; venue mix excludes the digital backing. Lyrics are
 captured from the publisher's rendered backing into video, accounting for its
-publish delay. Audience audio/video use one named WebRTC stream on one video
+publish delay. The lyric track uses `screen_share`, named `performance-lyrics`,
+with a 350 kbit/s / 25 fps screen encoding limit. The single audio mix uses
+`microphone`, named `performance-mix`. Publisher JWTs allow those two declared
+sources; readiness requires exactly those two tracks, and audience filters reject
+camera and extra screen-audio publications. The frontend, grant gateway and media
+worker must use the same source contract during a media-disabled rollout.
+Audience audio/video use one named WebRTC stream on one video
 element; audience pages do not run a second instrumental player.
 
 Room media grants bind current admission, paired scope, device, selected singer,

@@ -1605,6 +1605,61 @@ distinct-network, sustained representative capacity and impaired A/V gates remai
 open. P06.7 software abuse/escaping acceptance is complete; all failed comparisons
 above remain part of the evidence.
 
+### 2026-10-02 — Lyric screen source contract and packet-loss diagnosis
+
+Identified a source classification mismatch: lyrics were published as camera
+video. In pinned LiveKit v1.13.7, the receiver-report handler adjusts the video
+playout minimum from jitter for camera sources; screen-share sources skip that
+adjustment because bursty screen traffic can inflate jitter. Candidate code now
+declares the canvas as `screen_share`, explicitly retaining 350 kbit/s, 25 fps,
+1280×720 and resolution preference. Grant signing, gateway source checks,
+provider readiness, audience filtering and media fixtures use that same contract.
+Tests reject declared camera/screen-audio grants and a camera lyric track at
+readiness. No desktop capture prompt or extra audio publication is introduced.
+Source: [pinned downtrack handler](https://github.com/livekit/livekit/blob/v1.13.7/pkg/sfu/downtrack.go),
+[playout controller](https://github.com/livekit/livekit/blob/v1.13.7/pkg/sfu/playoutdelay.go).
+
+Party units **84/84**, backend **128/128**, type-check/production build pass:
+`/tmp/ktv-lyric-source-party-units.log`, `/tmp/ktv-lyric-source-backend-units.log`,
+`/tmp/ktv-lyric-source-build.log`. Native continuous UDP run completes functional
+recovery/handover and fails the final timing gate after 71 passing checks,
+`/tmp/ktv-lyric-source-udp-av.log`, exit 1. Baseline six pairs, no unmatched edges:
+p95/max **72.35 ms**. Impaired **40 pairs**, no unmatched edges: skew p50
+**138.32 ms**, p95 **328.88 ms**, maximum **562.56 ms**. Source preserves full
+**1280×720**, reports **23–26 fps** and **267.8–350 kbit/s** video target under
+impairment; baseline **24–26 fps**, 350 kbit/s. Receiver interval mean audio/video
+buffer residence is **206.6/283.9 ms**, 91 video freezes and 114 reported video
+packets lost. The real video section negotiates the playout-delay extension;
+audio does not. No SDP or credentials are logged.
+
+The classification corrects encoding and SFU semantics while impaired timing
+remains a failure. An isolated `KTV_ROOM_TEST_RECEIVER_TARGET_MS=500` experiment
+sets native targets on the two current receiver tracks before measurement. Its
+range is 0–1000 ms, requires A/V timing, and defaults to no override. It tests
+whether coordinated native buffering can cover repair stalls; it is not a
+production delay policy, nor proof of handover timing on later receiver tracks.
+No acceptance threshold or marker-accounting rule changes. Production remains
+frontend `ea986cd`, backend `e88783a`, media disabled. The new source contract
+requires a coordinated media-disabled frontend/backend/worker rollout.
+
+The first native receiver-target experiment stops before the target setter or
+A/V observer starts: native publisher drift **373 ms**, one sample, room enters
+`stage.unavailable` (`/tmp/ktv-lyric-source-500ms-receiver-udp-av.log`, exit 1).
+It provides no evidence for or against the buffer target. The process is terminal
+and fixture ports are free; a fresh experiment is running with the same target
+and unchanged native recovery guard. The failed startup remains recorded.
+
+The receiver-target retry applies **500 ms** to the two current tracks, then fails
+on native publisher recovery (`/tmp/ktv-lyric-source-500ms-receiver-udp-av-retry.log`,
+exit 1): publisher drift **90.2 ms**, 72 native samples, 55 impaired timeline
+points. Baseline six matched pairs, no unmatched edges: p95/max **249.49 ms**,
+source-to-video delay p95 **588.90 ms**. The impaired phase is incomplete. Thus
+coordinated target support is verified, but this run does not establish an impaired
+timing improvement and its baseline exceeds the diagnostic target. No receiver
+delay policy is added to the app. Next measurement uses the screen source under
+continuous TCP delay/jitter with native receiver defaults, to separate added loss
+from ordered transport impairment.
+
 ```text
 Date:
 Phase and item IDs:

@@ -875,6 +875,23 @@ publish backing delay. Audio and video carry the same named WebRTC stream and
 attach to one audience video element so its media clock governs both tracks.
 Headphone audio and publisher render timing still require physical checks.
 
+The lyric video is declared as `screen_share`, with `screenShareEncoding` explicitly
+limited to 350 kbit/s and 25 fps on the existing 1280×720 canvas. Audience filters,
+publisher JWT source grants and provider readiness use that same source contract;
+a declared camera or screen-audio source is rejected. Canvas publication continues
+to use its existing track; this classification does not request desktop capture.
+Upgrade frontend, backend grant/gateway and media worker together with media
+disabled and no active publisher. The production preview source contract is
+recorded in the release tracker.
+
+Pinned v1.13.7 applies its
+[jitter-driven playout controller](https://github.com/livekit/livekit/blob/v1.13.7/pkg/sfu/playoutdelay.go)
+to camera video; its
+[receiver-report handler](https://github.com/livekit/livekit/blob/v1.13.7/pkg/sfu/downtrack.go)
+skips jitter adjustment for screen-share sources because bursty screen traffic can
+inflate that estimate. This motivates the screen-content classification; native
+measurement must still establish whether timing improves.
+
 SFU synchronization policy (2026-10-02): the generated LiveKit configuration now
 sets `room.sync_streams: true`. In pinned v1.13.7, subscriber synchronization
 depends on this flag as well as the published stream name and client support;

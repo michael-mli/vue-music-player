@@ -27,6 +27,9 @@ const clientLocation = process.env.KTV_ROOM_TEST_CLIENT || 'same-host'
 assert.ok(['same-host', 'remote-ec2'].includes(clientLocation), 'Unknown room-test client topology')
 const remoteMode = clientLocation === 'remote-ec2'
 const avTiming = process.env.KTV_ROOM_TEST_AV_TIMING === '1'
+const receiverTargetMs = process.env.KTV_ROOM_TEST_RECEIVER_TARGET_MS === undefined ? null : Number(process.env.KTV_ROOM_TEST_RECEIVER_TARGET_MS)
+assert.ok(receiverTargetMs === null || avTiming && Number.isInteger(receiverTargetMs) && receiverTargetMs >= 0 && receiverTargetMs <= 1000,
+  'Receiver target experiment requires A/V timing and a 0–1000 ms target')
 const avTransitions = Number(process.env.KTV_ROOM_TEST_AV_TRANSITIONS || 40)
 assert.ok(Number.isInteger(avTransitions)&&avTransitions>=6&&avTransitions<=60, 'A/V transitions must be 6–60')
 const fixtureSeconds = avTiming ? Math.max(60, (avTransitions + 6) * 2 + 40) : 60
@@ -340,10 +343,11 @@ try {
     const sdp=peer.remoteDescription?.sdp||'';
     return sdp.split(/(?:^|\\r?\\n)m=/).filter(section=>/^(audio|video) /.test(section))
       .map(section=>({kind:section.startsWith('audio ')?'audio':'video',
+        playoutDelayNegotiated:section.includes('http://www.webrtc.org/experiments/rtp-hdrext/playout-delay'),
         cnames:[...new Set([...section.matchAll(/a=ssrc:\\d+ cname:([^\\r\\n]+)/g)].map(item=>item[1]))],
         streams:[...new Set([...section.matchAll(/a=msid:([^ \\r\\n]+)/g)].map(item=>item[1]))]}));
   }))()`)
-  console.log('Receiver synchronization group counts:',JSON.stringify(receiverGroups.map(item=>({kind:item.kind,cnameCount:item.cnames.length,streamCount:item.streams.length}))))
+  console.log('Receiver synchronization group counts:',JSON.stringify(receiverGroups.map(item=>({kind:item.kind,cnameCount:item.cnames.length,streamCount:item.streams.length,playoutDelayNegotiated:item.playoutDelayNegotiated}))))
   const syncAudio=receiverGroups.find(item=>item.kind==='audio'&&item.cnames.length),syncVideo=receiverGroups.find(item=>item.kind==='video'&&item.cnames.length)
   check(Boolean(syncAudio&&syncVideo&&syncAudio.cnames.some(value=>syncVideo.cnames.includes(value))&&syncAudio.streams.some(value=>syncVideo.streams.includes(value))), 'negotiated receiver audio/video share an RTCP synchronization identity')
 
@@ -424,6 +428,16 @@ try {
     check(result.pairs.every(item=>Number.isFinite(item.captureQueueMs)&&Math.abs(item.captureQueueMs)<100&&item.captureCallMs<20),`${phase} private output monitor capture queue and timing call remain bounded`)
   }
   if(avTiming) {
+    if(receiverTargetMs !== null) {
+      const targets=await evaluate(audience,`(() => {
+        const tracks=document.querySelector('[data-party-media-screen] video').srcObject.getTracks();
+        const receivers=__peers.flatMap(peer=>peer.getReceivers()).filter(receiver=>tracks.some(track=>track.id===receiver.track?.id));
+        if(receivers.length!==2||receivers.some(receiver=>!('jitterBufferTarget' in receiver)))throw new Error('AV_RECEIVER_TARGET_UNSUPPORTED');
+        return receivers.map(receiver=>{receiver.jitterBufferTarget=${receiverTargetMs};return {kind:receiver.track.kind,targetMs:receiver.jitterBufferTarget}});
+      })()`)
+      check(targets.length===2&&targets.every(item=>item.targetMs===receiverTargetMs),'experimental receiver audio/video targets apply to the two current tracks')
+      console.log('Experimental native receiver targets:',JSON.stringify(targets))
+    }
     await evaluate(audience,`(${installAvObserver.toString()})()`)
     await poll(async()=>await evaluate(audience,'__avObserver.evidence.ready')&&(await avBrowser.audioEvidence()).some(item=>typeof item.on==='boolean'),'actual private receiver output and decoded video marker available')
     await measureAv('baseline')

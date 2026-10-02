@@ -55,7 +55,7 @@ async function launch() {
 }
 async function connect() {
   const access = new AccessToken(apiKey, apiSecret, { identity, ttl: 120 })
-  access.addGrant({ roomJoin: true, room, canPublish: true, canSubscribe: false, canPublishData: false, canPublishSources: [TrackSource.MICROPHONE, TrackSource.CAMERA] })
+  access.addGrant({ roomJoin: true, room, canPublish: true, canSubscribe: false, canPublishData: false, canPublishSources: [TrackSource.MICROPHONE, TrackSource.SCREEN_SHARE] })
   const token = await access.toJwt()
   const ws = new WebSocket(control.replace('http:', 'ws:') + '/api/ktv/media/rtc?protocol=16&auto_subscribe=0&access_token=' + encodeURIComponent(token), { origin })
   sockets.push(ws); ws.on('error', () => {}); await once(ws, 'open')
