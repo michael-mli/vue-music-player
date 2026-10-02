@@ -9,8 +9,8 @@ Design reference: [ktv_party.md](ktv_party.md)
 Implemented contracts: [ktv_party_protocol.md](ktv_party_protocol.md)
 
 Current status: The durable-room preview is deployed at
-`https://music.micstec.com/party` with frontend `d6d4041`
-(`main-Df1mhgtD.js`, `main-D0gBov56.css`) and backend `9b74e8f`. Online media remains disabled.
+`https://music.micstec.com/party` with frontend `b9fbb91`
+(`main-C3F6BNH-.js`, `main-D0gBov56.css`) and backend `9b74e8f`. Online media remains disabled.
 Members can connect a shared screen or phone
 controller with a short-lived code; a display has read-only room access, and a
 controller inherits the member's current permissions. Hosts can appoint co-hosts,
@@ -750,18 +750,16 @@ prototype result is not automatically a release result.
 
 ### Current next action
 
-The room UI, publisher tap, lifecycle and supervisor shutdown are implemented and
-verified in local checks. Direct DNS, certificate renewal and media firewall
-rules are installed. Complete the integrated guide/handover journey on a real
-output device, start the supervised public service, and run phone and network
-acceptance. Keep the online flag disabled until
-those checks pass. Complete remaining local/browser/PWA release gates alongside
-streaming.
-Physical phone/screen timing, memory, background behavior, broad browser coverage
-and real streaming remain acceptance gates. Phone tabs and QR invitations are live;
-general receipts, cleanup and returning-invite recovery are now deployed. The
-UI/capture checkpoint is deployed. Continue supervised public transport
-validation while the public online flag stays disabled.
+Local room controls, guide/lease recovery, online capture, hybrid stage handover,
+public direct/TLS relay, synthetic 19-audience fanout and automatic audience
+reauthorization after media-signaling loss have software evidence. Frontend
+`b9fbb91` is deployed, backend remains `9b74e8f`; public media stays disabled.
+Continue imposed media jitter/loss/outage and long-run/sustained-load measurements,
+including publisher/receiver resource attribution and nominal frame-rate checks.
+Complete acoustic stage/guide and input/output alignment, Android/iOS/Safari,
+background/lock/output-switch/Bluetooth and real Wi-Fi/LTE acceptance. Preserve
+those physical and access-network gates; a synthetic EC2 run does not close them.
+Enable persistent online/hybrid media only after the P07/P08 release gates pass.
 
 ### Decision log
 
@@ -1105,10 +1103,24 @@ undocumented HTTP denial and late audio-enable/connection replies. The initial
 SDK-retry candidate failed (`/tmp/ktv-room-reconnect-first.log`): reconnecting with
 a revoked nonce is intentionally denied; the final approach obtains a fresh nonce.
 A test teardown originally restored its mocked API before pending revocation
-finished; the fixture now awaits Stop before cleanup. Final release build/browser
-checks, an additional post-recovery spectral audio assertion and deployment are
-pending. Physical, access-network outage, imposed jitter/loss and A/V gates remain
-open. Public media remains disabled.
+finished; the fixture now awaits Stop before cleanup. Final exact-source release verification is complete: frontend `b9fbb91`
+build/type check (`/tmp/ktv-reconnect-release-build.log`), UI **38/38**
+(`/tmp/ktv-reconnect-release-ui.log`), PWA **8/8**
+(`/tmp/ktv-reconnect-release-pwa.log`) and remote room journey **47/47**
+(`/tmp/ktv-room-reconnect-release.log`, exit 0). The extra check confirms actual
+received backing/microphone tones after automatic reauthorization, with the
+private original still at least 25 dB below both. It includes native guide timing,
+singer interruption and subsequent hybrid stage handover without runtime errors.
+
+Frontend `b9fbb91` is deployed (`main-C3F6BNH-.js`, `main-D0gBov56.css`); backend
+remains `9b74e8f`, with no backend restart. Public release checks **18/18**
+(`/tmp/ktv-reconnect-public-release.log`, exit 0) verify actual HTTP/WSS/default
+flags/timing, exact asset bytes/source SHA, temporary-room closure and database
+integrity/FKs; no public identity was added. The private rollback backup is
+`/home/mli/ktv-party-reconnect-predeploy.jsu4hbq7`; old hashed assets remain.
+Owned local and remote browsers/profiles, tunnels and SFU/database fixtures were
+removed and their listener ports were empty. Physical, access-network outage,
+imposed jitter/loss and A/V gates remain open. Public media remains disabled.
 
 ```text
 Date:
@@ -1145,5 +1157,6 @@ Next action:
 | Timing policy backend | Backend `0e0c7aa`, frontend `3e76e15` | `https://music.micstec.com/party` | 2026-10-01 | Backend 121/121; party units 49/49; type check and UI 29/29; public HTTP/WSS/timing/schema/cleanup 11/11 | Online flag disabled; physical/browser and integrated/different-network streaming acceptance remain open |
 | Feature-switch preview | Frontend/backend `9b74e8f` (`main-B6kwN6KJ.js`) | `https://music.micstec.com/party` | 2026-10-01 | Backend 126/126, party units 49/49, exact-build UI 38/38 and PWA 8/8; public flags/HTTP/WSS/assets/SHA/cleanup 18/18 | Media remains disabled; integrated streaming, physical timing and browser/device acceptance remain open |
 | Streaming lease/handover preview | Frontend `d6d4041` (`main-Df1mhgtD.js`), backend `9b74e8f` | `https://music.micstec.com/party` | 2026-10-01 | Party units 53/53; exact-build UI 38/38, PWA 8/8, full remote Chrome room-media 20/20; public HTTP/WSS/assets/SHA/cleanup 18/18 | Public media disabled; physical/mobile/jitter, local/online route handover and distinct access-network/load acceptance remain open |
+| Audience recovery preview | Frontend `b9fbb91` (`main-C3F6BNH-.js`), backend `9b74e8f` | `https://music.micstec.com/party` | 2026-10-01 | Party units 64/64; exact-build UI 38/38, PWA 8/8, remote room/media-signaling interruption/hybrid handover 47/47; public HTTP/WSS/assets/SHA/cleanup 18/18 | Public media disabled; physical/mobile, media packet impairments, A/V/end-to-end timing and sustained representative load remain open |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |

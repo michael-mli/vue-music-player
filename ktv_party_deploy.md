@@ -288,6 +288,13 @@ production configuration stays unchanged. Native clocks and drift/readiness
 checks are retained. The remote 2026-10-01 exact frontend `d6d4041` passes the full singing,
 private guide and handover journey 20/20, including spectral guide separation,
 old unexpired room-token rejection and exactly one decoded replacement player.
+Frontend `b9fbb91` adds automatic fresh-grant audience recovery; the exact build
+passes 47/47 with signaling interruption and hybrid route flags enabled
+(`/tmp/ktv-room-reconnect-release.log`). Party units 64/64, UI 38/38, PWA 8/8 and
+public release 18/18 pass. Backend remains `9b74e8f`; frontend-only deployment
+required no restart. Public media stays disabled. The private predeployment
+backup is `/home/mli/ktv-party-reconnect-predeploy.jsu4hbq7`; old assets remain.
+
 All scripts remove their owned fixtures. This does not measure physical acoustic
 alignment or distinct Wi-Fi/LTE networks. Failed journeys remain recorded in the
 tracker until their concrete defect is resolved.
