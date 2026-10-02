@@ -20,10 +20,14 @@ import { createKtvMediaWorker } from '../server/ktv-media-worker.js'
 import { createMediaTcpProxy } from './party-media-tcp-proxy.mjs'
 import { createMediaUdpProxy } from './party-media-udp-proxy.mjs'
 import { createOwnedRemoteBrowser } from './party-remote-browser.mjs'
+import { installAvSourceMarkers, installAvObserver, analyseAvObservations } from './party-av-observer.mjs'
 
 const clientLocation = process.env.KTV_ROOM_TEST_CLIENT || 'same-host'
 assert.ok(['same-host', 'remote-ec2'].includes(clientLocation), 'Unknown room-test client topology')
 const remoteMode = clientLocation === 'remote-ec2'
+const avTiming = process.env.KTV_ROOM_TEST_AV_TIMING === '1'
+const avMeasurements = []
+assert.ok(!avTiming || remoteMode, 'A/V fixture requires owned source/receiver browsers on one remote host clock domain')
 const impairmentMode = process.env.KTV_ROOM_TEST_MEDIA_IMPAIRMENT || 'off'
 assert.ok(['off', '1', 'tcp', 'udp'].includes(impairmentMode), 'Unknown media impairment mode')
 const mediaImpairment = impairmentMode !== 'off', impairmentProtocol = impairmentMode === 'udp' ? 'udp' : 'tcp'
@@ -44,7 +48,7 @@ const provider = new RoomServiceClient(upstreamUrl, apiKey, apiSecret, { request
 const db = initDb(root), contexts = [], debuggerSockets = [], pending = new Map(), sessionSockets = new Map(), errors = [], mediaHttp = []
 const ownedTcp = new Set()
 const trackTcp = server => server.on('connection', socket => { ownedTcp.add(socket); socket.once('close', () => ownedTcp.delete(socket)) })
-let mediaProxy, audienceCircuits, frontend, backend, worker, realtime, chrome, remoteBrowser, pulseModule, pathRoom, running = false, nextId = 0, passed = 0
+let mediaProxy, audienceCircuits, frontend, backend, worker, realtime, chrome, remoteBrowser, avBrowser, pulseModule, pathRoom, running = false, nextId = 0, passed = 0
 const check = (value, label) => { assert.ok(value, label); passed++; console.log(`PASS ${label}`) }
 const poll = async (work, label, timeout = 20000) => {
   const deadline = Date.now() + timeout
@@ -93,7 +97,10 @@ function wav(frequency, seconds = 60) {
   bytes.write('RIFF'); bytes.writeUInt32LE(36 + size, 4); bytes.write('WAVEfmt ', 8); bytes.writeUInt32LE(16, 16)
   bytes.writeUInt16LE(1, 20); bytes.writeUInt16LE(1, 22); bytes.writeUInt32LE(rate, 24); bytes.writeUInt32LE(rate * 2, 28)
   bytes.writeUInt16LE(2, 32); bytes.writeUInt16LE(16, 34); bytes.write('data', 36); bytes.writeUInt32LE(size, 40)
-  for (let index = 0; index < rate * seconds; index++) bytes.writeInt16LE(Math.round(Math.sin(index * 2 * Math.PI * frequency / rate) * 3000), 44 + index * 2)
+  for (let index = 0; index < rate * seconds; index++) {
+    const tone = avTiming && frequency === 440 && Math.floor(index / rate / 2) % 2 ? 660 : frequency
+    bytes.writeInt16LE(Math.round(Math.sin(index * 2 * Math.PI * tone / rate) * 3000), 44 + index * 2)
+  }
   return bytes
 }
 try {
@@ -101,7 +108,9 @@ try {
   // Keep the guide distinct from microphone/backing harmonics after encoding.
   await fs.writeFile(path.join(root, 'data/link.1.mp3'), wav(1729))
   await fs.writeFile(path.join(root, 'karaoke/link.1.instrumental.mp3'), wav(440))
-  await fs.writeFile(path.join(root, 'synced/link.1.lrc'), '[00:00]Singing together\n[00:10]Second lyric\n[00:25]Third lyric\n[00:50]Final lyric')
+  const lyrics = avTiming ? Array.from({length:30},(_,id)=>`[00:${String(id*2).padStart(2,'0')}]AV${id%2?'OFF':'ON'}${id}`).join('\n')
+    : '[00:00]Singing together\n[00:10]Second lyric\n[00:25]Third lyric\n[00:50]Final lyric'
+  await fs.writeFile(path.join(root, 'synced/link.1.lrc'), lyrics)
   const micFile = path.join(root, 'microphone.wav'); await fs.writeFile(micFile, wav(880))
   const config = path.join(root, 'livekit.yaml')
   if (mediaImpairment) {
@@ -196,7 +205,9 @@ try {
   const singerDebugUrl = remoteBrowser?.debuggerUrl || `http://127.0.0.1:${singerDebugPort}`
   await poll(async () => { try { return (await fetch(singerDebugUrl + '/json/version')).ok } catch { return false } }, 'owned fake-mic Chrome')
   const singerSocket = await debuggerConnection(singerDebugUrl)
-  const audienceSocket = remoteMode ? singerSocket : await debuggerConnection(process.env.CHROME_DEBUG_URL || 'http://127.0.0.1:9231')
+  if(avTiming) avBrowser=await createOwnedRemoteBrowser({host:process.env.KTV_ROOM_TEST_SSH_HOST,
+    knownHosts:process.env.KTV_ROOM_TEST_KNOWN_HOSTS,micFile,debugPort:Number(process.env.KTV_ROOM_TEST_AV_CHROME_PORT||9244),isolatedOutput:true})
+  const audienceSocket = avBrowser ? await debuggerConnection(avBrowser.debuggerUrl) : remoteMode ? singerSocket : await debuggerConnection(process.env.CHROME_DEBUG_URL || 'http://127.0.0.1:9231')
   console.log('Client topology:', clientLocation, '; native audio clocks; isolated synthetic room/microphone')
   async function page(actor, stage = false) {
     const socket = actor === 2 || actor === 3 ? singerSocket : audienceSocket
@@ -207,9 +218,11 @@ try {
     await cdp(socket, 'Page.enable', {}, sessionId); await cdp(socket, 'Runtime.enable', {}, sessionId)
     await cdp(socket, 'Network.enable', {}, sessionId)
     await cdp(socket, 'Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', 'en');
+      ${avTiming ? `(${installAvSourceMarkers.toString()})();` : ''}
       window.__sockets = []; const Socket = window.WebSocket; window.WebSocket = class extends Socket { constructor(...args) { super(...args); window.__sockets.push(this); } };
-      window.__micStreams = []; window.__bufferSources = []; window.__sourceEvidence = []; window.__outputEvidence = []; window.__peers = []; window.__contexts = [];
+      window.__micStreams = []; window.__bufferSources = []; window.__sourceEvidence = []; window.__outputEvidence = []; window.__peers = []; window.__contexts = [];window.__gainNodes=[];
       const Context = window.AudioContext; window.AudioContext = class extends Context { constructor(...args) { super(...args); window.__contexts.push(this); } };
+      if(${avTiming}) { const gain=Context.prototype.createGain;Context.prototype.createGain=function(...args){const node=gain.apply(this,args);node.__automation=[]; for(const name of ["setValueAtTime","cancelScheduledValues"]){const original=node.gain[name];node.gain[name]=function(...values){node.__automation.push({name,values,time:node.context.currentTime,at:performance.now()});if(node.__automation.length>12)node.__automation.shift();return original.apply(this,values)}} __gainNodes.push(node);return node} }
       window.__iceEvidence = [];
       const Peer = window.RTCPeerConnection; window.RTCPeerConnection = class extends Peer { constructor(...args) { super(...args); window.__peers.push(this);
         this.addEventListener('iceconnectionstatechange',()=>window.__iceEvidence.push({state:this.iceConnectionState,now:performance.now()})); } };
@@ -291,15 +304,52 @@ try {
   check(Boolean(firstPublisher.ready_at), 'provider-confirmed audio/video readiness is persisted for the exact publisher')
   const participants = await provider.listParticipants(`ktv-${room.room.id}`)
   check(participants.filter(item => item.identity === firstPublisher.identity).length === 1 && participants.find(item => item.identity === firstPublisher.identity).tracks.length === 2, 'actual SFU has one publisher with one mix and one lyric video')
-  await evaluate(audience, `(() => { const element = document.querySelector('[data-party-media-screen] video'); window.__receiveContext = new AudioContext(); __receiveContext.resume();
+  check(participants.find(item => item.identity === firstPublisher.identity).tracks.every(track=>track.stream==='performance'), 'SFU places performance audio and lyric video in the same synchronization stream')
+  const installSpectrum = () => evaluate(audience, `(() => { const element = document.querySelector('[data-party-media-screen] video'); window.__receiveContext = new AudioContext(); __receiveContext.resume();
     const source = __receiveContext.createMediaStreamSource(element.srcObject); window.__analyser = __receiveContext.createAnalyser(); __analyser.fftSize = 8192; __analyser.smoothingTimeConstant = 0;
     const silent = __receiveContext.createGain(); silent.gain.value = 0; source.connect(__analyser); __analyser.connect(silent); silent.connect(__receiveContext.destination); })()`)
   const spectrum = () => evaluate(audience, `(() => { const values = new Float32Array(__analyser.frequencyBinCount); __analyser.getFloatFrequencyData(values);
     return [440,880,1729].map(frequency => { const center = Math.round(frequency * __analyser.fftSize / __receiveContext.sampleRate); const value = Math.max(...values.slice(center-2,center+3)); return Number.isFinite(value) ? value : -120; }); })()`)
-  let peaks = await poll(async () => { const value = await spectrum(); return value[0] > -55 && value[1] > -55 ? value : false }, 'received backing and microphone tones')
-  check(peaks[2] < Math.min(peaks[0], peaks[1]) - 25, `audience mix contains backing and live microphone without original-vocal tone (${peaks.map(value => value.toFixed(1)).join(', ')} dB)`)
+  let peaks
+  async function verifySpectrum() {
+    await installSpectrum()
+    peaks = await poll(async () => { const value = await spectrum(); return value[0] > -55 && value[1] > -55 ? value : false }, 'received backing and microphone tones')
+    check(peaks[2] < Math.min(peaks[0], peaks[1]) - 25, `audience mix contains backing and live microphone without original-vocal tone (${peaks.map(value => value.toFixed(1)).join(', ')} dB)`)
+  }
+  if(!avTiming) await verifySpectrum()
   await poll(() => evaluate(audience, "document.querySelector('[data-party-media-screen] video')?.videoWidth > 0"), 'first captured lyric video decoded')
   check(await evaluate(audience, "(() => { const video = document.querySelector('[data-party-media-screen] video'); return video.videoWidth > 0 && Math.abs(video.videoWidth / video.videoHeight - 16/9) < .02; })()"), 'audience displays decoded captured lyric video')
+  const inboundTiming = () => evaluate(audience, `(async () => {
+    const fields=['kind','packetsReceived','packetsLost','jitter','jitterBufferDelay','jitterBufferTargetDelay',
+      'jitterBufferMinimumDelay','jitterBufferEmittedCount','estimatedPlayoutTimestamp','totalSamplesReceived',
+      'concealedSamples','insertedSamplesForDeceleration','removedSamplesForAcceleration','framesDecoded',
+      'framesDropped','framesReceived','freezeCount','totalFreezesDuration','totalProcessingDelay','totalDecodeTime'];
+    const reports=await Promise.all(__peers.map(peer=>peer.getStats()));
+    return reports.flatMap(report=>[...report.values()].filter(item=>item.type==='inbound-rtp')
+      .map(item=>Object.fromEntries(fields.filter(field=>item[field]!==undefined).map(field=>[field,item[field]]))));
+  })()`)
+  async function measureAv(phase) {
+    const inboundBefore = await inboundTiming()
+    const begin=await evaluate(audience, `__avObserver.begin(${JSON.stringify(phase)})`)
+    const result=await poll(async()=>{
+      const observed=await evaluate(audience,'__avObserver.evidence'), sources=await evaluate(phone,'__avSources')
+      const audio=(await avBrowser.audioEvidence()).filter(item=>typeof item.on==='boolean'&&!item.initial&&item.time>=begin).map(item=>({...item,phase}))
+      const measured=analyseAvObservations({...observed,audio,sources},phase)
+      return measured.count>=6?measured:false
+    },`six matched ${phase} audio/video marker transitions`,20000)
+    console.log('A/V receiver buffer diagnostics:',JSON.stringify({phase,before:inboundBefore,after:await inboundTiming()}))
+    avMeasurements.push(result)
+    console.log('A/V marker measurement:',JSON.stringify(result))
+    check(result.unmatchedVideo.length<=1&&result.unmatchedAudio<=1, `${phase} marker matching accounts for observed audio/video edges without selecting only aligned pairs`)
+    check(result.pairs.every(item=>item.videoDelayMs>=0&&item.videoDelayMs<2000), `${phase} captured marker has a valid source-to-received video observation delay`)
+    check(result.pairs.every(item=>Number.isFinite(item.captureQueueMs)&&Math.abs(item.captureQueueMs)<100&&item.captureCallMs<20),`${phase} private output monitor capture queue and timing call remain bounded`)
+  }
+  if(avTiming) {
+    await evaluate(audience,`(${installAvObserver.toString()})()`)
+    await poll(async()=>await evaluate(audience,'__avObserver.evidence.ready')&&(await avBrowser.audioEvidence()).some(item=>typeof item.on==='boolean'),'actual private receiver output and decoded video marker available')
+    await measureAv('baseline')
+    await evaluate(audience,'__avObserver.begin(null)')
+  }
   if (mediaImpairment) {
     const routes = async session => evaluate(session, `(async()=>{
       return (await Promise.all(__peers.map(peer=>peer.getStats()))).flatMap(report=>{
@@ -312,6 +362,8 @@ try {
     const selected = [...await routes(phone), ...await routes(audience)]
     check(selected.length>=2 && selected.every(item=>item.protocol===impairmentProtocol&&item.port===(impairmentProtocol==='udp'?7882:7881)), `publisher and audience media traverse the owned ${impairmentProtocol.toUpperCase()} proxy with no bypass`)
     mediaProxy.profile({delayMs:150,jitterMs:40,lossRate:impairmentProtocol==='udp'?0.05:0})
+    if(avTiming) { await new Promise(resolve=>setTimeout(resolve,2000));await measureAv('impaired');await evaluate(audience,'__avObserver.stopRecording()') }
+    if(avTiming) await verifySpectrum()
     const frames=await evaluate(audience, "document.querySelector('[data-party-media-screen] video').getVideoPlaybackQuality().totalVideoFrames")
     await poll(() => evaluate(audience, `document.querySelector('[data-party-media-screen] video').getVideoPlaybackQuality().totalVideoFrames>=${frames+40}`), 'video advances with bounded media delay')
     const delayedPeaks=await poll(async()=>{const value=await spectrum();return value[0]>-55&&value[1]>-55?value:false}, 'audio with bounded media delay')
@@ -335,6 +387,7 @@ try {
     if(impairmentProtocol==='udp') check(mediaProxy.snapshot().circuits.reduce((sum,item)=>sum+item.droppedToClient+item.droppedToSfu,0)>0, 'UDP fixture drops real datagrams during packet loss and the audience outage')
     console.log(`Media ${impairmentProtocol.toUpperCase()} fixture:`,JSON.stringify(mediaProxy.snapshot()))
   }
+  if(avTiming&&!mediaImpairment) { await evaluate(audience,'__avObserver.stopRecording()');await verifySpectrum() }
   await click(phone, 'Listen to original vocals privately')
   await poll(() => evaluate(phone, "document.body.innerText.includes('Turn off private original vocals')"), 'private original enabled')
   await poll(() => evaluate(phone, 'window.__sourceEvidence.some(item => item.frequency > 1600 && item.frequency < 1850)'), 'native private original tone source actually scheduled')
@@ -396,7 +449,11 @@ try {
   await poll(async () => { const current = await api(1, pathRoom); return current.playback.state === 'idle' && current.readiness.entryId !== request.queue[0].id }, 'skip commits before the next singer is invited')
   const nextRequest = await api(3, `${pathRoom}/queue`, { commandId: randomUUID(), songId: 1, title: 'Second live performer', requestNext: false, singerMemberId: nextSinger.self.id })
   view = await api(1, pathRoom)
-  if (view.readiness.state === 'idle') view = await api(1, `${pathRoom}/readiness/offer`, { commandId: randomUUID(), entryId: nextRequest.queue[0].id, clockId: view.clock.clockId, baseRevision: view.room.revision })
+  // The fair-turn sweep can offer the next singer between the read and write.
+  for(let attempt=0;view.readiness.state==='idle'&&attempt<3;attempt++) {
+    try { view = await api(1, `${pathRoom}/readiness/offer`, { commandId: randomUUID(), entryId: nextRequest.queue[0].id, clockId: view.clock.clockId, baseRevision: view.room.revision }) }
+    catch(error) { if(error.code!=='REVISION_CONFLICT') throw error;view=await api(1,pathRoom) }
+  }
   view = await poll(async () => { const current = await api(1, pathRoom); return current.readiness.entryId === nextRequest.queue[0].id && current.readiness.singerMemberId === nextSinger.self.id ? current : false }, 'correct next singer selection committed')
   await api(3, `${pathRoom}/readiness/respond`, { commandId: randomUUID(), clockId: view.readiness.clockId, performanceId: view.readiness.performanceId, generation: view.readiness.generation, baseRevision: view.room.revision, ready: true })
   const nextPhone = await page(3)
@@ -504,17 +561,21 @@ try {
     await poll(async () => db.prepare('SELECT state FROM ktv_media_grants WHERE identity = ?').get(returnPublisher.identity)?.state === 'revoked', 'final venue publisher revoked')
     check(db.prepare("SELECT COUNT(*) total FROM ktv_media_grants WHERE scope = 'publisher' AND state != 'revoked'").get().total === 0, 'hybrid journey leaves no publisher capability active')
   }
+  // Collect both phases before judging timing: a baseline failure must remain
+  // a failed run, while still exposing the impaired measurements for diagnosis.
+  for(const result of avMeasurements) check(result.absoluteSkewMs.p95<=150&&result.absoluteSkewMs.max<=250, `${result.phase} received audio/video marker presentation skew passes the 150 ms p95 / 250 ms maximum software target`)
   check(errors.length === 0, `no browser runtime exceptions (${errors.length})`)
   console.log(`${passed} built-app streaming checks passed. Client: ${clientLocation}; synthetic microphone, foreground Chrome, isolated policy/SFU. Remote HTTP/CDP use loopback SSH forwards; physical and distinct access-network acceptance remains open.`)
 } catch (error) {
   console.error('Journey failure:', error.message)
+  if(avBrowser) console.error('Private receiver output:',JSON.stringify(await avBrowser.audioEvidence().catch(()=>({error:'capture unavailable'}))))
   if(mediaProxy) console.error('Owned media proxy:',JSON.stringify(mediaProxy.snapshot()))
   console.error('Playback recovery:',JSON.stringify(db.prepare('SELECT state,recovery_reason FROM ktv_playback').all()))
   console.error('Runtime exception count:', errors.length)
   console.error('Media HTTP status (paths only):', JSON.stringify(mediaHttp))
   for (const session of sessionSockets.keys()) console.error('UI state:', JSON.stringify(await evaluate(session, ` (async () => ({status:document.querySelector('[data-party-media-status]')?.textContent,
     errors:[...document.querySelectorAll('[role=alert]')].map(item=>item.textContent), diagnostics:[...document.querySelectorAll('dl')].map(item=>item.textContent),
-    ice:window.__iceEvidence, output:window.__outputEvidence, sources:window.__sourceEvidence, contexts:window.__contexts.map(item=>({state:item.state,time:item.currentTime})), canvas:[...document.querySelectorAll('canvas')].map(item=>({width:item.width,height:item.height,connected:item.isConnected})),
+    av:window.__avObserver?.evidence,avSources:window.__avSources,gains:window.__gainNodes.map(node=>({gain:node.gain.value,context:window.__contexts.indexOf(node.context),automation:node.__automation})),receivedPeaks:window.__analyser?(()=>{const data=new Float32Array(__analyser.frequencyBinCount);__analyser.getFloatFrequencyData(data);return [440,660,880].map(frequency=>{const center=Math.round(frequency*__analyser.fftSize/__receiveContext.sampleRate);const value=Math.max(...data.slice(center-2,center+3));return Number.isFinite(value)?value:-120})})():null,ice:window.__iceEvidence, output:window.__outputEvidence, sources:window.__sourceEvidence, contexts:window.__contexts.map(item=>({state:item.state,time:item.currentTime})), canvas:[...document.querySelectorAll('canvas')].map(item=>({width:item.width,height:item.height,connected:item.isConnected})),
     video:[...document.querySelectorAll('video')].map(item=>({width:item.videoWidth,height:item.videoHeight,ready:item.readyState,paused:item.paused,muted:item.muted,tracks:item.srcObject?.getTracks().map(track=>({kind:track.kind,state:track.readyState,muted:track.muted,settings:track.getSettings()}))})),
     rtc:await Promise.all(window.__peers.map(async peer=>({state:peer.connectionState,tracks:[...await peer.getStats()].map(([,item])=>item).filter(item=>['inbound-rtp','outbound-rtp'].includes(item.type)).map(item=>({kind:item.kind,type:item.type,bytes:item.bytesSent??item.bytesReceived,frames:item.framesEncoded??item.framesDecoded,framesReceived:item.framesReceived,framesDropped:item.framesDropped}))})))
   }))()` ).catch(() => ({}))))
@@ -522,7 +583,7 @@ try {
 } finally {
   for (const { socket, browserContextId } of contexts) if (socket.readyState === WebSocket.OPEN) await cdp(socket, 'Target.disposeBrowserContext', { browserContextId }).catch(() => {})
   for (const socket of debuggerSockets) socket.close()
-  if (remoteBrowser) await remoteBrowser.close().catch(() => {
+  for(const ownedBrowser of [avBrowser,remoteBrowser]) if (ownedBrowser) await ownedBrowser.close().catch(() => {
     console.error('Owned remote browser cleanup was not verified; its 15-minute watchdog remains bounded')
     process.exitCode = 1
   })

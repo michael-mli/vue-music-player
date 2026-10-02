@@ -303,6 +303,26 @@ handover, longer outages and distinct access networks remain separate gates.
 Run `npm run test:party:impairment-fixtures` for byte/datagram fidelity, delay,
 selective stall/resume, drop and parameter-bound checks on the proxies.
 
+Set `KTV_ROOM_TEST_AV_TIMING=1` with the remote topology to measure the built
+player's audio/lyric markers before attaching spectral analysis. Source and
+receiver use separate owned Chrome processes on the remote host, retaining a
+common host clock domain. The receiver additionally requires Python 3,
+`pulseaudio`, `pactl` and `libpulse`. CDP 9244 must be free. A separate PulseAudio
+daemon uses only a private Unix socket in a mode-0700 temporary directory; it
+changes neither the shared daemon nor its default output. Capture uses the public
+signed-latency stream API, assembles fixed 10 ms DSP hops and emits bounded metrics,
+never raw microphone/output audio. Both browsers, the private output server,
+monitor and tunnels have owned cleanup; the browser watchdog remains 15 minutes.
+
+`npm run test:party:av-fixtures` validates marker matching and PCM detection,
+including silence and irregular capture fragment boundaries. The browser run
+requires six paired transitions in baseline and, when selected, impaired phases.
+The 150 ms p95 / 250 ms maximum diagnostic gate is checked after collecting the
+phases, so a failing baseline cannot hide the impairment evidence or pass the run.
+This does not establish physical speaker/microphone timing. As of 2026-10-02,
+controlled TCP and UDP impairment exceed the diagnostic limit; keep public media
+disabled while investigating receiver playout and completing release acceptance.
+
 The target must already have a trusted SSH key and `/usr/bin/google-chrome`.
 The fixture does not change trust records or existing profiles/services. It
 uploads only its synthetic microphone, creates a private temporary profile,
@@ -320,6 +340,17 @@ passes 47/47 with signaling interruption and hybrid route flags enabled
 public release 18/18 pass. Backend remains `9b74e8f`; frontend-only deployment
 required no restart. Public media stays disabled. The private predeployment
 backup is `/home/mli/ktv-party-reconnect-predeploy.jsu4hbq7`; old assets remain.
+
+Frontend `29a62cf` (`main-_4MVKaX7.js`, `main-D0gBov56.css`) is deployed on
+2026-10-02. Application fix `301d5c3` uses renewed WebSocket output leases for
+publishing/private originals and fails closed on gate rejection. Backend remains
+`9b74e8f`; no restart was required. Party units 73/73, UI 38/38 and PWA 8/8
+(candidate with the same application change), A/V fixture units 3/3 including
+three Python DSP cases, and exact public release checks 18/18 pass. The earlier
+full no-impairment A/V/reconnect/hybrid candidate passes 51/51. Current exact-build
+TCP/UDP runs complete the functional sequence but fail their A/V impairment gate.
+Private rollback backup: `/home/mli/ktv-party-output-lease-predeploy.fxlAxE`.
+Old frontend assets remain available; public rooms/guide remain on and media off.
 
 All scripts remove their owned fixtures. This does not measure physical acoustic
 alignment or distinct Wi-Fi/LTE networks. Failed journeys remain recorded in the

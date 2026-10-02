@@ -697,7 +697,7 @@ All scenarios are initially unrun. Add evidence links and mark pass/fail when ex
 | A15 | No instrumental, no LRC, changed asset version | Clear fallback/error; no silent original substitution | P05/P06 | Unrun |
 | A16 | Old installed PWA reconnects and new build becomes available | No stale authorized data; safe version/reload handling | P06/P08 | Unrun |
 | A17 | Remote singer enables original guide | Singer hears guide; audience gets backing and live mic only | P07 | Unrun |
-| A18 | Add network jitter to remote audience | Received lyric video and audio remain aligned within measured support limits | P07 | Unrun |
+| A18 | Add network jitter to remote audience | Received lyric video and audio remain aligned within measured support limits | P07 | Controlled TCP/UDP timing fails; field acceptance open |
 | A19 | Force TURN; remove active performer; reuse old media token | Relay works; publishing/access revocation is enforced | P07 | Unrun |
 | A20 | Switch local singer to remote singer and back | Correct stage routing, one active performance and backing source | P07 | Unrun |
 | A21 | Close/expire room and reopen old invitation/display links | Playback stops; access and new joins denied | P06/P08 | Unrun |
@@ -765,10 +765,13 @@ prototype result is not automatically a release result.
 Local room controls, guide/lease recovery, online capture, hybrid stage handover,
 public direct/TLS relay, synthetic 19-audience fanout and automatic audience
 reauthorization after media-signaling loss have software evidence. Frontend
-`b9fbb91` is deployed, backend remains `9b74e8f`; public media stays disabled.
+`29a62cf` is deployed with renewed output-lease handling, backend remains
+`9b74e8f`; public media stays disabled.
 Short controlled TCP/UDP media delay, UDP packet loss and audience-only outages
-now pass against the deployed frontend in isolated fixtures. Continue A/V and
-end-to-end measurements, longer outages, handover under continuing impairment,
+have functional evidence in isolated fixtures. A/V markers now reveal a failed
+TCP/UDP impairment timing gate (285/357 ms worst observed skew). Investigate
+receiver playout and validate that measurement on representative devices, then
+continue end-to-end measurements, longer outages, handover under continuing impairment,
 and long-run/sustained load, including publisher/receiver resource attribution
 and nominal frame-rate checks.
 Complete acoustic stage/guide and input/output alignment, Android/iOS/Safari,
@@ -1205,6 +1208,97 @@ media outages and continued impairment during handover, then sustained and
 representative load. Complete physical/mobile and distinct Wi-Fi/LTE acceptance
 before enabling persistent production media.
 
+### 2026-10-02 — Sustained publishing fix, A/V measurement and failed impairment gate
+
+A/V marker development exposed a real application defect: the public mix muted
+roughly six seconds into a turn while the UI continued to say it was publishing.
+The gate used the initial room-snapshot lease, while the backing engine received
+new heartbeat leases over WebSocket. `301d5c3` exposes that current validated lease
+from the playback controller and uses it for publishing and private originals.
+Current device/clock/performance/generation and expiry remain enforced. A rejected
+render-gate renewal now tears down capture and displays a permission error.
+Eight added lifecycle tests cover renewed leases after snapshot expiry, each
+invalid lease identity/expiry, missing authority and render-gate rejection.
+`29a62cf` adds an explicit regression test for the already-existing shared audio/
+video synchronization stream. No stream grouping change was necessary.
+
+A/V instrumentation observes actual pinned lyric transitions and the real received
+player. Receiver output is isolated in a separate private PulseAudio daemon;
+public native stream APIs retain signed latency instead of the simple API's
+negative-latency clamp. The monitor assembles 10 ms hops across irregular capture
+fragments and detects 440/660 Hz with a 23.22 ms window. The receiver's additional
+spectral analyser is attached only after timing observation. Source/receiver
+browsers share one host clock domain; video uses expected display time. These are
+software observations, not physical acoustic measurements or cross-host clock
+synchronization claims. Logs retain markers/metrics without raw audio or tokens.
+
+Checks and evidence:
+
+- Party units **73/73**, `/tmp/ktv-av-final-party-units.log`.
+- A/V fixture units **3/3**, including **3 Python DSP cases** for transitions,
+  silence and capture-fragment invariance, `/tmp/ktv-av-final-fixture-units.log`.
+- Build/type-check passes, `/tmp/ktv-av-signed-release-build.log`.
+- Same application change in candidate build: UI **38/38**, PWA **8/8**,
+  `/tmp/ktv-output-lease-release-ui.log`, `/tmp/ktv-output-lease-release-pwa.log`.
+- Full no-impairment A/V/reconnect/hybrid candidate **51/51**,
+  `/tmp/ktv-av-output-lease-release.log`: six transitions, no unmatched markers;
+  observed skew p50 **23.86 ms**, p95/max **90.59 ms**. This precedes the improved
+  signed-monitor/fragment handling and is retained as candidate evidence.
+- Exact build `29a62cf`, clean-player signed-monitor UDP run:
+  `/tmp/ktv-av-clean-output-udp-release.log`, **exit 1**. Baseline six pairs,
+  skew p50 **49.30 ms**, p95/max **67.74 ms**; impaired six pairs, p50
+  **157.97 ms**, p95/max **357.25 ms**, one unmatched video and audio edge.
+  Source-to-video delay p95 **977.30 ms**; audio observation delay p95
+  **819.33 ms**. **63 assertions pass before the impaired timing failure**.
+- Exact-build TCP run: `/tmp/ktv-av-clean-output-tcp-release.log`, **exit 1**.
+  Baseline six pairs, skew p50 **72.44 ms**, p95/max **81.77 ms**; impaired six
+  pairs, p50 **251.78 ms**, p95/max **285.07 ms**, no unmatched edges.
+  Source-to-video delay p95 **548.00 ms**; audio observation delay p95
+  **783.07 ms**. **61 assertions pass before the impaired timing failure**.
+
+The impairment profile remains 150 ms base delay plus uniform 0–40 ms jitter per
+proxy leg, with UDP 5% datagram loss per leg. Both functional journeys complete
+short audience outage/resume, private-guide separation, fresh audience grants,
+publisher revocation and venue/remote/venue handover. The profile returns to zero
+before signaling recovery/handover. They are **failed timing runs**, not acceptance
+passes. The diagnostic limits remain **150 ms p95 / 250 ms maximum**; six samples
+provide limited evidence, and these limits do not replace the 50 ms physical
+stage/guide requirement. An earlier simple-monitor UDP run failed baseline at
+188 ms; a signed run with the spectral tap attached failed impairment at 549 ms.
+Those failures remain in `/tmp/ktv-av-udp-release.log` and
+`/tmp/ktv-av-signed-udp-release.log`. Native application clocks, readiness, leases,
+permissions and drift guards were not weakened. P07.10/A18 remain open.
+
+A final receiver-buffer diagnostic run also fails (`exit 1`),
+`/tmp/ktv-av-receiver-buffer-diagnostic.log`: impaired six matched pairs,
+three unmatched edges in each medium, worst skew **596.5 ms**. Interval receiver
+statistics report mean audio/video jitter-buffer residence **331.01/133.41 ms**,
+**93/6** lost audio/video packets, and **4** video freezes totaling **9.033 s**.
+Baseline residence is **139.78/38.44 ms**, with no loss or freezes. The harness now
+records before/after native receiver counters for each timing phase. These are
+interval diagnostics, not additional end-to-end measurements. They identify
+uneven buffering and video starvation as concrete areas to investigate; no browser
+or SFU root cause is yet established. Incomplete marker accounting still fails
+immediately, and any failed skew phase fails the completed run.
+
+Frontend `29a62cf` is deployed at `https://music.micstec.com/party`, assets
+`main-_4MVKaX7.js` / `main-D0gBov56.css`. Exact public HTTP/WSS/assets/SHA/SQLite/
+cleanup checks **18/18**, `/tmp/ktv-output-lease-public-release.log`; temporary
+room closed and no account added. Backend stays `9b74e8f`, with no restart.
+Private online SQLite/frontend/server/config backup is
+`/home/mli/ktv-party-output-lease-predeploy.fxlAxE`; old assets are retained.
+Public rooms/guide stay enabled and media disabled.
+
+Cleanup verification finds no owned remote browser/monitor/output process and
+no CDP 9243/9244 or local fixture listeners. The shared remote default output
+remains `auto_null`. All owned SFUs, databases, profiles and tunnels are removed;
+the original three production containers remain running.
+
+Next: resolve and measure impaired receiver A/V playout, longer outages and
+continued impairment during handover, then representative sustained/multi-room
+load. Physical/mobile, output changes/Bluetooth and distinct Wi-Fi/LTE acceptance
+remain necessary before persistent online/hybrid enablement.
+
 ```text
 Date:
 Phase and item IDs:
@@ -1241,5 +1335,6 @@ Next action:
 | Feature-switch preview | Frontend/backend `9b74e8f` (`main-B6kwN6KJ.js`) | `https://music.micstec.com/party` | 2026-10-01 | Backend 126/126, party units 49/49, exact-build UI 38/38 and PWA 8/8; public flags/HTTP/WSS/assets/SHA/cleanup 18/18 | Media remains disabled; integrated streaming, physical timing and browser/device acceptance remain open |
 | Streaming lease/handover preview | Frontend `d6d4041` (`main-Df1mhgtD.js`), backend `9b74e8f` | `https://music.micstec.com/party` | 2026-10-01 | Party units 53/53; exact-build UI 38/38, PWA 8/8, full remote Chrome room-media 20/20; public HTTP/WSS/assets/SHA/cleanup 18/18 | Public media disabled; physical/mobile/jitter, local/online route handover and distinct access-network/load acceptance remain open |
 | Audience recovery preview | Frontend `b9fbb91` (`main-C3F6BNH-.js`), backend `9b74e8f` | `https://music.micstec.com/party` | 2026-10-01 | Party units 64/64; exact-build UI 38/38, PWA 8/8, remote room/media-signaling interruption/hybrid handover 47/47; public HTTP/WSS/assets/SHA/cleanup 18/18 | Public media disabled; physical/mobile, media packet impairments, A/V/end-to-end timing and sustained representative load remain open |
+| Output lease correction preview | Frontend `29a62cf` (`main-_4MVKaX7.js`), app fix `301d5c3`, backend `9b74e8f` | `https://music.micstec.com/party` | 2026-10-02 | Party 73/73; candidate UI 38/38, PWA 8/8 and no-impairment A/V/reconnect/hybrid 51/51; exact public 18/18 | TCP/UDP impaired A/V fails; media disabled; physical/mobile, distinct networks, continuing impairment/handover and sustained representative load open |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |

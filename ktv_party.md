@@ -626,6 +626,14 @@ does not automatically produce audio. Starting audio requires a user gesture;
 provide `Enable stage audio` and `Enable private guide` actions and handle rejected
 playback. [Browser autoplay guidance](https://developer.mozilla.org/en-US/docs/Web/Media/Guides/Autoplay)
 
+Output leases renewed by heartbeat arrive independently of room snapshots.
+Publishing and the singer's private original use the playback controller's latest
+validated lease, matched to device, clock, performance and generation. The publish
+gate expires at the earlier of that lease and its media permit. A missing, expired
+or mismatched lease, or a rejected render-gate renewal, releases capture and enters
+an explicit error state. A stale snapshot cannot extend or truncate that current
+capability.
+
 ### 9.4 Audible alignment and calibration
 
 Track four distinct quantities: network/clock uncertainty, local rendering delay,
@@ -955,6 +963,29 @@ end-to-end or A/V alignment. Longer outages, continued impairment during handove
 sustained load, physical devices and distinct access networks remain release
 gates. Parameters, measurements and failures are tracked in the implementation
 plan and deployment runbook.
+
+The optional A/V fixture alternates 440/660 Hz backing every two seconds and
+uses corresponding pinned lyric markers. It observes the application's actual
+caption draw, adds a numbered barcode to the captured canvas, and detects that
+barcode on the received player. Video timestamps use the browser's
+[frame callback presentation estimate](https://wicg.github.io/video-rvfc/).
+Receiver audio comes from a private PulseAudio output monitor on the same host
+clock domain as the source and receiver browsers. Its public native stream API
+retains signed monitor latency, including samples queued for future output;
+[PulseAudio stream timing contract](https://github.com/pulseaudio/pulseaudio/blob/v16.1/src/pulse/stream.h).
+PCM stays in memory; logs contain only marker/timing metrics.
+
+The monitor uses a 23.22 ms detector window with 10 ms hops. Receiver A/V skew
+is the difference between the presented-video estimate and the monitor's audio
+marker timestamp. Source-to-video delay starts at the caption draw. The reported
+audio observation delay uses that same caption reference, rather than an acoustic
+input timestamp. No extra receiver audio analyser is attached during measurement.
+Skew acceptance runs after collecting the phases, and a failed phase fails
+the run. Incomplete or unmatched evidence fails immediately. At least six paired transitions are required per phase; unmatched events
+remain visible. The **150 ms p95 / 250 ms maximum** limits are software diagnostic
+thresholds for this setup. They do not replace the physical 50 ms stage/guide
+target or establish a supported network/device matrix. Current TCP/UDP impairment
+measurements exceed these thresholds; online release remains gated.
 
 ## 11. Operational behavior and limits
 
