@@ -20,11 +20,12 @@ async function unusedLocalPort(port) {
   await new Promise(resolve => server.close(resolve))
 }
 
-export async function createOwnedRemoteBrowser({ host, knownHosts, micFile, frontendPort, debugPort = 9243, isolatedOutput = false }) {
+export async function createOwnedRemoteBrowser({ host, knownHosts, micFile, frontendPort, debugPort = 9243, isolatedOutput = false, captureOutput = isolatedOutput }) {
   if (!/^[A-Za-z0-9_-]+@[A-Za-z0-9.-]+$/.test(host || '') || !knownHosts ||
     ![debugPort, ...(frontendPort === undefined ? [] : [frontendPort])].every(port => Number.isInteger(port) && port >= 1024 && port <= 65535) || frontendPort === debugPort) {
     throw new Error('Invalid owned remote browser fixture configuration')
   }
+  if(captureOutput&&!isolatedOutput) throw new Error('Output capture requires an isolated output')
   const remotePorts = [debugPort, ...(frontendPort === undefined ? [] : [frontendPort])]
   const portFilter = '( ' + remotePorts.map(port => `sport = :${port}`).join(' or ') + ' )'
   await unusedLocalPort(debugPort)
@@ -69,7 +70,7 @@ echo removed
     root = await ssh(`test -x /usr/bin/google-chrome && test -z "$(/usr/bin/ss -ltnH '${portFilter}')" && umask 077 && mktemp -d /tmp/ktv-room-browser.XXXXXX`)
     if (!/^\/tmp\/ktv-room-browser\.[A-Za-z0-9]+$/.test(root)) { root = undefined; throw new Error('Remote owned directory was not verified') }
     if (micFile) await run('scp', [...options, micFile, `${host}:${root}/microphone.wav`])
-    if(isolatedOutput) {
+    if(captureOutput) {
       await ssh('test -x /usr/bin/pulseaudio && command -v python3 >/dev/null')
       const capture = await fs.readFile(new URL('./party-av-pulse-capture.py',import.meta.url),'utf8')
       await ssh(`umask 077; cat > ${shell(root+'/capture.py')}`,capture)
@@ -112,8 +113,8 @@ for attempt in $(seq 1 50); do test -S "$root/pulse.sock" && break; sleep .1; do
 test -S "$root/pulse.sock" || exit 1
 for attempt in $(seq 1 50); do test "$(/usr/bin/pactl -s "$PULSE_SERVER" get-default-sink 2>/dev/null)" = ktv_av && break; sleep .1; done
 test "$(/usr/bin/pactl -s "$PULSE_SERVER" get-default-sink 2>/dev/null)" = ktv_av || exit 1
-python3 -u "$root/capture.py" > "$root/av-audio.jsonl" 2> "$root/capture-errors.log" &
-monitor=$!
+${captureOutput ? `python3 -u "$root/capture.py" > "$root/av-audio.jsonl" 2> "$root/capture-errors.log" &
+monitor=$!` : ''}
 ` : ''}
 timeout --signal=TERM --kill-after=5s 900s /usr/bin/google-chrome \\
   --headless=new --no-sandbox --disable-dev-shm-usage --disable-gpu \\
@@ -153,7 +154,7 @@ echo $!
         if (listeners.length !== remotePorts.length || !remotePorts.every(port => listeners.includes(`127.0.0.1:${port}`))) {
           throw new Error('Owned remote forwards/browser must bind loopback only')
         }
-        return { debuggerUrl, close, ...(isolatedOutput ? { async audioEvidence() {
+        return { debuggerUrl, close, ...(captureOutput ? { async audioEvidence() {
           const raw=await ssh('python3 - '+shell(root),`import json,pathlib,sys
 root=pathlib.Path(sys.argv[1])
 error=(root/'capture-errors.log').read_text().strip().splitlines()

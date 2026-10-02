@@ -1363,6 +1363,58 @@ timing phases with unchanged p95/max limits. Continued impairment during handove
 longer outages, sustained representative/multi-room load and physical/mobile/
 distinct-access-network acceptance remain open. P07.10/A18 are not closed.
 
+### 2026-10-02 — Continuous impairment handover and provider readiness correction
+
+The room fixture can now retain delay/jitter/loss through audience reconnection,
+publisher replacement and venue → remote → venue handovers. It verifies both
+the active profile and selected ICE proxy route for fresh connections. The first
+UDP run fails after 36 checks at replacement publisher readiness,
+`/tmp/ktv-sfu-sync-continuous-udp-handover.log`, exit 1. Audience recovery had
+already succeeded under continuing impairment with a fresh nonce and denied old
+JWT. The replacement's readiness response was collapsed into HTTP 503 even
+though the policy worker remained available.
+
+The backend now preserves provider-pending confirmation as HTTP 409
+`MEDIA_NOT_READY`. The client retries only that exact code/status, at most four
+attempts with 0/200/400/800 ms delays, under its existing nonce and current lease.
+Stop/permission loss/expiry cancel the wait; all worker-unavailable and permission
+denials remain terminal. Neither provider readiness nor countdown recovery is
+bypassed. Eight new lifecycle checks cover successful pending confirmation,
+attempt exhaustion, Stop, lease expiry, unavailable/revoked/forbidden responses
+and a pending code incorrectly paired with HTTP 403.
+
+Candidate evidence: party **81/81** (`/tmp/ktv-provider-ready-party-final.log`),
+backend **127/127** (`/tmp/ktv-provider-ready-backend-full.log`), focused readiness
+routes **8/8** and final lifecycle **31/31** before the added HTTP-status negative
+case. Type-check/build passes (`/tmp/ktv-provider-ready-final-candidate-build.log`).
+The built-app continuous UDP journey passes **65/65**, exit 0,
+`/tmp/ktv-provider-ready-continuous-udp-candidate.log`: 150 ms delay, 0–40 ms jitter
+and 5% datagram loss per proxy leg remain active through automatic audience
+recovery and all three hybrid turns. Provider removal, old-token denial, exactly
+one player/publisher, private-guide exclusion and venue duplicate-backing checks
+pass. This is functional synthetic evidence; no A/V marker measurement or physical
+input/leakage measurement was performed in this run.
+
+A separate 59-audience/180-second public probe fails during client setup after
+30 audience admissions, before its sustained measurement phase; **12 checks**
+pass, `/tmp/ktv-sfu-sync-59-audience-load.log`, exit 1. The next client's actual
+received audio playout times out. This establishes neither a supported 30-device
+capacity nor the 59-device ceiling. A read-only, owned-session `/proc` sampler
+records 24 samples late in setup (`/tmp/ktv-sfu-sync-59-client-resources.jsonl`):
+renderer CPU peak **261.9%** and mean **214.6%**, audio-service peak **32.5%**,
+other browser processes peak **56.0%** (100% = one CPU); four-core host busy
+peaks at **99.0%**. Summed renderer RSS peaks at **5759.4 MiB**, which can double
+count shared pages. This shows client-host pressure, but does not establish the
+audio timeout's cause or SFU capacity. Failed transport probes now retain bounded
+track/player and receiver RTP diagnostics, without credentials.
+
+The source browser's private output no longer runs an unused PCM detector; the
+receiver retains actual output capture. This reduces observer work while keeping
+native clocks and all application recovery guards. Longer marker runs, representative
+multi-client/multi-room load, mobile/physical devices and distinct access networks
+remain open. Production remains frontend `29a62cf` / backend `9b74e8f`, media off,
+until a subsequent verified deployment is recorded.
+
 ```text
 Date:
 Phase and item IDs:

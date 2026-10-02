@@ -973,11 +973,12 @@ readiness, leases and publication authorization remain enforced.
 
 Short tests verify decoded lyric video and backing/microphone audio with injected
 delay/jitter, UDP datagram loss, an audience-only outage, private-guide isolation,
-and resumed media while the control socket stays connected. Subsequent recovery
-and hybrid handover run after the impairment profile returns to zero. TCP models
+and resumed media while the control socket stays connected. The optional continuous
+impairment mode retains that profile through audience recovery and all hybrid
+handovers, verifying selected proxy routes for fresh connections. TCP models
 ordered delayed delivery; UDP models datagram delay/reordering/loss. Proxy and
 receiver counters describe the tested transport, and do not establish acoustic,
-end-to-end or A/V alignment. Longer outages, continued impairment during handover,
+end-to-end or A/V alignment. Longer outages, timed impairment during handover,
 sustained load, physical devices and distinct access networks remain release
 gates. Parameters, measurements and failures are tracked in the implementation
 plan and deployment runbook.
@@ -999,7 +1000,9 @@ marker timestamp. Source-to-video delay starts at the caption draw. The reported
 audio observation delay uses that same caption reference, rather than an acoustic
 input timestamp. No extra receiver audio analyser is attached during measurement.
 Skew acceptance runs after collecting the phases, and a failed phase fails
-the run. Incomplete or unmatched evidence fails immediately. At least six paired transitions are required per phase; unmatched events
+the run. Incomplete or unmatched evidence fails immediately. Forty paired
+transitions are required by default, with six baseline transitions before an
+impaired phase; the configurable count is bounded to 6–60. Unmatched events
 remain visible. The **150 ms p95 / 250 ms maximum** limits are software diagnostic
 thresholds for this setup. They do not replace the physical 50 ms stage/guide
 target or establish a supported network/device matrix. Current TCP/UDP impairment

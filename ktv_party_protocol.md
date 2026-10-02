@@ -1,6 +1,6 @@
 # KTV Party implementation contracts
 
-Updated: 2026-10-01. This document describes the implemented protocol. Physical
+Updated: 2026-10-02. This document describes the implemented protocol. Physical
 audio/device and public streaming acceptance remain open in
 [ktv_party_implement.md](ktv_party_implement.md).
 
@@ -299,6 +299,15 @@ non-transient HTTP 4xx ends recovery, except the provider-removal-pending confli
 Provider-requested removal/room deletion/explicit leave are terminal. Publisher
 connections never recover automatically: capture stops and room readiness must
 be established again. All SDK connections retain their no-retry policy.
+
+Publisher confirmation is explicit: `POST /rooms/:id/media/:identity/ready`
+returns HTTP 409 `MEDIA_NOT_READY` when the provider has not confirmed both
+required tracks. The client retries that exact code/status at most four times,
+with delays 0/200/400/800 ms, using the same nonce. It checks the current output
+lease, clock, generation, admission and cancellation before each attempt and
+after success. Unavailable-worker responses and permission denials are terminal.
+Stop cancels any pending wait. No audio is declared publishing before provider
+acknowledgment; countdown expiry and render-thread silence guards remain enforced.
 
 ## 9. UI and requirement coverage
 

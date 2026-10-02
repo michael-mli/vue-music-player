@@ -131,6 +131,7 @@ async function connect(session, credential) {
   })()`)
 }
 async function playAudienceAudio(session) {
+  probeStep = 'actual received audio playout'
   await evaluate(session, `(async()=>{
     const audioTracks=tracks.filter(track=>track.kind==='audio');
     for(const track of audioTracks){const element=document.createElementNS('http://www.w3.org/1999/xhtml','audio');
@@ -281,6 +282,14 @@ try {
   check(await denied(singer, publisher), 'revoked publisher JWT cannot restore public media access')
   console.log(`${passed} supervised public-origin transport checks passed. Client: ${clientLocation}; synthetic policy/media only; integrated room, physical and access-network acceptance remains open.`)
 } catch (error) {
+  if(lastSession) console.error('Last receiver media diagnostics:',JSON.stringify({
+    stats:await stats(lastSession).catch(()=>null),
+    player:await evaluate(lastSession,`({tracks:window.tracks?.map(track=>({kind:track.kind,
+      readyState:track.mediaStreamTrack?.readyState,muted:track.mediaStreamTrack?.muted})),
+      audio:[...document.querySelectorAll('audio')].map(element=>({readyState:element.readyState,
+        currentTime:element.currentTime,paused:element.paused,ended:element.ended,muted:element.muted})),
+      audioPlaybackEnabled:performanceRoom?.canPlaybackAudio})`).catch(()=>null)
+  }))
   if (lastSession) console.error('ICE configuration:', JSON.stringify(await evaluate(lastSession, `({mode:transportMode,
     offeredTls:offeredUrls.filter(url=>url.startsWith('turns:')).length,
     offeredTls5349:offeredUrls.filter(url=>url.startsWith('turns:')&&url.includes(':5349')).length,

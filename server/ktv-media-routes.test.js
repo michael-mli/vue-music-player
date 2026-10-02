@@ -190,7 +190,8 @@ test('online startup requires provider-confirmed mix and lyrics before entering 
   const publisher = await f.publish(), path = `${f.route}/media/${publisher.data.identity}/ready`
   assert.equal((await f.request('POST', path, 1, { deviceId: f.devices[1].id })).status, 403)
   f.setTracks([{ type: TrackType.AUDIO, source: TrackSource.MICROPHONE, name: 'performance-mix' }])
-  assert.equal((await f.request('POST', path, 2, { deviceId: f.devices[1].id })).status, 503)
+  const pending = await f.request('POST', path, 2, { deviceId: f.devices[1].id })
+  assert.equal(pending.status, 409); assert.equal(pending.code, 'MEDIA_NOT_READY')
   assert.equal(f.worker.ready, true)
   assert.equal(f.db.prepare('SELECT ready_at FROM ktv_media_grants WHERE identity = ?').get(publisher.data.identity).ready_at, null)
   f.setTracks([{ type: TrackType.AUDIO, source: TrackSource.MICROPHONE, name: 'performance-mix' },

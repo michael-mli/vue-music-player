@@ -153,7 +153,19 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
       if (epoch !== attempt || !graph || !lyrics) return
       await connection.publish(graph.stream, lyrics.stream)
       if (epoch !== attempt) return
-      await partyApi.mediaReady(roomId, issued.identity, audio.deviceId)
+      // Published tracks can precede provider confirmation under delayed media.
+      // Retry only that explicit pending response, under the same current nonce.
+      const delays = [0, 200, 400, 800]
+      for (let index = 0; index < delays.length; index++) {
+        await waitRetry(delays[index]!)
+        if (disposed || epoch !== attempt) return
+        if (!currentPermit()) throw new Error('MEDIA_PERMISSION')
+        try { await partyApi.mediaReady(roomId, issued.identity, audio.deviceId); break }
+        catch (error) {
+          const pending = error as { code?: unknown; status?: unknown }
+          if (pending?.code !== 'MEDIA_NOT_READY' || pending.status !== 409 || index === delays.length - 1) throw error
+        }
+      }
       if (epoch !== attempt || !currentPermit()) return
       publisherReady = true; status.value = 'publishing'
     } catch (error) { if (epoch === attempt && !disposed) fail(error) }

@@ -21,11 +21,17 @@ export function registerKtvMediaRoutes(app, { db, clock, playback, realtime, con
       const response = await fetch(new URL(path, worker), { method: 'POST',
         headers: { Authorization: expected.toString(), 'Content-Type': 'application/json' },
         body: JSON.stringify(body || {}), signal: AbortSignal.timeout(5000), redirect: 'error' })
+      if (response.status === 409 && path === '/control/publisher-ready') {
+        fail(409, 'MEDIA_NOT_READY', 'Wait for both performance tracks to connect')
+      }
       if (!response.ok) throw new Error('Worker unavailable')
       const data = await response.json()
       if (data.success !== true) throw new Error('Worker unavailable')
       return data.data
-    } catch { fail(503, 'MEDIA_UNAVAILABLE', 'Online audio is temporarily unavailable') }
+    } catch (error) {
+      if (error instanceof RoomError && error.code === 'MEDIA_NOT_READY') throw error
+      fail(503, 'MEDIA_UNAVAILABLE', 'Online audio is temporarily unavailable')
+    }
   }
   function trusted(req, res, next) {
     res.set('Cache-Control', 'no-store')

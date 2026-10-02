@@ -260,7 +260,7 @@ test('an undocumented HTTP authorization denial stops audience recovery without 
   assert.equal(requests, 1); assert.equal(f.retryTimers.size, 0); assert.equal(f.media.status.value, 'error')
 })
 
-async function publisherFixture(f) {
+async function publisherFixture(f, ready = async () => ({}), expectedStatus = 'publishing') {
   const capture = f.media.prepareCapture()
   await permissionRequested(f)
   const input = stream(); f.micRequests[0].resolve(input); await capture
@@ -278,13 +278,63 @@ async function publisherFixture(f) {
   f.audio.createPublisherTap = () => ({context:{},instrumental:{},active:true,close(){}})
   f.state.api.mediaGrant = async () => ({identity:'publisher',scope:'publisher',room:'ktv-first-room',
     permit:{...identity,expiresServerMs:performance.now()+5000}})
-  f.state.api.mediaReady = async () => ({})
+  f.state.api.mediaReady = ready
   f.state.transport = async () => ({async connect(){},async publish(){},async close(){}})
   for(const tick of f.timers.values()) tick()
   await flush()
-  assert.equal(f.media.status.value,'publishing')
+  assert.equal(f.media.status.value,expectedStatus)
   return {graph,input,snapshotLease,renewedLease}
 }
+
+async function runRetry(f) {
+  for(const [id,tick] of [...f.retryTimers]) {f.retryTimers.delete(id);tick()}
+  await flush()
+}
+test('publisher waits for provider confirmation without issuing a second nonce or publishing early',async t=>{
+  const f=fixture(t);let requests=0
+  const {input,graph}=await publisherFixture(f,async()=>{if(++requests<3)throw {code:'MEDIA_NOT_READY',status:409}},'connecting')
+  assert.equal(f.media.status.value,'connecting');assert.equal(requests,1)
+  assert.equal(graph.renewals.length,0);assert.equal(input.getTracks()[0].readyState,'live')
+  await runRetry(f);assert.equal(requests,2);assert.equal(f.media.status.value,'connecting')
+  await runRetry(f);assert.equal(requests,3);assert.equal(f.media.status.value,'publishing')
+  assert.equal(f.removals.length,0)
+})
+test('publisher pending confirmation has a finite attempt limit and then releases capture',async t=>{
+  const f=fixture(t);let requests=0
+  const {input,graph}=await publisherFixture(f,async()=>{requests++;throw {code:'MEDIA_NOT_READY',status:409}},'connecting')
+  for(let n=0;n<3;n++)await runRetry(f)
+  assert.equal(requests,4);assert.equal(f.media.status.value,'error');assert.equal(f.retryTimers.size,0)
+  assert.equal(graph.closed,true);assert.equal(input.getTracks()[0].readyState,'ended')
+  assert.deepEqual(f.removals,[['first-room','publisher']])
+})
+for(const code of ['MEDIA_UNAVAILABLE','MEDIA_REVOKED','MEDIA_FORBIDDEN']) {
+  test(`publisher confirmation never retries ${code}`,async t=>{
+    const f=fixture(t);let requests=0
+    const {input}=await publisherFixture(f,async()=>{requests++;throw {code}},'error')
+    assert.equal(requests,1);assert.equal(f.retryTimers.size,0);assert.equal(f.media.status.value,'error')
+    assert.equal(input.getTracks()[0].readyState,'ended')
+  })
+}
+test('Stop cancels a pending publisher confirmation without starting a new connection',async t=>{
+  const f=fixture(t);let requests=0
+  const {input}=await publisherFixture(f,async()=>{requests++;throw {code:'MEDIA_NOT_READY',status:409}},'connecting')
+  assert.equal(f.retryTimers.size,1);await f.media.stop();await flush();await runRetry(f)
+  assert.equal(requests,1);assert.equal(f.retryTimers.size,0);assert.equal(f.media.status.value,'off')
+  assert.equal(input.getTracks()[0].readyState,'ended')
+})
+test('publisher pending confirmation cannot retry after its output lease expires',async t=>{
+  const f=fixture(t);let requests=0
+  const {input}=await publisherFixture(f,async()=>{requests++;throw {code:'MEDIA_NOT_READY',status:409}},'connecting')
+  f.audio.outputLease.value={...f.audio.outputLease.value,expiresServerMs:performance.now()-1}
+  await runRetry(f)
+  assert.equal(requests,1);assert.equal(f.media.status.value,'error');assert.equal(f.media.failure.value,'mediaErrorPermission')
+  assert.equal(input.getTracks()[0].readyState,'ended')
+})
+test('a publisher pending code on an authorization denial is terminal',async t=>{
+  const f=fixture(t);let requests=0
+  await publisherFixture(f,async()=>{requests++;throw {code:'MEDIA_NOT_READY',status:403}},'error')
+  assert.equal(requests,1);assert.equal(f.retryTimers.size,0)
+})
 
 test('publisher and private guide follow renewed WebSocket leases after the snapshot lease expires', async t => {
   const f = fixture(t), {graph,snapshotLease} = await publisherFixture(f)

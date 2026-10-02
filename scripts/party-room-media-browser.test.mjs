@@ -37,6 +37,9 @@ const mediaImpairment = impairmentMode !== 'off', impairmentProtocol = impairmen
 assert.ok(!mediaImpairment || remoteMode, 'Media impairment requires the owned remote browser topology')
 const networkRecovery = process.env.KTV_ROOM_TEST_NETWORK_RECOVERY === '1'
 const routeHandover = process.env.KTV_ROOM_TEST_ROUTE_HANDOVER === '1'
+const continuousImpairment = process.env.KTV_ROOM_TEST_CONTINUOUS_IMPAIRMENT === '1'
+assert.ok(!continuousImpairment || mediaImpairment && networkRecovery && routeHandover,
+  'Continuous impairment requires a media proxy, signaling recovery and hybrid handover')
 assert.ok(!routeHandover || remoteMode, 'Hybrid fixture requires the owned remote fake-microphone browser')
 if (remoteMode) {
   assert.equal(net.isIP(process.env.KTV_ROOM_TEST_PUBLIC_IP || ''), 4, 'Remote fixture requires the SFU public IPv4')
@@ -200,7 +203,7 @@ try {
   }
   if (remoteMode) remoteBrowser = await createOwnedRemoteBrowser({ host: process.env.KTV_ROOM_TEST_SSH_HOST,
     knownHosts: process.env.KTV_ROOM_TEST_KNOWN_HOSTS, micFile, frontendPort: frontend.address().port,
-    debugPort: Number(process.env.KTV_ROOM_TEST_CHROME_PORT || 9243), isolatedOutput: avTiming })
+    debugPort: Number(process.env.KTV_ROOM_TEST_CHROME_PORT || 9243), isolatedOutput: avTiming, captureOutput: false })
   else chrome = spawn(process.env.CHROME_BIN || '/usr/bin/google-chrome', ['--headless', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu',
     '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--no-first-run', '--no-default-browser-check', '--no-proxy-server',
     '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', `--use-file-for-fake-audio-capture=${micFile}`,
@@ -359,6 +362,22 @@ try {
     return reports.flatMap(report=>[...report.values()].filter(item=>item.type==='inbound-rtp')
       .map(item=>Object.fromEntries(fields.filter(field=>item[field]!==undefined).map(field=>[field,item[field]]))));
   })()`)
+  const routes = session => evaluate(session, `(async()=>{
+    return (await Promise.all(__peers.map(peer=>peer.getStats()))).flatMap(report=>{
+      const rows=[...report.values()];return rows.filter(item=>item.type==='transport'&&item.selectedCandidatePairId).map(item=>{
+        const pair=rows.find(value=>value.id===item.selectedCandidatePairId), remote=rows.find(value=>value.id===pair?.remoteCandidateId);
+        return {protocol:remote?.protocol,port:remote?.port};
+      });
+    });
+  })()`)
+  async function verifyImpairedRoute(session) {
+    if(!continuousImpairment) return
+    const profile=mediaProxy.snapshot(), selected=await routes(session)
+    check(profile.delayMs===150&&profile.jitterMs===40&&
+      (impairmentProtocol!=='udp'||profile.lossRate===0.05)&&selected.length>0&&
+      selected.every(item=>item.protocol===impairmentProtocol&&item.port===(impairmentProtocol==='udp'?7882:7881)),
+      'handover media keeps the configured delay/jitter/loss and selected proxy route')
+  }
   async function measureAv(phase) {
     const transitions = phase==='baseline'&&mediaImpairment?6:avTransitions
     const inboundBefore = await inboundTiming()
@@ -395,14 +414,6 @@ try {
     await evaluate(audience,'__avObserver.begin(null)')
   }
   if (mediaImpairment) {
-    const routes = async session => evaluate(session, `(async()=>{
-      return (await Promise.all(__peers.map(peer=>peer.getStats()))).flatMap(report=>{
-        const rows=[...report.values()];return rows.filter(item=>item.type==='transport'&&item.selectedCandidatePairId).map(item=>{
-          const pair=rows.find(value=>value.id===item.selectedCandidatePairId), remote=rows.find(value=>value.id===pair?.remoteCandidateId);
-          return {protocol:remote?.protocol,port:remote?.port};
-        });
-      });
-    })()`)
     const selected = [...await routes(phone), ...await routes(audience)]
     check(selected.length>=2 && selected.every(item=>item.protocol===impairmentProtocol&&item.port===(impairmentProtocol==='udp'?7882:7881)), `publisher and audience media traverse the owned ${impairmentProtocol.toUpperCase()} proxy with no bypass`)
     mediaProxy.profile({delayMs:150,jitterMs:40,lossRate:impairmentProtocol==='udp'?0.05:0})
@@ -439,10 +450,8 @@ try {
   peaks = await poll(async () => { const value = await spectrum(); return value[0] > -55 && value[1] > -55 ? value : false }, 'private guide keeps public backing intact')
   check(peaks[2] < Math.min(peaks[0], peaks[1]) - 25, `enabling the original guide in the built app keeps it outside the public mix (${peaks.map(value => value.toFixed(1)).join(', ')} dB)`)
   check(await evaluate(audience, 'window.__bufferSources.length === 0'), 'remote common screen creates no independent instrumental player')
-  // Keep imposed impairment scoped to the measured playback/guide segment.
-  // Recovery and subsequent performers still use this proxy, with its profile
-  // restored; combined handover under continuing impairment is a separate gate.
-  if(mediaProxy) mediaProxy.profile({delayMs:0,jitterMs:0,lossRate:0})
+  // Continuous mode retains the profile through recovery and all fresh performers.
+  if(mediaProxy&&!continuousImpairment) mediaProxy.profile({delayMs:0,jitterMs:0,lossRate:0})
   if (networkRecovery) {
     await evaluate(audience, `(() => {
       window.__mediaHistory=[];
@@ -474,6 +483,7 @@ try {
     check(recoveredPeaks[2]<Math.min(recoveredPeaks[0],recoveredPeaks[1])-25, 'recovered audience hears backing and microphone while private original remains excluded')
     check((await api(1, pathRoom)).playback.state === 'playing' && db.prepare('SELECT state FROM ktv_media_grants WHERE identity = ?').get(firstPublisher.identity).state === 'active', 'audience recovery does not replace or interrupt the current singer')
     check(await evaluate(audience, 'window.__bufferSources.length===0'), 'audience recovery never starts competing digital backing')
+    await verifyImpairedRoute(audience)
   }
   const oldPublisherGrant = await api(2, `${pathRoom}/media/${firstPublisher.identity}/renew`, { deviceId: device.id })
   if (networkRecovery) {
@@ -546,6 +556,7 @@ try {
     }
     async function received(session, venue) {
       await poll(() => evaluate(session, "(() => { const video = document.querySelector('[data-party-media-screen] video'); return video?.srcObject?.getAudioTracks().length === 1 && video.srcObject.getVideoTracks().length === 1 && video.getVideoPlaybackQuality().totalVideoFrames >= 10; })()"), 'hybrid received audio and decoded lyric video')
+      await verifyImpairedRoute(session)
       check(await evaluate(session, "document.querySelectorAll('[data-party-media-screen] video').length === 1"), 'hybrid route has exactly one decoded audience player')
       await evaluate(session, `(async () => {
         if (window.__routeContext) await __routeContext.close();
@@ -570,6 +581,7 @@ try {
       await poll(() => evaluate(session, "document.querySelector('[data-party-media-status]')?.textContent.includes('Sending live singing')"), 'hybrid provider acknowledges publisher')
       await poll(async () => (await api(1, pathRoom)).playback.state === 'playing', 'hybrid playing')
       const active = db.prepare("SELECT * FROM ktv_media_grants WHERE scope = 'publisher' AND state = 'active'").get()
+      await verifyImpairedRoute(session)
       check(active.identity !== previous.identity && active.member_id === member && active.generation !== previous.generation && Boolean(active.ready_at), 'hybrid handover grants a fresh generation and provider-confirmed nonce')
       check(db.prepare("SELECT COUNT(*) total FROM ktv_media_grants WHERE scope = 'publisher' AND state != 'revoked'").get().total === 1, 'hybrid handover preserves one publisher after provider acknowledgment')
       return active

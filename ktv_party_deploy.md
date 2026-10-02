@@ -296,10 +296,14 @@ stay excluded, and the room-control WebSocket to remain connected.
 RTP loss/jitter/buffer counters and bounded proxy queues are logged without
 credentials. These counters are not acoustic, end-to-end or A/V timing.
 
-Impairment remains active through private-guide verification, then returns to
-zero before the subsequent signaling recovery and performer handovers. Combine
-with both flags above for that later sequence. Continued impairment during
-handover, longer outages and distinct access networks remain separate gates.
+By default impairment remains active through private-guide verification, then
+returns to zero before signaling recovery and performer handovers. Add
+`KTV_ROOM_TEST_CONTINUOUS_IMPAIRMENT=1`, together with both recovery/handover flags,
+to retain the 150 ms delay, 0–40 ms jitter and UDP 5% per-leg loss through the entire
+sequence. The fixture checks the active profile and selected proxy route after
+audience recovery and each new publisher/receiver. This mode measures functional
+handover; enable the separate A/V marker mode for timing observations. Longer
+outages and distinct access networks remain separate gates.
 Run `npm run test:party:impairment-fixtures` for byte/datagram fidelity, delay,
 selective stall/resume, drop and parameter-bound checks on the proxies.
 
