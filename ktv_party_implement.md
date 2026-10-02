@@ -9,8 +9,10 @@ Design reference: [ktv_party.md](ktv_party.md)
 Implemented contracts: [ktv_party_protocol.md](ktv_party_protocol.md)
 
 Current status: The durable-room preview is deployed at
-`https://music.micstec.com/party` with frontend/backend `e88783a`
-(`main-CXsosxfb.js`, `main-D0gBov56.css`). Online media remains disabled.
+`https://music.micstec.com/party` with frontend `ea986cd`, backend implementation
+`e88783a` (`main-1zcZhmf9.js`, `main-D0gBov56.css`). Online media remains disabled.
+The lyric capture cadence fix is deployed; clean sustained native A/V passes
+40 transitions, with p95 **57.30 ms**. Impaired timing still fails.
 Output lease renewal and bounded provider-readiness retries are deployed.
 Continuous TCP/UDP impairment passes functional audience recovery and full hybrid
 handovers; shared receiver CNAME/MSID passes. Impaired A/V timing, sustained native
@@ -1579,6 +1581,30 @@ The resolution adaptation candidate is reverted; the app retains its existing
 encoder policy. Next investigation: negotiated playout extension behavior and
 packet repair versus frame presentation timing. Online release remains gated.
 
+Capture cadence preview **`ea986cd`** is deployed at
+`https://music.micstec.com/party`, assets **`main-1zcZhmf9.js` /
+`main-D0gBov56.css`**; backend implementation remains **`e88783a`**, no restart.
+Exact release build, UI **42/42**, PWA **8/8**, and native clean sustained room
+journey **26/26** pass. Forty matched transitions, no unmatched edges: absolute
+skew p50 **18.39 ms**, p95 **57.30 ms**, maximum **57.97 ms**; source-to-video delay
+p95 **138.50 ms**, maximum **161.30 ms**. Source video reports mostly **24–26 fps**,
+one sample **21 fps**, across 76 timeline points. Logs:
+`/tmp/ktv-capture-cadence-release-build.log`,
+`/tmp/ktv-capture-cadence-release-ui.log`,
+`/tmp/ktv-capture-cadence-release-pwa.log`,
+`/tmp/ktv-capture-cadence-release-clean-av.log`.
+
+Public release verification passes **18/18**, exit 0,
+`/tmp/ktv-capture-cadence-public-release.log`: HTTP/WSS, effective flags, exact
+asset bytes/commit, SQLite integrity/foreign keys, room cleanup and no added
+account. Private online SQLite/frontend/config backup:
+`/home/mli/ktv-party-cadence-predeploy.rbaklp_4`. Confirmed zero active audio rooms
+before publication; old hashed assets retained, index/worker replaced atomically.
+Rooms/guide remain enabled and media disabled. This is a preview; physical/mobile,
+distinct-network, sustained representative capacity and impaired A/V gates remain
+open. P06.7 software abuse/escaping acceptance is complete; all failed comparisons
+above remain part of the evidence.
+
 ```text
 Date:
 Phase and item IDs:
@@ -1617,5 +1643,6 @@ Next action:
 | Audience recovery preview | Frontend `b9fbb91` (`main-C3F6BNH-.js`), backend `9b74e8f` | `https://music.micstec.com/party` | 2026-10-01 | Party units 64/64; exact-build UI 38/38, PWA 8/8, remote room/media-signaling interruption/hybrid handover 47/47; public HTTP/WSS/assets/SHA/cleanup 18/18 | Public media disabled; physical/mobile, media packet impairments, A/V/end-to-end timing and sustained representative load remain open |
 | Output lease correction preview | Frontend `29a62cf` (`main-_4MVKaX7.js`), app fix `301d5c3`, backend `9b74e8f` | `https://music.micstec.com/party` | 2026-10-02 | Party 73/73; candidate UI 38/38, PWA 8/8 and no-impairment A/V/reconnect/hybrid 51/51; exact public 18/18 | TCP/UDP impaired A/V fails; media disabled; physical/mobile, distinct networks, continuing impairment/handover and sustained representative load open |
 | Provider confirmation preview | Frontend/backend `e88783a` (`main-CXsosxfb.js`) | `https://music.micstec.com/party` | 2026-10-02 | Backend 127/127, party 81/81, exact UI 38/38, PWA 8/8, continuous TCP handover 63/63, same-source UDP candidate 65/65, public 18/18 | Media disabled; sustained native drift/A/V, physical/mobile, longer outages, representative/multi-room load and distinct networks open; 59-audience setup failed |
+| Capture cadence preview | Frontend `ea986cd` (`main-1zcZhmf9.js`), backend `e88783a` | `https://music.micstec.com/party` | 2026-10-02 | Party 84/84, fixture 9/9, exact UI 42/42, PWA 8/8, native clean 40-transition journey 26/26, public 18/18; P06.7 software acceptance complete | Media disabled; impaired A/V still fails; physical/mobile, longer outages, representative/multi-room load and distinct networks open |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |

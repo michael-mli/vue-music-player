@@ -378,7 +378,7 @@ All scripts remove their owned fixtures. This does not measure physical acoustic
 alignment or distinct Wi-Fi/LTE networks. Failed journeys remain recorded in the
 tracker until their concrete defect is resolved.
 
-Provider-readiness preview `e88783a` is deployed on 2026-10-02, assets
+Provider-readiness preview `e88783a` was deployed on 2026-10-02, assets
 `main-CXsosxfb.js` / `main-D0gBov56.css`. HTTP 409 pending confirmation has bounded
 same-nonce retries; unavailable/permission failures remain terminal. Backend
 127/127, party 81/81, exact UI 38/38, PWA 8/8, continuous TCP handover 63/63 and
@@ -387,6 +387,20 @@ Backend restarted with zero active audio rooms. Rollback backup:
 `/home/mli/ktv-party-provider-ready-predeploy.pvof0w47`; frontend assets retained.
 Rooms/guide stay enabled and media disabled. Failed impaired timing and the
 59-audience setup failure remain open in the tracker.
+
+Current frontend preview is **`ea986cd`**, assets **`main-1zcZhmf9.js` /
+`main-D0gBov56.css`**; backend implementation remains **`e88783a`**, no restart.
+Capture preserves its 25 fps cadence and uses manual frame requests when supported.
+Party units 84/84, A/V fixture units 9/9, exact UI 42/42, PWA 8/8, native clean
+40-transition room journey 26/26 and public release 18/18 pass. Clean skew p95 is
+57.30 ms, maximum 57.97 ms, no unmatched edges. Rollback backup:
+`/home/mli/ktv-party-cadence-predeploy.rbaklp_4`; SQLite backup integrity and foreign
+keys pass; old assets retained and no active audio room at publication. Public
+room/guide flags remain enabled and media disabled. Impaired timing comparisons
+still fail; this is not an online beta. Evidence is in the implementation tracker.
+The fixture now follows timing events over one bounded owned SSH channel;
+`KTV_ROOM_TEST_PLAYOUT_MAX_MS` changes only the isolated SFU (50–500, default 500).
+It changes neither prepared production policy nor the timing acceptance thresholds.
 
 Before enabling online rooms publicly, record these results:
 
