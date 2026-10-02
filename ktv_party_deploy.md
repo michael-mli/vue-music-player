@@ -577,6 +577,17 @@ codes, private keys, environment files or raw signaling URLs into support logs.
 
 ## 5. Backup, release and rollback
 
+The current frontend preview is `d33b209`, deployed 2026-10-02; backend remains
+`f58a8f3`. Assets are `main-DU8DSm-f.js`, `main-DnE6rWx5.css`,
+`partyLeaseGuard.worklet-BWdT3O5D.js` and `partyEncodedLease.worker-BxVsrNxp.js`.
+Serve both native modules as JavaScript at their hashed same-origin paths and
+precache them with the generated worker. Exact build, UI 45/45, PWA 10/10,
+isolated full native room 56/56 and public release 23/23 pass. The private rollback
+backup is `/home/mli/ktv-party-encoded-expiry-predeploy.p_7g43dq`, holding the
+previous frontend `7c1f583`, unchanged backend configuration, consistent checked
+database backup and static archive. Public media remains disabled; impaired timing,
+physical/mobile, capacity and online deployment gates remain open.
+
 Before changing the backend, capture the deployed frontend asset names and build
 SHA, backend commit, nginx site configuration and private runtime configuration.
 Use SQLite's online backup API for `auth.db` so the WAL is included consistently;

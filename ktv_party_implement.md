@@ -14,12 +14,10 @@ The core room, invitation/guest, moderation, queue, shared-screen, phone-control
 scheduled playback and private-guide software is implemented. The deployed app
 is a preview; public online media is still disabled.
 
-1. **Audio reliability:** finish release verification and deployment of the new
-   encoded publisher lease gate. An independent current-browser WebRTC receiver
-   exposed a post-expiry burst in the existing PCM-only path. The candidate passes
-   isolated Chrome 137 and 154 native tests and the full-room journey.
-   Extend sustained native and physical coverage; the previous candidate's larger
-   render-clock stall remains unexplained.
+1. **Audio reliability:** extend sustained native and physical coverage of the
+   deployed encoded publisher lease gate and bounded source-phase correction.
+   Independent Chrome 137/154 lease checks and the full-room journey pass; physical
+   output acceptance and the earlier larger render-clock stall remain open.
 2. **Streaming timing:** resolve impaired-network A/V timing, measure handover
    timing and longer outages, and verify source-clock stability. Functional
    reconnect/handover passes do not establish acceptable audible/video alignment.
@@ -36,26 +34,25 @@ is a preview; public online media is still disabled.
 
 Recording/export, reactions, themes and remote duets remain optional P09 work.
 
-Current status: The bounded audio drift preview is deployed at
-`https://music.micstec.com/party` with frontend `7c1f583`, backend `f58a8f3`
-(`main-BRuMNKuZ.js`, `main-DnE6rWx5.css`,
-`partyLeaseGuard.worklet-5od8dAEf.js`). Online media remains disabled.
-Native rendering guards pass expired-stage silence and integrated replacement.
-The earlier publisher check used the same frozen context as its consumer; a newer
-independent WebRTC receiver exposes a brief post-expiry publisher burst. An encoded
-worker gate is under verification and is not deployed. Earlier exact native
-lease checks 15/15, UI 45/45, PWA 10/10, full clean streaming/recovery/handover
-56/56 and public release 21/21 pass; party units 94/94 pass.
-The deployed build also passes **41/41 integrated native stage-replacement checks**:
-two separate outputs, the actual room backend, blocked page tasks and a frozen/
-resumed audio clock. Early restart is refused and the old output remains quiet
-through replacement playback and queued callbacks. Physical output acceptance is open.
+Current status: The encoded publisher expiry preview is deployed at
+`https://music.micstec.com/party` with frontend `d33b209`, backend `f58a8f3`
+(`main-DU8DSm-f.js`, `main-DnE6rWx5.css`,
+`partyLeaseGuard.worklet-BWdT3O5D.js`, `partyEncodedLease.worker-BxVsrNxp.js`).
+Online media remains disabled. Native render and encoded-frame gates now pass
+**15/15** independent lease checks on both Chrome 137 and 154, including an actual
+separate WebRTC receiver after source clock freeze/resume. This replaces the
+earlier same-context publisher observation that missed a late burst.
+Exact `d33b209` build/type-check, UI **45/45**, PWA **10/10**, full clean native
+streaming/recovery/handover **56/56** and public release **23/23** pass; party units
+**105/105** pass. The same stage engine in committed `28bde60` also passes **41/41**
+integrated native stage replacement checks: two independent outputs, actual room
+backend and blocked/frozen/resumed clocks. Physical output acceptance is open.
 The PWA activation fix is deployed: failed updates retain the current page and
 allow retry; empty catalogs no longer trigger phantom song downloads. Exact-build
 UI/PWA checks also reject malformed room responses without losing the form.
 Lyric capture cadence and authorized screen-content classification are deployed;
-clean native A/V passes 40 transitions, with p95 **64.46 ms** after a real
-50 ms output interruption and bounded feedback correction.
+clean native A/V passes 40 transitions with no unmatched edges, p95 **70.36 ms**
+and maximum **97.70 ms**, after a real **50.21-ms** output interruption.
 Impaired timing still fails. Matching worker image `ktv-party-media:f58a8f3`
 passes supervisor and public direct/TLS-TURN revocation checks; no persistent
 media container is running.
@@ -2380,6 +2377,46 @@ Final UI/PWA and actual publisher checks must exercise that emitted asset before
 publication. The initial local foreground launcher used the wrong display; the
 owned desktop uses `:2`, not the unauthenticated login display `:0`.
 
+#### Encoded publisher expiry preview published
+
+Frontend **`d33b209`** is deployed at `https://music.micstec.com/party`; backend
+**`f58a8f3`** and the single `karaoke-auth` process remain unchanged. Exact assets
+are `main-DU8DSm-f.js`, `main-DnE6rWx5.css`,
+`partyLeaseGuard.worklet-BWdT3O5D.js` and
+`partyEncodedLease.worker-BxVsrNxp.js`. Both native modules are emitted as hashed
+same-origin JavaScript and precached by the generated worker.
+
+- Exact committed build/type-check passes
+  (`/tmp/ktv-encoded-worker-release-build-20261002.log`).
+- Owned foreground Chrome 146 UI **45/45** and PWA **10/10** pass
+  (`/tmp/ktv-encoded-expiry-release-ui-20261002.log`,
+  `/tmp/ktv-encoded-expiry-release-pwa-20261002.log`), including failed activation,
+  retry and removal of legacy cached room authority.
+- Exact Chrome 154 full native SFU journey passes **56/56**
+  (`/tmp/ktv-encoded-worker-release-full-room-20261002.log`): decoded emitted-worker
+  publication, private guide exclusion, audience recovery, singer replacement,
+  revoked-token rejection and both hybrid handover directions. After an actual
+  **50.21-ms** output pause, baseline **40 pairs**, zero unmatched edges, absolute
+  skew p95 **70.36 ms**, maximum **97.70 ms**. This run does not measure handover
+  transition timing or impaired-network alignment.
+- Public HTTP/WSS, effective flags, exact asset bytes, module JavaScript MIME,
+  generated worker precaching and committed build identity pass **23/23**
+  (`/tmp/ktv-encoded-expiry-public-release-20261002.log`). Temporary public room is
+  closed, no user identity added, database integrity and foreign keys pass.
+
+Independent native lease tests pass **15/15** on both Chrome 137 and 154 using the
+unchanged guard source in `28bde60`; integrated stage replacement passes **41/41**
+on that committed candidate. Party units **105/105** pass. Public room/guide
+features remain enabled, media disabled and no persistent SFU running. All owned
+test profiles, SFU containers and forwarding ports are cleaned. Static publication
+retained older hashed assets and took a consistent private rollback backup at
+`/home/mli/ktv-party-encoded-expiry-predeploy.p_7g43dq` (0700 directory, 0600 files),
+containing previous frontend `7c1f583`, backend `f58a8f3`, checked SQLite backup,
+frontend archive and runtime configuration. Original main tag remains
+`ktv-party-baseline-2026-09-29` at `6e8504b`. Impaired timing, sustained/physical
+audio, mobile/installed-PWA, nominal audience and multi-room capacity, distinct
+networks and persistent online release remain open.
+
 ### Release record
 
 | Release | Build/commit | Environment/URL | Date | Gates and evidence | Remaining scope |
@@ -2410,5 +2447,6 @@ owned desktop uses `:2`, not the unauthenticated login display `:0`.
 | PWA activation preview | Frontend `fe4f216` (`main-9fvbdGW2.js`), backend `f58a8f3` | `https://music.micstec.com/party` | 2026-10-02 | Exact UI 42/42, PWA 10/10, clean native 40-transition journey 26/26, public release 18/18; party 84/84, update 3/3, catalog 2/2, fixture 12/12 | Media disabled, no persistent SFU; UDP impaired timing fails; physical/mobile, installed PWA, handover timing, representative capacity and distinct networks open |
 | Native lease guard preview | Frontend `ca6c757` (`main-CgZ1TyOk.js`, `partyLeaseGuard.worklet-5od8dAEf.js`), backend `f58a8f3` | `https://music.micstec.com/party` | 2026-10-02 | Party 90/90; exact UI 45/45, PWA 10/10, native lease 15/15, full clean 40-transition streaming/recovery/handover 53/53, public release 21/21; post-release integrated replacement 41/41 and fixture 14/14 | Media disabled, no persistent SFU; UDP timing and impaired source drift, physical replacement, mobile/field PWA, timing through handover, representative capacity and distinct networks remain open |
 | Bounded audio drift preview | Frontend `7c1f583` (`main-BRuMNKuZ.js`), backend `f58a8f3` | `https://music.micstec.com/party` | 2026-10-02 | Party 94/94; exact UI 45/45, PWA 10/10, native lease 15/15, integrated replacement 41/41, native output-interruption/full recovery/handover 56/56 and public release 21/21; 40 clean A/V pairs p95 64.46 ms/max 86.51 ms | Media disabled, no persistent SFU; unexplained earlier large render stall, sustained/UDP stability, physical/mobile, measured handover, real networks and representative capacity open |
+| Encoded publisher expiry preview | Frontend `d33b209` (`main-DU8DSm-f.js`), backend `f58a8f3` | `https://music.micstec.com/party` | 2026-10-02 | Party 105/105; exact UI 45/45, PWA 10/10, full native SFU/recovery/handover 56/56, public release 23/23; 40 clean A/V pairs p95 70.36 ms/max 97.70 ms; same guard source in `28bde60` passes independent Chrome 137/154 lease 15/15 each and native stage replacement 41/41 | Media disabled, no persistent SFU; UDP timing and sustained/physical audio, mobile/field PWA, handover timing, nominal/multi-room capacity and distinct networks remain open |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |

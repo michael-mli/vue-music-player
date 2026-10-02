@@ -929,8 +929,9 @@ The PCM gate becomes silent 100 ms plus clock uncertainty before expiry; the RTP
 gate closes 10 ms plus uncertainty before expiry, allowing encoded silence to
 replace the receiver's last vocal frame. This does not revoke server access or
 erase audio already buffered at receivers. Independent native receiver checks,
-impaired networks and physical outputs remain required. The candidate is under
-verification; public media remains disabled.
+impaired networks and physical outputs remain required. The gate is deployed in
+the preview and passes independent Chrome 137/154 native receiver checks plus
+the complete isolated room journey; public media remains disabled.
 [WebRTC encoded transform specification](https://www.w3.org/TR/webrtc-encoded-transform/)
 
 The lyric video is declared as `screen_share`, with `screenShareEncoding` explicitly
