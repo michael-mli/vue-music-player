@@ -43,7 +43,7 @@ function fixture(t) {
   const document = Object.assign(new EventTarget(), { hidden: false, createElement() { return { style: {}, remove() {} } } })
   globalThis.window = window; globalThis.document = document
   const engines = []
-  const state = { cleanups, api: { async mediaStatus() { return { available: true } }, async mediaRevoke(...args) { removals.push(args) } },
+  const state = { cleanups, api: { async mediaStatus() { return { available: true } }, async mediaOutput() { return { permit: null } }, async mediaRevoke(...args) { removals.push(args) } },
     audioEngine() {
       const ready = deferred()
       const engine = { ready, prepared: 0, closed: false, enable: () => ready.promise,
@@ -185,7 +185,7 @@ test('an audio-enable promise completing after user Stop cannot restore audience
   const f = fixture(t), pending = deferred()
   let enableWork = async () => {}
   f.state.api.mediaGrant = async () => ({identity:'audience',scope:'audience',room:'ktv-first-room',token:'test-only',serverUrl:'/api/ktv/media'})
-  f.state.transport = async () => ({async connect() {}, enableAudio: () => enableWork(), async close() {}})
+  f.state.transport = async () => ({async connect() {}, renewReceivePermit() { return true }, enableAudio: () => enableWork(), async close() {}})
   await f.media.listen(); enableWork = () => pending.promise
   const enabling = f.media.enableAudio(); await f.media.stop(); pending.resolve(); await enabling
   assert.equal(f.media.status.value, 'off'); assert.equal(f.media.isAudience.value, false)
@@ -196,11 +196,54 @@ function audienceFixture(f) {
   const connections = []
   f.state.api.mediaGrant = async () => ({identity:'audience-'+connections.length,scope:'audience',room:'ktv-first-room',token:'test-only',serverUrl:'/api/ktv/media'})
   f.state.transport = async (grant, callbacks) => {
-    const connection = { grant, callbacks, async connect() {}, async enableAudio() {}, async close() {} }
+    const connection = { grant, callbacks, permits: [], renewReceivePermit(...args) { this.permits.push(args); return true }, async connect() {}, async enableAudio() {}, async close() {} }
     connections.push(connection); return connection
   }
   return connections
 }
+
+test('a source output reply after listener Stop cannot reauthorize an old transport', async t => {
+  const f = fixture(t), connections = audienceFixture(f), reply = deferred()
+  f.state.api.mediaOutput = () => reply.promise
+  const listening = f.media.listen(); await flush()
+  assert.equal(connections.length, 1)
+  await f.media.stop()
+  reply.resolve({ permit: { publisherIdentity: 'old-source', clockId: 'clock', performanceId: 'first-performance', generation: 1,
+    expiresServerMs: performance.now() + 5000 } })
+  await listening
+  assert.equal(connections[0].permits.length, 0); assert.equal(f.media.status.value, 'off')
+})
+
+test('listener authority polling waits for the asynchronously loaded transport', async t => {
+  const f = fixture(t), loaded = deferred()
+  let requests = 0
+  f.state.api.mediaGrant = async () => ({ identity: 'audience', scope: 'audience', room: 'ktv-first-room' })
+  f.state.api.mediaOutput = async () => { requests++; return { permit: null } }
+  f.state.transport = () => loaded.promise
+  const listening = f.media.listen(); await flush()
+  for (const tick of f.timers.values()) tick()
+  await flush()
+  assert.equal(requests, 0); assert.equal(f.media.status.value, 'connecting'); assert.equal(f.removals.length, 0)
+  loaded.resolve({ renewReceivePermit() { return true }, async connect() {}, async enableAudio() {}, async close() {} })
+  await listening
+  assert.equal(requests, 1); assert.equal(f.media.status.value, 'listening')
+})
+
+test('listener output follows current performance authority and closes on a generation change', async t => {
+  const f = fixture(t), connections = audienceFixture(f)
+  const permit = { publisherIdentity: 'source', clockId: 'clock', performanceId: 'first-performance', generation: 1,
+    expiresServerMs: performance.now() + 5000 }
+  f.party.value.playback = { state: 'playing', clockId: 'clock', performanceId: 'first-performance', generation: 1 }
+  f.state.api.mediaOutput = async () => ({ permit })
+  await f.media.listen()
+  assert.deepEqual(connections[0].permits[0][0], permit)
+  const before = connections[0].permits.length
+  f.party.value.playback.state = 'scheduled'
+  f.party.value.playback.state = 'playing'
+  assert.equal(connections[0].permits.length, before, 'countdown completion retains the same player and source authority')
+  f.party.value.playback.generation = 2
+  assert.deepEqual(connections[0].permits.at(-1), [null, null])
+})
 
 test('audience link loss revokes the previous nonce before connecting a newly authorized session', async t => {
   const f = fixture(t), connections = audienceFixture(f), removal = deferred()

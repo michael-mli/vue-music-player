@@ -64,6 +64,47 @@ test('only the selected singer’s connected controller and live output lease ca
   assert.equal((await f.issue(1, 'publisher')).scope, 'publisher')
 })
 
+test('receiver permits bind a ready source nonce and never borrow the longer audience lifetime', async t => {
+  const f = fixture(t), audience = await f.issue(2, 'audience')
+  const output = () => f.service.receivePermit(audience.identity, f.memberIds[2], f.devices[2].id)
+  assert.equal(output(), null)
+  const publisher = await f.issue(1, 'publisher')
+  assert.equal(output(), null)
+  f.service.acknowledgeReady(publisher.identity)
+  const permit = output()
+  assert.deepEqual(Object.keys(permit).sort(), ['clockId', 'expiresServerMs', 'generation', 'performanceId', 'publisherIdentity'])
+  assert.equal(permit.publisherIdentity, publisher.identity)
+  assert.equal(permit.clockId, f.playback.clockId); assert.equal(permit.performanceId, f.playback.performanceId)
+  assert.equal(permit.generation, f.playback.generation)
+  assert.equal(permit.expiresServerMs, publisher.permit.expiresServerMs)
+  f.playback.lease.expiresServerMs = 2500
+  assert.equal(output().expiresServerMs, 2500)
+  f.service.revoke({ identity: publisher.identity }); assert.equal(output(), null)
+  f.service.acknowledgeRemoval(publisher.identity)
+  const replacement = await f.issue(1, 'publisher'); f.service.acknowledgeReady(replacement.identity)
+  assert.equal(output().publisherIdentity, replacement.identity)
+  f.playback.generation++; assert.equal(output(), null)
+})
+
+test('a restarted service cannot invent a source deadline before returning a current source permit', async t => {
+  const f = fixture(t), audience = await f.issue(2, 'audience'), publisher = await f.issue(1, 'publisher')
+  f.service.acknowledgeReady(publisher.identity)
+  assert.ok(f.service.receivePermit(audience.identity, f.memberIds[2], f.devices[2].id))
+  f.restart()
+  assert.equal(f.service.receivePermit(audience.identity, f.memberIds[2], f.devices[2].id), null)
+  const renewed = await f.service.renew(publisher.identity, f.memberIds[1], f.devices[1].id)
+  assert.equal(f.service.receivePermit(audience.identity, f.memberIds[2], f.devices[2].id).expiresServerMs, renewed.permit.expiresServerMs)
+})
+
+test('receiver authority cannot be read through another member/device, a publisher grant or a revoked listener', async t => {
+  const f = fixture(t), audience = await f.issue(2, 'audience'), publisher = await f.issue(1, 'publisher')
+  for (const args of [[audience.identity, f.memberIds[1], f.devices[2].id],
+    [audience.identity, f.memberIds[2], f.devices[1].id], [publisher.identity, f.memberIds[1], f.devices[1].id]])
+    assert.throws(() => f.service.receivePermit(...args), code('MEDIA_REVOKED'))
+  f.service.revoke({ identity: audience.identity })
+  assert.throws(() => f.service.receivePermit(audience.identity, f.memberIds[2], f.devices[2].id), code('MEDIA_REVOKED'))
+})
+
 test('generation handover cannot issue a new publisher before provider removal acknowledgment', async t => {
   const f = fixture(t), first = await f.issue(1, 'publisher'), oldClaims = await f.verifier.verify(first.token)
   f.playback.generation++

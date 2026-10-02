@@ -120,6 +120,28 @@ test('room media HTTP uses admitted actor/device scope and recovers an issuance 
   assert.equal((await f.request('POST', `${f.route}/media/${first.data.identity}/renew`, 3, { deviceId: f.devices[2].id })).status, 403)
 })
 
+test('audience output route returns only current authority and denies foreign actor/device/room access', async t => {
+  const f = await fixture(t); await f.mode('online')
+  const audience = await f.request('POST', `${f.route}/media-token`, 3,
+    { commandId: randomUUID(), deviceId: f.devices[2].id, scope: 'audience' })
+  const endpoint = `${f.route}/media/${audience.data.identity}/output`
+  assert.deepEqual((await f.request('POST', endpoint, 3, { deviceId: f.devices[2].id })).data, { permit: null })
+  assert.equal((await f.request('POST', endpoint, 2, { deviceId: f.devices[2].id })).code, 'MEDIA_REVOKED')
+  assert.equal((await f.request('POST', endpoint, 3, { deviceId: f.devices[1].id })).code, 'MEDIA_REVOKED')
+  assert.equal((await f.request('POST', `/rooms/${randomUUID()}/media/${audience.data.identity}/output`, 3,
+    { deviceId: f.devices[2].id })).status, 404)
+  const publisher = await f.publish(); assert.equal(publisher.status, 200)
+  f.setTracks([{ type: TrackType.AUDIO, source: TrackSource.MICROPHONE, name: 'performance-mix' },
+    { type: TrackType.VIDEO, source: TrackSource.SCREEN_SHARE, name: 'performance-lyrics' }])
+  const ready = await f.request('POST', `${f.route}/media/${publisher.data.identity}/ready`, 2, { deviceId: f.devices[1].id })
+  assert.equal(ready.status, 200)
+  const reply = await f.request('POST', endpoint, 3, { deviceId: f.devices[2].id })
+  assert.equal(reply.data.permit.publisherIdentity, publisher.data.identity)
+  assert.ok(!JSON.stringify(reply.data).includes(publisher.data.token))
+  await f.request('POST', `${f.route}/media/${audience.data.identity}/revoke`, 3, {})
+  assert.equal((await f.request('POST', endpoint, 3, { deviceId: f.devices[2].id })).status, 403)
+})
+
 test('mode changes wait for provider acknowledgment and replay without revoking a later listener', async t => {
   const f = await fixture(t)
   await f.mode('online')
@@ -159,6 +181,8 @@ test('paired read-only displays can receive but cannot revoke their host’s oth
   assert.equal(first.status, 200)
   const host = await f.request('POST', `${f.route}/media-token`, 1, { commandId: randomUUID(), deviceId: f.devices[0].id, scope: 'audience' })
   assert.equal(host.status, 200)
+  assert.equal((await f.request('POST', `${f.route}/media/${first.data.identity}/output`, grant, { deviceId: display.id })).status, 200)
+  assert.equal((await f.request('POST', `${f.route}/media/${host.data.identity}/output`, grant, { deviceId: f.devices[0].id })).status, 403)
   assert.equal((await f.request('POST', `${f.route}/media/${host.data.identity}/revoke`, grant, {})).status, 403)
   assert.equal((await f.request('POST', `${f.route}/media-token`, grant, { commandId: randomUUID(), deviceId: f.devices[0].id, scope: 'publisher' })).status, 403)
   assert.equal((await f.request('POST', `${f.route}/media-token`, 1, { commandId: randomUUID(), deviceId: display.id, scope: 'publisher' })).code, 'MEDIA_FORBIDDEN')

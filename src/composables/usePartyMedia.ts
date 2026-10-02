@@ -7,6 +7,7 @@ import { PartyAudioEngine } from '@/services/partyAudioEngine'
 import { getMicStream, releaseMicStream } from './useMicDevices'
 import type { usePartyPlayback } from './usePartyPlayback'
 import type { PartyClockEstimate } from '@/utils/partyClock'
+import type { PartyReceivePermit } from '@/services/partyReceiveGraph'
 
 type Transport = Awaited<ReturnType<typeof createPartyMediaTransport>>
 const mediaErrors: Record<string, string> = {
@@ -49,6 +50,8 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
   let originalReady = false, oldMonitorVolume = .7, captureBinding = '', epoch = 0, disposed = false
   let starting = false, renewing = false, publisherReady = false, lastRenewMs = 0, lastStatusMs = 0
   let captureSawActive = false
+  let receivePermit: PartyReceivePermit | null = null, lastOutputMs = 0
+  let outputRequest: { epoch: number; identity: string } | null = null
   let retryWait: { id: number; finish: () => void } | null = null
 
   function binding() {
@@ -81,6 +84,7 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
     cancelRetryWait()
     const hadCapture = Boolean(capture.value || captureBinding)
     epoch++; starting = false; publisherReady = false; captureBinding = ''; originalReady = false; captureSawActive = false
+    receivePermit = null; lastOutputMs = 0
     const previous = grant.value, previousRoomId = previous?.room.replace(/^ktv-/, ''), oldTransport = transport, oldOriginal = original
     grant.value = null; transport = null; original = null
     const mic = capture.value; capture.value = null
@@ -187,10 +191,27 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
       },
     })
     if (disposed || epoch !== attempt) { await connection.close(); return }
-    transport = connection; await connection.connect()
+    transport = connection
+    await refreshReceivePermit(roomId, attempt, issued.identity)
+    if (epoch !== attempt) return
+    await connection.connect()
     if (epoch !== attempt) return
     established = true
     status.value = 'listening'; await enableAudio()
+  }
+  function receiveMatchesPlayback(permit: PartyReceivePermit) {
+    const playback = party.value?.playback
+    return Boolean(playback && ['scheduled', 'playing'].includes(playback.state) && permit.clockId === playback.clockId &&
+      permit.performanceId === playback.performanceId && permit.generation === playback.generation)
+  }
+  async function refreshReceivePermit(roomId: string, attempt: number, identity: string) {
+    const request = { epoch: attempt, identity }; outputRequest = request; lastOutputMs = performance.now()
+    try {
+      const result = await partyApi.mediaOutput(roomId, identity, audio.deviceId)
+      if (disposed || epoch !== attempt || grant.value?.identity !== identity) return
+      receivePermit = result.permit && clock.value?.status === 'healthy' && receiveMatchesPlayback(result.permit) ? result.permit : null
+      if (!transport?.renewReceivePermit(receivePermit, clock.value)) throw new Error('MEDIA_PERMISSION')
+    } finally { if (outputRequest === request) outputRequest = null }
   }
   async function listen() {
     if (!online.value || !connected.value || party.value?.self.admission !== 'admitted') return
@@ -263,6 +284,16 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
       (!canCapture.value || binding() !== captureBinding || audio.blocked.value))) void stop()
   }, { flush: 'sync' })
   watch(mode, () => { if (grant.value?.scope === 'audience' || status.value === 'reconnecting') void stop() }, { flush: 'sync' })
+  watch([() => party.value?.playback?.clockId, () => party.value?.playback?.generation,
+    () => party.value?.playback?.performanceId, () => party.value?.playback?.state], () => {
+    if (grant.value?.scope !== 'audience') return
+    // Scheduled -> playing retains the same authority and received tracks.
+    // Replacing that player here breaks both output and a live lyric observer.
+    lastOutputMs = 0
+    if (receivePermit && !receiveMatchesPlayback(receivePermit)) {
+      receivePermit = null; transport?.renewReceivePermit(null, null)
+    }
+  }, { flush: 'sync' })
   watch(() => party.value?.room.id, () => { void stop(); available.value = false; lastStatusMs = 0 }, { flush: 'sync' })
   async function refreshStatus() {
     const roomId = party.value?.room.id
@@ -287,6 +318,16 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
         expiresServerMs: Math.min(grant.value.permit.expiresServerMs, audio.outputLease.value?.expiresServerMs || 0) }
       if (!graph.renew(permit, clock.value) || !transport?.renewPublishPermit(permit, clock.value)) {
         fail(new Error('MEDIA_PERMISSION')); return
+      }
+    }
+    if (grant.value?.scope === 'audience' && transport) {
+      if (receivePermit && (!receiveMatchesPlayback(receivePermit) || clock.value?.status !== 'healthy')) {
+        receivePermit = null; transport?.renewReceivePermit(null, null)
+      }
+      if (receivePermit && !transport?.renewReceivePermit(receivePermit, clock.value)) return
+      if (now - lastOutputMs >= 1000 && outputRequest?.epoch !== epoch) {
+        const attempt = epoch, identity = grant.value.identity, roomId = party.value!.room.id
+        void refreshReceivePermit(roomId, attempt, identity).catch(error => { if (epoch === attempt) fail(error) })
       }
     }
     if (originalReady && original && publisherReady && playback && clock.value && currentPermit()) original.sync(playback, clock.value, audio.outputLease.value, 'guide')

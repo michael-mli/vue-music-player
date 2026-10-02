@@ -12,6 +12,8 @@ import { createOwnedRemoteBrowser } from './party-remote-browser.mjs'
 const receiverTargetMs = process.env.KTV_LEASE_TEST_RECEIVER_TARGET_MS === undefined ? null : Number(process.env.KTV_LEASE_TEST_RECEIVER_TARGET_MS)
 assert.ok(receiverTargetMs === null || Number.isInteger(receiverTargetMs) && receiverTargetMs >= 0 && receiverTargetMs <= 1000,
   'Native receiver buffering experiment requires a 0–1000 ms target')
+assert.ok([undefined, '0', '1'].includes(process.env.KTV_LEASE_TEST_RECEIVER_GUARD), 'Receiver guard must be explicitly 0 or 1')
+const receiverGuard = process.env.KTV_LEASE_TEST_RECEIVER_GUARD === '1'
 
 const source = await fs.readFile('src/services/partyAudioEngine.ts', 'utf8')
 const compile = text => ts.transpileModule(text, {
@@ -24,6 +26,8 @@ const modules = {
     .replace("import moduleUrl from './partyLeaseGuard.worklet.js?url';", "const moduleUrl = '/lease-guard.worklet.js';"),
   '/lease-guard.worklet.js': await fs.readFile('src/services/partyLeaseGuard.worklet.js', 'utf8'),
   '/publish-graph.js': compile(await fs.readFile('src/services/partyPublishGraph.ts', 'utf8'))
+    .replace("'./partyLeaseGuard'", "'/lease-guard.js'"),
+  '/receive-graph.js': compile(await fs.readFile('src/services/partyReceiveGraph.ts', 'utf8'))
     .replace("'./partyLeaseGuard'", "'/lease-guard.js'"),
   '/encoded-lease.js': compile(await fs.readFile('src/services/partyEncodedLease.ts', 'utf8'))
     .replace("import workerUrl from './partyEncodedLease.worker.js?url';", "const workerUrl = '/encoded-lease.worker.js';"),
@@ -86,10 +90,17 @@ const sockets = new Set(), server = http.createServer((req, res) => {
   res.setHeader('Cache-Control', 'no-store')
   if (req.url === '/tone.wav') { res.setHeader('Content-Type', 'audio/wav'); res.end(bytes) }
   else if (modules[req.url]) { res.setHeader('Content-Type', 'text/javascript'); res.end(modules[req.url]) }
+  else if (req.url === '/receiver') {
+    res.setHeader('Content-Type', 'text/html')
+    res.end(`<!doctype html><title>Independent native lease receiver</title><script type="module">
+      import { PartyReceiveGraph } from '/receive-graph.js'; import { installPartyLeaseGuard } from '/lease-guard.js';
+      window.PartyReceiveGraph=PartyReceiveGraph;window.installPartyLeaseGuard=installPartyLeaseGuard;window.receiverReady=true;
+    </script>`)
+  }
   else { res.setHeader('Content-Type', 'text/html'); res.end(html) }
 })
 server.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)) })
-let browser, receiverBrowser, socket, receiverSocket, session, receiverSession, contextId, nextId = 0, passed = 0
+let browser, receiverBrowser, socket, receiverSocket, session, receiverSession, contextId, receiverContextId, nextId = 0, passed = 0
 const pending = new Map(), errors = []
 const check = (value, message) => { assert.ok(value, message); passed++; console.log('PASS', message) }
 const poll = async (work, label, timeout = 10000) => {
@@ -131,9 +142,17 @@ async function connectPublisherReceiver() {
     receiverSocket = new WebSocket(info.webSocketDebuggerUrl); await once(receiverSocket,'open')
     receiverSocket.on('message',receive)
     // The receiver needs native media APIs, not the source's engine/bootstrap.
-    const target = await cdp('Target.createTarget',{url:'about:blank'},undefined,receiverSocket)
+    // Use the source fixture's existing loopback forward without creating a
+    // second owner for that port. This secure origin supports the native worklet.
+    ;({browserContextId:receiverContextId}=await cdp('Target.createBrowserContext',{},undefined,receiverSocket))
+    const target = await cdp('Target.createTarget',{browserContextId:receiverContextId,url:`http://127.0.0.1:${server.address().port}/receiver`},undefined,receiverSocket)
     ;({sessionId:receiverSession}=await cdp('Target.attachToTarget',{targetId:target.targetId,flatten:true},undefined,receiverSocket))
     await cdp('Runtime.enable',{},receiverSession,receiverSocket)
+    try { await poll(()=>receiverEvaluate('window.receiverReady'),'independent receiver modules ready') }
+    catch (error) {
+      console.log('Independent receiver bootstrap:', JSON.stringify(await receiverEvaluate(`({readyState:document.readyState,title:document.title,secure:isSecureContext,graph:typeof PartyReceiveGraph,exceptions:${JSON.stringify(errors)}})`)))
+      throw error
+    }
     assert.equal(await receiverEvaluate("typeof RTCPeerConnection==='function'&&typeof document.createElement==='function'"),true,
       'Independent receiver exposes native peer/audio APIs')
   }
@@ -152,8 +171,10 @@ async function connectPublisherReceiver() {
     await (${gather})(publisherPeer);return publisherPeer.localDescription.toJSON();
   })()`)
   const answer = await receiverEvaluate(`(async()=>{
+    window.receiverGraph?.close();await window.receiverContext?.close();window.receiverGraph=null;window.receiverContext=null;
     window.receiverPeer?.close();window.receiverAudio?.remove();
     window.receiverPeer=new RTCPeerConnection();window.receiverAudio=document.createElement('audio');
+    receiverAudio.muted=${receiverGuard};
     receiverAudio.autoplay=true;document.body.append(receiverAudio);
     receiverPeer.ontrack=event=>{
       if (${receiverTargetMs !== null}) {
@@ -170,6 +191,13 @@ async function connectPublisherReceiver() {
   await poll(()=>evaluate("publisherPeer.connectionState==='connected'"),'native publisher peer connected')
   await poll(()=>receiverEvaluate("receiverAudio.srcObject?.getAudioTracks().length===1"),'independent receiver audio track')
   await receiverEvaluate('receiverAudio.play()')
+  if (receiverGuard) await receiverEvaluate(`(async()=>{
+    window.receiverContext=new AudioContext();await receiverContext.resume();await installPartyLeaseGuard(receiverContext);
+    window.receiverGuardFailures=0;
+    window.receiverGraph=new PartyReceiveGraph(receiverContext,receiverAudio.srcObject,
+      {publisherIdentity:'owned-publisher',clockId:'owned-clock',performanceId:'owned-performance',generation:1},
+      ()=>receiverGuardFailures++);
+  })()`)
   if (receiverTargetMs !== null) {
     const targets = await receiverEvaluate("receiverPeer.getReceivers().filter(receiver=>receiver.track.kind==='audio').map(receiver=>receiver.jitterBufferTarget)")
     assert.deepEqual(targets, [receiverTargetMs], 'Native publisher expiry fixture applies the actual receiver buffering target')
@@ -198,11 +226,24 @@ try {
     if (profile === 'publisher') {
       await connectPublisherReceiver()
       timing = await evaluate('authorizePublisher()')
+      if (receiverGuard) check(await receiverEvaluate(`receiverGraph.renew(
+        {publisherIdentity:'owned-publisher',clockId:'owned-clock',performanceId:'owned-performance',generation:1,expiresServerMs:${timing.expiry}},
+        {clockId:'owned-clock',status:'healthy',offsetMs:performance.timeOrigin,uncertaintyMs:5})`),
+        `${label}: receiver uses the same source wall deadline after native buffering`)
     }
     const outputBrowser = profile === 'publisher' ? receiverBrowser : browser
     await poll(async () => (await outputBrowser.audioEvidence()).some(item => item.captureHeartbeat && item.time > timing.start && item.onAmplitude > .02), 'actual authorized tone output', 2000)
     check(true, `${label}: native output contains the authorized tone`)
-    const frozen = await evaluate(`(() => {
+    const receiverStall = receiverGuard && profile === 'publisher' ? receiverEvaluate(`(() => {
+      const before=receiverContext.currentTime,begin=performance.timeOrigin+performance.now();
+      ${mode === 'suspend-task-stall' ? 'receiverContext.suspend();' : ''}
+      while(performance.timeOrigin+performance.now()<${timing.expiry}+750) {}
+      const suspendedTime=receiverContext.currentTime,resume=performance.timeOrigin+performance.now();
+      ${mode === 'suspend-task-stall' ? 'receiverContext.resume();' : ''}
+      const until=performance.now()+2200;while(performance.now()<until) {}
+      return {before,suspendedTime,after:receiverContext.currentTime,begin,resume,finish:performance.timeOrigin+performance.now()};
+    })()`) : Promise.resolve(null)
+    const [frozen, receiverFrozen] = await Promise.all([evaluate(`(() => {
       const before = context.currentTime, begin = performance.timeOrigin + performance.now();
       ${mode === 'suspend-task-stall' ? 'context.suspend();' : ''}
       while (performance.now() < leaseEnd + 750) {}
@@ -211,7 +252,7 @@ try {
       const finish = performance.now() + 2200;
       while (performance.now() < finish) {}
       return { before, suspendedTime, after: context.currentTime, begin, resume, finish: performance.timeOrigin + performance.now() };
-    })()`)
+    })()`), receiverStall])
     await new Promise(resolve => setTimeout(resolve, 300))
     const observed = await outputBrowser.audioEvidence()
     const evidence = observed.filter(item => (item.captureHeartbeat || typeof item.audible==='boolean') && item.time >= timing.start && item.time <= frozen.finish + 100)
@@ -222,11 +263,19 @@ try {
       return rows.map(row=>Object.fromEntries(['jitterBufferDelay','jitterBufferTargetDelay','jitterBufferEmittedCount',
         'totalSamplesReceived','concealedSamples'].filter(key=>Number.isFinite(row[key])).map(key=>[key,row[key]])));
     })()`) : undefined
-    console.log('Native lease measurement:', JSON.stringify({ profile, mode, output:profile==='publisher'?'independent native WebRTC receiver':'native stage',timing, frozen, evidence, receiverTargetMs, receiverBuffer, stateEvents: await evaluate('stateEvents') }))
+    console.log('Native lease measurement:', JSON.stringify({ profile, mode, output:profile==='publisher'?'independent native WebRTC receiver':'native stage',timing, frozen, receiverFrozen, evidence, receiverTargetMs, receiverGuard, receiverBuffer, stateEvents: await evaluate('stateEvents') }))
     check(expired.filter(item=>item.captureHeartbeat).length >= 2&&typeof activityAtBoundary?.audible==='boolean', `${label}: actual output is observed after the wall-clock lease boundary`)
     measurements.push({ label, expiredAudible: expired.filter(item => item.onAmplitude > .015 || item.audible===true),
       activeAtBoundary:activityAtBoundary?.audible===true })
     if (mode === 'suspend-task-stall') check(frozen.suspendedTime - frozen.before < .2, 'audio render clock actually freezes while the page task is blocked')
+    if (receiverFrozen && mode === 'suspend-task-stall') check(receiverFrozen.suspendedTime - receiverFrozen.before < .2,
+      'independent receiver render clock actually freezes while its own page task is blocked')
+    if (receiverGuard && profile === 'publisher') {
+      check(!await receiverEvaluate(`receiverGraph.renew(
+        {publisherIdentity:'owned-publisher',clockId:'owned-clock',performanceId:'owned-performance',generation:1,expiresServerMs:${timing.expiry}+5000},
+        {clockId:'owned-clock',status:'healthy',offsetMs:performance.timeOrigin,uncertaintyMs:5})`),
+        `${label}: late renewal cannot resurrect the expired receiver graph`)
+    }
     await evaluate('(async () => { window.encodedLease?.close(); window.publisherPeer?.close(); window.graph?.close(); window.publisherTone?.stop(); window.graph = null; window.publisherTone = null; await engine.close(); })()')
   }
   check(errors.length === 0, 'native lease fixture has no runtime exception')
@@ -235,6 +284,8 @@ try {
   console.log(`${passed} native lease checks passed; isolated engine experiment only`)
 } finally {
   if (socket?.readyState === WebSocket.OPEN && contextId) await cdp('Target.disposeBrowserContext', { browserContextId: contextId }).catch(() => {})
+  if (receiverSocket?.readyState === WebSocket.OPEN && receiverContextId)
+    await cdp('Target.disposeBrowserContext', { browserContextId: receiverContextId },undefined,receiverSocket).catch(() => {})
   socket?.close(); receiverSocket?.close()
   for (const item of pending.values()) item.reject(new Error('Native lease fixture closed'))
   pending.clear()

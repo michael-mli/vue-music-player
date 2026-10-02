@@ -3,6 +3,7 @@ import config from '@/config'
 import { useAuthStore } from '@/stores/auth'
 import { clearPartyDevice, getPartyDevice, type PartyDeviceGrant } from './partyDevice'
 import { runPartyMutation } from './partyCommandJournal'
+import type { PartyReceivePermit } from './partyReceiveGraph'
 
 export class PartyApiError extends Error {
   constructor(message: string, public code?: string, public status?: number) { super(message); this.name = 'PartyApiError' }
@@ -249,6 +250,8 @@ export const partyApi = {
     mutation<PartyMediaGrant>(`/rooms/${encodeURIComponent(roomId)}/media-token`, { deviceId, scope }),
   mediaRenew: (roomId: string, identity: string, deviceId: string) =>
     call<PartyMediaGrant>('post', `/rooms/${encodeURIComponent(roomId)}/media/${encodeURIComponent(identity)}/renew`, { deviceId }),
+  mediaOutput: (roomId: string, identity: string, deviceId: string) =>
+    call<{ permit: PartyReceivePermit | null }>('post', `/rooms/${encodeURIComponent(roomId)}/media/${encodeURIComponent(identity)}/output`, { deviceId }),
   mediaReady: (roomId: string, identity: string, deviceId: string) =>
     call<{ ready: true }>('post', `/rooms/${encodeURIComponent(roomId)}/media/${encodeURIComponent(identity)}/ready`, { deviceId }),
   mediaRevoke: (roomId: string, identity: string) =>

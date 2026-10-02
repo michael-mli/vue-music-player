@@ -13,6 +13,10 @@ export function createKtvMediaGrants({ db, clock, getPlayback, getDevices, apiKe
   if (!apiKey || !apiSecret || apiSecret.length < 32 || !Number.isSafeInteger(audienceLifetimeMs) || audienceLifetimeMs < 30000 || audienceLifetimeMs > 120000) {
     throw new Error('Invalid KTV media configuration')
   }
+  // Preserve the exact monotonic deadline delivered to the source. Recomputing
+  // it from wall timestamps for every listener introduces rounding jitter and
+  // could accidentally grant longer output than that source actually received.
+  const publisherDeadlines = new Map()
   const columns = db.prepare('PRAGMA table_info(ktv_rooms)').all().map(column => column.name)
   if (!columns.includes('performance_mode')) db.exec("ALTER TABLE ktv_rooms ADD COLUMN performance_mode TEXT NOT NULL DEFAULT 'local' CHECK (performance_mode IN ('local', 'online', 'hybrid'))")
   db.exec(`CREATE TABLE IF NOT EXISTS ktv_media_grants (
@@ -119,10 +123,12 @@ export function createKtvMediaGrants({ db, clock, getPlayback, getDevices, apiKe
     // signed credential for a revoked membership, lease or performance.
     const latest = db.prepare('SELECT * FROM ktv_media_grants WHERE identity = ?').get(row.identity)
     if (!valid(latest)) fail(403, 'MEDIA_REVOKED', 'Media access is unavailable')
+    const permit = row.scope === 'publisher' ? { clockId: row.clock_id, performanceId: row.performance_id,
+      generation: row.generation, expiresServerMs: Math.min(getPlayback(row.room_id).lease.expiresServerMs,
+        clock.nowMs() + Math.max(0, Date.parse(latest.expires_at) - Date.now())) } : null
+    if (permit) publisherDeadlines.set(row.identity, permit.expiresServerMs)
     return { identity: row.identity, scope: row.scope, room: ktvMediaRoom(row.room_id), token,
-      expiresAt: latest.expires_at, ...(row.scope === 'publisher' ? { permit: { clockId: row.clock_id,
-        performanceId: row.performance_id, generation: row.generation, expiresServerMs: Math.min(getPlayback(row.room_id).lease.expiresServerMs,
-          clock.nowMs() + Math.max(0, Date.parse(latest.expires_at) - Date.now())) } } : {}) }
+      expiresAt: latest.expires_at, ...(permit ? { permit } : {}) }
   }
 
   async function issue({ roomId, memberId, deviceId, deviceGrantId = null, scope, commandId }) {
@@ -167,6 +173,22 @@ export function createKtvMediaGrants({ db, clock, getPlayback, getDevices, apiKe
       .run(expiry(row.scope, current.playback), identity, 'active')
     return signed(db.prepare('SELECT * FROM ktv_media_grants WHERE identity = ?').get(identity))
   }
+  function receivePermit(identity, memberId, deviceId) {
+    const audience = db.prepare('SELECT * FROM ktv_media_grants WHERE identity = ?').get(identity)
+    if (!valid(audience) || audience.scope !== 'audience' || audience.member_id !== memberId || audience.device_id !== deviceId)
+      fail(403, 'MEDIA_REVOKED', 'Media access is unavailable')
+    const publisher = db.prepare("SELECT * FROM ktv_media_grants WHERE room_id = ? AND scope = 'publisher' AND state = 'active'").get(audience.room_id)
+    const current = publisher?.ready_at && valid(publisher)
+    const sourceDeadline = publisherDeadlines.get(publisher?.identity)
+    if (!current || !Number.isFinite(sourceDeadline)) return null
+    // A listener's two-minute grant cannot prolong a performer's short lease.
+    // Return no tokens or member names; bind output to the exact provider nonce.
+    const expiresServerMs = Math.min(sourceDeadline, current.playback.lease.expiresServerMs,
+      clock.nowMs() + Math.max(0, Date.parse(audience.expires_at) - Date.now()))
+    if (!Number.isFinite(expiresServerMs) || expiresServerMs <= clock.nowMs() + 100) return null
+    return { publisherIdentity: publisher.identity, clockId: publisher.clock_id,
+      performanceId: publisher.performance_id, generation: publisher.generation, expiresServerMs }
+  }
   function authorize(claims) {
     const row = db.prepare('SELECT * FROM ktv_media_grants WHERE identity = ?').get(claims.sub)
     if (!valid(row) || claims.video?.room !== ktvMediaRoom(row.room_id)) return null
@@ -183,6 +205,7 @@ export function createKtvMediaGrants({ db, clock, getPlayback, getDevices, apiKe
   function acknowledgeRemoval(identity) {
     // Called only by the authenticated provider-control path after its removal ack.
     db.prepare("UPDATE ktv_media_grants SET state = 'revoked', revoked_at = ? WHERE identity = ? AND state != 'revoked'").run(stamp(), identity)
+    publisherDeadlines.delete(identity)
   }
   function invalidGrants() {
     return db.prepare("SELECT * FROM ktv_media_grants WHERE state != 'revoked'").all().filter(row => !valid(row))
@@ -191,6 +214,9 @@ export function createKtvMediaGrants({ db, clock, getPlayback, getDevices, apiKe
   function prune(receiptCutoff) {
     db.prepare('DELETE FROM ktv_media_receipts WHERE created_at < ?').run(receiptCutoff)
     db.prepare("DELETE FROM ktv_media_grants WHERE state = 'revoked' AND revoked_at < ? AND identity NOT IN (SELECT identity FROM ktv_media_receipts)").run(receiptCutoff)
+    for (const identity of publisherDeadlines.keys()) {
+      if (!db.prepare("SELECT 1 FROM ktv_media_grants WHERE identity = ? AND state = 'active'").get(identity)) publisherDeadlines.delete(identity)
+    }
   }
   function publisherReady(roomId) {
     const row = db.prepare("SELECT * FROM ktv_media_grants WHERE room_id = ? AND scope = 'publisher' AND state = 'active'").get(roomId)
@@ -201,5 +227,5 @@ export function createKtvMediaGrants({ db, clock, getPlayback, getDevices, apiKe
     if (!valid(row) || row.scope !== 'publisher') fail(403, 'MEDIA_REVOKED', 'Media access is unavailable')
     db.prepare("UPDATE ktv_media_grants SET ready_at = ? WHERE identity = ? AND state = 'active'").run(stamp(), identity)
   }
-  return { issue, renew, authorize, revoke, acknowledgeRemoval, invalidGrants, prune, publisherReady, acknowledgeReady }
+  return { issue, renew, receivePermit, authorize, revoke, acknowledgeRemoval, invalidGrants, prune, publisherReady, acknowledgeReady }
 }

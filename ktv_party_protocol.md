@@ -280,8 +280,32 @@ with a 350 kbit/s / 25 fps screen encoding limit. The single audio mix uses
 sources; readiness requires exactly those two tracks, and audience filters reject
 camera and extra screen-audio publications. The frontend, grant gateway and media
 worker must use the same source contract during a media-disabled rollout.
-Audience audio/video use one named WebRTC stream on one video
-element; audience pages do not run a second instrumental player.
+Audience audio/video use one named WebRTC stream on one video element; audience
+pages do not run a second instrumental player. The receiver output candidate
+keeps that element muted and routes its received audio through a post-buffer
+Web Audio lease guard. Native timing acceptance is required for this new path.
+
+`POST /rooms/:id/media/:identity/output` takes the listener's `deviceId` and
+returns `{ permit: null }` when no current provider-ready performer is available,
+or `{ permit: { publisherIdentity, clockId, performanceId, generation,
+expiresServerMs } }`. The route requires current audience membership, owned device
+and nonce, paired-device scope and room binding. Responses are `no-store` and
+contain no JWT, private guide or display name. The deadline is bounded by the
+exact permit last returned to the publisher, its stage lease and the listener's
+own expiry. A restarted service cannot invent a cached publisher deadline.
+
+The client allows one output-authority request at a time per listener attempt,
+at most once per second after transport initialization, and ignores replies
+after Stop/navigation/replacement. Only that authorized publisher's mix/lyrics
+are subscribed. Performance/generation/clock changes close previous output;
+expired render guards, ended tracks and suspended contexts cannot be rearmed.
+The guard applies the existing 100-ms early silence policy and independent
+absolute wall deadline, protecting output even while page tasks are blocked.
+Public media remains disabled. Backend handover scheduling still must reserve
+already issued listener deadlines: a source-stop acknowledgment must not free
+replacement output while a blocked receiver can retain queued old audio. Planned
+transition boundaries need the same protection. Old-client compatibility, impaired
+timing and full device/release acceptance also remain required before shipping.
 
 Room media grants bind current admission, paired scope, device, selected singer,
 performance, generation and output lease. Provider-confirmed audio/video readiness

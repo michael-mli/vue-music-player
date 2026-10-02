@@ -14,11 +14,13 @@ The core room, invitation/guest, moderation, queue, shared-screen, phone-control
 scheduled playback and private-guide software is implemented. The deployed app
 is a preview; public online media is still disabled.
 
-1. **Audio reliability:** enforce the source deadline at the receiver after native
-   buffering. A new independent Chrome 154 test with a 1000-ms receiver target
-   stays audible until expiry +273.08 ms, exceeding the unchanged 150-ms margin.
-   Default-buffer source lease checks pass; they do not establish buffered-receiver
-   safety. Sustained/physical coverage and the earlier render-clock stall remain open.
+1. **Audio reliability:** finish stalled/early-stop handover safety and release the
+   receiver output guard. The deployed raw receiver can remain audible until expiry
+   +273.08 ms with a 1000-ms target. The private guard passes 20 isolated native
+   checks and a 64-check clean room/recovery/handover journey. Early stage-stop
+   acknowledgments must respect already issued receiver deadlines before replacement
+   output starts; that backend reservation is still open. Old-client compatibility,
+   sustained/physical output and the earlier render-clock stall also remain open.
 2. **Streaming timing:** resolve impaired-network A/V timing, measure handover
    timing and longer outages, and verify source-clock stability. Functional
    reconnect/handover passes do not establish acceptable audible/video alignment.
@@ -48,7 +50,9 @@ streaming/recovery/handover **56/56** and public release **23/23** pass; party u
 **105/105** pass. The same stage engine in committed `28bde60` also passes **41/41**
 integrated native stage replacement checks: two independent outputs, actual room
 backend and blocked/frozen/resumed clocks. Physical output acceptance is open. A subsequent buffered-receiver test fails
-the same expiry boundary; receiver output enforcement remains unimplemented.
+the deployed expiry boundary. A private receiver output candidate now passes
+20 isolated native checks and a 64-check clean room journey; it has not been
+released.
 The PWA activation fix is deployed: failed updates retain the current page and
 allow retry; empty catalogs no longer trigger phantom song downloads. Exact-build
 UI/PWA checks also reject malformed room responses without losing the form.
@@ -2700,6 +2704,130 @@ and stale renewal rejection. Increasing buffering cannot be released without it.
 Public frontend `d33b209`, backend `f58a8f3`, media disabled and no persistent SFU
 remain unchanged. These results do not close P06/P07/P08, physical/device,
 post-handover timing, sustained/capacity, real access-network or final release gates.
+
+### 2026-10-02 — Receiver output deadline candidate
+
+`src/services/partyReceiveGraph.ts` applies the source deadline after native
+WebRTC buffering, reusing the existing absolute-clock render worklet. Its single
+received-audio input passes through a closed gain and the guard to the destination.
+It retains the 100-ms early cutoff, bounded clock uncertainty and ten-second
+permit ceiling. Publisher nonce, clock, performance and generation must match.
+A previous expired deadline, shorter authority, ended track, suspended context,
+wall-clock discontinuity or render fault permanently closes that graph. A delayed
+renewal cannot build another processor and revive old output. The caller owns
+and retains the received track and context; closing the graph disconnects its
+nodes without stopping the caller's inputs.
+
+The backend's admitted, device-owned `POST /media/:identity/output` endpoint
+returns only the current provider-ready source's identity/deadline or null.
+The deadline is bounded by the exact monotonic permit last returned to that
+publisher, the stage lease and the listener's own expiry. An in-memory per-source
+bound avoids recomputing a slightly different source deadline from wall timestamps
+for each listener; removal/pruning deletes it, and a restarted service returns no
+source authority until a current publisher permit is actually returned.
+No new database migration, token, member name or guide asset is returned.
+
+The audience transport subscribes only to that authorized source, keeps one shared
+always-muted video element containing both tracks and makes the post-buffer graph
+the sole audible path. It owns element binding directly because the SDK's audio
+attachment/start method can unmute raw received audio. Element/graph ownership
+prevents delayed old-source subscriptions from clearing a replacement. Admission,
+room/mode, generation, visibility, clock and connection loss close old output.
+Output authority is refreshed once per second with one request per active attempt;
+late replies after Stop/navigation are ignored. SDK subscription requests are sent
+only when desired state changes, rather than on every deadline recheck.
+
+The first full-room attempt exits 1 before receiving tracks
+(`/tmp/ktv-receiver-output-native-room-final-20261002.log`), with a permission
+failure and zero browser exceptions. A real startup race was identified: the
+100-ms listener timer could poll while the asynchronously loaded transport was
+still absent, then treat that absence as rejected authority. Polling now requires
+an initialized transport. The lifecycle regression explicitly delays loading,
+ticks the timer and proves no premature request or revocation.
+
+Evidence so far:
+
+- Final type check passes (`/tmp/ktv-receiver-output-typecheck-final2-20261002.log`).
+- Targeted graph/transport/lifecycle checks pass 59/59 after the subscription
+  deduplication and countdown continuity checks
+  (`/tmp/ktv-receiver-integrated-targeted-final4-20261002.log`).
+- Final full party checks pass **123/123**
+  (`/tmp/ktv-receiver-output-party-final2-20261002.log`). The earlier parallel run
+  fails one unrelated 300-ms existing audio-decode fixture wait; that fixture
+  passes 26/26 in isolation and the subsequent full run passes.
+- Backend grant/HTTP scope checks pass 22/22
+  (`/tmp/ktv-receiver-authority-backend-final2-20261002.log`), covering exact source
+  deadline, readiness, nonce replacement, generation/revocation, restart, foreign
+  member/device/room and paired-display scope.
+- Independent Chrome 154 buffered-output regression passes **20/20** with actual
+  1000-ms target, separate native output capture and both publisher and receiver
+  page tasks blocked (`/tmp/ktv-cft154-buffered-receiver-guard-context-20261002.log`).
+  The task-stall quiet edge is **35.27 ms before** the source deadline. The
+  suspended receiver's render clock actually freezes, no late output occurs after
+  resume, and later renewal cannot revive either graph. Both direct stage cases
+  also pass; no browser exception. Earlier receiver bootstrap attempts fail before
+  measuring publisher output; a fresh owned browser context resolves that setup.
+- Private artifact `/tmp/ktv-codec-candidate-receiver-output-race-20261002` builds
+  successfully and preserves production sources/`dist`. It uses a marked VP8,
+  backup-disabled comparison, 1280x720/25 fps/350 kbit/s and default SDK transport;
+  the encoded lease worker remains unchanged. This artifact predates the small
+  subscription-request deduplication guard; its evidence must not be described as
+  an exact final release build.
+
+The first corrected room journey (`/tmp/ktv-receiver-output-native-room-race-20261002.log`)
+passes the 40-pair baseline, guide isolation, fresh audience recovery and functional
+singer replacement, then times out measuring 40 next-singer pairs. Source cadence
+is 24.99 fps; receiver diagnostics show a path/counter change; playback remains
+playing and browser exceptions are zero. An unnecessary player replacement on
+scheduled-to-playing was identified: that state change retains the same valid
+source, clock and generation. The watcher now retains that output and only closes
+it on lost authority or a real binding change. A late play rejection from a removed
+old element also cannot mark a new player's audio blocked. A lifecycle regression
+checks countdown completion retains the same authority. The candidate is rebuilt
+with these changes and subscription-request deduplication.
+
+The corrected native room journey passes **64/64**
+(`/tmp/ktv-receiver-output-native-room-handover-20261002.log`), using
+`/tmp/ktv-codec-candidate-receiver-output-handover-20261002` with subscription
+requests deduplicated and countdown output preserved:
+
+| Phase | Matched / unmatched audio / unmatched video | p95 / maximum received skew | Measured source / receiver fps |
+| --- | --- | --- | --- |
+| Baseline | 40 / 0 / 0 | 81.37 / 98.70 ms | 24.99 / 24.98 |
+| Replacement singer | 40 / 0 / 0 | 101.26 / 102.61 ms | 25.00 / 25.00 |
+| Venue-to-remote | 40 / 0 / 0 | 123.62 / 125.82 ms | 25.00 / 24.98 |
+
+All original matching, observation-delay, native capture queue, nominal dimensions
+and actual source/receiver cadence gates pass. Browser exceptions are zero.
+The actual room policy/provider confirms one publisher, mix and captured lyrics;
+private vocal guide exclusion, fresh audience recovery, source revocation,
+replacement, and both hybrid directions pass. The result does not measure acoustic
+alignment, transition-gap timing or continuously impaired post-handover timing.
+The final typed artifact `/tmp/ktv-codec-candidate-receiver-output-typed-20261002`
+builds successfully. Its main runtime matches the measured artifact after
+normalizing only the existing informational Sidebar build timestamp; other
+compiled assets are byte-identical. That timestamp changes the main filename and
+its index/service-worker references. The type annotation does not change media
+runtime behavior. These are private VP8 comparison artifacts, not a published
+release. Production `dist/index.html` remains SHA256
+`22029bb64d1efd421e73be97a3b681b238b8267424e5af9c7a42855202abf1d5`.
+
+**Next safety requirement (code review; fault test pending):** issued audience
+deadlines must be reserved by backend
+handover scheduling. `device.stopped` currently can shorten a stage's safe-after
+bound while a blocked listener still holds a later deadline and queued samples.
+Scheduled pause/seek boundaries must likewise account for already issued receiver
+authority. Client snapshot handling works when tasks run, but cannot replace a
+server reservation when a listener task is stalled. This new requirement remains
+open; do not claim buffered early-stop/replacement safety from clean handovers or
+from expiry-only isolated checks. The existing durable restart bound must continue
+to cover any receiver authorization ceiling.
+
+Impaired-network, stalled handover, physical, old-client, Safari/mobile,
+long-outage, nominal capacity and public-release acceptance remain open.
+
+Public frontend `d33b209`, backend `f58a8f3`, production assets and media-disabled
+configuration remain unchanged; no persistent SFU is running.
 
 ### Release record
 

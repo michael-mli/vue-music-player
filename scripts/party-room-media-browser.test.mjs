@@ -138,7 +138,7 @@ async function debuggerConnection(url) {
       const response = packet.params.response, pathname = new URL(response.url).pathname
       if (pathname.startsWith('/api/ktv/') && pathname.includes('media')) {
         mediaHttp.push({ path: pathname.replace(/[0-9a-f]{8}-[0-9a-f-]{27}/g, 'id'), status: response.status })
-        if (mediaHttp.length > 16) mediaHttp.shift()
+        if (mediaHttp.length > 64) mediaHttp.shift()
       }
     }
   })

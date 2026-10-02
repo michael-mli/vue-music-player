@@ -1119,6 +1119,19 @@ includes acceleration/deceleration and A/V delay control. Those mechanisms make
 buffer convergence plausible, but do not prove synchronized outputs for this app.
 Receiver policies remain fixture experiments until actual timing passes.
 
+Source-side expiry cannot remove audio already buffered at a receiver. The
+receiver output candidate uses a publisher-nonce/performance-bound deadline
+from the admitted listener's room API, bounded by the source permit, stage lease
+and listener expiry. It applies the existing render guard after native buffering,
+with absolute wall expiry and permanent silence on expired or discontinuous
+clocks. The shared video element retains both tracks but stays muted; only the
+guarded received mix reaches the output. Private vocal-guide audio is never an
+input. The changed playback path must pass native A/V and recovery/handover
+acceptance before release. Backend early-stop acknowledgments and planned
+transition boundaries also must respect previously issued receiver deadlines,
+including listeners whose page tasks cannot process a new snapshot; that reservation
+work remains open. Public online media is still disabled.
+
 Optional `KTV_ROOM_TEST_HANDOVER_AV=1` extends the native fixture with 40-pair
 post-handover phases for a replacement remote singer and the venue-to-remote
 route. The host uses a third isolated output so two player instances cannot mix

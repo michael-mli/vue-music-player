@@ -603,8 +603,17 @@ A new independent native receiver test with a 1000-ms buffer target also fails
 publisher expiry: audio remains audible until expiry +273.08 ms, beyond the
 unchanged 150-ms margin. Default-buffer lease passes do not cover this case.
 Receiver output must enforce the authoritative source deadline after buffering
-before longer receiver buffering or public media can be released. Source guards,
-expiry margins and all measured quality/timing gates remain unchanged.
+before longer receiver buffering or public media can be released. The private
+post-buffer receiver graph now passes 20 isolated native checks with that target,
+including blocked/frozen/resumed receiver clocks and rejected late renewal. The
+new admitted listener output API binds the exact ready publisher nonce/deadline;
+its clean app integration/recovery/handover passes 64/64 with three 40-pair
+phases. Buffered stalled/early-stop handovers still need server reservations for
+already issued receiver deadlines; that safety requirement and full acceptance
+remain open. Deploy frontend and
+backend together for this contract, validate old-client behavior before enabling
+media, and keep the feature disabled until full gates pass. Source guards, expiry
+margins and all measured quality/timing gates remain unchanged.
 
 The current frontend preview is `d33b209`, deployed 2026-10-02; backend remains
 `f58a8f3`. Assets are `main-DU8DSm-f.js`, `main-DnE6rWx5.css`,

@@ -121,6 +121,13 @@ export function registerKtvMediaRoutes(app, { db, clock, playback, realtime, con
     await ready()
     return { ...await grants.renew(id, view.self.id, deviceId), serverUrl: '/api/ktv/media' }
   }))
+  app.post('/api/ktv/rooms/:id/media/:identity/output', roomAccess(), handler(async req => {
+    const view = viewerSnapshot(req), deviceId = device(req), id = identity(req)
+    const row = db.prepare('SELECT room_id FROM ktv_media_grants WHERE identity = ?').get(id)
+    if (row?.room_id !== req.params.id) fail(403, 'MEDIA_REVOKED', 'Media access is unavailable')
+    await ready()
+    return { permit: grants.receivePermit(id, view.self.id, deviceId) }
+  }))
   app.post('/api/ktv/rooms/:id/media/:identity/revoke', roomAccess(), handler(async req => {
     const view = viewerSnapshot(req), id = identity(req)
     const row = db.prepare('SELECT * FROM ktv_media_grants WHERE identity = ? AND room_id = ?').get(id, req.params.id)
