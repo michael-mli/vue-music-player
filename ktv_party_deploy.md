@@ -577,6 +577,16 @@ codes, private keys, environment files or raw signaling URLs into support logs.
 
 ## 5. Backup, release and rollback
 
+Private codec/keyframe comparisons are created with
+`node scripts/party-codec-experiment-build.mjs --codec vp8 --out-dir /tmp/ktv-codec-candidate-NAME --keyframe-ms 500`.
+Their root `ktv-codec-experiment.json` identifies them as non-release artifacts;
+do not publish them or remove the marker to bypass the publication whitelist.
+The builder verifies production sources and `dist` remain unchanged. Current
+VP9, H264 and VP8/NTP comparisons fail impaired timing or nominal quality gates;
+the periodic-keyframe candidate fails publisher readiness before measurement.
+No production codec/controller change is approved by those results. See the
+implementation tracker for evidence and the remaining worker diagnostic work.
+
 The current frontend preview is `d33b209`, deployed 2026-10-02; backend remains
 `f58a8f3`. Assets are `main-DU8DSm-f.js`, `main-DnE6rWx5.css`,
 `partyLeaseGuard.worklet-BWdT3O5D.js` and `partyEncodedLease.worker-BxVsrNxp.js`.

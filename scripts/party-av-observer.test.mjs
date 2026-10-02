@@ -18,7 +18,13 @@ test('fixture RTC timeline retains encoder/buffer evidence without signaling cre
     ['ice',{type:'candidate-pair',url:'turns:private-host',credential:'secret-turn',currentRoundTripTime:.7,availableOutgoingBitrate:95000}],
   ])
   const receiver={track:{kind:'audio'},jitterBufferTarget:null}
-  globalThis.window={__peers:[{getStats:async()=>report,getReceivers:()=>[receiver]}]}
+  globalThis.window={__peers:[{getStats:async()=>report,getReceivers:()=>[receiver],getSenders:()=>[{
+    track:{kind:'video',contentHint:'detail',label:'private-label'},
+    getParameters:()=>({degradationPreference:'maintain-resolution',encodings:[{
+      maxBitrate:350000,maxFramerate:25,scaleResolutionDownBy:Infinity,scalabilityMode:'L1T3',active:true,
+      credential:'secret-token',rid:'private-rid',ssrc:999,
+    }]})
+  }]}]}
   const result=await collectAvMediaStats(),[audio,video]=result.reports
   assert.deepEqual(audio.codec,{mimeType:'audio/opus',clockRate:48000,channels:2})
   assert.equal(audio.jitterBufferEmittedCount,0);assert.equal('packetsLost' in audio,false)
@@ -29,13 +35,15 @@ test('fixture RTC timeline retains encoder/buffer evidence without signaling cre
   assert.equal('framesAssembledFromMultiplePackets' in video,false)
   assert.deepEqual(result.receiverTargets,[{peer:0,kind:'audio',targetSupported:true,targetMs:null}])
   assert.equal(receiver.jitterBufferTarget,null)
+  assert.deepEqual(result.senderParameters,[{peer:0,kind:'video',contentHint:'detail',degradationPreference:'maintain-resolution',
+    encodings:[{active:true,maxBitrate:350000,maxFramerate:25,scalabilityMode:'L1T3'}]}])
   assert.deepEqual(result.reports[2],{peer:0,type:'selected-transport',currentRoundTripTime:.7,availableOutgoingBitrate:95000})
-  for(const secret of ['private-address','secret-ice','secret-token','secret-sdp','secret-turn','turns:'])assert.ok(!JSON.stringify(result).includes(secret))
+  for(const secret of ['private-address','secret-ice','secret-token','secret-sdp','secret-turn','turns:','private-label','private-rid'])assert.ok(!JSON.stringify(result).includes(secret))
 })
 
 test('RTC timeline distinguishes unsupported buffering hints and refuses unbounded peer history',async t=>{
   const previous=globalThis.window;t.after(()=>{globalThis.window=previous})
-  globalThis.window={__peers:[{getStats:async()=>new Map(),getReceivers:()=>[{track:{kind:'video'}}]}]}
+  globalThis.window={__peers:[{getStats:async()=>new Map(),getReceivers:()=>[{track:{kind:'video'}}],getSenders:()=>[]}]}
   assert.deepEqual((await collectAvMediaStats()).receiverTargets,[{peer:0,kind:'video',targetSupported:false,targetMs:null}])
   window.__peers=Array(17).fill({})
   await assert.rejects(collectAvMediaStats,/AV_STATS_PEER_LIMIT/)

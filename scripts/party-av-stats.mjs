@@ -45,7 +45,21 @@ export async function collectAvMediaStats() {
     })
     return [...media, ...transports]
   }))
-  return { time: performance.timeOrigin + performance.now(), reports: reports.flat(),
+  const senderParameters = window.__peers.flatMap((peer, index) => peer.getSenders().filter(sender => ['audio','video'].includes(sender.track?.kind))
+    .map(sender => {
+      const parameters = sender.getParameters(), result = { peer: index, kind: sender.track.kind }
+      if (['', 'motion', 'detail', 'text', 'speech', 'music'].includes(sender.track.contentHint)) result.contentHint = sender.track.contentHint
+      if (['balanced', 'maintain-resolution', 'maintain-framerate'].includes(parameters.degradationPreference)) result.degradationPreference = parameters.degradationPreference
+      result.encodings = (parameters.encodings || []).map(encoding => Object.fromEntries([
+        'active', 'maxBitrate', 'maxFramerate', 'scaleResolutionDownBy', 'scalabilityMode',
+      ].filter(key => typeof encoding[key] === 'number' && Number.isFinite(encoding[key]) ||
+        key === 'active' && typeof encoding[key] === 'boolean' ||
+        key === 'scalabilityMode' && /^L[1-3]T[1-3](h|_KEY|_KEY_SHIFT)?$/.test(encoding[key] || ''))
+        .map(key => [key, encoding[key]])))
+      return result
+    }))
+  if (senderParameters.length > 32 || senderParameters.some(item => item.encodings.length > 3)) throw new Error('AV_STATS_SENDER_LIMIT')
+  return { time: performance.timeOrigin + performance.now(), reports: reports.flat(), senderParameters,
     receiverTargets: window.__peers.flatMap((peer, index) => peer.getReceivers().map(receiver => ({
       peer: index, kind: receiver.track?.kind,
       targetSupported: 'jitterBufferTarget' in receiver,

@@ -2417,6 +2417,74 @@ frontend archive and runtime configuration. Original main tag remains
 audio, mobile/installed-PWA, nominal audience and multi-room capacity, distinct
 networks and persistent online release remain open.
 
+### 2026-10-02 — Private codec comparisons and measured quality gates
+
+The current public preview remains frontend `d33b209`, backend `f58a8f3`, with
+room and guide enabled, media disabled and no persistent SFU. Clean native
+playback passes; impaired received A/V timing remains the primary software
+release gate. The target remains p95 **150 ms**, maximum **250 ms**, with 40
+matched transitions and at most one unmatched audio/video edge each.
+
+`scripts/party-codec-experiment-build.mjs` creates an isolated real-app build only
+under a fresh `/tmp/ktv-codec-candidate-*` directory. It retains the production
+1280×720 / 25-fps capture and 350-kbit/s video ceiling, replaces exactly one
+publisher option literal, and disables secondary backup encoding for the private
+comparison. That setting is not a public compatibility decision: any future
+secondary encoder needs its own publication lease guard. The builder records
+source/effective module hashes and verifies production sources, commit and all
+`dist` bytes remain unchanged. The root `ktv-codec-experiment.json` marks the
+artifact as private and incompatible with the normal publication whitelist.
+
+Native counters now establish actual negotiated codec, stable single video path,
+dimensions, sender settings and whole-phase source/receiver frame cadence. Both
+measured frame rates must remain 20–30 fps, without selecting a favorable window.
+Missing/reset counters, SSRC changes, hidden additional encoders, lower resolution
+or codec fallback remain failed evidence. Diagnostics retain bounded whitelisted
+sender settings without labels, RID, SDP or credentials. Runtime failures expose
+fixed error categories instead of raw exception text.
+
+All comparisons use native Chrome 154, an independent EC2 audience and continuous
+UDP impairment of 150-ms delay, up to 40-ms jitter and 5% datagram loss per leg.
+The random loss sequence is not identical across runs; differences in numerical
+skew are not a controlled ranking of codecs.
+
+| Private candidate | Baseline absolute p95 / max | Impaired result | Decision |
+| --- | --- | --- | --- |
+| VP9, native SDK SVC | 99.81 / 99.81 ms, 6 pairs | Timeout before 40 pairs; source 21.78 fps, receiver 16.90 fps across 89.23 seconds; one runtime exception with category unavailable in that older run | Failed completion and nominal receiver cadence |
+| H264 | 95.96 / 95.96 ms, 6 pairs | 40 pairs, one unmatched edge each; p95 652.51 / max 735.10 ms; nominal cadence retained; later hybrid provider confirmation also times out | Failed timing and functional completion |
+| VP8 plus native NTP receiver controller | 106.89 / 106.89 ms, 6 pairs | 40 pairs, no unmatched edges; p95 391.39 / max 709.46 ms; source 23.44 fps, receiver 23.36 fps; functional recovery/handover passes | Failed timing |
+
+Logs: `/tmp/ktv-vp9-continuous-udp-codec-20261002.log`,
+`/tmp/ktv-h264-continuous-udp-codec-20261002.log`,
+`/tmp/ktv-vp8-native-ntp-continuous-udp-20261002.log`.
+The VP9 runtime count alone does not establish its exact exception category.
+Native NTP playout estimates are available in the newer browser runs; successful
+buffer-target assignment still does not prove that received markers meet limits.
+
+A fourth private candidate requests a video keyframe every **500 ms** through the
+standard encoded-transform worker, independently of test markers. The production
+worker is unchanged. Requests require a live permit, serialize pending promises,
+and fail closed if the API is unsupported or rejects. Audio does not receive the
+timer. Native encoded keyframe counts must establish at least 80% of the requested
+cadence; successful API promises alone cannot pass. This tests the hypothesis that
+video reference recovery contributes to delay, without claiming a proven cause.
+The private build passes and production `dist` is unchanged. Fixture units pass
+**21/21** (`/tmp/ktv-codec-keyframe-quality-fixtures-20261002.log`). The native run
+at `/tmp/ktv-vp8-keyframe500-continuous-udp-20261002.log` exits 1: publisher
+provider confirmation times out before any baseline/impaired marker measurement.
+Playback enters `recovering` / `stage.unavailable`, the publisher reports its
+performance connection ended, and browser runtime exceptions are zero. No actual
+keyframe cadence or A/V improvement is established. The precise worker/provider
+failure reason is not retained by this run; bounded worker failure diagnostics
+are the next useful step before changing or repeating the candidate.
+
+Remaining acceptance: impaired and post-handover timing; sustained source/output
+stability and longer outages; five-minute physical phone/stage guide alignment,
+headphone calibration and microphone/venue isolation; Safari/iOS/Android,
+background/lock/autoplay and field-installed PWA; full nominal audience and
+multi-room load; distinct Wi-Fi/LTE access networks; persistent SFU/TURN and final
+online/hybrid publication. Optional P09 enhancements follow the core release.
+
 ### Release record
 
 | Release | Build/commit | Environment/URL | Date | Gates and evidence | Remaining scope |

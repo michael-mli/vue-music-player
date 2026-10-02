@@ -22,6 +22,7 @@ import { createMediaUdpProxy } from './party-media-udp-proxy.mjs'
 import { createOwnedRemoteBrowser } from './party-remote-browser.mjs'
 import { installAvSourceMarkers, installAvObserver, analyseAvObservations } from './party-av-observer.mjs'
 import { collectAvMediaStats } from './party-av-stats.mjs'
+import { analyseCodecQuality } from './party-av-codec-quality.mjs'
 import { nativeSyncTargetStep, nativeNetworkTargetStep, nativeRepairTargetStep, installNativeSyncExperiment } from './party-av-native-sync.mjs'
 
 const clientLocation = process.env.KTV_ROOM_TEST_CLIENT || 'same-host'
@@ -29,6 +30,18 @@ assert.ok(['same-host', 'remote-ec2'].includes(clientLocation), 'Unknown room-te
 const remoteMode = clientLocation === 'remote-ec2'
 const frontendBuild = path.resolve(process.env.KTV_ROOM_TEST_DIST_ROOT || 'dist')
 await fs.access(path.join(frontendBuild, 'index.html'))
+let codecExperiment
+try { codecExperiment = JSON.parse(await fs.readFile(path.join(frontendBuild, 'ktv-codec-experiment.json'), 'utf8')) }
+catch (error) { if (error.code !== 'ENOENT') throw error }
+if (codecExperiment) {
+  assert.ok(codecExperiment.version===1&&codecExperiment.privateCodecExperiment===true&&
+    ['vp8','vp9','h264'].includes(codecExperiment.codec)&&codecExperiment.backupCodec===false&&
+    codecExperiment.width===1280&&codecExperiment.height===720&&codecExperiment.fps===25&&codecExperiment.maxBitrate===350000&&
+    (codecExperiment.keyframeMs==null||(Number.isInteger(codecExperiment.keyframeMs)&&codecExperiment.keyframeMs>=250&&codecExperiment.keyframeMs<=5000)),
+    'Malformed private codec experiment marker')
+  assert.equal(process.env.KTV_ROOM_TEST_AV_TIMING,'1','Codec comparisons require actual native A/V evidence')
+  console.log('Private codec comparison:',JSON.stringify(codecExperiment))
+}
 const avTiming = process.env.KTV_ROOM_TEST_AV_TIMING === '1'
 const sourceStallMs = Number(process.env.KTV_ROOM_TEST_OUTPUT_STALL_MS || 0)
 assert.ok(sourceStallMs === 0 || avTiming && remoteMode && Number.isInteger(sourceStallMs) && sourceStallMs >= 20 && sourceStallMs <= 100,
@@ -719,16 +732,27 @@ try {
   }
   // Collect both phases before judging timing: a baseline failure must remain
   // a failed run, while still exposing the impaired measurements for diagnosis.
+  const codecQualities=codecExperiment?avMeasurements.map(measurement=>
+    analyseCodecQuality(avTimingSamples,measurement.phase,codecExperiment.codec,codecExperiment.keyframeMs??null)):[]
+  for (const quality of codecQualities) console.log('Native codec quality:',JSON.stringify(quality))
+  for (const quality of codecQualities) {
+    check(quality.errors.length===0,`${quality.phase} codec comparison preserves actual 1280x720 and nominal measured source/receiver cadence`)
+  }
   for(const result of avMeasurements) check(result.absoluteSkewMs.p95<=150&&result.absoluteSkewMs.max<=250, `${result.phase} received audio/video marker presentation skew passes the 150 ms p95 / 250 ms maximum software target`)
   check(errors.length === 0, `no browser runtime exceptions (${errors.length})`)
   console.log(`${passed} built-app streaming checks passed. Client: ${clientLocation}; synthetic microphone, foreground Chrome, isolated policy/SFU. Remote HTTP/CDP use loopback SSH forwards; physical and distinct access-network acceptance remains open.`)
 } catch (error) {
   console.error('Journey failure:', error.message)
   if(avTimingSamples.length) console.error('A/V timing timeline on failure:',JSON.stringify(avTimingSamples))
+  if(codecExperiment) for(const phase of new Set(avTimingSamples.map(item=>item.phase)))
+    console.error('Native codec quality on failure:',JSON.stringify(analyseCodecQuality(avTimingSamples,phase,codecExperiment.codec,codecExperiment.keyframeMs??null)))
   if(avBrowser) console.error('Private receiver output:',JSON.stringify(await avBrowser.audioEvidence().catch(()=>({error:'capture unavailable'}))))
   if(mediaProxy) console.error('Owned media proxy:',JSON.stringify(mediaProxy.snapshot()))
   console.error('Playback recovery:',JSON.stringify(db.prepare('SELECT state,recovery_reason FROM ktv_playback').all()))
   console.error('Runtime exception count:', errors.length)
+  const known=['AV_VIDEO_EVIDENCE_LIMIT','AV_MARKER_ID_LIMIT','AV_STATS_SENDER_LIMIT','AV_STATS_PEER_LIMIT',
+    'TypeError','RangeError','ReferenceError','NetworkError','AbortError','InvalidStateError','OperationError']
+  console.error('Runtime error categories:',JSON.stringify(errors.slice(0,8).map(message=>known.find(code=>message.includes(code))||'RuntimeError')))
   console.error('Media HTTP status (paths only):', JSON.stringify(mediaHttp))
   for (const session of sessionSockets.keys()) console.error('UI state:', JSON.stringify(await evaluate(session, ` (async () => ({status:document.querySelector('[data-party-media-status]')?.textContent,
     errors:[...document.querySelectorAll('[role=alert]')].map(item=>item.textContent), diagnostics:[...document.querySelectorAll('dl')].map(item=>item.textContent),
