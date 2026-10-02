@@ -534,8 +534,14 @@ Status: In progress
   tickets, grants, and media tokens; validate upgrades with an installed old PWA.
   Software exclusions, offline behavior and a synthetic installed-old-worker
   upgrade pass 6/6 locally; field-installed old PWA validation remains open.
-- [ ] P06.7 Run permission/admission abuse cases, origin validation, bounded message
+- [x] P06.7 Run permission/admission abuse cases, origin validation, bounded message
   sizes/rates, and escaped user-supplied room/member text.
+  Backend admission, device scopes, untrusted origins, oversized HTTP bodies and
+  rate-bucket tests pass in the 127-check release suite. Native built-app UI **42/42**
+  now includes literal rendering of supplied HTML in room lists, participant names,
+  queue titles and shared stages; `/tmp/ktv-ui-escaped-text.log`. No supplied event
+  handler is installed or executed. This completes software abuse/escaping scope;
+  physical/browser support criteria remain separate.
 - [x] P06.8 Measure the planning load of 20 members and bounded device/queue counts;
   record socket memory, command latency, snapshot fanout, and database behavior.
   `npm run test:party:load` passes with a separate isolated server: 20 members,
@@ -680,33 +686,34 @@ Evidence: Pending.
 
 ## 13. Acceptance scenario register
 
-All scenarios are initially unrun. Add evidence links and mark pass/fail when executed.
+Results distinguish automated software evidence from physical-device acceptance.
+Completed software checks do not close a hardware or acoustic gate.
 
 | ID | Scenario | Expected outcome | Phase | Result |
 | --- | --- | --- | --- | --- |
-| A01 | Guest creates room; second guest joins by code | One host, one admitted/pending member according to setting | P02 | Unrun |
-| A02 | Pending guest calls room APIs and opens stage URL | No admitted room data or controls | P02 | Unrun |
-| A03 | Same member pairs phone and TV | One participant, distinct restricted devices | P02/P04 | Unrun |
-| A04 | Two guests request simultaneously; one retries after lost ack | Both accepted requests appear once or explicit conflict prompts retry | P03 | Unrun |
-| A05 | Request next, host approval, then normal turns | Current song continues; visible override followed by fair rotation | P03/P04 | Unrun |
-| A06 | Same song appears twice and multiple clients report completion | Exactly one entry completes; next entry remains distinct | P03/P05 | Unrun |
+| A01 | Guest creates room; second guest joins by code | One host, one admitted/pending member according to setting | P02 | Software pass: [HTTP/admission tests](server/ktv.test.js); public preview checks |
+| A02 | Pending guest calls room APIs and opens stage URL | No admitted room data or controls | P02 | API/socket redaction passes [room tests](server/ktv.test.js); full device acceptance open |
+| A03 | Same member pairs phone and TV | One participant, distinct restricted devices | P02/P04 | Software scope/revocation passes [pairing tests](server/ktv.test.js); physical phone/TV open |
+| A04 | Two guests request simultaneously; one retries after lost ack | Both accepted requests appear once or explicit conflict prompts retry | P03 | Software pass: concurrent clients, retries and restart in [room tests](server/ktv.test.js) |
+| A05 | Request next, host approval, then normal turns | Current song continues; visible override followed by fair rotation | P03/P04 | Software pass: queue/active-turn safeguards in [room tests](server/ktv.test.js) and [playback tests](server/ktv-playback.test.js) |
+| A06 | Same song appears twice and multiple clients report completion | Exactly one entry completes; next entry remains distinct | P03/P05 | Software pass: distinct entries and completion idempotency in [playback tests](server/ktv-playback.test.js) |
 | A07 | Stage and phone guide run for five minutes | Measured p95 error meets supported-setup target | P01/P05 | Unrun |
-| A08 | Host pauses, seeks, resumes; old ready/ended packet arrives | One valid timeline; obsolete packet ignored | P05 | Unrun |
-| A09 | Optional guide fails; repeat with guide marked required | Guide-only recovery, then room pause in required case | P05 | Unrun |
+| A08 | Host pauses, seeks, resumes; old ready/ended packet arrives | One valid timeline; obsolete packet ignored | P05 | Software pass: [playback boundaries](server/ktv-playback.test.js) and [built-app journey](scripts/party-browser.test.mjs); physical timing open |
+| A09 | Optional guide fails; repeat with guide marked required | Guide-only recovery, then room pause in required case | P05 | Software pass: [guide policy](server/ktv-playback.test.js) and [built-app recovery](scripts/party-browser.test.mjs); physical output open |
 | A10 | Stage loses connectivity and another device takes over | Old lease stops output before replacement becomes audible | P05/P06 | Unrun |
-| A11 | Backend restarts during a song | Paused checkpoint, new clock ID, explicit readiness/resume | P06 | Unrun |
-| A12 | Host disconnects with/without co-host | Documented transfer or pause-before-next policy | P06 | Unrun |
-| A13 | Kick member with several devices; reuse grants and tickets | All revoked room capabilities fail | P06 | Unrun |
+| A11 | Backend restarts during a song | Paused checkpoint, new clock ID, explicit readiness/resume | P06 | Software pass: restart/checkpoint and new generation in [playback tests](server/ktv-playback.test.js) |
+| A12 | Host disconnects with/without co-host | Documented transfer or pause-before-next policy | P06 | Software pass: grace, co-host choice, return and rollback in [playback tests](server/ktv-playback.test.js) |
+| A13 | Kick member with several devices; reuse grants and tickets | All revoked room capabilities fail | P06 | Software pass: real socket revocation and paired-device scope in [room tests](server/ktv.test.js) |
 | A14 | Background/lock/unlock or change headphones | Honest suspended state, recalibration/recovery as needed | P06 | Unrun |
 | A15 | No instrumental, no LRC, changed asset version | Clear fallback/error; no silent original substitution | P05/P06 | Unrun |
-| A16 | Old installed PWA reconnects and new build becomes available | No stale authorized data; safe version/reload handling | P06/P08 | Unrun |
-| A17 | Remote singer enables original guide | Singer hears guide; audience gets backing and live mic only | P07 | Unrun |
+| A16 | Old installed PWA reconnects and new build becomes available | No stale authorized data; safe version/reload handling | P06/P08 | Synthetic old-worker upgrade passes 8/8; field-installed PWA open; [fixture](scripts/party-pwa-browser.test.mjs) |
+| A17 | Remote singer enables original guide | Singer hears guide; audience gets backing and live mic only | P07 | Native synthetic room/mix isolation passes; physical singing/leakage open; [journey](scripts/party-room-media-browser.test.mjs) |
 | A18 | Add network jitter to remote audience | Received lyric video and audio remain aligned within measured support limits | P07 | Controlled TCP/UDP timing fails; field acceptance open |
-| A19 | Force TURN; remove active performer; reuse old media token | Relay works; publishing/access revocation is enforced | P07 | Unrun |
-| A20 | Switch local singer to remote singer and back | Correct stage routing, one active performance and backing source | P07 | Unrun |
-| A21 | Close/expire room and reopen old invitation/display links | Playback stops; access and new joins denied | P06/P08 | Unrun |
+| A19 | Force TURN; remove active performer; reuse old media token | Relay works; publishing/access revocation is enforced | P07 | Public transport/revocation passes 14/14; distinct access networks open; [fixture](scripts/party-public-transport.test.mjs) |
+| A20 | Switch local singer to remote singer and back | Correct stage routing, one active performance and backing source | P07 | Native synthetic continuous TCP/UDP handover passes; physical/multi-network session open; [journey](scripts/party-room-media-browser.test.mjs) |
+| A21 | Close/expire room and reopen old invitation/display links | Playback stops; access and new joins denied | P06/P08 | Software pass: atomic expiry and open-socket closure in [room tests](server/ktv.test.js); physical silence open |
 | A22 | Exit party and use existing solo karaoke | Solo controls/lyrics work; party audio and listeners are released | P05/P06 | Unrun |
-| A23 | Open invitation in a fresh browser; enter name; join; refresh; another guest uses the same name | No registration required; random participant ID persists on refresh; duplicate names have distinct IDs; blank names rejected | P02/P04 | Unrun |
+| A23 | Open invitation in a fresh browser; enter name; join; refresh; another guest uses the same name | No registration required; random participant ID persists on refresh; duplicate names have distinct IDs; blank names rejected | P02/P04 | Guest name/random ID/returning admission software checks pass [room tests](server/ktv.test.js); complete fresh physical-browser journey open |
 
 ## 14. Verification strategy
 
@@ -1518,6 +1525,52 @@ not resolve the impaired A/V failure. Next, compare encoder resolution/framerate
 adaptation with timing and readability evidence. This candidate is not deployed. Production
 remains `e88783a`, media disabled. Encoded cadence and impaired A/V must be measured
 before claiming improvement; physical/mobile/load/network gates remain open.
+
+An isolated `maintain-framerate` encoder comparison also fails, exit 1,
+`/tmp/ktv-capture-framerate-udp-av.log`. Baseline six pairs p95/max **109.01 ms**;
+source cadence **23–25 fps**, encoded resolution **640×360 / 960×540**. The
+impaired phase stops after 25 timeline samples when native publisher drift reaches
+**248.3 ms**, 50 samples. Its pre-stop source cadence is roughly **13–24 fps** at
+**960×540**, but the required 40-pair timing result and readability acceptance are
+incomplete. This comparison does not establish a better release policy; the app
+retains `maintain-resolution`. The SDK's resolution/framerate tradeoff is documented
+in [TrackPublishOptions](https://docs.livekit.io/reference/client-sdk-js/interfaces/TrackPublishOptions.html).
+Selected transport RTT and bandwidth-estimate counters were added to the diagnostic
+whitelist for subsequent runs, with redaction tests; no candidate IDs/addresses
+are exported. Next check: sustained clean timing with the capture cadence fix,
+then investigate failed transport timing with complete observation windows.
+
+The clean sustained check also stops on native publisher recovery: **86.4 ms**,
+43 native samples, 22 source markers; no complete 40-pair result
+(`/tmp/ktv-capture-cadence-clean-av.log`, exit 1). Source reports **21–25 fps**.
+The measurement poll previously opened a new SSH/Python process for every
+receiver-evidence read. Replaced those reads with one owned timing-event stream;
+PCM stays on the receiver, numeric timestamps stay unchanged, and evidence history
+and line sizes are bounded. Channel loss or malformed evidence fails the run;
+intentional teardown closes the owned channel and monitor. Fixture units **9/9**
+pass (`/tmp/ktv-av-evidence-stream-units.log`), including fragmented input, unchanged
+timestamps, redaction, bounded history, oversized/malformed input, stream loss and
+startup failure cleanup. The clean sustained run with the new reader passes
+**26/26**, exit 0 (`/tmp/ktv-capture-cadence-stream-clean-av.log`): **40 matched
+transitions**, no unmatched edges, absolute skew p50 **27.51 ms**, p95 **60.88 ms**,
+maximum **61.61 ms**, source-to-video delay p95 **113.70 ms**, maximum **114.90 ms**.
+Source reports **24–26 encoded fps** throughout 76 timeline samples. This reduces
+probe process churn and establishes a clean run for the capture fix; the earlier
+native failures remain evidence and their underlying cause is unproven.
+
+With the event stream, the `maintain-framerate`/500 ms SFU comparison completes
+40 impaired pairs, no unmatched edges, but still fails the final timing gate:
+**140.48 ms p50 / 358.84 ms p95 / 526.59 ms maximum**
+(`/tmp/ktv-capture-framerate-stream-udp-av.log`, exit 1). Baseline six pairs p95/max
+**67.34 ms**. Impaired source maintains **24–26 fps**, at **960×540 / 1280×720**;
+baseline includes **640×360 / 960×540**. Functional continuous handover completes.
+For several late markers, arrival-to-presentation is **344–590 ms**, while reported
+decode processing is **1–5.5 ms**; other late markers have short post-arrival delay.
+Source selected transport RTT is **311–377 ms**. These timings indicate multiple
+delay components; they do not prove decoding or the adaptive hint is the cause.
+An isolated `KTV_ROOM_TEST_PLAYOUT_MAX_MS=150` comparison is in progress. The
+fixture accepts 50–500 ms, defaults to 500 and prints the effective value. Prepared
+production SFU policy and timing acceptance thresholds remain unchanged.
 
 ```text
 Date:

@@ -1002,6 +1002,10 @@ clock domain as the source and receiver browsers. Its public native stream API
 retains signed monitor latency, including samples queued for future output;
 [PulseAudio stream timing contract](https://github.com/pulseaudio/pulseaudio/blob/v16.1/src/pulse/stream.h).
 PCM stays in memory; logs contain only marker/timing metrics.
+One bounded SSH channel follows the owned receiver's timing events, preserving
+their original timestamps. Polling uses local copies, avoiding a new SSH/Python
+process on every measurement poll. Malformed, oversized or interrupted evidence
+fails the observation. Both the channel and receiver monitor have bounded cleanup.
 
 The monitor uses a 23.22 ms detector window with 10 ms hops. Receiver A/V skew
 is the difference between the presented-video estimate and the monitor's audio

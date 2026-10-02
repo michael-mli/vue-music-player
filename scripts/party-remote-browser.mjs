@@ -3,6 +3,7 @@
 import { execFile, spawn } from 'node:child_process'
 import net from 'node:net'
 import fs from 'node:fs/promises'
+import { createAvEvidenceStream } from './party-av-evidence-stream.mjs'
 
 const shell = value => "'" + value.replaceAll("'", "'\\''") + "'"
 function run(command, args, input) {
@@ -32,10 +33,11 @@ export async function createOwnedRemoteBrowser({ host, knownHosts, micFile, fron
   const options = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'StrictHostKeyChecking=yes',
     '-o', `UserKnownHostsFile=${knownHosts}`]
   const ssh = (command, input) => run('ssh', [...options, host, command], input)
-  let root, pid, forward
+  let root, pid, forward, evidenceStream
   async function close() {
     let removed = true
     try {
+      await evidenceStream?.close()
       if (root) {
         if (pid) {
           const result = await ssh('bash -s', `set -eu
@@ -115,6 +117,7 @@ for attempt in $(seq 1 50); do test "$(/usr/bin/pactl -s "$PULSE_SERVER" get-def
 test "$(/usr/bin/pactl -s "$PULSE_SERVER" get-default-sink 2>/dev/null)" = ktv_av || exit 1
 ${captureOutput ? `python3 -u "$root/capture.py" > "$root/av-audio.jsonl" 2> "$root/capture-errors.log" &
 monitor=$!` : ''}
+${captureOutput ? `printf '%s' "$monitor" > "$root/monitor.pid"` : ''}
 ` : ''}
 timeout --signal=TERM --kill-after=5s 900s /usr/bin/google-chrome \\
   --headless=new --no-sandbox --disable-dev-shm-usage --disable-gpu \\
@@ -154,17 +157,12 @@ echo $!
         if (listeners.length !== remotePorts.length || !remotePorts.every(port => listeners.includes(`127.0.0.1:${port}`))) {
           throw new Error('Owned remote forwards/browser must bind loopback only')
         }
-        return { debuggerUrl, close, ...(captureOutput ? { async audioEvidence() {
-          const raw=await ssh('python3 - '+shell(root),`import json,pathlib,sys
-root=pathlib.Path(sys.argv[1])
-error=(root/'capture-errors.log').read_text().strip().splitlines()
-lines=(root/'av-audio.jsonl').read_text().splitlines()
-print(json.dumps({'error':error[-1][:200] if error else None,'events':[json.loads(line) for line in lines[-258:]]}))
-`)
-          const result=JSON.parse(raw)
-          if(result.error) throw new Error('Owned output monitor failed: '+result.error)
-          return result.events
-        } } : {}) }
+        if (captureOutput) {
+          const command = `monitor=$(cat ${shell(root+'/monitor.pid')}); case "$monitor" in ''|*[!0-9]*) exit 1;; esac; timeout --signal=TERM --kill-after=5s 900s tail --pid="$monitor" -n +1 -f -- ${shell(root+'/av-audio.jsonl')}`
+          const follower = spawn('ssh', [...options, host, command], { stdio: ['ignore', 'pipe', 'ignore'] })
+          evidenceStream = createAvEvidenceStream(follower)
+        }
+        return { debuggerUrl, close, ...(captureOutput ? { audioEvidence: evidenceStream.audioEvidence } : {}) }
       }
       await new Promise(resolve => setTimeout(resolve, 100))
     }

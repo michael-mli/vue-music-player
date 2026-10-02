@@ -13,7 +13,8 @@ test('fixture RTC timeline retains encoder/buffer evidence without signaling cre
     ['video',{type:'outbound-rtp',kind:'video',framesEncoded:25,totalEncodeTime:.01,qualityLimitationReason:'bandwidth',
       qualityLimitationDurations:{cpu:0,bandwidth:2,other:Infinity,access_token:'secret-token'},token:'secret-token'}],
     ['codec',{mimeType:'audio/opus',clockRate:48000,channels:2,sdpFmtpLine:'secret-sdp'}],
-    ['ice',{type:'candidate-pair',url:'turns:private-host',credential:'secret-turn'}],
+    ['transport',{type:'transport',selectedCandidatePairId:'ice'}],
+    ['ice',{type:'candidate-pair',url:'turns:private-host',credential:'secret-turn',currentRoundTripTime:.7,availableOutgoingBitrate:95000}],
   ])
   const receiver={track:{kind:'audio'},jitterBufferTarget:null}
   globalThis.window={__peers:[{getStats:async()=>report,getReceivers:()=>[receiver]}]}
@@ -24,6 +25,7 @@ test('fixture RTC timeline retains encoder/buffer evidence without signaling cre
   assert.equal(video.qualityLimitationReason,'bandwidth');assert.deepEqual(video.qualityLimitationDurations,{cpu:0,bandwidth:2})
   assert.deepEqual(result.receiverTargets,[{peer:0,kind:'audio',targetSupported:true,targetMs:null}])
   assert.equal(receiver.jitterBufferTarget,null)
+  assert.deepEqual(result.reports[2],{peer:0,type:'selected-transport',currentRoundTripTime:.7,availableOutgoingBitrate:95000})
   for(const secret of ['private-address','secret-ice','secret-token','secret-sdp','secret-turn','turns:'])assert.ok(!JSON.stringify(result).includes(secret))
 })
 

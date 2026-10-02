@@ -14,7 +14,7 @@ export async function collectAvMediaStats() {
     'retransmittedPacketsSent', 'retransmittedBytesSent']
   const reports = await Promise.all(window.__peers.map(async (peer, index) => {
     const report = await peer.getStats(), rows = [...report.values()]
-    return rows.filter(item => ['inbound-rtp', 'outbound-rtp', 'remote-inbound-rtp'].includes(item.type))
+    const media = rows.filter(item => ['inbound-rtp', 'outbound-rtp', 'remote-inbound-rtp'].includes(item.type))
       .map(item => {
         const result = { peer: index, type: item.type }
         for (const field of fields) {
@@ -33,6 +33,14 @@ export async function collectAvMediaStats() {
             .map(key => [key, item.qualityLimitationDurations[key]]))
         return result
       })
+    const transports = rows.filter(item => item.type === 'transport').flatMap(item => {
+      const selected = report.get(item.selectedCandidatePairId)
+      if (selected?.type !== 'candidate-pair') return []
+      return [{ peer: index, type: 'selected-transport', ...Object.fromEntries([
+        'timestamp', 'currentRoundTripTime', 'availableOutgoingBitrate', 'availableIncomingBitrate',
+      ].filter(key => Number.isFinite(selected[key])).map(key => [key, selected[key]])) }]
+    })
+    return [...media, ...transports]
   }))
   return { time: performance.timeOrigin + performance.now(), reports: reports.flat(),
     receiverTargets: window.__peers.flatMap((peer, index) => peer.getReceivers().map(receiver => ({

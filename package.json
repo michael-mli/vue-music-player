@@ -20,7 +20,7 @@
     "test:party:public-transport": "node scripts/party-public-transport.test.mjs",
     "test:party:room-media": "node scripts/party-room-media-browser.test.mjs",
     "test:party:impairment-fixtures": "node --test scripts/party-media-tcp-proxy.test.mjs scripts/party-media-udp-proxy.test.mjs",
-    "test:party:av-fixtures": "node --test scripts/party-av-observer.test.mjs"
+    "test:party:av-fixtures": "node --test scripts/party-av-observer.test.mjs scripts/party-av-evidence-stream.test.mjs"
   },
   "dependencies": {
     "@breezystack/lamejs": "^1.2.7",

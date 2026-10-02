@@ -149,6 +149,25 @@ try {
     await poll(() => evaluate(session, `document.body.innerText.includes(${JSON.stringify(text)})`), 'guide disabled hint')
     check(await evaluate(session, `!document.body.innerText.includes(${JSON.stringify(language === 'en' ? 'Enable private vocal guide' : '启用私人原唱指导')})`), `${language} controller explains guide unavailability`)
   }
+  const roomText = '<svg onload=window.__partyInjected=1>', memberText = '<img src=x onerror=__partyInjected=1>'
+  const songText = '<img src=x onerror=window.__partyInjected=1>'
+  const escaped = await api(1, '/rooms', { name: roomText, displayName: memberText, approvalRequired: false })
+  await api(2, '/join', { code: escaped.invitationCode, displayName: memberText })
+  await api(2, `/rooms/${escaped.room.id}/queue`, { songId: 1, title: songText, requestNext: false })
+  async function literalText(session, value, label) {
+    await poll(() => evaluate(session, `document.body.textContent.includes(${JSON.stringify(value)})`), label)
+    check(await evaluate(session, `window.__partyInjected === undefined && !document.querySelector('.party-page [onload], .party-page [onerror]')`), label)
+  }
+  const escapedHome = await page(1, '/party')
+  await literalText(escapedHome, roomText, 'room list renders supplied markup as literal text')
+  const escapedPhone = await page(1, `/party/${escaped.room.id}`)
+  await poll(() => evaluate(escapedPhone, '!!document.getElementById("party-tab-people")'), 'escaped room tabs')
+  await evaluate(escapedPhone, "document.getElementById('party-tab-people').click()")
+  await literalText(escapedPhone, memberText, 'people list renders supplied member markup as literal text')
+  await evaluate(escapedPhone, "document.getElementById('party-tab-queue').click()")
+  await literalText(escapedPhone, songText, 'queue renders supplied song markup as literal text')
+  const escapedStage = await page(1, `/party/${escaped.room.id}/stage`, 'en', 1280)
+  await literalText(escapedStage, roomText, 'shared stage renders supplied room markup as literal text')
   check(errors.length === 0, 'no native browser runtime exceptions')
   console.log(`${passed} built-app UI checks passed. Emulated layout and keyboard only; no physical audio/browser matrix claim.`)
 } finally {
