@@ -151,7 +151,7 @@ deployed; it does not resolve streaming/device acceptance.
 | P04 | Stage, phone controller, host UI | P02–P03 | In progress | Entry/join/pairing, Songs/Queue/Sing/People tabs, local invitation/pairing QR, moderation, readiness and guide controls; broad accessibility/physical coverage open |
 | P05 | Scheduled playback, private guide, shared lyrics | P01, P03–P04 | In progress | Stage/guide/lyrics/controls pass Chrome journey; required-guide and rendered-drift/output recovery tested; physical timing open |
 | P06 | Recovery, browser coverage, local release readiness | P02–P05 | In progress | Guide/stage loss, host transfer, restart and revocation have automated evidence; physical/device coverage open |
-| P07 | Online performance streaming and hybrid operation | P01, stable P03/P05 contracts | In progress | SFU/capture spike, room authorization and mode/capture/audience UI implemented; online and hybrid software handover verified; physical/network/device acceptance open |
+| P07 | Online performance streaming and hybrid operation | P01, stable P03/P05 contracts | In progress | SFU/capture spike, room authorization and mode/capture/audience UI implemented; online/hybrid handover and 19-audience synthetic fanout verified; physical/network/device acceptance open |
 | P08 | Deployment, monitoring, and release verification | P06 for local; P07 for online | In progress | Intermediate previews deployed; private config generator, nginx snippet and runbook added; public media and release acceptance open |
 | P09 | Optional enhancements | Released foundation | Not started | — |
 
@@ -550,7 +550,7 @@ Status: In progress
 Deliverables: a media transport decision, performance capture/publishing, remote
 audience playback, and tested performer handover. This phase implements R12–R13.
 
-- [ ] P07.1 Spike an established SFU, initially evaluate LiveKit; record hosted or
+- [x] P07.1 Spike an established SFU, initially evaluate LiveKit; record hosted or
   self-hosted choice, cost/capacity assumptions, region, TURN, and network requirements.
 - [x] P07.2 Build separate local-monitor and publish graphs: guide remains private;
   published audio contains instrumental plus microphone exactly once.
@@ -605,6 +605,8 @@ denial, provider-acknowledged nonce handover and one current audience player.
 Evidence: `/tmp/ktv-stream-release-room-media.log`; party units 53/53 include lease
 arrival/cancellation and delayed SDK unsubscribe/subscription regressions. The
 app/CDP route uses loopback SSH forwards; direct media connects to the SFU host.
+P07.1 selects the supervised self-hosted us-east-1 service and documents
+capacity/transfer/operating-cost assumptions in design section 10.3.
 Other P07 items and physical/network exit criteria remain open; this does not
 prove mobile support, acoustic alignment or distinct access networks.
 
@@ -1030,6 +1032,57 @@ leakage, actual mixer/input alignment, mobile capture, access-network impairment
 and one-to-many streaming measurements remain required gates. Synthetic EC2
 capture and separate browser contexts do not prove those criteria. No application
 change or deployment was required; public media remains disabled.
+
+
+Public fanout checkpoint (2026-10-01): `test:party:public-transport` now supports
+an owned remote Chrome/CDP fixture without an app reverse tunnel or microphone
+upload, plus bounded concurrent audiences (0–59) and measurement duration
+(10–180 seconds). Load mode uses the app's single-video 350 kbit/s, 25 fps,
+maintain-resolution settings and 64 kbit/s Opus/RED audio settings. Each receiver
+plays actual audio. Reconnect clears old peer counters, and route classification
+uses each peer transport's selected candidate pair, resolved within its own
+stats report ([WebRTC stats definition](https://www.w3.org/TR/webrtc-stats/#dom-rtctransportstats-selectedcandidatepairid)).
+
+Final run **21/21**, process exit 0: `/tmp/ktv-public-fanout-playout.log`.
+One publisher and 19 remote Chrome 137 audience contexts (10 direct, 9 strict
+TLS-only TURN) stayed connected over a 62.7-second simultaneous window. All
+received 1280×720 video and played audio; each emitted at least 2,859,840 audio
+samples. Reported RTP packet loss and dropped video frames were zero. Decoded
+video averaged **12.89–12.94 fps**, below the nominal 25-fps capture setting.
+Audio jitter-buffer averages were **230.41–358.73 ms**, video **165.10–247.31 ms**;
+these are receiver buffer statistics, not measured end-to-end or A/V alignment.
+Aggregate received RTP payload was about **5.30 Mbit/s**. Sampled supervisor/SFU
+container CPU peaked at **50.83%** (Docker scale: 100% = one CPU), memory at
+**183.2 MiB**. Host-network Docker NetIO was unavailable; RTP deltas supply the
+transfer observation. Client CPU was not measured, so the FPS limit is not
+attributed to a particular component.
+
+An authorized audience deliberately disconnected, rejoined using its valid
+credential, decoded new video and resumed actual audio playout. Every audience
+then received provider-acknowledged removal and its old token was denied at the
+public gateway; the publisher was likewise removed and denied. Owned browser,
+profile, CDP tunnel, media container and private fixtures were removed. Ports
+9243/3103/7880/7881/5349 were empty afterward. Public features still report
+rooms=true, guide=true, media=false. Production users/rooms were not touched.
+
+Earlier runs: `/tmp/ktv-public-fanout-first.log` and `...-final.log` passed 20
+RTP/video-only checks with SDK default encoding. `...-measured.log` failed the
+final nominated-pair route assertion while media continued; insufficient route
+details were retained to determine that run's cause. `...-diagnostic.log` passed
+20/20 with route details but decoded 960×540 under default simulcast; it is not
+720p app-settings evidence. `...-app-settings.log` passed 20/20 at 1280×720 before
+actual audio playout was added. Those historical runs do not substitute for the
+final playout measurement or prove the intermittent assertion's root cause.
+
+P07.1 is complete with the initial supervised self-hosted LiveKit choice in
+us-east-1, capacity assumptions and operating-cost worksheet in design section
+10.3. P07.10 remains open: short synthetic fanout and deliberate reconnect are
+verified, but sustained/multi-room/device-ceiling load, nominal frame-rate under
+representative clients, automatic network-drop recovery, imposed jitter/loss,
+physical devices, real access networks, end-to-end latency and A/V timing remain
+required. This one-browser separate-EC2 workload is not 19 physical devices or a
+production support claim. No application deployment was needed; public media
+remains disabled.
 
 ```text
 Date:

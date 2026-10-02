@@ -14,6 +14,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import WebSocket from '../server/node_modules/ws/wrapper.mjs'
 import { AccessToken, RoomServiceClient, TrackSource } from '../server/node_modules/livekit-server-sdk/dist/index.js'
+import { createOwnedRemoteBrowser } from './party-remote-browser.mjs'
 import { prepareMediaConfig } from './prepare-ktv-media-config.mjs'
 
 const exec = promisify(execFile), origin = process.env.KTV_TRANSPORT_ORIGIN || 'https://music.micstec.com'
@@ -23,10 +24,15 @@ assert.ok(publicIp && turnDomain && networkInterface && tlsRoot, 'Supply KTV_TRA
 const image = process.env.KTV_TRANSPORT_IMAGE || 'ktv-party-media:release'
 const clientLocation = process.env.KTV_TRANSPORT_CLIENT_LOCATION || 'same-host'
 assert.ok(['same-host', 'remote-ec2'].includes(clientLocation), 'Unknown client location')
+const audienceCount = Number(process.env.KTV_TRANSPORT_AUDIENCES || 0)
+const loadSeconds = Number(process.env.KTV_TRANSPORT_LOAD_SECONDS || 60)
+assert.ok(Number.isInteger(audienceCount) && audienceCount >= 0 && audienceCount <= 59, 'Audience count must be 0–59')
+assert.ok(Number.isInteger(loadSeconds) && loadSeconds >= 10 && loadSeconds <= 180, 'Load duration must be 10–180 seconds')
+const credentialSeconds = audienceCount ? 900 : 120
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ktv-public-transport-'))
 const configRoot = path.join(root, 'private'), container = `ktv-transport-${randomUUID().slice(0, 8)}`
 const room = `ktv-${randomUUID()}`, grants = new Map(), contexts = [], pending = new Map()
-let backend, browser, running = false, nextId = 0, passed = 0, controlSecret, provider, probeStep = 'configuration', lastSession
+let backend, browser, remoteBrowser, running = false, nextId = 0, passed = 0, controlSecret, provider, probeStep = 'configuration', lastSession
 const check = (condition, label) => { assert.ok(condition, label); passed++; console.log('PASS', label) }
 const poll = async (work, label, timeout = 20000) => {
   const deadline = Date.now() + timeout
@@ -79,16 +85,21 @@ async function page(mode) {
 }
 async function issue(scope) {
   const identity = `ktv-media-${randomUUID()}`
-  grants.set(identity, { identity, room, scope, expires: Date.now() + 120000, revoked: false, removed: false })
-  const access = new AccessToken('ktv-party', provider.secret, { identity, ttl: 120 })
+  grants.set(identity, { identity, room, scope, expires: Date.now() + credentialSeconds * 1000, revoked: false, removed: false })
+  const access = new AccessToken('ktv-party', provider.secret, { identity, ttl: credentialSeconds })
   access.addGrant({ roomJoin: true, room, canPublish: scope === 'publisher', canSubscribe: scope === 'audience', canPublishData: false,
     canPublishSources: scope === 'publisher' ? [TrackSource.MICROPHONE, TrackSource.CAMERA] : [] })
   return { identity, token: await access.toJwt() }
 }
 const stats = session => evaluate(session, `(async()=>{
-  const reports=(await Promise.all(transportPeers.map(peer=>peer.getStats()))).flatMap(report=>[...report.values()]);
-  const pairs=reports.filter(item=>item.type==='candidate-pair'&&item.state==='succeeded'&&item.nominated);
-  const candidates=pairs.map(pair=>reports.find(item=>item.id===pair.localCandidateId)).filter(Boolean);
+  const groups=(await Promise.all(transportPeers.map(peer=>peer.getStats()))).map(report=>[...report.values()]);
+  const reports=groups.flat();
+  // Resolve IDs within each peer's report and follow the transport's current
+  // selection. Nominated/succeeded historical pairs need not carry current RTP.
+  const selected=groups.flatMap(rows=>rows.filter(item=>item.type==='transport'&&item.selectedCandidatePairId).map(item=>{
+    const pair=rows.find(value=>value.id===item.selectedCandidatePairId);return {pair,candidate:rows.find(value=>value.id===pair?.localCandidateId)};
+  })).filter(item=>item.pair?.state==='succeeded'&&item.candidate);
+  const pairs=selected.map(item=>item.pair), candidates=selected.map(item=>item.candidate);
   const inbound=reports.filter(item=>item.type==='inbound-rtp');
   const configuredUrls=transportPeers.flatMap(peer=>(peer.getConfiguration().iceServers||[]).flatMap(item=>[].concat(item.urls)));
   return { pairs:pairs.length, types:candidates.map(item=>item.candidateType),
@@ -98,17 +109,35 @@ const stats = session => evaluate(session, `(async()=>{
     audioBytes:inbound.filter(item=>item.kind==='audio').reduce((sum,item)=>sum+(item.bytesReceived||0),0),
     videoBytes:inbound.filter(item=>item.kind==='video').reduce((sum,item)=>sum+(item.bytesReceived||0),0),
     frames:inbound.filter(item=>item.kind==='video').reduce((sum,item)=>sum+(item.framesDecoded||0),0),
+    packetsLost:inbound.reduce((sum,item)=>sum+Math.max(0,item.packetsLost||0),0),
+    packetsReceived:inbound.reduce((sum,item)=>sum+(item.packetsReceived||0),0),
+    jitterMs:inbound.map(item=>(item.jitter||0)*1000),
+    roundTripMs:pairs.map(item=>(item.currentRoundTripTime||0)*1000),
+    jitterBuffers:['audio','video'].map(kind=>({kind,
+      delay:inbound.filter(item=>item.kind===kind).reduce((sum,item)=>sum+(item.jitterBufferDelay||0),0),
+      emitted:inbound.filter(item=>item.kind===kind).reduce((sum,item)=>sum+(item.jitterBufferEmittedCount||0),0)})),
+    resolutions:inbound.filter(item=>item.kind==='video').map(item=>({width:item.frameWidth,height:item.frameHeight})),
+    framesDropped:inbound.reduce((sum,item)=>sum+(item.framesDropped||0),0),
     state:window.performanceRoom?.state };
 })()`)
 async function connect(session, credential) {
   probeStep = 'public signaling and ICE connection'
   await evaluate(session, `(async()=>{
     const {Room,RoomEvent}=LivekitClient;
-    window.performanceRoom=new Room({adaptiveStream:false,dynacast:false,reconnectPolicy:{nextRetryDelayInMs:()=>null}});window.tracks=[];
+    window.transportPeers=[]; window.performanceRoom=new Room({adaptiveStream:false,dynacast:false,reconnectPolicy:{nextRetryDelayInMs:()=>null}});window.tracks=[];
     performanceRoom.on(RoomEvent.TrackSubscribed,track=>tracks.push(track));
     await performanceRoom.connect(${JSON.stringify(origin.replace('https:', 'wss:') + '/api/ktv/media')},${JSON.stringify(credential.token)},
       {rtcConfig:{iceTransportPolicy:transportMode==='direct'?'all':'relay'}});return true;
   })()`)
+}
+async function playAudienceAudio(session) {
+  await evaluate(session, `(async()=>{
+    const audioTracks=tracks.filter(track=>track.kind==='audio');
+    for(const track of audioTracks){const element=document.createElementNS('http://www.w3.org/1999/xhtml','audio');
+      track.attach(element);document.documentElement.appendChild(element);await element.play();}
+    await performanceRoom.startAudio();return true;
+  })()`)
+  await poll(async () => (await stats(session)).jitterBuffers.some(item=>item.kind==='audio'&&item.emitted>0), 'actual received audio playout')
 }
 const denied = (session, credential) => evaluate(session, `fetch(${JSON.stringify(origin + '/api/ktv/media/rtc/validate')},
   {headers:{Authorization:${JSON.stringify('Bearer ' + credential.token)}}}).then(response=>response.status===403)`)
@@ -149,7 +178,12 @@ try {
   check(true, 'supervisor owns SFU on production media ports with isolated policy')
   const response = await exec('curl', ['-sS', '-A', 'Mozilla/5.0', '--max-time', '10', '-w', '\n%{http_code}', origin + '/api/ktv/media/rtc/validate'])
   check(response.stdout.trim() === 'Media access unavailable\n403', 'public nginx/CDN signaling reaches gateway and rejects missing credentials')
-  const info = await (await fetch((process.env.CHROME_DEBUG_URL || 'http://127.0.0.1:9230') + '/json/version')).json()
+  if (process.env.KTV_TRANSPORT_SSH_HOST) {
+    assert.equal(clientLocation, 'remote-ec2', 'Owned remote fixture requires remote-ec2 client label')
+    remoteBrowser = await createOwnedRemoteBrowser({ host: process.env.KTV_TRANSPORT_SSH_HOST,
+      knownHosts: process.env.KTV_TRANSPORT_KNOWN_HOSTS, debugPort: Number(process.env.KTV_TRANSPORT_CHROME_PORT || 9243) })
+  }
+  const info = await (await fetch((remoteBrowser?.debuggerUrl || process.env.CHROME_DEBUG_URL || 'http://127.0.0.1:9230') + '/json/version')).json()
   browser = new WebSocket(info.webSocketDebuggerUrl); await once(browser, 'open')
   browser.on('message', raw => { const message = JSON.parse(raw); if (!message.id) return; const task = pending.get(message.id); if (!task) return; pending.delete(message.id); message.error ? task.reject(new Error('CDP command failed')) : task.resolve(message.result) })
   console.log('Browser:', info.Browser, '; client location:', clientLocation)
@@ -161,11 +195,12 @@ try {
   await evaluate(singer, `(async()=>{
     window.audioContext=new AudioContext();await audioContext.resume();const oscillator=audioContext.createOscillator();oscillator.frequency.value=440;
     const destination=audioContext.createMediaStreamDestination();oscillator.connect(destination);oscillator.start();
-    const canvas=document.createElementNS('http://www.w3.org/1999/xhtml','canvas');canvas.width=640;canvas.height=360;
-    const ctx=canvas.getContext('2d');window.videoTimer=setInterval(()=>{ctx.fillStyle='#102030';ctx.fillRect(0,0,640,360);ctx.fillStyle='white';ctx.font='32px sans-serif';ctx.fillText('KTV transport '+Date.now(),20,180)},100);
-    const video=canvas.captureStream(10);
-    await performanceRoom.localParticipant.publishTrack(destination.stream.getAudioTracks()[0],{name:'performance-mix',source:LivekitClient.Track.Source.Microphone,stream:'performance'});
-    await performanceRoom.localParticipant.publishTrack(video.getVideoTracks()[0],{name:'performance-lyrics',source:LivekitClient.Track.Source.Camera,stream:'performance'});return true;
+    const load = ${audienceCount > 0};
+    const canvas=document.createElementNS('http://www.w3.org/1999/xhtml','canvas');canvas.width=load?1280:640;canvas.height=load?720:360;
+    const ctx=canvas.getContext('2d');window.videoTimer=setInterval(()=>{ctx.fillStyle='#102030';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.fillStyle='#28aa60';ctx.fillRect(Date.now()%1000,240,180,40);ctx.fillStyle='white';ctx.font='32px sans-serif';ctx.fillText('KTV transport '+Date.now(),20,180)},load?40:100);
+    const video=canvas.captureStream(load?25:10);
+    await performanceRoom.localParticipant.publishTrack(destination.stream.getAudioTracks()[0],{name:'performance-mix',source:LivekitClient.Track.Source.Microphone,stream:'performance',...(load?{audioPreset:{maxBitrate:64000},dtx:false,red:true}:{})});
+    await performanceRoom.localParticipant.publishTrack(video.getVideoTracks()[0],{name:'performance-lyrics',source:LivekitClient.Track.Source.Camera,stream:'performance',...(load?{degradationPreference:'maintain-resolution',simulcast:false,videoEncoding:{maxBitrate:350000,maxFramerate:25}}:{})});return true;
   })()`)
   probeStep = 'provider publisher tracks'
   await poll(async () => (await provider.listParticipants(room)).some(item => item.identity === publisher.identity && item.tracks.length === 2), 'provider reports published audio/video')
@@ -185,6 +220,59 @@ try {
     await poll(() => evaluate(listener, "performanceRoom.state==='disconnected'"), `${mode} audience revoked`)
     check(grants.get(audience.identity).removed, `${mode} revocation has provider acknowledgment`)
     check(await denied(listener, audience), `${mode} revoked unexpired JWT cannot restore public media access`)
+  }
+  if (audienceCount) {
+    const listeners = []
+    for (let index = 0; index < audienceCount; index++) {
+      const mode = index % 2 ? 'turn-tls' : 'direct', session = await page(mode), credential = await issue('audience')
+      await connect(session, credential)
+      await poll(async () => { const value = await stats(session); return value.audioBytes > 0 && value.frames >= 10 }, `load audience ${index + 1} receives`, 30000)
+      await playAudienceAudio(session)
+      listeners.push({ session, credential, mode })
+      console.log(`Load audience ${index + 1}/${audienceCount} connected (${mode})`)
+    }
+    check((await provider.listParticipants(room)).length === audienceCount + 1, 'one publisher fans out to every requested concurrent audience')
+    probeStep = 'concurrent fanout measurement'
+    const baseline = await Promise.all(listeners.map(item => stats(item.session)))
+    const started = Date.now(), samples = [], resources = []
+    while (Date.now() - started < loadSeconds * 1000) {
+      await new Promise(resolve => setTimeout(resolve, 2000))
+      samples.push(await Promise.all(listeners.map(item => stats(item.session))))
+      const usage = JSON.parse((await exec('docker', ['stats', '--no-stream', '--format', '{{json .}}', container])).stdout)
+      resources.push({ cpu: usage.CPUPerc, memory: usage.MemUsage, network: usage.NetIO })
+      assert.ok(samples.at(-1).every(item => item.state === 'connected'), 'All load audiences must stay connected')
+    }
+    const final = samples.at(-1), durations = (Date.now() - started) / 1000
+    const metrics = final.map((item, index) => {
+      const before = baseline[index], frames = item.frames - before.frames, audio = item.audioBytes - before.audioBytes, video = item.videoBytes - before.videoBytes
+      const lost = Math.max(0, item.packetsLost - before.packetsLost), received = item.packetsReceived - before.packetsReceived
+      return { mode: listeners[index].mode, fps: Number((frames / durations).toFixed(2)), audioBytes: audio, videoBytes: video,
+        packetLossPercent: Number((100 * lost / Math.max(1, lost + received)).toFixed(3)), framesDropped: item.framesDropped - before.framesDropped,
+        jitterBufferMs: item.jitterBuffers.map(value => { const previous = before.jitterBuffers.find(old => old.kind === value.kind), emitted = value.emitted - previous.emitted;
+          return { kind: value.kind, ms: emitted > 0 ? Number((1000 * (value.delay - previous.delay) / emitted).toFixed(2)) : null }; }),
+        audioPlayoutSamples: item.jitterBuffers.find(value=>value.kind==='audio').emitted - before.jitterBuffers.find(value=>value.kind==='audio').emitted,
+        resolutions: item.resolutions, pairs: item.pairs, candidateTypes: item.types, tls: item.tls, tlsOnly: item.tlsOnly, relayProtocols: item.relayProtocols,
+        jitterMs: item.jitterMs.map(value => Number(value.toFixed(2))), roundTripMs: item.roundTripMs.map(value => Number(value.toFixed(2))) }
+    })
+    console.log('Fanout measurement:', JSON.stringify({ audiences: audienceCount, seconds: Number(durations.toFixed(1)), source: 'synthetic 1280x720 canvas at 25 fps, app single-video/350-kbit and audio/64-kbit settings', metrics, resources }))
+    check(metrics.every(item => item.audioBytes > 0 && item.videoBytes > 0 && item.fps >= 5), 'every concurrent audience advances audio and decodes at least five video frames per second')
+    check(metrics.every(item => item.audioPlayoutSamples > 0), 'every concurrent audience decodes and plays received audio')
+    check(final.every((item, index) => item.pairs > 0 && (listeners[index].mode === 'direct' ? !item.types.includes('relay') : item.types.every(value=>value==='relay') && item.tlsOnly && item.tls && item.relayProtocols.every(value=>['tls','tcp'].includes(value)))), 'concurrent direct and strict TLS relay audiences keep their intended ICE routes')
+    // An authorized user can deliberately leave and reconnect with their still
+    // live credential. This is not a simulated Wi-Fi/LTE outage or automatic retry.
+    probeStep = 'authorized audience reconnect'
+    const reconnect = listeners[0]
+    await evaluate(reconnect.session, 'performanceRoom.disconnect()')
+    await poll(async () => !(await provider.listParticipants(room)).some(item => item.identity === reconnect.credential.identity), 'load audience leaves provider')
+    await connect(reconnect.session, reconnect.credential)
+    await poll(async () => { const value = await stats(reconnect.session); return value.state === 'connected' && value.frames >= 10 }, 'authorized audience reconnect')
+    await playAudienceAudio(reconnect.session)
+    check((await provider.listParticipants(room)).some(item => item.identity === reconnect.credential.identity), 'authorized unexpired audience credential permits deliberate reconnect')
+    probeStep = 'fanout audience revocation'
+    for (const item of listeners) grants.get(item.credential.identity).revoked = true
+    await poll(async () => listeners.every(item => grants.get(item.credential.identity).removed) && (await provider.listParticipants(room)).length === 1, 'all fanout audience revocations acknowledged', 30000)
+    check(listeners.every(item => grants.get(item.credential.identity).removed), 'all concurrent audience revocations have provider acknowledgment')
+    check((await Promise.all(listeners.map(item => denied(item.session, item.credential)))).every(Boolean), 'all revoked fanout credentials are denied at the public gateway')
   }
   grants.get(publisher.identity).revoked = true
   probeStep = 'publisher revocation'
@@ -208,6 +296,7 @@ try {
 } finally {
   if (browser?.readyState === WebSocket.OPEN) for (const browserContextId of contexts) await cdp('Target.disposeBrowserContext', { browserContextId }).catch(() => {})
   browser?.close()
+  if (remoteBrowser) await remoteBrowser.close().catch(() => { console.error('Owned remote browser cleanup was not verified'); process.exitCode = 1 })
   if (running) await exec('docker', ['rm', '-f', container]).catch(() => {})
   if (backend?.listening) await new Promise(resolve => { backend.close(resolve); backend.closeAllConnections() })
   await fs.rm(root, { recursive: true, force: true })

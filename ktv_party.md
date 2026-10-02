@@ -886,6 +886,57 @@ received mix. Group conversation, echo management, video cameras, and simultaneo
 remote duets are separate extensions; initial performance microphone access belongs
 to the current singer/capture device only.
 
+### 10.3 Initial SFU deployment and operating budget
+
+Decision (2026-10-01): use the implemented self-hosted, supervised LiveKit service
+in AWS `us-east-1` for the initial online/hybrid release. Current test infrastructure
+is the existing `t3a.xlarge` in `us-east-1a`; this does not enable the production
+media flag. The policy gateway and supervisor enforce provider-acknowledged
+revocation and stop the SFU when authoritative room policy cannot be reached.
+Operating the existing tested path gives control over that shutdown behavior.
+A hosted service remains a later option after demonstrating the same authorization
+and revocation contract, including denial of old unexpired JWTs through every
+signaling/reconnect path. Multi-region operation is a separate future phase.
+
+Initial capacity planning assumes one active singer/mix and one 1280×720 lyric
+video at 25 fps per room, 20 people and one viewing device per person: at most
+19 audience streams alongside the publisher. Up to 59 audience device sessions
+is a boundary scenario for the three-device-per-member ceiling, **not verified
+production capacity**. Multiple rooms multiply these budgets. The provider room
+limit is 61 for additive headroom; authorization/device limits remain enforced by
+room policy. For sizing, tracks, subscribers and bitrate all affect SFU load;
+measure the actual workload as described in [LiveKit benchmarking guidance](https://docs.livekit.io/transport/self-hosting/benchmark/).
+
+Illustrative bandwidth assumptions: 500 kbit/s lyric video plus 64 kbit/s audio,
+with 25% allowance for protocol overhead and operating headroom. Current app
+publishing targets 350 kbit/s video and 64 kbit/s Opus with RED; redundancy and
+packet overhead can increase on-wire audio bitrate. These worksheet values
+are planning inputs, not configured caps or an observed worst case.
+
+| Concurrent audiences | Payload egress | Egress with allowance | Decimal GB per room-hour with allowance |
+| --- | --- | --- | --- |
+| 19 | 10.72 Mbit/s | 13.40 Mbit/s | 6.03 GB |
+| 59, unverified device ceiling | 33.28 Mbit/s | 41.60 Mbit/s | 18.72 GB |
+
+Use `GB = audience_count × (video_kbit_s + audio_kbit_s) × 3600 / 8 / 1,000,000`,
+then multiply by 1.25 for the example allowance. Budget monthly transfer from
+actual concurrent room-hours and measured bitrate. Add compute/CPU-credit,
+public IPv4, disk/log/backup and operational costs at current account/region rates.
+Existing compute has incremental resource cost and may require a dedicated SFU
+host after sustained-load measurements. TURN forwarding on the same host is
+included in each audience's media egress; cross-zone/host transfer can add cost.
+AWS's shared monthly outbound allowance must be deducted only once across the
+account's eligible traffic, not once per room or service. Consult current
+[AWS EC2 pricing](https://aws.amazon.com/ec2/pricing/on-demand/) and account billing
+before converting this worksheet into a dollar estimate.
+
+HTTPS/WSS 443 reaches only the authorized signaling gateway. Direct ICE and TURN
+use the specific ports, DNS-only trusted TURN hostname, certificates and firewall
+rules in [the deployment guide](ktv_party_deploy.md). Required physical, mobile
+and distinct access-network tests remain release gates. A short separate-host
+synthetic fanout run supports the 19-audience test scenario only; it does not
+establish sustained multi-room capacity or latency for geographically distant users.
+
 ## 11. Operational behavior and limits
 
 Implemented defaults: 20 members per room, the original browser plus two paired
@@ -959,7 +1010,7 @@ measurement. Exclude credentials and raw microphone audio from diagnostics.
 | Sync target | 50 ms p95 on a documented setup | Acoustic measurement |
 | Background/BT support | Supported only where measured | Device matrix |
 | Lyrics for remote audiences | Publisher-captured lyric video | Streaming spike |
-| SFU deployment | Evaluate LiveKit; hosted vs self-hosted undecided | Streaming spike |
+| SFU deployment | Self-hosted supervised LiveKit in us-east-1 for the initial release | Device/network gates before enablement; capacity review before expansion |
 | Room/queue limits | Defaults in section 11 | Load test and usability review |
 | Independent vocal control | Keep original mix initially; retain stems later | Asset pipeline extension |
 

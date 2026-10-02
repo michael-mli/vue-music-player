@@ -20,10 +20,12 @@ async function unusedLocalPort(port) {
 }
 
 export async function createOwnedRemoteBrowser({ host, knownHosts, micFile, frontendPort, debugPort = 9243 }) {
-  if (!/^[A-Za-z0-9_-]+@[A-Za-z0-9.-]+$/.test(host || '') || !knownHosts || !micFile ||
-    ![frontendPort, debugPort].every(port => Number.isInteger(port) && port >= 1024 && port <= 65535) || frontendPort === debugPort) {
+  if (!/^[A-Za-z0-9_-]+@[A-Za-z0-9.-]+$/.test(host || '') || !knownHosts ||
+    ![debugPort, ...(frontendPort === undefined ? [] : [frontendPort])].every(port => Number.isInteger(port) && port >= 1024 && port <= 65535) || frontendPort === debugPort) {
     throw new Error('Invalid owned remote browser fixture configuration')
   }
+  const remotePorts = [debugPort, ...(frontendPort === undefined ? [] : [frontendPort])]
+  const portFilter = '( ' + remotePorts.map(port => `sport = :${port}`).join(' or ') + ' )'
   await unusedLocalPort(debugPort)
   const options = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'StrictHostKeyChecking=yes',
     '-o', `UserKnownHostsFile=${knownHosts}`]
@@ -63,9 +65,9 @@ echo removed
     if (!removed) throw new Error('Remote browser fixture cleanup was not verified')
   }
   try {
-    root = await ssh(`test -x /usr/bin/google-chrome && test -z "$(/usr/bin/ss -ltnH '( sport = :${debugPort} or sport = :${frontendPort} )')" && umask 077 && mktemp -d /tmp/ktv-room-browser.XXXXXX`)
+    root = await ssh(`test -x /usr/bin/google-chrome && test -z "$(/usr/bin/ss -ltnH '${portFilter}')" && umask 077 && mktemp -d /tmp/ktv-room-browser.XXXXXX`)
     if (!/^\/tmp\/ktv-room-browser\.[A-Za-z0-9]+$/.test(root)) { root = undefined; throw new Error('Remote owned directory was not verified') }
-    await run('scp', [...options, micFile, `${host}:${root}/microphone.wav`])
+    if (micFile) await run('scp', [...options, micFile, `${host}:${root}/microphone.wav`])
     const script = `#!/bin/bash
 set -u
 root="$1"
@@ -85,7 +87,7 @@ timeout --signal=TERM --kill-after=5s 900s /usr/bin/google-chrome \\
   --no-first-run --no-default-browser-check --no-proxy-server \\
   --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows \\
   --use-fake-device-for-media-stream --use-fake-ui-for-media-stream \\
-  --use-file-for-fake-audio-capture="$root/microphone.wav" \\
+  ${micFile ? '--use-file-for-fake-audio-capture="$root/microphone.wav"' : ''} \\
   --remote-debugging-address=127.0.0.1 --remote-debugging-port=${debugPort} \\
   --user-data-dir="$root/profile" about:blank &
 child=$!
@@ -104,7 +106,7 @@ echo $!
     pid = Number(output)
     forward = spawn('ssh', [...options, '-o', 'ExitOnForwardFailure=yes', '-N',
       '-L', `127.0.0.1:${debugPort}:127.0.0.1:${debugPort}`,
-      '-R', `127.0.0.1:${frontendPort}:127.0.0.1:${frontendPort}`, host], { stdio: 'ignore' })
+      ...(frontendPort === undefined ? [] : ['-R', `127.0.0.1:${frontendPort}:127.0.0.1:${frontendPort}`]), host], { stdio: 'ignore' })
     let forwardError = false
     forward.on('error', () => { forwardError = true })
     const debuggerUrl = `http://127.0.0.1:${debugPort}`
@@ -113,9 +115,9 @@ echo $!
       let ready = false
       try { ready = (await fetch(debuggerUrl + '/json/version', { signal: AbortSignal.timeout(1000) })).ok } catch { /* Wait for the owned browser and forwards. */ }
       if (ready) {
-        const listeners = (await ssh(`/usr/bin/ss -ltnH '( sport = :${frontendPort} or sport = :${debugPort} )'`))
+        const listeners = (await ssh(`/usr/bin/ss -ltnH '${portFilter}'`))
           .split('\n').filter(Boolean).map(line => line.trim().split(/\s+/)[3])
-        if (listeners.length !== 2 || !listeners.includes(`127.0.0.1:${frontendPort}`) || !listeners.includes(`127.0.0.1:${debugPort}`)) {
+        if (listeners.length !== remotePorts.length || !remotePorts.every(port => listeners.includes(`127.0.0.1:${port}`))) {
           throw new Error('Owned remote forwards/browser must bind loopback only')
         }
         return { debuggerUrl, close }

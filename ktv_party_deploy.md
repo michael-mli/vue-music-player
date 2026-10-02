@@ -197,6 +197,28 @@ KTV_TRANSPORT_TLS=/home/mli/ktv-media-private/tls \
 npm run test:party:public-transport
 ```
 
+To let the checker own a remote Chrome process and its CDP tunnel, add
+`KTV_TRANSPORT_CLIENT_LOCATION=remote-ec2`,
+`KTV_TRANSPORT_SSH_HOST=operator@owned-host`, and
+`KTV_TRANSPORT_KNOWN_HOSTS=/path/to/already-trusted-known_hosts`.
+No app reverse forward or microphone upload is needed for this transport probe.
+`KTV_TRANSPORT_CHROME_PORT` defaults to 9243. The remote profile/browser has a
+15-minute watchdog and is removed on completion; existing profiles remain untouched.
+
+Add `KTV_TRANSPORT_AUDIENCES=19 KTV_TRANSPORT_LOAD_SECONDS=60` for concurrent
+fanout measurement. Counts are bounded to 59, durations to 10–180 seconds.
+Synthetic credentials last 15 minutes in load mode and all are revoked before
+cleanup. The source is a 1280×720 moving canvas at 25 fps with oscillator audio;
+publishing uses the app’s single-video 350 kbit/s and audio 64 kbit/s settings.
+Receivers alternate direct and strict TLS-only TURN. The log records per-audience
+FPS, decoded resolution, selected ICE route, RTP byte growth/loss, jitter/round-trip
+and separate audio/video jitter-buffer statistics with actual received audio
+playout, plus
+container CPU and memory samples. Host-network Docker `NetIO` may report zero;
+use RTP byte deltas for this test's transfer observation. Jitter-buffer delay is
+not end-to-end latency. Deliberate authorized disconnect/reconnect is checked;
+Wi-Fi/LTE drops and automatic recovery require separate validation.
+
 The checker creates separate temporary provider/control keys and a bounded
 loopback policy fixture. It owns the SFU through the normal PID 1 supervisor,
 uses the actual public HTTPS/WSS nginx/CDN path, checks decoded synthetic media,
