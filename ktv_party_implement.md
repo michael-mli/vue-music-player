@@ -2369,6 +2369,17 @@ publication checks remain before deployment. Public app,
 backend and disabled media flag are unchanged. Arbitrarily buffered network audio
 and physical output remain acceptance work.
 
+The committed `28bde60` production build also passes **41/41** integrated native
+Chrome 154 stage-replacement checks
+(`/tmp/ktv-encoded-expiry-release-replacement-20261002.log`): the expired output
+stays quiet through native clock suspension, reassignment, resume and queued old
+callbacks. Release inspection found the small encoded worker was inlined as a
+data URL. The build now emits `.worker.js` as a separate hashed same-origin asset,
+like the rendering worklet, for explicit JavaScript delivery and PWA precaching.
+Final UI/PWA and actual publisher checks must exercise that emitted asset before
+publication. The initial local foreground launcher used the wrong display; the
+owned desktop uses `:2`, not the unauthenticated login display `:0`.
+
 ### Release record
 
 | Release | Build/commit | Environment/URL | Date | Gates and evidence | Remaining scope |

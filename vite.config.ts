@@ -121,8 +121,8 @@ export default defineConfig({
   },
   publicDir: false,
   build: {
-    // Worklet modules need their own hashed URL, including cached PWA upgrades.
-    assetsInlineLimit: file => file.endsWith('.worklet.js') ? false : undefined,
+    // Render worklets and RTP workers need hashed URLs and PWA cache entries.
+    assetsInlineLimit: file => file.endsWith('.worklet.js') || file.endsWith('.worker.js') ? false : undefined,
     rollupOptions: {
       input: {
         // Manually include icon files
