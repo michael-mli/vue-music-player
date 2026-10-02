@@ -2545,6 +2545,94 @@ background/lock/autoplay and field-installed PWA; full nominal audience and
 multi-room load; distinct Wi-Fi/LTE access networks; persistent SFU/TURN and final
 online/hybrid publication. Optional P09 enhancements follow the core release.
 
+### 2026-10-02 — Demand-driven native keyframe recovery experiment
+
+The fixed-interval results motivated a distinct private hypothesis: request
+recovery only on native video lag or stalled decoded-frame progress. The pure
+`scripts/party-keyframe-recovery.mjs` step receives native audio/video RTP reports
+and sample time; it never receives marker IDs, pixel values, lyric state, marker
+skew or source test transitions. It seeds a fresh progress window, validates
+stable SSRCs and nondecreasing counters, and rejects missing/stale evidence.
+
+The trigger is video behind audio by more than 150 ms on aligned native NTP
+playout estimates, bounded to two seconds, or no decoded-frame progress across
+a valid 500–2500-ms sample interval. Requests are separated by at least five
+seconds and suppressed when a new keyframe has just been decoded. Missing NTP
+estimates cannot produce a delay trigger; independently measured frame stalls
+can still qualify. Fresh phase windows preserve the request cooldown across
+network setup/settling gaps.
+
+The native sender helper now supports explicit requests without a periodic
+timer, preserving its single-video-sender check, exact fresh parameters, pending
+serialization and closed/ended/policy-failure behavior. The normal encoded-frame
+lease remains authoritative. The fixture records fixed recovery reasons and
+observes newly encoded keyframes after requests on the same sender. This is
+encoder-progress evidence; it does not uniquely attribute an individual keyframe
+when native provider recovery could also request one.
+
+`KTV_ROOM_TEST_DEMAND_KEYFRAMES=1` requires actual native A/V capture and a private
+marked codec artifact, rejects competing keyframe policies, and defaults off.
+This first experiment measures baseline and initial impaired publication only;
+its request delivery uses owned test coordination. Functional singer/hybrid
+handover is still exercised afterward, but production recovery signaling and
+post-handover timing are not implemented or proven by this fixture option.
+All original full-release requirements remain open.
+
+Fixture units pass **31/31**
+(`/tmp/ktv-demand-keyframe-fixtures-20261002.log`), including pending/closed manual
+requests, five-second cooldown, recent-keyframe suppression, missing estimates,
+counter resets, SSRC changes and stale samples. The native continuous UDP run
+`/tmp/ktv-vp8-demand-keyframe-continuous-udp-20261002.log` exits 1:
+
+- Baseline: six pairs, no unmatched edges, p95/max **100.50 ms**; measured source
+  **25.06 fps**, receiver **24.95 fps**.
+- Impaired phase times out before 40 matches. Across **85 samples / 89.00
+  seconds**, measured source **2.37 fps**, receiver **2.42 fps**; both nominal
+  cadence gates fail. Six requests fulfill and six later source samples show
+  newly encoded keyframes on the same sender.
+- Initial impaired source sample is already **13 fps / 38-kbit/s target**, before
+  the first recovery request. Available outgoing bitrate falls from **83,076**
+  to **30,000 bit/s**, with video target near 30 kbit/s. The network/encoder rate
+  collapse therefore precedes demand recovery; the run does not establish its
+  unique cause or prove the recovery rule caused it.
+- Playback remains `playing`, publisher still reports sending, encoded worker
+  reports `ready` without a silent fault, and browser runtime exceptions are zero.
+  Functional audience/singer/hybrid recovery after the timed-out phase is not
+  reached. This is failed evidence, not an impaired sync or nominal quality pass.
+
+The next investigation separates bandwidth-estimation behavior from reference
+recovery. The pinned SDK's `singlePeerConnection` defaults to true but can fall
+back; the effective transport must be observed rather than inferred from options.
+Passive `scripts/party-rtc-feedback.mjs` now records only fixed peer/description
+types, media kinds/directions and negotiated feedback/extension booleans, with
+bounded peer, section and SDP sizes. No SDP, payload/stream IDs, credentials,
+addresses or track labels are retained. Units pass **33/33**
+(`/tmp/ktv-feedback-demand-fixtures-20261002.log`). The native clean negotiation
+and functional run `/tmp/ktv-native-feedback-clean-20261002.log` passes **49/49**,
+using unchanged release `dist` with no recovery/impairment policy: provider
+readiness, private guide exclusion, audience/publisher capability recovery,
+singer replacement and both hybrid directions, with zero browser exceptions.
+This run does not measure A/V marker timing.
+
+The publisher has one observed native peer. Its local `sendonly` video offer and
+corresponding remote `recvonly` answer both negotiate **transport-cc and
+goog-remb feedback**, with transport-wide sequence and absolute-send-time
+extensions. The audience's active video answer negotiates **goog-remb without
+transport-cc feedback**. Reserved receive sections also exist; their advertised
+capabilities must not be mistaken for active delivery. The next distinct
+hypothesis is a scoped publisher feedback comparison, retaining a negotiated
+supported estimator, rather than disabling all congestion feedback. The pinned
+[server direction configuration](https://raw.githubusercontent.com/livekit/livekit/v1.13.7/pkg/rtc/config.go)
+distinguishes consolidated and legacy publisher capabilities, so capability
+assumptions alone are insufficient. No feedback override is implemented or shipped
+by this checkpoint. Native owned profiles, SFU and forwarding ports are cleaned.
+
+Public frontend `d33b209`, backend `f58a8f3`, media disabled, production artifacts
+and infrastructure are unchanged. All candidates retain the nominal measured
+quality and original 150-ms p95 / 250-ms maximum received A/V gates. Physical,
+mobile, post-handover timing, longer outages, full audience/multi-room capacity,
+distinct access networks and persistent online/hybrid release remain open.
+
 ### Release record
 
 | Release | Build/commit | Environment/URL | Date | Gates and evidence | Remaining scope |

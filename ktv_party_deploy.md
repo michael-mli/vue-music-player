@@ -591,6 +591,15 @@ both 500-ms and one-second periods fail impaired timing and nominal frame rates.
 Fixture request promises require measured encoded cadence as proof; none of
 these options enable public media or change the deployed app.
 
+The subsequent private demand-recovery run also fails completion and nominal
+cadence. Its video bitrate/frame-rate collapse begins before the first recovery
+request. Passive negotiation diagnostics on the unchanged release pass 49/49
+functional native checks and show that the publisher advertises and negotiates
+both transport-cc and goog-remb video feedback. A scoped feedback comparison is
+the next experiment; no estimator override is deployed. Keep all measured
+quality/timing and full-release gates intact. Evidence is in the implementation
+tracker's demand-recovery section.
+
 The current frontend preview is `d33b209`, deployed 2026-10-02; backend remains
 `f58a8f3`. Assets are `main-DU8DSm-f.js`, `main-DnE6rWx5.css`,
 `partyLeaseGuard.worklet-BWdT3O5D.js` and `partyEncodedLease.worker-BxVsrNxp.js`.

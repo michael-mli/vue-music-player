@@ -25,6 +25,8 @@ import { collectAvMediaStats } from './party-av-stats.mjs'
 import { analyseCodecQuality } from './party-av-codec-quality.mjs'
 import { installEncodedLeaseObserver } from './party-encoded-lease-observer.mjs'
 import { installSenderKeyframeExperiment } from './party-sender-keyframes.mjs'
+import { keyframeRecoveryStep } from './party-keyframe-recovery.mjs'
+import { collectRtcFeedback } from './party-rtc-feedback.mjs'
 import { nativeSyncTargetStep, nativeNetworkTargetStep, nativeRepairTargetStep, installNativeSyncExperiment } from './party-av-native-sync.mjs'
 
 const clientLocation = process.env.KTV_ROOM_TEST_CLIENT || 'same-host'
@@ -46,6 +48,9 @@ if (codecExperiment) {
 }
 const avTiming = process.env.KTV_ROOM_TEST_AV_TIMING === '1'
 const senderKeyframeMs = process.env.KTV_ROOM_TEST_SENDER_KEYFRAME_MS === undefined ? null : Number(process.env.KTV_ROOM_TEST_SENDER_KEYFRAME_MS)
+const demandKeyframes = process.env.KTV_ROOM_TEST_DEMAND_KEYFRAMES === '1'
+assert.ok(!demandKeyframes || avTiming && codecExperiment && codecExperiment.keyframeMs == null && senderKeyframeMs === null,
+  'Demand recovery requires a private native comparison without another keyframe policy')
 assert.ok(senderKeyframeMs === null || avTiming && codecExperiment && codecExperiment.keyframeMs == null &&
   Number.isInteger(senderKeyframeMs) && senderKeyframeMs >= 250 && senderKeyframeMs <= 5000,
   'Sender keyframes require a private native comparison without the worker keyframe policy')
@@ -76,6 +81,7 @@ assert.ok(!mediaImpairment || remoteMode, 'Media impairment requires the owned r
 const networkRecovery = process.env.KTV_ROOM_TEST_NETWORK_RECOVERY === '1'
 const routeHandover = process.env.KTV_ROOM_TEST_ROUTE_HANDOVER === '1'
 const handoverAv = process.env.KTV_ROOM_TEST_HANDOVER_AV === '1'
+assert.ok(!demandKeyframes || !handoverAv, 'Private demand-recovery measurement currently scopes one initial publisher')
 assert.ok(!handoverAv || avTiming && routeHandover && receiverSync === 'off' && receiverTargetMs === null,
   'Post-handover A/V requires native timing, full hybrid handover and unmodified receiver policy')
 const continuousImpairment = process.env.KTV_ROOM_TEST_CONTINUOUS_IMPAIRMENT === '1'
@@ -379,16 +385,18 @@ try {
   await poll(() => evaluate(phone, "document.querySelector('[data-party-media-status]')?.textContent.includes('Sending live singing')"), 'publisher ready through provider acknowledgment')
   await poll(() => evaluate(audience, "(() => { const video = document.querySelector('[data-party-media-screen] video'); return video?.srcObject?.getAudioTracks().length === 1 && video.srcObject.getVideoTracks().length === 1; })()"), 'audience receives both performance tracks')
   await poll(async () => (await api(1, pathRoom)).playback.state === 'playing', 'room plays after ready countdown')
-  if (senderKeyframeMs !== null) {
-    await evaluate(phone, `(${installSenderKeyframeExperiment.toString()})(${senderKeyframeMs})`)
+  if (senderKeyframeMs !== null || demandKeyframes) {
+    await evaluate(phone, `(${installSenderKeyframeExperiment.toString()})(${senderKeyframeMs ?? 5000}, ${demandKeyframes})`)
     senderKeyframePage = phone
-    console.log('Private native sender keyframe interval:', senderKeyframeMs)
+    console.log('Private native sender keyframe policy:', JSON.stringify({ periodMs: senderKeyframeMs, demandKeyframes }))
   }
   const firstPublisher = db.prepare("SELECT * FROM ktv_media_grants WHERE scope = 'publisher' AND state = 'active'").get()
   check(Boolean(firstPublisher.ready_at), 'provider-confirmed audio/video readiness is persisted for the exact publisher')
   const participants = await provider.listParticipants(`ktv-${room.room.id}`)
   check(participants.filter(item => item.identity === firstPublisher.identity).length === 1 && participants.find(item => item.identity === firstPublisher.identity).tracks.length === 2, 'actual SFU has one publisher with one mix and one lyric video')
   check(participants.find(item => item.identity === firstPublisher.identity).tracks.every(track=>track.stream==='performance'), 'SFU places performance audio and lyric video in the same synchronization stream')
+  console.log('Publisher negotiated feedback:', JSON.stringify(await evaluate(phone, `(${collectRtcFeedback.toString()})()`)))
+  console.log('Audience negotiated feedback:', JSON.stringify(await evaluate(audience, `(${collectRtcFeedback.toString()})()`)))
   const receiverGroups = await evaluate(audience, `(() => __peers.flatMap(peer => {
     const sdp=peer.remoteDescription?.sdp||'';
     return sdp.split(/(?:^|\\r?\\n)m=/).filter(section=>/^(audio|video) /.test(section))
@@ -440,7 +448,11 @@ try {
       selected.every(item=>item.protocol===impairmentProtocol&&item.port===(impairmentProtocol==='udp'?7882:7881)),
       'handover media keeps the configured delay/jitter/loss and selected proxy route')
   }
+  let recoveryLastRequest = null, recoveryPending, recoveryEncoded = 0
   async function measureAv(phase, sourcePage = phone) {
+    // Phase setup can include several seconds of network settling. Seed a fresh
+    // progress window while preserving the request cooldown across that gap.
+    let recoveryState
     const transitions = phase==='baseline'&&mediaImpairment?6:avTransitions
     const inboundBefore = await inboundTiming()
     const begin=await evaluate(audience, `__avObserver.begin(${JSON.stringify(phase)})`)
@@ -454,6 +466,30 @@ try {
           evaluate(audience,`(${collectAvMediaStats.toString()})()`),
         ])
         avTimingSamples.push({phase,source,receiver})
+        if (demandKeyframes) {
+          const audios = receiver.reports.filter(row => row.type === 'inbound-rtp' && row.kind === 'audio')
+          const videos = receiver.reports.filter(row => row.type === 'inbound-rtp' && row.kind === 'video')
+          const sourceVideos = source.reports.filter(row => row.type === 'outbound-rtp' && row.kind === 'video')
+          assert.ok(audios.length === 1 && videos.length === 1 && sourceVideos.length === 1,
+            'Private recovery must use exactly one native audio/video path')
+          const sourceVideo = sourceVideos[0]
+          if (recoveryPending && sourceVideo.ssrc === recoveryPending.ssrc &&
+            sourceVideo.keyFramesEncoded > recoveryPending.keys) {
+            recoveryEncoded++; recoveryPending = null
+          }
+          const decision = keyframeRecoveryStep(receiver.time, audios[0], videos[0], recoveryState)
+          assert.ok(decision.valid, 'Private recovery refuses missing, reset or stale native progress')
+          if (decision.request) recoveryLastRequest = receiver.time
+          recoveryState = { ...decision.state, lastRequestMs: recoveryLastRequest }
+          avTimingSamples.at(-1).keyframeRecovery = { request: decision.request, reason: decision.reason,
+            aheadMs: decision.aheadMs, encodedResponses: recoveryEncoded }
+          if (decision.request) {
+            assert.ok(Number.isFinite(sourceVideo.keyFramesEncoded), 'Native encoder keyframe evidence must exist before a recovery request')
+            assert.equal(await evaluate(sourcePage, 'window.__avSenderKeyframes.request()'), true,
+              'Demand recovery request is accepted by the current native sender')
+            recoveryPending = { ssrc: sourceVideo.ssrc, keys: sourceVideo.keyFramesEncoded }
+          }
+        }
         if (receiverSync !== 'off') avTimingSamples.at(-1).nativeSync = await evaluate(audience,
           `__avNativeSync.sample(${JSON.stringify(receiver)}${receiverSync === 'repair' ? ',' + JSON.stringify(source) : ''})`)
         const sample=await evaluate(sourcePage,`(() => {
@@ -749,6 +785,10 @@ try {
     console.log('Private native sender keyframe requests:', JSON.stringify(state))
     check(state.requests > 0 && state.fulfilled > 0 && [null, 'sender-ended'].includes(state.failure),
       'native sender keyframe requests complete without encoder or policy failure')
+    if (demandKeyframes) {
+      console.log('Private demand recovery encoded responses:', recoveryEncoded)
+      check(recoveryEncoded > 0, 'demand recovery observes actual newly encoded keyframes after requests')
+    }
   }
   const codecQualities=codecExperiment?avMeasurements.map(measurement=>
     analyseCodecQuality(avTimingSamples,measurement.phase,codecExperiment.codec,(senderKeyframeMs??codecExperiment.keyframeMs??null))):[]
