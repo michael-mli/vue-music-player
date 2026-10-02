@@ -1568,9 +1568,16 @@ For several late markers, arrival-to-presentation is **344–590 ms**, while rep
 decode processing is **1–5.5 ms**; other late markers have short post-arrival delay.
 Source selected transport RTT is **311–377 ms**. These timings indicate multiple
 delay components; they do not prove decoding or the adaptive hint is the cause.
-An isolated `KTV_ROOM_TEST_PLAYOUT_MAX_MS=150` comparison is in progress. The
+An isolated `KTV_ROOM_TEST_PLAYOUT_MAX_MS=150` comparison also fails, exit 1,
+`/tmp/ktv-capture-framerate-stream-150ms-udp-av.log`: baseline six-pair p95/max
+**83.35 ms**; impaired 40 matched pairs, one unmatched video/audio edge, skew
+**132.91 ms p50 / 377.65 ms p95 / 560.74 ms maximum**. Functional recovery and
+hybrid handover complete before the final timing assertion fails. The
 fixture accepts 50–500 ms, defaults to 500 and prints the effective value. Prepared
 production SFU policy and timing acceptance thresholds remain unchanged.
+The resolution adaptation candidate is reverted; the app retains its existing
+encoder policy. Next investigation: negotiated playout extension behavior and
+packet repair versus frame presentation timing. Online release remains gated.
 
 ```text
 Date:
