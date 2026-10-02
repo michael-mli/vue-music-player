@@ -324,6 +324,12 @@ The browser run defaults to 40 paired transitions per phase; an impaired run use
 six baseline transitions and 40 impaired transitions. Set
 `KTV_ROOM_TEST_AV_TRANSITIONS` to an integer from 6 to 60 to select the sample count.
 At the default, generated audio lasts 132 seconds and marker IDs use eight bits.
+An impaired phase begins after the existing two-second profile settling interval;
+it does not measure the first two seconds of an abrupt network change. Every
+transition observed after that boundary remains in the p95/maximum calculation.
+For comparison only, `KTV_ROOM_TEST_PLAYOUT_HINTS=off` disables the isolated SFU's
+adaptive video hint while retaining synchronized stream identities. The default
+is `adaptive` (0–500 ms). This fixture flag changes no prepared/live configuration.
 The 150 ms p95 / 250 ms maximum diagnostic gate is checked after collecting the
 phases, so a failing baseline cannot hide the impairment evidence or pass the run.
 This does not establish physical speaker/microphone timing. As of 2026-10-02,
@@ -371,6 +377,16 @@ publisher drift. The full failed evidence remains in the implementation tracker.
 All scripts remove their owned fixtures. This does not measure physical acoustic
 alignment or distinct Wi-Fi/LTE networks. Failed journeys remain recorded in the
 tracker until their concrete defect is resolved.
+
+Provider-readiness preview `e88783a` is deployed on 2026-10-02, assets
+`main-CXsosxfb.js` / `main-D0gBov56.css`. HTTP 409 pending confirmation has bounded
+same-nonce retries; unavailable/permission failures remain terminal. Backend
+127/127, party 81/81, exact UI 38/38, PWA 8/8, continuous TCP handover 63/63 and
+same-source UDP candidate 65/65 pass. Exact public release checks pass 18/18.
+Backend restarted with zero active audio rooms. Rollback backup:
+`/home/mli/ktv-party-provider-ready-predeploy.pvof0w47`; frontend assets retained.
+Rooms/guide stay enabled and media disabled. Failed impaired timing and the
+59-audience setup failure remain open in the tracker.
 
 Before enabling online rooms publicly, record these results:
 

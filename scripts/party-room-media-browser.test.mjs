@@ -30,6 +30,8 @@ const avTransitions = Number(process.env.KTV_ROOM_TEST_AV_TRANSITIONS || 40)
 assert.ok(Number.isInteger(avTransitions)&&avTransitions>=6&&avTransitions<=60, 'A/V transitions must be 6–60')
 const fixtureSeconds = avTiming ? Math.max(60, (avTransitions + 6) * 2 + 40) : 60
 const avMeasurements = []
+const playoutHints = process.env.KTV_ROOM_TEST_PLAYOUT_HINTS || 'adaptive'
+assert.ok(['adaptive','off'].includes(playoutHints),'Unknown SFU playout hint mode')
 assert.ok(!avTiming || remoteMode, 'A/V fixture requires owned source/receiver browsers on one remote host clock domain')
 const impairmentMode = process.env.KTV_ROOM_TEST_MEDIA_IMPAIRMENT || 'off'
 assert.ok(['off', '1', 'tcp', 'udp'].includes(impairmentMode), 'Unknown media impairment mode')
@@ -131,7 +133,8 @@ try {
   const rtc = remoteMode
     ? `  node_ip: ${process.env.KTV_ROOM_TEST_PUBLIC_IP}\n  use_external_ip: false\n  tcp_port: ${mediaImpairment ? 17901 : 7881}\n  udp_port: ${mediaImpairment ? 17902 : 7882}\n  interfaces:\n    includes: [${process.env.KTV_ROOM_TEST_INTERFACE}]\n`
     : '  node_ip: 127.0.0.1\n  use_external_ip: false\n  tcp_port: 17901\n  udp_port: 17902\n  enable_loopback_candidate: true\n  interfaces:\n    includes: [lo]\n'
-  await fs.writeFile(config, `port: 17900\nbind_addresses: [127.0.0.1]\nrtc:\n${rtc}room:\n  max_participants: 6\n  sync_streams: true\n  playout_delay:\n    enabled: true\n    min: 0\n    max: 500\nkeys:\n  ${apiKey}: ${apiSecret}\nlogging:\n  level: warn\n`, { mode: 0o600 })
+  await fs.writeFile(config, `port: 17900\nbind_addresses: [127.0.0.1]\nrtc:\n${rtc}room:\n  max_participants: 6\n  sync_streams: true\n  playout_delay:\n    enabled: ${playoutHints==='adaptive'}\n    min: 0\n    max: 500\nkeys:\n  ${apiKey}: ${apiSecret}\nlogging:\n  level: warn\n`, { mode: 0o600 })
+  console.log('Fixture SFU policy:',JSON.stringify({syncStreams:true,playoutHints}))
   await exec('docker', ['run', '-d', '--name', container, '--network', 'host', '--user', `${process.getuid()}:${process.getgid()}`,
     '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', '-v', `${config}:/run/livekit.yaml:ro`, image, '--config', '/run/livekit.yaml'])
   running = true

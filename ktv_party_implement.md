@@ -9,11 +9,12 @@ Design reference: [ktv_party.md](ktv_party.md)
 Implemented contracts: [ktv_party_protocol.md](ktv_party_protocol.md)
 
 Current status: The durable-room preview is deployed at
-`https://music.micstec.com/party` with frontend `29a62cf`
-(`main-_4MVKaX7.js`, `main-D0gBov56.css`) and backend `9b74e8f`. Online media remains disabled.
-The output lease renewal fix is deployed. SFU synchronization configuration and
-longer A/V tests are being verified: shared receiver CNAME/MSID now passes, but
-impaired timing and sustained native publisher drift remain open.
+`https://music.micstec.com/party` with frontend/backend `e88783a`
+(`main-CXsosxfb.js`, `main-D0gBov56.css`). Online media remains disabled.
+Output lease renewal and bounded provider-readiness retries are deployed.
+Continuous TCP/UDP impairment passes functional audience recovery and full hybrid
+handovers; shared receiver CNAME/MSID passes. Impaired A/V timing, sustained native
+publisher drift and physical/mobile acceptance remain open.
 Members can connect a shared screen or phone
 controller with a short-lived code; a display has read-only room access, and a
 controller inherits the member's current permissions. Hosts can appoint co-hosts,
@@ -154,7 +155,7 @@ deployed; it does not resolve streaming/device acceptance.
 | P04 | Stage, phone controller, host UI | P02–P03 | In progress | Entry/join/pairing, Songs/Queue/Sing/People tabs, local invitation/pairing QR, moderation, readiness and guide controls; broad accessibility/physical coverage open |
 | P05 | Scheduled playback, private guide, shared lyrics | P01, P03–P04 | In progress | Stage/guide/lyrics/controls pass Chrome journey; required-guide and rendered-drift/output recovery tested; physical timing open |
 | P06 | Recovery, browser coverage, local release readiness | P02–P05 | In progress | Guide/stage loss, host transfer, restart and revocation have automated evidence; physical/device coverage open |
-| P07 | Online performance streaming and hybrid operation | P01, stable P03/P05 contracts | In progress | Capture/authorization, hybrid handover, 19-audience fanout, bounded TCP/UDP delay/loss/outage and fresh audience recovery verified in synthetic tests; A/V, sustained/representative network and physical/device acceptance open |
+| P07 | Online performance streaming and hybrid operation | P01, stable P03/P05 contracts | In progress | Capture/authorization, continuous TCP/UDP impairment through audience recovery and hybrid handover, 19-audience fanout verified in synthetic tests; sustained A/V/native drift, failed device-ceiling setup, representative networks and physical/mobile acceptance open |
 | P08 | Deployment, monitoring, and release verification | P06 for local; P07 for online | In progress | Intermediate previews deployed; private config generator, nginx snippet and runbook added; public media and release acceptance open |
 | P09 | Optional enhancements | Released foundation | Not started | — |
 
@@ -1415,6 +1416,67 @@ multi-client/multi-room load, mobile/physical devices and distinct access networ
 remain open. Production remains frontend `29a62cf` / backend `9b74e8f`, media off,
 until a subsequent verified deployment is recorded.
 
+The provider-readiness preview `e88783a` is deployed at
+`https://music.micstec.com/party`, assets `main-CXsosxfb.js` /
+`main-D0gBov56.css`. Exact release type-check/build, UI **38/38**, PWA **8/8** and
+continuous TCP handover **63/63** pass; the UDP candidate with the same application
+source passes **65/65**. Logs: `/tmp/ktv-provider-ready-release-build.log`,
+`/tmp/ktv-provider-ready-release-ui.log`, `/tmp/ktv-provider-ready-release-pwa.log`,
+`/tmp/ktv-provider-ready-continuous-tcp-release.log`. Public HTTP/WSS, effective
+feature flags, asset bytes/commit, SQLite integrity/foreign keys and cleanup pass
+**18/18**, `/tmp/ktv-provider-ready-public-release.log`. Temporary room closed;
+no account added. Backend restarted only after confirming zero active audio rooms.
+Private online database/frontend/old backend route/config/process backup:
+`/home/mli/ktv-party-provider-ready-predeploy.pvof0w47`. Old assets are retained.
+Public rooms/guide remain enabled and media disabled.
+
+Exact preview clean-network sustained A/V observation now passes **26/26**, exit
+0, `/tmp/ktv-provider-ready-clean-av-release.log`: **40 matched transitions**, no
+unmatched edges, absolute skew p50 **24.71 ms**, p95 **61.83 ms**, maximum
+**91.52 ms**. Source-to-video observation delay p95 **173.70 ms**; audio observation
+delay p95 **161.53 ms**. The source's unused PCM detector is absent, while receiver
+output monitoring and all native recovery guards remain intact. This is progress
+over the retained earlier native-drift failures, not proof of their underlying
+cause or physical/device reliability.
+
+The same exact preview with continuous TCP impairment and 40 impaired transitions
+still fails (`/tmp/ktv-provider-ready-sustained-tcp-av-release.log`, exit 1).
+Baseline six pairs: p95/max **47.93 ms**. Impaired 40 pairs, no unmatched edges:
+p50 **158.87 ms**, p95 **393.70 ms**, max **575.75 ms**. Source-to-video delay p95
+**1064.10 ms**, audio observation delay p95 **789.52 ms**. Interval mean audio/video
+buffer residence is **195.60/263.54 ms**, with no reported packet loss and five
+video freezes. Functional recovery/handover completes; timing remains a failure.
+A fixture-only `KTV_ROOM_TEST_PLAYOUT_HINTS=off` comparison now isolates the
+adaptive video hint from stream grouping without changing prepared configuration.
+The impairment sample starts after the existing two-second settling interval;
+thresholds and marker accounting are unchanged.
+
+The no-hints comparison also fails, exit 1,
+`/tmp/ktv-provider-ready-sustained-tcp-no-hints.log`: baseline six-pair p95/max
+**72.25 ms**; impaired 40 pairs with no unmatched edges, p50 **131.06 ms**, p95
+**468.94 ms**, max **632.47 ms**. Mean audio/video buffer residence is
+**232.22/264.38 ms**, no reported packet loss and five video freezes. Disabling
+the hint does not resolve this run; the prepared adaptive policy remains unchanged.
+Both sustained TCP runs complete the functional recovery/handover sequence and
+fail the final timing assertion.
+
+Read-only client process samples for the no-hints run
+(`/tmp/ktv-provider-ready-no-hints-resources.jsonl`, 65 active samples) report
+aggregate renderer CPU mean/peak **125.73/180.53%**, audio-service **5.72/14.16%**,
+other browser processes **38.42/139.46%**, receiver monitor **9.38/12.63%**
+(100% = one CPU). Four-core host busy mean/peak is **60.5/78.7%**. These are
+owned-process diagnostics, not proof of a root cause or a production resource
+budget. Next investigation: correlate source encoded-frame cadence and RTCP clock
+mapping with receiver buffer/freezes through the impairment transition. Preserve
+the clean-network pass and both failed comparisons; physical/mobile, representative
+load and distinct access-network gates remain open.
+
+Final cleanup verifies no owned remote browser/output/monitor process, CDP
+9243/9244, local UI browser 9253 or fixture media/control listener. Shared remote
+output remains `auto_null`; only the original three production Docker containers
+are running. Unrelated PM2 process PIDs are unchanged. The production backend is
+one online process with watching disabled.
+
 ```text
 Date:
 Phase and item IDs:
@@ -1452,5 +1514,6 @@ Next action:
 | Streaming lease/handover preview | Frontend `d6d4041` (`main-Df1mhgtD.js`), backend `9b74e8f` | `https://music.micstec.com/party` | 2026-10-01 | Party units 53/53; exact-build UI 38/38, PWA 8/8, full remote Chrome room-media 20/20; public HTTP/WSS/assets/SHA/cleanup 18/18 | Public media disabled; physical/mobile/jitter, local/online route handover and distinct access-network/load acceptance remain open |
 | Audience recovery preview | Frontend `b9fbb91` (`main-C3F6BNH-.js`), backend `9b74e8f` | `https://music.micstec.com/party` | 2026-10-01 | Party units 64/64; exact-build UI 38/38, PWA 8/8, remote room/media-signaling interruption/hybrid handover 47/47; public HTTP/WSS/assets/SHA/cleanup 18/18 | Public media disabled; physical/mobile, media packet impairments, A/V/end-to-end timing and sustained representative load remain open |
 | Output lease correction preview | Frontend `29a62cf` (`main-_4MVKaX7.js`), app fix `301d5c3`, backend `9b74e8f` | `https://music.micstec.com/party` | 2026-10-02 | Party 73/73; candidate UI 38/38, PWA 8/8 and no-impairment A/V/reconnect/hybrid 51/51; exact public 18/18 | TCP/UDP impaired A/V fails; media disabled; physical/mobile, distinct networks, continuing impairment/handover and sustained representative load open |
+| Provider confirmation preview | Frontend/backend `e88783a` (`main-CXsosxfb.js`) | `https://music.micstec.com/party` | 2026-10-02 | Backend 127/127, party 81/81, exact UI 38/38, PWA 8/8, continuous TCP handover 63/63, same-source UDP candidate 65/65, public 18/18 | Media disabled; sustained native drift/A/V, physical/mobile, longer outages, representative/multi-room load and distinct networks open; 59-audience setup failed |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |
