@@ -937,6 +937,25 @@ and distinct access-network tests remain release gates. A short separate-host
 synthetic fanout run supports the 19-audience test scenario only; it does not
 establish sustained multi-room capacity or latency for geographically distant users.
 
+### 10.4 Controlled network verification
+
+The room/media browser harness can route its real encrypted media through owned
+TCP or UDP impairment proxies while room-control traffic remains independent.
+Only fixture ICE candidates are remapped; selected candidate pairs confirm that
+the media actually takes the proxy route. Native audio clocks, source scheduling,
+readiness, leases and publication authorization remain enforced.
+
+Short tests verify decoded lyric video and backing/microphone audio with injected
+delay/jitter, UDP datagram loss, an audience-only outage, private-guide isolation,
+and resumed media while the control socket stays connected. Subsequent recovery
+and hybrid handover run after the impairment profile returns to zero. TCP models
+ordered delayed delivery; UDP models datagram delay/reordering/loss. Proxy and
+receiver counters describe the tested transport, and do not establish acoustic,
+end-to-end or A/V alignment. Longer outages, continued impairment during handover,
+sustained load, physical devices and distinct access networks remain release
+gates. Parameters, measurements and failures are tracked in the implementation
+plan and deployment runbook.
+
 ## 11. Operational behavior and limits
 
 Implemented defaults: 20 members per room, the original browser plus two paired

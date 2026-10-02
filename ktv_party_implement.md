@@ -147,11 +147,11 @@ deployed; it does not resolve streaming/device acceptance.
 | P00 | Scope baseline and technical contracts | Design | Complete | Protocol/reference inventory, configurable limits/timing, coordinated validation and durable restart-silence policy documented and verified |
 | P01 | Two-device audio feasibility prototype | P00 minimum timing contract | In progress | Monotonic clock estimator tested; audio prototype and acoustic measurements open |
 | P02 | Rooms, identities, invitations, permissions, persistence | P00 | Complete | Transactional general/encrypted receipts, restart/rollback, guest recovery, expiry/retention, permissions and configured bounds pass backend/browser/public checks |
-| P03 | Realtime state, commands, queue, leases | P02 | In progress | Versioned playback timeline, checkpoints, presence, renewable stage leases and turn history tested; fair automatic next turns and host-loss grace/transfer tested |
+| P03 | Realtime state, commands, queue, leases | P02 | Complete (software) | Three real socket clients converge after concurrent edits/reconnect; durable queue command replay survives service/database restart; revision, permission, timeline and lease authority verified |
 | P04 | Stage, phone controller, host UI | P02–P03 | In progress | Entry/join/pairing, Songs/Queue/Sing/People tabs, local invitation/pairing QR, moderation, readiness and guide controls; broad accessibility/physical coverage open |
 | P05 | Scheduled playback, private guide, shared lyrics | P01, P03–P04 | In progress | Stage/guide/lyrics/controls pass Chrome journey; required-guide and rendered-drift/output recovery tested; physical timing open |
 | P06 | Recovery, browser coverage, local release readiness | P02–P05 | In progress | Guide/stage loss, host transfer, restart and revocation have automated evidence; physical/device coverage open |
-| P07 | Online performance streaming and hybrid operation | P01, stable P03/P05 contracts | In progress | SFU/capture spike, room authorization and mode/capture/audience UI implemented; online/hybrid handover and 19-audience synthetic fanout verified; physical/network/device acceptance open |
+| P07 | Online performance streaming and hybrid operation | P01, stable P03/P05 contracts | In progress | Capture/authorization, hybrid handover, 19-audience fanout, bounded TCP/UDP delay/loss/outage and fresh audience recovery verified in synthetic tests; A/V, sustained/representative network and physical/device acceptance open |
 | P08 | Deployment, monitoring, and release verification | P06 for local; P07 for online | In progress | Intermediate previews deployed; private config generator, nginx snippet and runbook added; public media and release acceptance open |
 | P09 | Optional enhancements | Released foundation | Not started | — |
 
@@ -322,14 +322,14 @@ Release `f1e21da` passes 76 full backend checks, 19 frontend unit checks and a
 
 ## 6. P03 — Realtime state, queue, and playback authority
 
-Status: In progress
+Status: Complete (software). Physical output silence/alignment remains in P01/P05/P06.
 
 Likely files: `server/ktv/room-service.js`, `queue.js`, `realtime.js`, `clock.js`,
 `src/types/party.ts`, `src/services/partyService.ts`, `src/stores/party.ts`.
 
 - [x] P03.1 Attach `ws` to the HTTP server and add Vite/nginx WebSocket routing.
   Authenticate first-message tickets with timeout and explicit origin checks.
-- [ ] P03.2 Serialize commands by room; enforce revisions, payload validation,
+- [x] P03.2 Serialize commands by room; enforce revisions, payload validation,
   current permissions, idempotency, and transaction-before-broadcast ordering.
 - [x] P03.3 Broadcast authorized full snapshots; keep presence/telemetry separate.
   Implement reconnect/backoff, fresh ticket, snapshot, and clock negotiation.
@@ -341,18 +341,20 @@ Likely files: `server/ktv/room-service.js`, `queue.js`, `realtime.js`, `clock.js
   expiry, and host/co-host disconnect policy.
 - [x] P03.7 Implement timeline/checkpoint persistence and new-clock paused recovery
   on process restart; persist no per-frame playhead writes.
-- [ ] P03.8 Implement store command status, conflict recovery, snapshot replacement,
+- [x] P03.8 Implement store command status, conflict recovery, snapshot replacement,
   and separate local preferences from authoritative room state.
-- [ ] P03.9 Exercise simultaneous queue edits, retries after lost acknowledgments,
+- [x] P03.9 Exercise simultaneous queue edits, retries after lost acknowledgments,
   duplicated `ended`, stale skips, and role revocation on open sockets.
 
 Exit criteria:
 
-- [ ] Three clients converge to one queue after simultaneous requests and reconnects.
-- [ ] A command applies once even if resent over another transport after restart.
-- [ ] The same song can appear in distinct entries without confusing completion.
-- [ ] Only one current output lease exists, with a defined safe replacement boundary.
-- [ ] Server restarts yield paused state and reject all old-clock readiness/schedules.
+- [x] Three clients converge to one queue after simultaneous requests and reconnects.
+- [x] A command applies once when resent after reconnect, reload, or restart.
+  The implemented protocol uses HTTP mutations and WebSocket snapshots/control
+  messages; this does not claim a second WebSocket mutation endpoint.
+- [x] The same song can appear in distinct entries without confusing completion.
+- [x] Only one current output lease exists, with a defined safe replacement boundary.
+- [x] Server restarts yield paused state and reject all old-clock readiness/schedules.
 
 Evidence: `server/ktv-queue.js`, `server/ktv-realtime.js`, queue/receipt tables in
 `server/ktv-schema.js`, and queue routes in `server/ktv-routes.js`. Members can add up to three pending
@@ -378,6 +380,16 @@ graces, earliest connected co-host transfer and waiting without a moderator are
 implemented; paired displays cannot preserve controlling host presence.
 Core playback browser checks pass; physical multi-device testing remains open; latest
 automated and deployment evidence is recorded in section 15.
+The checklist audit confirms the existing single-owner synchronous SQLite
+transactions and post-commit broadcasts, revision checks, encrypted/durable
+receipts, browser command journal, busy/error feedback, monotonic snapshot
+replacement and separate device preferences. A new real HTTP/WebSocket test
+connects three admitted clients, commits concurrent same-song requests, verifies
+identical queues, edits during one client's disconnect, reconnects with a fresh
+ticket, restarts all server/socket/database instances, replays an already
+committed queue command, and checks convergence under a new clock epoch.
+Existing tests cover duplicate completion, stale generation/revision rejection,
+role changes on open sockets, one lease and restart safety boundaries.
 
 ## 7. P04 — Stage, phone controller, and moderation UI
 
@@ -458,7 +470,7 @@ Status: In progress
 Likely files: `src/services/partyAudioEngine.ts`, `src/composables/usePartyClock.ts`,
 `usePartyAudio.ts`, asset descriptor support, and lyric-view integration.
 
-- [ ] P05.1 Integrate the P01 engine with real room snapshots and playback commands;
+- [x] P05.1 Integrate the P01 engine with real room snapshots and playback commands;
   acquire/release application audio ownership and clean up sources/listeners.
 - [x] P05.2 Resolve and pin original/instrumental/lyric versions and timing offsets,
   including imported songs, missing stems, and manual-lyric catalog entries.
@@ -468,7 +480,7 @@ Likely files: `src/services/partyAudioEngine.ts`, `src/composables/usePartyClock
   exactly-once completion, and preparation of the next singer's entry.
 - [x] P05.5 Wire private original playback, guide volume, calibration and output
   change handling; other phones remain silent until enabled.
-- [ ] P05.6 Wire room lyric correction and pinned lyrics; separate device audio
+- [x] P05.6 Wire room lyric correction and pinned lyrics; separate device audio
   calibration from lyric correction and existing solo local-storage settings.
 - [x] P05.7 Add measured drift policy, fade/recovery, buffer health, clock uncertainty,
   and clear required-guide versus optional-guide failure behavior.
@@ -754,8 +766,11 @@ Local room controls, guide/lease recovery, online capture, hybrid stage handover
 public direct/TLS relay, synthetic 19-audience fanout and automatic audience
 reauthorization after media-signaling loss have software evidence. Frontend
 `b9fbb91` is deployed, backend remains `9b74e8f`; public media stays disabled.
-Continue imposed media jitter/loss/outage and long-run/sustained-load measurements,
-including publisher/receiver resource attribution and nominal frame-rate checks.
+Short controlled TCP/UDP media delay, UDP packet loss and audience-only outages
+now pass against the deployed frontend in isolated fixtures. Continue A/V and
+end-to-end measurements, longer outages, handover under continuing impairment,
+and long-run/sustained load, including publisher/receiver resource attribution
+and nominal frame-rate checks.
 Complete acoustic stage/guide and input/output alignment, Android/iOS/Safari,
 background/lock/output-switch/Bluetooth and real Wi-Fi/LTE acceptance. Preserve
 those physical and access-network gates; a synthetic EC2 run does not close them.
@@ -1121,6 +1136,74 @@ integrity/FKs; no public identity was added. The private rollback backup is
 Owned local and remote browsers/profiles, tunnels and SFU/database fixtures were
 removed and their listener ports were empty. Physical, access-network outage,
 imposed jitter/loss and A/V gates remain open. Public media remains disabled.
+
+#### 2026-10-01 — Controlled media impairment and P03 checklist audit
+
+Media harness commit: `c0bf06e`; tested frontend remains `b9fbb91`, backend
+implementation remains `9b74e8f`. These are test/document changes and require no
+production rebuild or restart. Public media remains disabled.
+
+Owned proxies forward unmodified encrypted TCP bytes or UDP datagrams to the
+isolated SFU's actual interface. The remote Chrome 137.0.7151.68 fixture filters
+and remaps only its remote ICE candidates, then verifies the actual selected
+routes. Delay/jitter is injected on both publisher and audience media paths;
+control HTTP/WebSocket traffic is independent. No host firewall/routing, native
+audio clock, permission, output lease or drift guard was altered.
+
+Final checks, all exit 0:
+
+- Proxy behavior: **8/8**, `/tmp/ktv-media-proxy-final-units.log`.
+- TCP full built-app sequence: **54/54**, `/tmp/ktv-media-tcp-release.log`.
+- UDP full built-app sequence: **56/56**, `/tmp/ktv-media-udp-release.log`.
+- Backend suite with new three-client convergence/restart test: **127/127**,
+  `/tmp/ktv-convergence-backend-final.log`; targeted test also passes in
+  `/tmp/ktv-three-client-convergence.log`.
+
+The measured segment injects a 150 ms base plus 0–40 ms jitter per proxy leg;
+UDP drops datagrams with 5% probability per leg. Both decode at least forty
+additional video frames, retain backing/microphone tones and exclude the private
+guide. The audience-only outage lasts **1,778 ms TCP / 1,786 ms UDP**, with a
+three-second fixture safety bound. Video stops, the actual room-control socket
+stays connected, and audio/video resume without changing the singer or room
+playback state. Queues remain bounded without overflow. The profile remains
+active through private-guide verification, then resets to zero before automatic
+fresh-nonce audience recovery, publisher interruption and venue → remote → venue
+handover. Those later steps pass through the same proxy.
+
+UDP receiver sample: audio **374 received / 8 lost**, video **231 received / 6
+lost / 147 decoded frames**; RTP jitter **13 ms audio / 26 ms video**; cumulative
+average jitter buffers **54.68 ms audio / 67.37 ms video**. TCP sample reports
+zero lost RTP packets and **87.35 ms audio / 37.39 ms video** average buffers.
+These are software counters spanning initial and impaired playback, not acoustic,
+end-to-end or A/V latency measurements. UDP proxy totals include deliberate
+outage drops; they do not estimate a measured end-to-end loss percentage.
+
+Fixture development failures remain recorded: loopback TCP forwarding received
+no SFU replies until it used the advertised local interface; a UDP profile
+assignment bug was caught by proxy tests; earlier 180-second WAV/continuously
+impaired combined runs stopped before later recovery/handover completed, with
+native output-timing recovery observed in one run. The final fixture retains the
+existing 60-second song and scopes impairment to its measured segment. This does
+not resolve sustained impairment during handover. Automatic fair-turn selection
+also exposed a revision conflict in a fixture host request; the fixture now
+refreshes that conflict with a fresh command ID and waits for genuine current
+generation decode readiness. No application safety check was weakened.
+
+P03.2/P03.8/P03.9 and P03 software exit criteria are now checked against existing
+implementation and the new three-real-socket test. HTTP command replay applies
+once after a complete service/database restart; WebSocket remains the snapshot,
+clock and device-control transport. P05.1/P05.6 now reflect existing wired audio
+ownership/pinned lyrics/room correction and separate device calibration. Physical
+output silence, timing, browser and access-network criteria remain open.
+
+All owned SFU containers, databases, proxies, browser profiles and SSH tunnels
+were cleaned. Local TCP/UDP fixture ports and remote CDP 9243 were empty;
+the three existing production containers remain running.
+
+Next: measure A/V/end-to-end delay with explicit source/receiver markers, longer
+media outages and continued impairment during handover, then sustained and
+representative load. Complete physical/mobile and distinct Wi-Fi/LTE acceptance
+before enabling persistent production media.
 
 ```text
 Date:

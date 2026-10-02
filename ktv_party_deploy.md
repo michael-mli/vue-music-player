@@ -277,6 +277,32 @@ venue → remote → venue sequence afterward. This is a signaling interruption;
 RTP packet loss, access-network outage, imposed jitter and physical A/V delay
 remain separate gates.
 
+Set `KTV_ROOM_TEST_MEDIA_IMPAIRMENT=tcp` or `udp` with the remote topology
+above to route encrypted media through an owned delay proxy. The test selects
+only that protocol and verifies each peer's selected ICE candidate pair, so
+an unmodified direct route cannot bypass the fixture. Private SFU TCP 17901
+and UDP 17902 must also be free and remain closed to external clients.
+The proxy forwards to the SFU's actual local interface. It changes no host
+routing, firewall, qdisc, native audio clock or application safety limit.
+
+The measured playback segment injects 150 ms base delay plus 0–40 ms uniform
+jitter in each direction. UDP also drops datagrams with 5% probability on each
+proxy leg; this is not a claim of 5% total end-to-end loss. TCP preserves byte
+order and models delayed delivery rather than UDP loss. Both pause audience
+media briefly, with a three-second automatic safety bound and an elapsed-time
+log; TCP queues bytes, UDP discards datagrams. Checks require video to freeze
+and then advance, actual backing/microphone tones to return, private vocals to
+stay excluded, and the room-control WebSocket to remain connected.
+RTP loss/jitter/buffer counters and bounded proxy queues are logged without
+credentials. These counters are not acoustic, end-to-end or A/V timing.
+
+Impairment remains active through private-guide verification, then returns to
+zero before the subsequent signaling recovery and performer handovers. Combine
+with both flags above for that later sequence. Continued impairment during
+handover, longer outages and distinct access networks remain separate gates.
+Run `npm run test:party:impairment-fixtures` for byte/datagram fidelity, delay,
+selective stall/resume, drop and parameter-bound checks on the proxies.
+
 The target must already have a trusted SSH key and `/usr/bin/google-chrome`.
 The fixture does not change trust records or existing profiles/services. It
 uploads only its synthetic microphone, creates a private temporary profile,

@@ -912,6 +912,55 @@ test('room sockets use one-use tickets, redact pending views, broadcast changes 
   assert.equal(await hostClosed, 4410)
 })
 
+test('three room clients converge after concurrent edits, a missed update, and durable command replay after restart', async t => {
+  const fixture = await setup(t), { request } = fixture
+  const view = (await request('POST', '/rooms', 1, { commandId: randomUUID(), name: 'Convergence', displayName: 'Host', approvalRequired: false })).body.data
+  const route = `/rooms/${view.room.id}`
+  const joined = await Promise.all([2, 3].map(actor => request('POST', '/join', actor, { commandId: randomUUID(), code: view.invitationCode, displayName: `Singer ${actor}` })))
+  assert.ok(joined.every(result => result.status === 200))
+  const sockets = new Set()
+  t.after(() => { for (const ws of sockets) ws.terminate() })
+  async function connect(actor) {
+    const ticket = (await request('POST', `${route}/socket-ticket`, actor, {})).body.data.ticket
+    const client = await openSocket(fixture.socketUrl, fixture.origin, ticket)
+    sockets.add(client.ws)
+    return { ws: client.ws, snapshot: await client.first }
+  }
+  const clients = await Promise.all([1, 2, 3].map(connect))
+  const queue = snapshot => snapshot.queue.map(entry => ({ id: entry.id, songId: entry.songId, requesterMemberId: entry.requesterMemberId, singerMemberId: entry.singerMemberId }))
+  const broadcasts = clients.map(client => nextSnapshot(client.ws, snapshot => snapshot.queue?.length === 3))
+  const commands = [1, 2, 3].map(() => ({ commandId: randomUUID(), songId: 1, title: 'Same song', requestNext: false }))
+  const committed = await Promise.all(commands.map((body, index) => request('POST', `${route}/queue`, index + 1, body)))
+  assert.ok(committed.every(result => result.status === 200))
+  const canonical = (await request('GET', route, 1)).body.data
+  assert.equal(new Set(canonical.queue.map(entry => entry.id)).size, 3)
+  for (const snapshot of await Promise.all(broadcasts)) assert.deepEqual(queue(snapshot), queue(canonical))
+
+  const disconnected = new Promise(resolve => clients[1].ws.once('close', resolve))
+  clients[1].ws.terminate(); await disconnected
+  const liveUpdates = [clients[0], clients[2]].map(client => nextSnapshot(client.ws, snapshot => snapshot.queue?.length === 4))
+  assert.equal((await request('POST', `${route}/queue`, 3, { commandId: randomUUID(), songId: 2, title: 'While disconnected', requestNext: false })).status, 200)
+  const updated = (await request('GET', route, 1)).body.data
+  for (const snapshot of await Promise.all(liveUpdates)) assert.deepEqual(queue(snapshot), queue(updated))
+  const reconnected = await connect(2)
+  assert.deepEqual(queue(reconnected.snapshot), queue(updated))
+  assert.ok(reconnected.snapshot.room.revision > clients[1].snapshot.room.revision)
+
+  // The caller treats an already committed response as lost and reuses its
+  // exact command after all server/socket/database instances have restarted.
+  await fixture.restart()
+  const replayed = await request('POST', `${route}/queue`, 2, commands[1])
+  assert.equal(replayed.status, 200)
+  assert.deepEqual(queue(replayed.body.data), queue(updated))
+  assert.equal(fixture.db.prepare('SELECT COUNT(*) total FROM ktv_queue_entries WHERE room_id = ?').get(view.room.id).total, 4)
+  const recovered = await Promise.all([1, 2, 3].map(connect))
+  for (const client of recovered) {
+    assert.deepEqual(queue(client.snapshot), queue(updated))
+    assert.notEqual(client.snapshot.clock.clockId, clients[0].snapshot.clock.clockId)
+  }
+  assert.deepEqual(fixture.db.prepare('PRAGMA foreign_key_check').all(), [])
+})
+
 test('room socket rejects an untrusted browser origin before authentication', async (t) => {
   const { socketUrl } = await setup(t)
   const edgeOrigin = new WebSocket(socketUrl, { origin: socketUrl.replace('ws:', 'https:').replace('/api/ktv/ws', '') })
