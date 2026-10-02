@@ -11,6 +11,7 @@ test('fixture RTC timeline retains encoder/buffer evidence without signaling cre
     ['audio',{type:'inbound-rtp',kind:'audio',timestamp:1000,ssrc:3,codecId:'codec',jitterBufferEmittedCount:0,
       estimatedPlayoutTimestamp:3999900000000,address:'private-address',usernameFragment:'secret-ice'}],
     ['video',{type:'outbound-rtp',kind:'video',framesEncoded:25,totalEncodeTime:.01,qualityLimitationReason:'bandwidth',
+      keyFramesEncoded:2,hugeFramesSent:1,totalAssemblyTime:Infinity,
       qualityLimitationDurations:{cpu:0,bandwidth:2,other:Infinity,access_token:'secret-token'},token:'secret-token'}],
     ['codec',{mimeType:'audio/opus',clockRate:48000,channels:2,sdpFmtpLine:'secret-sdp'}],
     ['transport',{type:'transport',selectedCandidatePairId:'ice'}],
@@ -23,6 +24,9 @@ test('fixture RTC timeline retains encoder/buffer evidence without signaling cre
   assert.equal(audio.jitterBufferEmittedCount,0);assert.equal('packetsLost' in audio,false)
   assert.equal(audio.estimatedPlayoutTimestamp,3999900000000)
   assert.equal(video.qualityLimitationReason,'bandwidth');assert.deepEqual(video.qualityLimitationDurations,{cpu:0,bandwidth:2})
+  assert.equal(video.keyFramesEncoded,2);assert.equal(video.hugeFramesSent,1)
+  assert.equal('totalAssemblyTime' in video,false)
+  assert.equal('framesAssembledFromMultiplePackets' in video,false)
   assert.deepEqual(result.receiverTargets,[{peer:0,kind:'audio',targetSupported:true,targetMs:null}])
   assert.equal(receiver.jitterBufferTarget,null)
   assert.deepEqual(result.reports[2],{peer:0,type:'selected-transport',currentRoundTripTime:.7,availableOutgoingBitrate:95000})

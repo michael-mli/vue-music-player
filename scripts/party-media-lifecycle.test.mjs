@@ -279,11 +279,13 @@ async function publisherFixture(f, ready = async () => ({}), expectedStatus = 'p
   f.state.api.mediaGrant = async () => ({identity:'publisher',scope:'publisher',room:'ktv-first-room',
     permit:{...identity,expiresServerMs:performance.now()+5000}})
   f.state.api.mediaReady = ready
-  f.state.transport = async () => ({async connect(){},async publish(){},async close(){}})
+  const encoded = {renewals:[],accepted:true}
+  f.state.transport = async () => ({async connect(){},async publish(){},async close(){},
+    renewPublishPermit(permit,clock) {encoded.renewals.push({permit,clock});return encoded.accepted}})
   for(const tick of f.timers.values()) tick()
   await flush()
   assert.equal(f.media.status.value,expectedStatus)
-  return {graph,input,snapshotLease,renewedLease}
+  return {graph,input,snapshotLease,renewedLease,encoded}
 }
 
 async function runRetry(f) {
@@ -337,7 +339,7 @@ test('a publisher pending code on an authorization denial is terminal',async t=>
 })
 
 test('publisher and private guide follow renewed WebSocket leases after the snapshot lease expires', async t => {
-  const f = fixture(t), {graph,snapshotLease} = await publisherFixture(f)
+  const f = fixture(t), {graph,snapshotLease,encoded} = await publisherFixture(f)
   const pending = f.media.toggleOriginal()
   f.engines[0].ready.resolve(); await pending
   for(let sequence=9;sequence<15;sequence++) {
@@ -346,10 +348,21 @@ test('publisher and private guide follow renewed WebSocket leases after the snap
     for(const tick of f.timers.values()) tick()
     assert.equal(f.media.status.value,'publishing')
     assert.equal(graph.renewals.at(-1).permit.expiresServerMs,next.expiresServerMs)
+    assert.equal(encoded.renewals.at(-1).permit.expiresServerMs,next.expiresServerMs)
     assert.equal(f.engines[0].syncCalls.at(-1)[2].sequence,sequence)
   }
   assert.ok(snapshotLease.expiresServerMs<performance.now())
   assert.equal(graph.closed,false)
+})
+
+test('encoded gate rejection tears down the publisher and microphone',async t=>{
+  const f=fixture(t),{graph,input,encoded}=await publisherFixture(f)
+  encoded.accepted=false
+  for(const tick of f.timers.values())tick()
+  assert.equal(f.media.status.value,'error')
+  assert.equal(f.media.failure.value,'mediaErrorPermission')
+  assert.equal(graph.closed,true)
+  assert.equal(input.getAudioTracks()[0].readyState,'ended')
 })
 
 for(const [name,change] of [

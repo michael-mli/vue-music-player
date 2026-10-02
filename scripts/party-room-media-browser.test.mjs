@@ -27,6 +27,8 @@ import { nativeSyncTargetStep, nativeNetworkTargetStep, nativeRepairTargetStep, 
 const clientLocation = process.env.KTV_ROOM_TEST_CLIENT || 'same-host'
 assert.ok(['same-host', 'remote-ec2'].includes(clientLocation), 'Unknown room-test client topology')
 const remoteMode = clientLocation === 'remote-ec2'
+const frontendBuild = path.resolve(process.env.KTV_ROOM_TEST_DIST_ROOT || 'dist')
+await fs.access(path.join(frontendBuild, 'index.html'))
 const avTiming = process.env.KTV_ROOM_TEST_AV_TIMING === '1'
 const sourceStallMs = Number(process.env.KTV_ROOM_TEST_OUTPUT_STALL_MS || 0)
 assert.ok(sourceStallMs === 0 || avTiming && remoteMode && Number.isInteger(sourceStallMs) && sourceStallMs >= 20 && sourceStallMs <= 100,
@@ -203,7 +205,7 @@ try {
   app.get('/data/metadata.json', (req, res) => res.json({ '1': { title: 'Live stream test', duration: 60 } }))
   app.get('/karaoke/karaoke_manifest.json', (req, res) => res.json({ version: 1, ids: [1] }))
   app.use('/data', express.static(path.join(root, 'data'))); app.use('/karaoke', express.static(path.join(root, 'karaoke')))
-  app.use(express.static(path.resolve('dist'))); app.get('*', (req, res) => res.sendFile(path.resolve('dist/index.html')))
+  app.use(express.static(frontendBuild)); app.get('*', (req, res) => res.sendFile(path.join(frontendBuild,'index.html')))
   await worker.reconcile(); check(worker.ready, 'actual room-policy worker is ready')
   async function api(actor, route, body) {
     const response = await fetch(origin + '/api/ktv' + route, { method: body === undefined ? 'GET' : 'POST',
@@ -437,8 +439,12 @@ try {
             recentLongTasks:__longTasks.filter(item=>performance.now()-item.startTime<3000),
             output:context?.getOutputTimestamp(),render:context?.currentTime};
           __phaseEvidence.push(sample);if(__phaseEvidence.length>180)__phaseEvidence.shift();
-          return {failed:document.querySelector('[role=alert]')?.textContent};
+          return {failed:document.querySelector('[role=alert]')?.textContent,
+            timing:{now:sample.now,rates:sample.rates,sourceStops:sample.sourceStops,
+              recentLongTasks:sample.recentLongTasks,output:sample.output,render:sample.render,
+              phaseErrorMs:Number(/Calculated sample phase(-?[0-9.]+) ms/.exec(sample.diagnostics)?.[1])}};
         })()`)
+        avTimingSamples.at(-1).sourceTiming=sample.timing
         if(sample.failed) throw new Error('Publisher audio recovery interrupted A/V observation')
       }
       const observed=await evaluate(audience,'__avObserver.evidence'), sources=await evaluate(sourcePage,'__avSources')

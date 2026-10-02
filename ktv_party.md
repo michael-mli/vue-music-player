@@ -918,6 +918,21 @@ publish backing delay. Audio and video carry the same named WebRTC stream and
 attach to one audience video element so its media clock governs both tracks.
 Headphone audio and publisher render timing still require physical checks.
 
+A second local expiry barrier sits between the publisher encoders and RTP
+packetization, using a dedicated worker. It starts closed, receives only validated
+current clock/performance/generation permits, and drops audio and lyric frames
+after expiry independently of page callbacks and AudioContext suspension. Timer
+and per-frame checks latch expired or discontinuous clocks closed; a late renewal
+requires a fresh publishing session. Standard script transforms and the older
+encoded-stream API share the gate. Unsupported publishing paths fail visibly.
+The PCM gate becomes silent 100 ms plus clock uncertainty before expiry; the RTP
+gate closes 10 ms plus uncertainty before expiry, allowing encoded silence to
+replace the receiver's last vocal frame. This does not revoke server access or
+erase audio already buffered at receivers. Independent native receiver checks,
+impaired networks and physical outputs remain required. The candidate is under
+verification; public media remains disabled.
+[WebRTC encoded transform specification](https://www.w3.org/TR/webrtc-encoded-transform/)
+
 The lyric video is declared as `screen_share`, with `screenShareEncoding` explicitly
 limited to 350 kbit/s and 25 fps on the existing 1280×720 canvas. Audience filters,
 publisher JWT source grants and provider readiness use that same source contract;

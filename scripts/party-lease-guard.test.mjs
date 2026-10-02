@@ -51,3 +51,17 @@ test('the native processor supports the existing fifteen-second stage lease ceil
   f.step(14999); assert.equal(f.render().alive, true)
   f.step(1); assert.equal(f.render().alive, false)
 })
+test('expired or stopped guards clear reused output blocks and missing channels cannot replay old PCM', () => {
+  for (const reason of ['expired', 'stopped', 'suspended']) {
+    const f = fixture(), block = f.render()
+    if (reason === 'expired') f.step(4000)
+    else if (reason === 'stopped') f.send({ type:'stop' })
+    else f.step(3000,0)
+    assert.equal(f.processor.process(block.input,block.output),false)
+    for (const channel of block.output[0]) assert.deepEqual(Array.from(channel),[0,0])
+  }
+  const f = fixture(), block = f.render()
+  assert.equal(f.processor.process([[block.input[0][0]]],block.output),true)
+  assert.deepEqual(Array.from(block.output[0][0]),Array.from(block.input[0][0]))
+  assert.deepEqual(Array.from(block.output[0][1]),[0,0])
+})

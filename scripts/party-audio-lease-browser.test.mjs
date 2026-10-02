@@ -21,6 +21,9 @@ const modules = {
   '/lease-guard.worklet.js': await fs.readFile('src/services/partyLeaseGuard.worklet.js', 'utf8'),
   '/publish-graph.js': compile(await fs.readFile('src/services/partyPublishGraph.ts', 'utf8'))
     .replace("'./partyLeaseGuard'", "'/lease-guard.js'"),
+  '/encoded-lease.js': compile(await fs.readFile('src/services/partyEncodedLease.ts', 'utf8'))
+    .replace("import workerUrl from './partyEncodedLease.worker.js?url';", "const workerUrl = '/encoded-lease.worker.js';"),
+  '/encoded-lease.worker.js': await fs.readFile('src/services/partyEncodedLease.worker.js', 'utf8'),
 }
 const rate = 44100, duration = 60, bytes = Buffer.alloc(44 + rate * duration * 2)
 bytes.write('RIFF'); bytes.writeUInt32LE(bytes.length - 8, 4); bytes.write('WAVEfmt ', 8)
@@ -34,10 +37,20 @@ const asset = { url: '/tone.wav', bytes: bytes.length, sha256: createHash('sha25
 const html = `<!doctype html><title>Owned native lease fixture</title><script type="module">
   import { PartyAudioEngine } from '/engine.js';
   import { PartyPublishGraph } from '/publish-graph.js';
+  import { PartyEncodedLease, partyEncodedRTCConfiguration } from '/encoded-lease.js';
+  window.PartyEncodedLease = PartyEncodedLease; window.partyEncodedRTCConfiguration = partyEncodedRTCConfiguration;
   const Context = window.AudioContext;
   window.AudioContext = class extends Context { constructor(...args) { super(...args); window.context = this; } };
   window.engine = new PartyAudioEngine();
   window.stateEvents = [];
+  window.authorizePublisher = () => {
+    const now = performance.now(), offset = 5000;
+    window.leaseEnd = now + 3500;
+    const clock = { clockId: 'owned-clock', status: 'healthy', offsetMs: offset, uncertaintyMs: 5 };
+    const permit = {clockId:clock.clockId,performanceId:'owned-performance',generation:1,expiresServerMs:leaseEnd+offset};
+    if (!graph.renew(permit,clock) || !encodedLease.renew(permit,clock)) throw new Error('PUBLISH_LEASE_REJECTED');
+    return { start:performance.timeOrigin+now,expiry:performance.timeOrigin+leaseEnd };
+  };
   window.start = async (profile) => {
     await engine.enable();
     context.addEventListener('statechange', () => stateEvents.push({ state: context.state, time: performance.timeOrigin + performance.now() }));
@@ -58,9 +71,8 @@ const html = `<!doctype html><title>Owned native lease fixture</title><script ty
       window.publisherTone = tone;
       window.graph = new PartyPublishGraph(context, context.createGain(), capture.stream,
         { clockId: clock.clockId, performanceId: playback.performanceId, generation: 1 }, 'clean-mic', false);
-      graph.renew({ clockId: clock.clockId, performanceId: playback.performanceId, generation: 1, expiresServerMs: lease.expiresServerMs }, clock);
-      // Observe the guarded MediaStream destination itself, including live mic.
-      context.createMediaStreamSource(graph.stream).connect(context.destination);
+      // Negotiate an independent receiver while the publish gate is still closed.
+      // A same-context loopback can retain samples when that consumer is frozen.
     }
     return { start: performance.timeOrigin + now, expiry: performance.timeOrigin + leaseEnd };
   };
@@ -73,7 +85,7 @@ const sockets = new Set(), server = http.createServer((req, res) => {
   else { res.setHeader('Content-Type', 'text/html'); res.end(html) }
 })
 server.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)) })
-let browser, socket, session, contextId, nextId = 0, passed = 0
+let browser, receiverBrowser, socket, receiverSocket, session, receiverSession, contextId, nextId = 0, passed = 0
 const pending = new Map(), errors = []
 const check = (value, message) => { assert.ok(value, message); passed++; console.log('PASS', message) }
 const poll = async (work, label, timeout = 10000) => {
@@ -81,11 +93,11 @@ const poll = async (work, label, timeout = 10000) => {
   while (Date.now() < deadline) { const value = await work(); if (value) return value; await new Promise(resolve => setTimeout(resolve, 100)) }
   throw new Error(`Timed out: ${label}`)
 }
-function cdp(method, params = {}, sessionId) {
+function cdp(method, params = {}, sessionId, connection = socket) {
   return new Promise((resolve, reject) => {
     const id = ++nextId, timer = setTimeout(() => { pending.delete(id); reject(new Error(`CDP timeout: ${method}`)) }, 15000)
     pending.set(id, { resolve(value) { clearTimeout(timer); resolve(value) }, reject(error) { clearTimeout(timer); reject(error) } })
-    socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
+    connection.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
   })
 }
 async function evaluate(expression) {
@@ -93,21 +105,71 @@ async function evaluate(expression) {
   if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text)
   return result.result.value
 }
+function receive(raw) {
+  const packet = JSON.parse(raw)
+  if (packet.id) {
+    const item = pending.get(packet.id); if (!item) return
+    pending.delete(packet.id); packet.error ? item.reject(new Error(packet.error.message)) : item.resolve(packet.result)
+  } else if (packet.method === 'Runtime.exceptionThrown') errors.push(packet.params.exceptionDetails.text)
+}
+async function receiverEvaluate(expression) {
+  const result = await cdp('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, userGesture: true }, receiverSession, receiverSocket)
+  if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text)
+  return result.result.value
+}
+async function connectPublisherReceiver() {
+  if (!receiverBrowser) {
+    receiverBrowser = await createOwnedRemoteBrowser({ host:process.env.KTV_ROOM_TEST_SSH_HOST,
+      knownHosts:process.env.KTV_ROOM_TEST_KNOWN_HOSTS,
+      debugPort:Number(process.env.KTV_LEASE_TEST_RECEIVER_PORT || 9246),isolatedOutput:true,captureActivity:true })
+    const info = await (await fetch(receiverBrowser.debuggerUrl+'/json/version')).json()
+    console.log('Independent native publisher receiver:',info.Browser)
+    receiverSocket = new WebSocket(info.webSocketDebuggerUrl); await once(receiverSocket,'open')
+    receiverSocket.on('message',receive)
+    // The receiver needs native media APIs, not the source's engine/bootstrap.
+    const target = await cdp('Target.createTarget',{url:'about:blank'},undefined,receiverSocket)
+    ;({sessionId:receiverSession}=await cdp('Target.attachToTarget',{targetId:target.targetId,flatten:true},undefined,receiverSocket))
+    await cdp('Runtime.enable',{},receiverSession,receiverSocket)
+    assert.equal(await receiverEvaluate("typeof RTCPeerConnection==='function'&&typeof document.createElement==='function'"),true,
+      'Independent receiver exposes native peer/audio APIs')
+  }
+  const gather = `peer => new Promise((resolve,reject) => {
+    if(peer.iceGatheringState==='complete') {resolve();return;}
+    const timer=setTimeout(()=>reject(new Error('LEASE_ICE_TIMEOUT')),8000);
+    const check=()=>{if(peer.iceGatheringState==='complete'){clearTimeout(timer);peer.removeEventListener('icegatheringstatechange',check);resolve();}};
+    peer.addEventListener('icegatheringstatechange',check);
+  })`
+  const offer = await evaluate(`(async()=>{
+    window.encodedLease?.close(); window.publisherPeer?.close();
+    window.publisherPeer=new RTCPeerConnection(partyEncodedRTCConfiguration());
+    window.encodedLease = new PartyEncodedLease({clockId:'owned-clock',performanceId:'owned-performance',generation:1},()=>{});
+    graph.stream.getTracks().forEach(track=>encodedLease.attach(publisherPeer.addTrack(track,graph.stream),'audio'));
+    await publisherPeer.setLocalDescription(await publisherPeer.createOffer());
+    await (${gather})(publisherPeer);return publisherPeer.localDescription.toJSON();
+  })()`)
+  const answer = await receiverEvaluate(`(async()=>{
+    window.receiverPeer?.close();window.receiverAudio?.remove();
+    window.receiverPeer=new RTCPeerConnection();window.receiverAudio=document.createElement('audio');
+    receiverAudio.autoplay=true;document.body.append(receiverAudio);
+    receiverPeer.ontrack=event=>{receiverAudio.srcObject=event.streams[0];};
+    await receiverPeer.setRemoteDescription(${JSON.stringify(offer)});
+    await receiverPeer.setLocalDescription(await receiverPeer.createAnswer());
+    await (${gather})(receiverPeer);return receiverPeer.localDescription.toJSON();
+  })()`)
+  await evaluate(`publisherPeer.setRemoteDescription(${JSON.stringify(answer)})`)
+  await poll(()=>evaluate("publisherPeer.connectionState==='connected'"),'native publisher peer connected')
+  await poll(()=>receiverEvaluate("receiverAudio.srcObject?.getAudioTracks().length===1"),'independent receiver audio track')
+  await receiverEvaluate('receiverAudio.play()')
+}
 try {
   server.listen(0, '127.0.0.1'); await once(server, 'listening')
   browser = await createOwnedRemoteBrowser({ host: process.env.KTV_ROOM_TEST_SSH_HOST,
     knownHosts: process.env.KTV_ROOM_TEST_KNOWN_HOSTS, frontendPort: server.address().port,
-    debugPort: Number(process.env.KTV_LEASE_TEST_CHROME_PORT || 9245), isolatedOutput: true })
+    debugPort: Number(process.env.KTV_LEASE_TEST_CHROME_PORT || 9245), isolatedOutput: true, captureActivity:true })
   const info = await (await fetch(browser.debuggerUrl + '/json/version')).json()
   console.log('Native lease engine source SHA256:', createHash('sha256').update(source).digest('hex'), '; browser:', info.Browser)
   socket = new WebSocket(info.webSocketDebuggerUrl); await once(socket, 'open')
-  socket.on('message', raw => {
-    const packet = JSON.parse(raw)
-    if (packet.id) {
-      const item = pending.get(packet.id); if (!item) return
-      pending.delete(packet.id); packet.error ? item.reject(new Error(packet.error.message)) : item.resolve(packet.result)
-    } else if (packet.method === 'Runtime.exceptionThrown') errors.push(packet.params.exceptionDetails.text)
-  })
+  socket.on('message',receive)
   ;({ browserContextId: contextId } = await cdp('Target.createBrowserContext'))
   const target = await cdp('Target.createTarget', { browserContextId: contextId, url: `http://127.0.0.1:${server.address().port}/` })
   ;({ sessionId: session } = await cdp('Target.attachToTarget', { targetId: target.targetId, flatten: true }))
@@ -117,8 +179,13 @@ try {
   const measurements = []
   for (const [profile, mode] of [['stage', 'task-stall'], ['stage', 'suspend-task-stall'], ['publisher', 'task-stall'], ['publisher', 'suspend-task-stall']]) {
     const label = `${profile}/${mode}`
-    const timing = await evaluate(`start(${JSON.stringify(profile)})`)
-    await poll(async () => (await browser.audioEvidence()).some(item => item.captureHeartbeat && item.time > timing.start && item.onAmplitude > .02), 'actual stage tone output', 2000)
+    let timing = await evaluate(`start(${JSON.stringify(profile)})`)
+    if (profile === 'publisher') {
+      await connectPublisherReceiver()
+      timing = await evaluate('authorizePublisher()')
+    }
+    const outputBrowser = profile === 'publisher' ? receiverBrowser : browser
+    await poll(async () => (await outputBrowser.audioEvidence()).some(item => item.captureHeartbeat && item.time > timing.start && item.onAmplitude > .02), 'actual authorized tone output', 2000)
     check(true, `${label}: native output contains the authorized tone`)
     const frozen = await evaluate(`(() => {
       const before = context.currentTime, begin = performance.timeOrigin + performance.now();
@@ -131,24 +198,28 @@ try {
       return { before, suspendedTime, after: context.currentTime, begin, resume, finish: performance.timeOrigin + performance.now() };
     })()`)
     await new Promise(resolve => setTimeout(resolve, 300))
-    const evidence = (await browser.audioEvidence()).filter(item => item.captureHeartbeat && item.time >= timing.start && item.time <= frozen.finish + 100)
+    const observed = await outputBrowser.audioEvidence()
+    const evidence = observed.filter(item => (item.captureHeartbeat || typeof item.audible==='boolean') && item.time >= timing.start && item.time <= frozen.finish + 100)
     const expired = evidence.filter(item => item.time > timing.expiry + 150)
-    console.log('Native lease measurement:', JSON.stringify({ profile, mode, timing, frozen, evidence, stateEvents: await evaluate('stateEvents') }))
-    check(expired.length >= 2, `${label}: actual output is observed after the wall-clock lease boundary`)
-    measurements.push({ label, expiredAudible: expired.filter(item => item.onAmplitude > .015) })
+    const activityAtBoundary = observed.filter(item=>typeof item.audible==='boolean'&&item.time<=timing.expiry+150).at(-1)
+    console.log('Native lease measurement:', JSON.stringify({ profile, mode, output:profile==='publisher'?'independent native WebRTC receiver':'native stage',timing, frozen, evidence, stateEvents: await evaluate('stateEvents') }))
+    check(expired.filter(item=>item.captureHeartbeat).length >= 2&&typeof activityAtBoundary?.audible==='boolean', `${label}: actual output is observed after the wall-clock lease boundary`)
+    measurements.push({ label, expiredAudible: expired.filter(item => item.onAmplitude > .015 || item.audible===true),
+      activeAtBoundary:activityAtBoundary?.audible===true })
     if (mode === 'suspend-task-stall') check(frozen.suspendedTime - frozen.before < .2, 'audio render clock actually freezes while the page task is blocked')
-    await evaluate('(async () => { window.graph?.close(); window.publisherTone?.stop(); window.graph = null; window.publisherTone = null; await engine.close(); })()')
+    await evaluate('(async () => { window.encodedLease?.close(); window.publisherPeer?.close(); window.graph?.close(); window.publisherTone?.stop(); window.graph = null; window.publisherTone = null; await engine.close(); })()')
   }
   check(errors.length === 0, 'native lease fixture has no runtime exception')
-  for (const measurement of measurements) check(measurement.expiredAudible.length === 0,
+  for (const measurement of measurements) check(!measurement.activeAtBoundary&&measurement.expiredAudible.length === 0,
     `${measurement.label}: old output remains silent after lease expiry despite blocked page tasks`)
   console.log(`${passed} native lease checks passed; isolated engine experiment only`)
 } finally {
   if (socket?.readyState === WebSocket.OPEN && contextId) await cdp('Target.disposeBrowserContext', { browserContextId: contextId }).catch(() => {})
-  socket?.close()
+  socket?.close(); receiverSocket?.close()
   for (const item of pending.values()) item.reject(new Error('Native lease fixture closed'))
   pending.clear()
-  await browser?.close()
+  const cleanup = await Promise.allSettled([browser?.close(),receiverBrowser?.close()])
   for (const item of sockets) item.destroy()
   if (server.listening) await new Promise(resolve => server.close(resolve))
+  for (const result of cleanup) if (result.status==='rejected') throw result.reason
 }

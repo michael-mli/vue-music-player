@@ -11,7 +11,10 @@ export async function collectAvMediaStats() {
     'concealedSamples', 'insertedSamplesForDeceleration', 'removedSamplesForAcceleration',
     'framesDecoded', 'framesDropped', 'framesReceived', 'freezeCount', 'totalFreezesDuration',
     'totalProcessingDelay', 'totalDecodeTime', 'nackCount', 'pliCount', 'firCount',
-    'retransmittedPacketsSent', 'retransmittedBytesSent']
+    'retransmittedPacketsSent', 'retransmittedBytesSent', 'retransmittedPacketsReceived',
+    'framesAssembledFromMultiplePackets', 'totalAssemblyTime',
+    'keyFramesEncoded', 'keyFramesDecoded', 'hugeFramesSent',
+    'fecPacketsReceived', 'fecPacketsDiscarded', 'fecBytesReceived']
   const reports = await Promise.all(window.__peers.map(async (peer, index) => {
     const report = await peer.getStats(), rows = [...report.values()]
     const media = rows.filter(item => ['inbound-rtp', 'outbound-rtp', 'remote-inbound-rtp'].includes(item.type))

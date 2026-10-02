@@ -43,13 +43,18 @@ class PartyLeaseGuard extends AudioWorkletProcessor {
     return true
   }
   process(inputs, outputs) {
-    if (!this.checkClock()) return false
+    const alive = this.checkClock()
     const input = inputs[0] || []
-    for (let channel = 0; channel < outputs[0].length; channel++) {
-      const samples = input[channel]
-      if (samples) outputs[0][channel].set(samples)
+    for (let index = 0; index < outputs.length; index++) {
+      for (let channel = 0; channel < outputs[index].length; channel++) {
+        const samples = alive && index === 0 ? input[channel] : null
+        if (samples) outputs[index][channel].set(samples)
+        // Clear the final quantum explicitly. Returning false must never leave
+        // a previous audio block available to a MediaStream destination.
+        else outputs[index][channel].fill(0)
+      }
     }
-    return true
+    return alive
   }
 }
 registerProcessor('party-lease-guard', PartyLeaseGuard)

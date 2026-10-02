@@ -11,8 +11,13 @@ const sdk = moduleUrl(`export class Room { constructor(options) { globalThis.__p
   export const DisconnectReason = { UNKNOWN_REASON:0, CLIENT_INITIATED:1, DUPLICATE_IDENTITY:2, SERVER_SHUTDOWN:3, PARTICIPANT_REMOVED:4, ROOM_DELETED:5, STATE_MISMATCH:6, JOIN_FAILURE:7, SIGNAL_CLOSE:9 };
   export const Track = { Kind:{Audio:'audio',Video:'video'}, Source:{Microphone:'mic',Camera:'camera',ScreenShare:'screen_share'} };`)
 const source = await fs.readFile(new URL('../src/services/partyMediaTransport.ts', import.meta.url), 'utf8')
+const encoded = moduleUrl(`export const partyEncodedRTCConfiguration = () => ({encodedInsertableStreams:true});
+  export class PartyEncodedLease { constructor(identity, failed) { this.identity=identity; this.failed=failed; this.attachments=[]; this.closed=false; globalThis.__partyTransport.lease=this; }
+    attach(sender,kind) { if(!sender) throw new Error('MEDIA_CAPTURE_UNAVAILABLE'); this.attachments.push({sender,kind}); }
+    renew(permit,clock) { this.permit=permit; this.clock=clock; return !this.closed; }
+    close() { this.closed=true; } }`)
 const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText
-const { createPartyMediaTransport } = await import(moduleUrl(compiled.replace("'livekit-client'", JSON.stringify(sdk))))
+const { createPartyMediaTransport } = await import(moduleUrl(compiled.replace("'livekit-client'", JSON.stringify(sdk)).replace("'./partyEncodedLease'", JSON.stringify(encoded))))
 
 async function fixture(t, scope = 'audience') {
   const previous = { window: globalThis.window, document: globalThis.document, state: globalThis.__partyTransport }
@@ -20,6 +25,7 @@ async function fixture(t, scope = 'audience') {
   const room = new EventEmitter(), elements = new Set(), created = [], rejected = [], detached = []
   let started = 0, recovering = 0, recovered = 0, ended = 0, blocked = 0
   room.startAudio = async () => { started++ }; room.disconnect = async () => room.emit('disconnect')
+  room.connect = async (...args) => { globalThis.__partyTransport.connectArgs=args }
   globalThis.__partyTransport = { room }
   globalThis.window = { location: { origin: 'https://party.example' } }
   globalThis.document = { createElement() {
@@ -27,7 +33,8 @@ async function fixture(t, scope = 'audience') {
       pause() { this.paused = true }, remove() { this.removed = true }, async play() { this.paused = false } }
     created.push(element); return element
   } }
-  const transport = await createPartyMediaTransport({ scope, serverUrl: '/api/ktv/media', token: 'test-only' }, {
+  const transport = await createPartyMediaTransport({ scope, serverUrl: '/api/ktv/media', token: 'test-only',
+    permit: scope==='publisher'?{clockId:'clock',performanceId:'performance',generation:1,expiresServerMs:8000}:undefined }, {
     attached: element => elements.add(element), detached: element => { detached.push(element); elements.delete(element) }, ended(recoverable) { ended++; disconnected.push(recoverable) }, recovering() { recovering++ }, recovered() { recovered++ }, playbackBlocked() { blocked++ } })
   t.after(async () => {
     await transport.close()
@@ -118,7 +125,7 @@ test('user Stop cancels an in-flight audio enable before its late reply can play
 
 test('performance audio and lyric video publish in the same receiver synchronization stream', async t=>{
   const f=await fixture(t,'publisher'), published=[]
-  f.room.localParticipant={async publishTrack(track,options){published.push({track,options})}}
+  f.room.localParticipant={async publishTrack(track,options){published.push({track,options});return {track:{sender:track}}}}
   const mix={kind:'audio'},lyrics={kind:'video'}
   await f.transport.publish({getAudioTracks:()=>[mix]},{getVideoTracks:()=>[lyrics]})
   assert.deepEqual(published.map(item=>item.track),[mix,lyrics])
@@ -126,4 +133,12 @@ test('performance audio and lyric video publish in the same receiver synchroniza
   assert.deepEqual(published.map(item=>item.options.name),['performance-mix','performance-lyrics'])
   assert.deepEqual(published.map(item=>item.options.source),['mic','screen_share'])
   assert.deepEqual(published[1].options.screenShareEncoding,{maxBitrate:350000,maxFramerate:25})
+  await f.transport.connect()
+  assert.equal(globalThis.__partyTransport.connectArgs[2].rtcConfig.encodedInsertableStreams,true)
+  const lease=globalThis.__partyTransport.lease
+  assert.deepEqual(lease.attachments,[{sender:mix,kind:'audio'},{sender:lyrics,kind:'video'}])
+  assert.equal(f.transport.renewPublishPermit({expiresServerMs:5000},{status:'healthy'}),true)
+  await f.transport.close()
+  assert.equal(lease.closed,true)
+  assert.equal(f.transport.renewPublishPermit({expiresServerMs:6000},{status:'healthy'}),false)
 })

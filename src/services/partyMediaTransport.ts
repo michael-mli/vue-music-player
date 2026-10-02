@@ -1,4 +1,7 @@
 import type { PartyMediaGrant } from './partyApi'
+import type { PartyClockEstimate } from '@/utils/partyClock'
+import type { PartyPublishPermit } from './partyPublishGraph'
+import { PartyEncodedLease, partyEncodedRTCConfiguration } from './partyEncodedLease'
 
 export async function createPartyMediaTransport(grant: PartyMediaGrant, callbacks: {
   attached: (element: HTMLMediaElement) => void
@@ -10,8 +13,10 @@ export async function createPartyMediaTransport(grant: PartyMediaGrant, callback
   const { Room, RoomEvent, Track, DisconnectReason } = await import('livekit-client')
   const room = new Room({ adaptiveStream: false, dynacast: false, disconnectOnPageLeave: true,
     reconnectPolicy: { nextRetryDelayInMs: () => null } })
+  const rtcConfig = grant.scope === 'publisher' ? partyEncodedRTCConfiguration() : undefined
   const received = new Map<string, { participant: string; element: HTMLVideoElement; track: import('livekit-client').RemoteTrack; publication: import('livekit-client').RemoteTrackPublication }>()
   let stopped = false, terminalNotified = false
+  let encodedLease: PartyEncodedLease | null = null
   function removeElement(element: HTMLMediaElement) {
     element.pause(); element.srcObject = null; element.remove(); callbacks.detached(element)
   }
@@ -59,6 +64,7 @@ export async function createPartyMediaTransport(grant: PartyMediaGrant, callback
   room.on(RoomEvent.Disconnected, reason => {
     if (stopped || terminalNotified) return
     terminalNotified = true
+    encodedLease?.close()
     for (const element of new Set([...received.values()].map(item => item.element))) element.pause()
     // Gateway disconnects revoke this nonce. Recovery must obtain a fresh grant;
     // provider removals, room close and explicit leave must remain terminal.
@@ -69,17 +75,27 @@ export async function createPartyMediaTransport(grant: PartyMediaGrant, callback
   const server = new URL(grant.serverUrl, window.location.origin)
   server.protocol = server.protocol === 'https:' ? 'wss:' : 'ws:'
   return {
-    async connect() { await room.connect(server.toString(), grant.token, { autoSubscribe: grant.scope === 'audience' }) },
+    async connect() { await room.connect(server.toString(), grant.token, { autoSubscribe: grant.scope === 'audience', rtcConfig }) },
     async publish(audio: MediaStream, video: MediaStream) {
       const mix = audio.getAudioTracks()[0], lyrics = video.getVideoTracks()[0]
-      if (!mix || !lyrics || stopped) throw new Error('MEDIA_CAPTURE_UNAVAILABLE')
-      await room.localParticipant.publishTrack(mix, { name: 'performance-mix', stream: 'performance', source: Track.Source.Microphone,
+      if (!mix || !lyrics || stopped || encodedLease || grant.scope !== 'publisher' || !grant.permit) throw new Error('MEDIA_CAPTURE_UNAVAILABLE')
+      encodedLease = new PartyEncodedLease(grant.permit, () => {
+        if (stopped || terminalNotified) return
+        terminalNotified = true; callbacks.ended(false)
+      })
+      const audioPublication = await room.localParticipant.publishTrack(mix, { name: 'performance-mix', stream: 'performance', source: Track.Source.Microphone,
         audioPreset: { maxBitrate: 64000 }, dtx: false, red: true })
       if (stopped) throw new Error('MEDIA_CAPTURE_UNAVAILABLE')
+      encodedLease.attach(audioPublication.track?.sender, 'audio')
       // Captured lyrics are screen content. Camera classification causes the SFU
       // to apply a jitter-driven video delay to low-rate canvas traffic.
-      await room.localParticipant.publishTrack(lyrics, { name: 'performance-lyrics', stream: 'performance', source: Track.Source.ScreenShare,
+      const videoPublication = await room.localParticipant.publishTrack(lyrics, { name: 'performance-lyrics', stream: 'performance', source: Track.Source.ScreenShare,
         degradationPreference: 'maintain-resolution', simulcast: false, screenShareEncoding: { maxBitrate: 350000, maxFramerate: 25 } })
+      if (stopped) throw new Error('MEDIA_CAPTURE_UNAVAILABLE')
+      encodedLease.attach(videoPublication.track?.sender, 'video')
+    },
+    renewPublishPermit(permit: PartyPublishPermit, clock: PartyClockEstimate) {
+      return !stopped && !terminalNotified && !!encodedLease && encodedLease.renew(permit, clock)
     },
     async enableAudio() {
       if (stopped || terminalNotified) return
@@ -92,6 +108,7 @@ export async function createPartyMediaTransport(grant: PartyMediaGrant, callback
     },
     async close() {
       stopped = true
+      encodedLease?.close()
       clearReceived(); await room.disconnect(true)
     },
   }

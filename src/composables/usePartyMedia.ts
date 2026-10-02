@@ -282,9 +282,12 @@ export function usePartyMedia(party: Ref<PartySnapshot | null>, connected: Ref<b
     else if (captureBinding && captureSawActive) { void stop(); return }
     // Heartbeat leases arrive independently of room snapshots. Use the same
     // validated current lease as the backing engine and stop on gate rejection.
-    if (publisherReady && graph && grant.value?.permit && clock.value && !graph.renew({ ...grant.value.permit,
-      expiresServerMs: Math.min(grant.value.permit.expiresServerMs, audio.outputLease.value?.expiresServerMs || 0) }, clock.value)) {
-      fail(new Error('MEDIA_PERMISSION')); return
+    if (publisherReady && graph && grant.value?.permit && clock.value) {
+      const permit = { ...grant.value.permit,
+        expiresServerMs: Math.min(grant.value.permit.expiresServerMs, audio.outputLease.value?.expiresServerMs || 0) }
+      if (!graph.renew(permit, clock.value) || !transport?.renewPublishPermit(permit, clock.value)) {
+        fail(new Error('MEDIA_PERMISSION')); return
+      }
     }
     if (originalReady && original && publisherReady && playback && clock.value && currentPermit()) original.sync(playback, clock.value, audio.outputLease.value, 'guide')
     else original?.stop()

@@ -14,11 +14,12 @@ The core room, invitation/guest, moderation, queue, shared-screen, phone-control
 scheduled playback and private-guide software is implemented. The deployed app
 is a preview; public online media is still disabled.
 
-1. **Audio reliability:** extend sustained native and physical coverage of the
-   deployed bounded-rate and native lease scheduling changes. Exact native
-   interruption/recovery and stage replacement now pass; the previous candidate's
-   larger render-clock stall remains unexplained. Unit checks alone do not close
-   sustained stability or physical acceptance.
+1. **Audio reliability:** finish release verification and deployment of the new
+   encoded publisher lease gate. An independent current-browser WebRTC receiver
+   exposed a post-expiry burst in the existing PCM-only path. The candidate passes
+   isolated Chrome 137 and 154 native tests and the full-room journey.
+   Extend sustained native and physical coverage; the previous candidate's larger
+   render-clock stall remains unexplained.
 2. **Streaming timing:** resolve impaired-network A/V timing, measure handover
    timing and longer outages, and verify source-clock stability. Functional
    reconnect/handover passes do not establish acceptable audible/video alignment.
@@ -39,8 +40,10 @@ Current status: The bounded audio drift preview is deployed at
 `https://music.micstec.com/party` with frontend `7c1f583`, backend `f58a8f3`
 (`main-BRuMNKuZ.js`, `main-DnE6rWx5.css`,
 `partyLeaseGuard.worklet-5od8dAEf.js`). Online media remains disabled.
-Native rendering guards now keep expired stage and published mic/backing silent
-after a frozen audio clock resumes while page tasks remain blocked. Exact native
+Native rendering guards pass expired-stage silence and integrated replacement.
+The earlier publisher check used the same frozen context as its consumer; a newer
+independent WebRTC receiver exposes a brief post-expiry publisher burst. An encoded
+worker gate is under verification and is not deployed. Earlier exact native
 lease checks 15/15, UI 45/45, PWA 10/10, full clean streaming/recovery/handover
 56/56 and public release 21/21 pass; party units 94/94 pass.
 The deployed build also passes **41/41 integrated native stage-replacement checks**:
@@ -2256,6 +2259,115 @@ venue microphone contains a continuous 880-Hz input, so it cannot prove
 remote-to-venue A/V alignment. Those gaps, continuously impaired post-handover
 timing, physical devices and representative capacity remain open. No new frontend
 publication, backend restart or persistent SFU is required for this fixture work.
+
+#### Continuous UDP handover and current-browser comparison
+
+The extended fixture was run with the unchanged deployed `7c1f583` app,
+default SFU stream sync/adaptive 500-ms policy, 1280×720/25-fps/350-kbit/s
+screen-share request and actual UDP 150-ms delay, up to 40-ms extra jitter and
+5% packet loss retained through singer replacement. Baseline remains six pairs;
+each impaired/new-singer phase requires 40, with the same unmatched-edge and
+150-ms p95/250-ms maximum limits. No clock, source guard or receiver policy is
+replaced.
+
+Chrome **137.0.7151.68** fails
+(`/tmp/ktv-continuous-post-handover-udp-av-20261002.log`). Initial impaired phase
+has 40 pairs/no unmatched edges, absolute skew p95 **485.76 ms**, maximum
+**684.39 ms**. The replacement singer then enters native drift recovery after
+20 diagnostic samples, largest calculated source error **114.4 ms**; the phase
+does not complete. Stop-call counts are **12–14**, not one per animation frame;
+recent main-thread long tasks are empty until a final 52-ms task. Smaller repeated
+native render/wall deficits are present. This proves deduplication reduced the
+redundant calls, not that those calls caused or resolved the remaining stalls.
+
+An independently cached, official Chrome for Testing **154.0.8037.92** also
+fails (`/tmp/ktv-cft154-continuous-post-handover-udp-av-20261002.log`):
+
+| Phase | Matched pairs | Unmatched audio/video | Absolute skew p95 / maximum |
+| --- | --- | --- | --- |
+| Baseline | 6 | 0 / 0 | 65.30 / 65.30 ms |
+| Initial impaired performer | 40 | 0 / 0 | 347.30 / 380.53 ms |
+| Replacement singer | 40 | 2 / 2 | 502.52 / 630.89 ms |
+
+The replacement phase fails its unmatched-edge gate; venue-to-remote measurement
+is not reached. Native source phase ranges **4.3–12.9 ms** in the impaired phase
+and **0.3–11.1 ms** after replacement; the room is still playing without recovery
+and there are no browser runtime exceptions. The comparison is not controlled
+for the randomly generated loss sequence, so different skew values are not proof
+of a browser improvement. It establishes a current-browser run with healthy
+measured source timing and failed received A/V timing. Selected decoded
+multi-packet frame assembly intervals average approximately **421–523 ms**,
+supporting further investigation of packet recovery separately from source drift.
+
+Fixture diagnostics now retain finite packet-assembly/keyframe/FEC counters and
+bounded source timing/stop-call/long-task observations without SDP, credentials,
+addresses or raw PCM. Missing browser counters remain missing. **15/15** fixture
+units pass (`/tmp/ktv-assembly-diagnostics-fixtures-20261002.log`). The runner
+accepts an explicit private build directory so future candidates can be built
+without replacing an artifact another fixture is serving.
+
+`scripts/party-install-test-chrome.py --version 154.0.8037.92` installs or verifies
+only the current user's isolated cache. The owned remote helper accepts
+`KTV_ROOM_TEST_CHROME_BIN` while retaining `/usr/bin/google-chrome` by default;
+profiles, Pulse output, capture, loopback forwarding and watchdog ownership stay
+unchanged. The observed binary version is verified, with archive SHA-256
+`ff43322f335e436b2f4dcdfeeec5db032299e335a7e8c1c618b326e100ce8732`
+and **196,202,491 bytes** recorded. Both test browser profiles/SFUs are cleaned;
+the reusable versioned binary cache remains. System Chrome, public app/backend,
+feature flags and infrastructure sizing are unchanged. Impaired handover timing,
+native sustained stability, physical/browser/mobile and full release gates remain
+open.
+
+#### Independent publisher expiry and encoded-frame gate
+
+The native lease fixture now publishes to a separate native WebRTC receiver with
+its own private output detector, rather than playing the MediaStream back through
+the AudioContext that the source freezes. Continuous RMS activity edges accompany
+the heartbeat observations. Clocks, expiry and the 150-ms silence margin are
+unchanged. This fixture is an actual point-to-point publisher path, not a full SFU
+authorization or physical-device test.
+
+Chrome **154.0.8037.92** confirms a roughly **30-ms** output burst after context
+resume, approximately **818 ms after permit expiry**
+(`/tmp/ktv-cft154-independent-native-lease-blank-receiver-20261002.log`, exit 1).
+Explicitly clearing reused worklet output buffers adds useful hardening and passes
+95 unit checks, but the independent native failure persists
+(`/tmp/ktv-cft154-expired-output-clear-native-lease-20261002.log`). PCM expiry alone
+does not close the encoded publication boundary.
+
+The candidate installs a dedicated worker on both actual publisher RTP senders.
+It drops encoded frames before packetization until armed by a validated permit;
+independent wall/monotonic clock checks, a timer and per-frame deadline checks
+permanently close expired, stopped, replayed or mismatched permits. Modern
+`RTCRtpScriptTransform` and legacy transferred encoded streams use the same worker.
+Only publisher connections request the legacy insertable-streams configuration.
+Main-thread renewals use the same minimum of the media permit and current output
+lease as the PCM graph. Server/provider revocation remains authoritative.
+
+Closing PCM and RTP at the same early deadline removed the late burst but left
+receiver concealment audible beyond the unchanged silence boundary
+(`/tmp/ktv-cft154-encoded-lease-native-20261002.log`, exit 1). The revised RTP deadline
+is uncertainty plus **10 ms** before expiry; PCM remains uncertainty plus **100 ms**
+early, allowing encoded silence to reach the receiver before RTP closes. This
+candidate passes **15/15** independent native lease checks on both Chrome 154
+and Chrome 137, including running and frozen/resumed publisher contexts
+(`/tmp/ktv-cft154-encoded-silence-drain-native-20261002.log`,
+`/tmp/ktv-chrome137-encoded-silence-drain-native-20261002.log`). Party units pass
+**105/105** (`/tmp/ktv-encoded-lease-final-units-20261002.log`), including both
+adapter paths, unsupported publishers, worker failure and composable rejection.
+The private production build/type-check passes
+(`/tmp/ktv-encoded-lease-candidate-build-20261002.log`). The same candidate's full
+native Chrome 154 SFU journey passes **56/56**
+(`/tmp/ktv-encoded-lease-candidate-full-room-20261002.log`): provider confirmation,
+received lyric video, private-guide exclusion, audience recovery, singer change,
+revocation and both hybrid handover directions. After a real **50.18-ms** source
+output pause, the baseline has **40 pairs**, no unmatched edges, absolute skew
+p95 **68.02 ms**, maximum **88.69 ms**. Post-handover timing is not measured in
+this run; it is functional handover evidence. Owned profiles, SFU and forwarding
+ports are cleaned. Exact committed release/UI/PWA/stage-replacement and public
+publication checks remain before deployment. Public app,
+backend and disabled media flag are unchanged. Arbitrarily buffered network audio
+and physical output remain acceptance work.
 
 ### Release record
 

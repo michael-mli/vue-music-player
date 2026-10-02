@@ -21,13 +21,15 @@ async function unusedLocalPort(port) {
   await new Promise(resolve => server.close(resolve))
 }
 
-export async function createOwnedRemoteBrowser({ host, knownHosts, micFile, frontendPort, debugPort = 9243, isolatedOutput = false, captureOutput = isolatedOutput, captureActivity = false }) {
+export async function createOwnedRemoteBrowser({ host, knownHosts, micFile, frontendPort, debugPort = 9243, isolatedOutput = false, captureOutput = isolatedOutput, captureActivity = false,
+  chromeBin = process.env.KTV_ROOM_TEST_CHROME_BIN || '/usr/bin/google-chrome' }) {
   if (!/^[A-Za-z0-9_-]+@[A-Za-z0-9.-]+$/.test(host || '') || !knownHosts ||
     ![debugPort, ...(frontendPort === undefined ? [] : [frontendPort])].every(port => Number.isInteger(port) && port >= 1024 && port <= 65535) || frontendPort === debugPort) {
     throw new Error('Invalid owned remote browser fixture configuration')
   }
   if(captureOutput&&!isolatedOutput) throw new Error('Output capture requires an isolated output')
   if(captureActivity&&!captureOutput) throw new Error('Output activity requires output capture')
+  if (!/^\/[A-Za-z0-9_./-]+$/.test(chromeBin) || chromeBin.split('/').includes('..')) throw new Error('Invalid owned browser binary path')
   const remotePorts = [debugPort, ...(frontendPort === undefined ? [] : [frontendPort])]
   const portFilter = '( ' + remotePorts.map(port => `sport = :${port}`).join(' or ') + ' )'
   await unusedLocalPort(debugPort)
@@ -70,7 +72,7 @@ echo removed
     if (!removed) throw new Error('Remote browser fixture cleanup was not verified')
   }
   try {
-    root = await ssh(`test -x /usr/bin/google-chrome && test -z "$(/usr/bin/ss -ltnH '${portFilter}')" && umask 077 && mktemp -d /tmp/ktv-room-browser.XXXXXX`)
+    root = await ssh(`test -x ${shell(chromeBin)} && test -z "$(/usr/bin/ss -ltnH '${portFilter}')" && umask 077 && mktemp -d /tmp/ktv-room-browser.XXXXXX`)
     if (!/^\/tmp\/ktv-room-browser\.[A-Za-z0-9]+$/.test(root)) { root = undefined; throw new Error('Remote owned directory was not verified') }
     if (micFile) await run('scp', [...options, micFile, `${host}:${root}/microphone.wav`])
     if(captureOutput) {
@@ -121,7 +123,7 @@ ${captureOutput ? `${captureActivity ? 'KTV_CAPTURE_ACTIVITY=1 ' : ''}python3 -u
 monitor=$!` : ''}
 ${captureOutput ? `printf '%s' "$monitor" > "$root/monitor.pid"` : ''}
 ` : ''}
-timeout --signal=TERM --kill-after=5s 900s /usr/bin/google-chrome \\
+timeout --signal=TERM --kill-after=5s 900s ${shell(chromeBin)} \\
   --headless=new --no-sandbox --disable-dev-shm-usage --disable-gpu \\
   --no-first-run --no-default-browser-check --no-proxy-server \\
   --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows \\
