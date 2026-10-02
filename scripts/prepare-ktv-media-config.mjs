@@ -31,6 +31,11 @@ rtc:
     includes: [${JSON.stringify(networkInterface)}]
 room:
   max_participants: 61
+  sync_streams: true
+  playout_delay:
+    enabled: true
+    min: 0
+    max: 500
 turn:
   enabled: true
   domain: ${turnDomain}

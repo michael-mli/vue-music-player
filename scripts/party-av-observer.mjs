@@ -6,8 +6,8 @@ export function installAvSourceMarkers() {
     const marker = /^AV(?:ON|OFF)(\d+)$/.exec(text)
     if (marker && y === 300 && this.canvas.width === 1280 && this.canvas.height === 720) {
       const id = Number(marker[1])
-      if (id > 63) throw new Error('AV_MARKER_ID_LIMIT')
-      const bits = [1, 0, 1, 0, ...Array.from({ length: 6 }, (_, index) => id >> (5 - index) & 1)]
+      if (id > 255) throw new Error('AV_MARKER_ID_LIMIT')
+      const bits = [1, 0, 1, 0, ...Array.from({ length: 8 }, (_, index) => id >> (7 - index) & 1)]
       bits.push(bits.slice(4).reduce((value, bit) => value ^ bit, 0))
       this.save()
       for (let index = 0; index < bits.length; index++) {
@@ -25,21 +25,21 @@ export function installAvSourceMarkers() {
 export function installAvObserver() {
   const video = document.querySelector('[data-party-media-screen] video')
   if (!video?.requestVideoFrameCallback) throw new Error('AV_FRAME_CALLBACK_UNAVAILABLE')
-  const canvas = document.createElement('canvas'); canvas.width = 352; canvas.height = 32
+  const canvas = document.createElement('canvas'); canvas.width = 416; canvas.height = 32
   const pixels = canvas.getContext('2d', { willReadFrequently: true })
   const evidence = { video: [], invalidFrames: 0, ready: false }
   let phase = null, previousId = null, frameId, stopped = false
   function frame(now, metadata) {
     if (stopped) return
     pixels.drawImage(video, 64 * video.videoWidth / 1280, 360 * video.videoHeight / 720,
-      352 * video.videoWidth / 1280, 32 * video.videoHeight / 720, 0, 0, 352, 32)
-    const data = pixels.getImageData(0, 0, 352, 32).data
-    const bits = Array.from({ length: 11 }, (_, index) => data[(16 * 352 + index * 32 + 16) * 4] > 128 ? 1 : 0)
-    const valid = bits.slice(0, 4).join('') === '1010' && bits.slice(4, 10).reduce((sum, bit) => sum ^ bit, 0) === bits[10]
+      416 * video.videoWidth / 1280, 32 * video.videoHeight / 720, 0, 0, 416, 32)
+    const data = pixels.getImageData(0, 0, 416, 32).data
+    const bits = Array.from({ length: 13 }, (_, index) => data[(16 * 416 + index * 32 + 16) * 4] > 128 ? 1 : 0)
+    const valid = bits.slice(0, 4).join('') === '1010' && bits.slice(4, 12).reduce((sum, bit) => sum ^ bit, 0) === bits[12]
     if (!valid) evidence.invalidFrames++
     else {
       evidence.ready = true
-      const id = bits.slice(4, 10).reduce((value, bit) => value * 2 + bit, 0)
+      const id = bits.slice(4, 12).reduce((value, bit) => value * 2 + bit, 0)
       if (previousId !== null && id !== previousId && phase) {
         if (evidence.video.length >= 128) throw new Error('AV_VIDEO_EVIDENCE_LIMIT')
         evidence.video.push({ phase, id, on: id % 2 === 0, time: performance.timeOrigin + metadata.expectedDisplayTime,

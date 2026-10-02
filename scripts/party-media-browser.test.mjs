@@ -103,7 +103,7 @@ try {
   await exec('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=turn.localhost',
     '-keyout', path.join(turnRoot, 'key.pem'), '-out', path.join(turnRoot, 'cert.pem')])
   await fs.chmod(path.join(turnRoot, 'key.pem'), 0o600)
-  await fs.writeFile(path.join(root, 'livekit.yaml'), `port: 17880\nbind_addresses: [127.0.0.1]\nlog_level: warn\nrtc:\n  tcp_port: 17881\n  udp_port: 17882\n  node_ip: 127.0.0.1\n  use_external_ip: false\n  enable_loopback_candidate: true\n  interfaces:\n    includes: [lo]\nturn:\n  enabled: true\n  domain: turn.localhost\n  udp_port: 17884\n  tls_port: 17885\n  cert_file: /run/turn/cert.pem\n  key_file: /run/turn/key.pem\n  relay_range_start: 17886\n  relay_range_end: 17898\n  allow_restricted_peer_cidrs: [127.0.0.0/8]\nkeys:\n  ${apiKey}: ${apiSecret}\nroom:\n  max_participants: 6\n`, { mode: 0o600 })
+  await fs.writeFile(path.join(root, 'livekit.yaml'), `port: 17880\nbind_addresses: [127.0.0.1]\nlog_level: warn\nrtc:\n  tcp_port: 17881\n  udp_port: 17882\n  node_ip: 127.0.0.1\n  use_external_ip: false\n  enable_loopback_candidate: true\n  interfaces:\n    includes: [lo]\nturn:\n  enabled: true\n  domain: turn.localhost\n  udp_port: 17884\n  tls_port: 17885\n  cert_file: /run/turn/cert.pem\n  key_file: /run/turn/key.pem\n  relay_range_start: 17886\n  relay_range_end: 17898\n  allow_restricted_peer_cidrs: [127.0.0.0/8]\nkeys:\n  ${apiKey}: ${apiSecret}\nroom:\n  max_participants: 6\n  sync_streams: true\n  playout_delay:\n    enabled: true\n    min: 0\n    max: 500\n`, { mode: 0o600 })
   await exec('docker', ['run', '-d', '--name', container, '--network', 'host', '--user', `${process.getuid()}:${process.getgid()}`, '--read-only', '--cap-drop', 'ALL',
     '--security-opt', 'no-new-privileges', '-v', `${root}/livekit.yaml:/etc/livekit.yaml:ro`, '-v', `${turnRoot}:/run/turn:ro`, image, '--config', '/etc/livekit.yaml'])
   running = true
@@ -151,12 +151,12 @@ try {
     window.graph = new PartyPublishGraph(context, backing, micOutput.stream, { clockId: 'spike', performanceId: 'performance', generation: ${generation} });
     const renew = () => graph.renew({ clockId: 'spike', performanceId: 'performance', generation: ${generation}, expiresServerMs: performance.now() + 4000 },
       { clockId: 'spike', status: 'healthy', offsetMs: 0, uncertaintyMs: 1 }); renew(); window.renewTimer = setInterval(renew, 500);
-    await room.localParticipant.publishTrack(graph.stream.getAudioTracks()[0], { name: 'performance-mix', source: LivekitClient.Track.Source.Microphone });
+    await room.localParticipant.publishTrack(graph.stream.getAudioTracks()[0], { name: 'performance-mix', stream: 'performance', source: LivekitClient.Track.Source.Microphone });
     const canvas = document.createElement('canvas'); document.body.appendChild(canvas); window.lyricCanvas = canvas;
     window.lyricCapture = new PartyLyricCapture(canvas, () => performance.now() < graph.diagnostics.expiresServerMs - 100 ?
       { title: 'Captured performance', singer: 'Synthetic singer', renderPositionMs: context.currentTime * 1000,
         backingDelayMs: 0, lyricOffsetMs: 0, lines: [{ time: 0, text: 'First line' }, { time: 2, text: 'Second line' }] } : null);
-    await room.localParticipant.publishTrack(lyricCapture.stream.getVideoTracks()[0], { name: 'performance-lyrics', source: LivekitClient.Track.Source.Camera,
+    await room.localParticipant.publishTrack(lyricCapture.stream.getVideoTracks()[0], { name: 'performance-lyrics', stream: 'performance', source: LivekitClient.Track.Source.Camera,
       simulcast: false, videoEncoding: { maxBitrate: 350000, maxFramerate: 25 } });
   })()`)
   await publish(1)

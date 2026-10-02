@@ -2,15 +2,18 @@
 
 Created: 2026-09-29
 
-Last updated: 2026-10-01
+Last updated: 2026-10-02
 
 Design reference: [ktv_party.md](ktv_party.md)
 
 Implemented contracts: [ktv_party_protocol.md](ktv_party_protocol.md)
 
 Current status: The durable-room preview is deployed at
-`https://music.micstec.com/party` with frontend `b9fbb91`
-(`main-C3F6BNH-.js`, `main-D0gBov56.css`) and backend `9b74e8f`. Online media remains disabled.
+`https://music.micstec.com/party` with frontend `29a62cf`
+(`main-_4MVKaX7.js`, `main-D0gBov56.css`) and backend `9b74e8f`. Online media remains disabled.
+The output lease renewal fix is deployed. SFU synchronization configuration and
+longer A/V tests are being verified: shared receiver CNAME/MSID now passes, but
+impaired timing and sustained native publisher drift remain open.
 Members can connect a shared screen or phone
 controller with a short-lived code; a display has read-only room access, and a
 controller inherits the member's current permissions. Hosts can appoint co-hosts,
@@ -1298,6 +1301,67 @@ Next: resolve and measure impaired receiver A/V playout, longer outages and
 continued impairment during handover, then representative sustained/multi-room
 load. Physical/mobile, output changes/Bluetooth and distinct Wi-Fi/LTE acceptance
 remain necessary before persistent online/hybrid enablement.
+
+### 2026-10-02 — SFU synchronization policy and sustained publisher diagnostics
+
+Pinned LiveKit source identified a configuration omission: the shared published
+`performance` name did not enable synchronized subscriber identities while
+`room.sync_streams` was false. Config generation and isolated SFU fixtures now
+enable it, with adaptive video playout hints bounded to 0–500 ms. The integrated
+receiver verifies shared negotiated MSID and RTCP CNAME. This fixes the grouping
+configuration; it does not establish successful impaired timing. The pinned
+server excludes Firefox from this synchronization path, so browser coverage remains
+open. See the linked primary implementation in the design's streaming section.
+
+Timing fixtures now default to 40 transitions, with six baseline transitions when
+impairment is selected. The default generated song lasts 132 seconds; marker IDs
+use eight bits plus parity and retain source/receiver bounds. Both browsers have
+separate private PulseAudio outputs. Bounded per-second phase, native output-clock,
+server clock and playback samples distinguish publisher failures from receiver
+buffering. A publisher recovery fails the observation promptly; it cannot become
+a passing partial sample. Native clocks, audio start scheduling and drift limits
+are unchanged.
+
+Checks and retained failed evidence:
+
+- Party units **73/73**, `/tmp/ktv-sfu-sync-policy-units.log`.
+- A/V fixture units **4/4**, including three Python DSP cases and byte-ID/parity
+  round trips, `/tmp/ktv-sfu-sync-av-final-units.log`.
+- Supervisor/SFU lifecycle **9/9**, `/tmp/ktv-sfu-sync-supervisor.log`.
+- Public-origin remote direct/trusted TLS TURN/revocation **14/14**,
+  `/tmp/ktv-sfu-sync-public-transport.log`, exit 0.
+- Sync-only TCP six-pair candidate: impaired p95/max **219.37 ms**, exit 1,
+  `/tmp/ktv-sfu-sync-tcp-candidate.log`.
+- Sync plus adaptive hints TCP six-pair candidate: baseline p95/max **28.23 ms**,
+  impaired p95/max **220.19 ms**, exit 1,
+  `/tmp/ktv-sfu-sync-playout-tcp-candidate.log`.
+- Same-policy UDP candidate: baseline p95/max **78.89 ms**, impaired p95/max
+  **282.97 ms**, exit 1, `/tmp/ktv-sfu-sync-playout-udp-candidate.log`.
+- Forty-edge TCP attempts fail at native publisher drift before collecting the
+  required impaired phase. Shared-source/private-receiver output reaches **118 ms**
+  largest calculated error over 47 samples,
+  `/tmp/ktv-sfu-sync-playout-tcp-sustained.log`. Both private outputs reach
+  **124.8 ms** over 38 samples, `/tmp/ktv-sfu-sync-private-tcp-sustained.log`.
+  Its six-pair baseline p95/max is **39.20 ms**. Both exit 1.
+- A clean-network sustained diagnostic also fails: largest calculated error
+  **98.4 ms**, 15 samples, recovery approximately 14 seconds into the performance,
+  `/tmp/ktv-sfu-sync-clean-sustained-diagnostic.log`, exit 1. Server offset samples
+  remain near 9750 ms while rendered audio progressively falls behind. This
+  reproduces publisher drift without the impairment proxy; the underlying native
+  output/render resource cause is not yet established.
+
+Prepared private configuration `/home/mli/ktv-media-private/livekit.yaml` has the
+verified policy; keys are unchanged, files remain mode 0600 and parent mode 0700.
+Atomic replacement retains private rollback
+`/home/mli/ktv-media-private/livekit.before-sync-20261002.yaml`. No persistent
+media service was started. Frontend remains deployed `29a62cf`, backend `9b74e8f`,
+rooms/guide enabled and media disabled. No application rebuild or backend restart
+was necessary for these fixture/configuration changes.
+
+Next: diagnose sustained native publisher clock behavior, then repeat complete
+timing phases with unchanged p95/max limits. Continued impairment during handover,
+longer outages, sustained representative/multi-room load and physical/mobile/
+distinct-access-network acceptance remain open. P07.10/A18 are not closed.
 
 ```text
 Date:

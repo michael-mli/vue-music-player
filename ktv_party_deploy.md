@@ -306,17 +306,20 @@ selective stall/resume, drop and parameter-bound checks on the proxies.
 Set `KTV_ROOM_TEST_AV_TIMING=1` with the remote topology to measure the built
 player's audio/lyric markers before attaching spectral analysis. Source and
 receiver use separate owned Chrome processes on the remote host, retaining a
-common host clock domain. The receiver additionally requires Python 3,
-`pulseaudio`, `pactl` and `libpulse`. CDP 9244 must be free. A separate PulseAudio
+common host clock domain. Both audio outputs additionally require Python 3,
+`pulseaudio`, `pactl` and `libpulse`. CDP 9244 must be free. Each browser's separate PulseAudio
 daemon uses only a private Unix socket in a mode-0700 temporary directory; it
 changes neither the shared daemon nor its default output. Capture uses the public
 signed-latency stream API, assembles fixed 10 ms DSP hops and emits bounded metrics,
-never raw microphone/output audio. Both browsers, the private output server,
+never raw microphone/output audio. Both browsers, the private output servers,
 monitor and tunnels have owned cleanup; the browser watchdog remains 15 minutes.
 
 `npm run test:party:av-fixtures` validates marker matching and PCM detection,
-including silence and irregular capture fragment boundaries. The browser run
-requires six paired transitions in baseline and, when selected, impaired phases.
+including silence, irregular capture fragment boundaries and byte marker IDs/parity.
+The browser run defaults to 40 paired transitions per phase; an impaired run uses
+six baseline transitions and 40 impaired transitions. Set
+`KTV_ROOM_TEST_AV_TRANSITIONS` to an integer from 6 to 60 to select the sample count.
+At the default, generated audio lasts 132 seconds and marker IDs use eight bits.
 The 150 ms p95 / 250 ms maximum diagnostic gate is checked after collecting the
 phases, so a failing baseline cannot hide the impairment evidence or pass the run.
 This does not establish physical speaker/microphone timing. As of 2026-10-02,
@@ -351,6 +354,15 @@ full no-impairment A/V/reconnect/hybrid candidate passes 51/51. Current exact-bu
 TCP/UDP runs complete the functional sequence but fail their A/V impairment gate.
 Private rollback backup: `/home/mli/ktv-party-output-lease-predeploy.fxlAxE`.
 Old frontend assets remain available; public rooms/guide remain on and media off.
+
+The 2026-10-02 synchronization configuration enables `room.sync_streams: true`
+and adaptive playout hints (`enabled: true`, `min: 0`, `max: 500`). Existing prepared
+private configuration was updated atomically without rotating provider/control
+keys; rollback is `livekit.before-sync-20261002.yaml` in the same mode-0700 private
+directory. Both files remain mode 0600. Public remote transport passes 14/14 and
+supervisor checks 9/9 with this policy. This does not authorize public enablement:
+six-pair impaired timing still fails and longer clean/impaired runs stop at native
+publisher drift. The full failed evidence remains in the implementation tracker.
 
 All scripts remove their owned fixtures. This does not measure physical acoustic
 alignment or distinct Wi-Fi/LTE networks. Failed journeys remain recorded in the

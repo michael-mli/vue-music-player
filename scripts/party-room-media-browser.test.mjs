@@ -26,6 +26,9 @@ const clientLocation = process.env.KTV_ROOM_TEST_CLIENT || 'same-host'
 assert.ok(['same-host', 'remote-ec2'].includes(clientLocation), 'Unknown room-test client topology')
 const remoteMode = clientLocation === 'remote-ec2'
 const avTiming = process.env.KTV_ROOM_TEST_AV_TIMING === '1'
+const avTransitions = Number(process.env.KTV_ROOM_TEST_AV_TRANSITIONS || 40)
+assert.ok(Number.isInteger(avTransitions)&&avTransitions>=6&&avTransitions<=60, 'A/V transitions must be 6–60')
+const fixtureSeconds = avTiming ? Math.max(60, (avTransitions + 6) * 2 + 40) : 60
 const avMeasurements = []
 assert.ok(!avTiming || remoteMode, 'A/V fixture requires owned source/receiver browsers on one remote host clock domain')
 const impairmentMode = process.env.KTV_ROOM_TEST_MEDIA_IMPAIRMENT || 'off'
@@ -92,7 +95,7 @@ async function evaluate(session, expression) {
 async function click(session, label) {
   await poll(() => evaluate(session, `(() => { const item = [...document.querySelectorAll('button')].find(item => item.textContent.trim() === ${JSON.stringify(label)} && !item.disabled && item.getClientRects().length); if (!item) return false; item.click(); return true })()`), `button ${label}`)
 }
-function wav(frequency, seconds = 60) {
+function wav(frequency, seconds = fixtureSeconds) {
   const rate = 44100, size = rate * seconds * 2, bytes = Buffer.alloc(44 + size)
   bytes.write('RIFF'); bytes.writeUInt32LE(36 + size, 4); bytes.write('WAVEfmt ', 8); bytes.writeUInt32LE(16, 16)
   bytes.writeUInt16LE(1, 20); bytes.writeUInt16LE(1, 22); bytes.writeUInt32LE(rate, 24); bytes.writeUInt32LE(rate * 2, 28)
@@ -108,7 +111,7 @@ try {
   // Keep the guide distinct from microphone/backing harmonics after encoding.
   await fs.writeFile(path.join(root, 'data/link.1.mp3'), wav(1729))
   await fs.writeFile(path.join(root, 'karaoke/link.1.instrumental.mp3'), wav(440))
-  const lyrics = avTiming ? Array.from({length:30},(_,id)=>`[00:${String(id*2).padStart(2,'0')}]AV${id%2?'OFF':'ON'}${id}`).join('\n')
+  const lyrics = avTiming ? Array.from({length:Math.ceil(fixtureSeconds/2)},(_,id)=>`[${String(Math.floor(id*2/60)).padStart(2,'0')}:${String(id*2%60).padStart(2,'0')}]AV${id%2?'OFF':'ON'}${id}`).join('\n')
     : '[00:00]Singing together\n[00:10]Second lyric\n[00:25]Third lyric\n[00:50]Final lyric'
   await fs.writeFile(path.join(root, 'synced/link.1.lrc'), lyrics)
   const micFile = path.join(root, 'microphone.wav'); await fs.writeFile(micFile, wav(880))
@@ -125,7 +128,7 @@ try {
   const rtc = remoteMode
     ? `  node_ip: ${process.env.KTV_ROOM_TEST_PUBLIC_IP}\n  use_external_ip: false\n  tcp_port: ${mediaImpairment ? 17901 : 7881}\n  udp_port: ${mediaImpairment ? 17902 : 7882}\n  interfaces:\n    includes: [${process.env.KTV_ROOM_TEST_INTERFACE}]\n`
     : '  node_ip: 127.0.0.1\n  use_external_ip: false\n  tcp_port: 17901\n  udp_port: 17902\n  enable_loopback_candidate: true\n  interfaces:\n    includes: [lo]\n'
-  await fs.writeFile(config, `port: 17900\nbind_addresses: [127.0.0.1]\nrtc:\n${rtc}room:\n  max_participants: 6\nkeys:\n  ${apiKey}: ${apiSecret}\nlogging:\n  level: warn\n`, { mode: 0o600 })
+  await fs.writeFile(config, `port: 17900\nbind_addresses: [127.0.0.1]\nrtc:\n${rtc}room:\n  max_participants: 6\n  sync_streams: true\n  playout_delay:\n    enabled: true\n    min: 0\n    max: 500\nkeys:\n  ${apiKey}: ${apiSecret}\nlogging:\n  level: warn\n`, { mode: 0o600 })
   await exec('docker', ['run', '-d', '--name', container, '--network', 'host', '--user', `${process.getuid()}:${process.getgid()}`,
     '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', '-v', `${config}:/run/livekit.yaml:ro`, image, '--config', '/run/livekit.yaml'])
   running = true
@@ -197,7 +200,7 @@ try {
   }
   if (remoteMode) remoteBrowser = await createOwnedRemoteBrowser({ host: process.env.KTV_ROOM_TEST_SSH_HOST,
     knownHosts: process.env.KTV_ROOM_TEST_KNOWN_HOSTS, micFile, frontendPort: frontend.address().port,
-    debugPort: Number(process.env.KTV_ROOM_TEST_CHROME_PORT || 9243) })
+    debugPort: Number(process.env.KTV_ROOM_TEST_CHROME_PORT || 9243), isolatedOutput: avTiming })
   else chrome = spawn(process.env.CHROME_BIN || '/usr/bin/google-chrome', ['--headless', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu',
     '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--no-first-run', '--no-default-browser-check', '--no-proxy-server',
     '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', `--use-file-for-fake-audio-capture=${micFile}`,
@@ -219,7 +222,24 @@ try {
     await cdp(socket, 'Network.enable', {}, sessionId)
     await cdp(socket, 'Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', 'en');
       ${avTiming ? `(${installAvSourceMarkers.toString()})();` : ''}
-      window.__sockets = []; const Socket = window.WebSocket; window.WebSocket = class extends Socket { constructor(...args) { super(...args); window.__sockets.push(this); } };
+      window.__partyClocks=[]; window.__partyPlaybacks=[]; window.__phaseEvidence=[];
+      window.__sockets = []; const Socket = window.WebSocket; window.WebSocket = class extends Socket { constructor(...args) {
+        super(...args); window.__sockets.push(this);
+        this.addEventListener('message',event=>{
+          let packet;try { packet=JSON.parse(event.data) } catch { return }
+          if(packet.type==='clock.reply') {
+            const {clientSendMs,serverReceiveMs,serverSendMs}=packet,received=performance.now();
+            __partyClocks.push({received,offsetMs:((serverReceiveMs-clientSendMs)+(serverSendMs-received))/2,
+              roundTripMs:received-clientSendMs-(serverSendMs-serverReceiveMs)});
+            if(__partyClocks.length>120)__partyClocks.shift();
+          }
+          if(packet.type==='snapshot'&&packet.data?.playback) {
+            const {state,generation,positionMs,anchorServerMs}=packet.data.playback;
+            __partyPlaybacks.push({state,generation,positionMs,anchorServerMs,received:performance.now()});
+            if(__partyPlaybacks.length>120)__partyPlaybacks.shift();
+          }
+        });
+      } };
       window.__micStreams = []; window.__bufferSources = []; window.__sourceEvidence = []; window.__outputEvidence = []; window.__peers = []; window.__contexts = [];window.__gainNodes=[];
       const Context = window.AudioContext; window.AudioContext = class extends Context { constructor(...args) { super(...args); window.__contexts.push(this); } };
       if(${avTiming}) { const gain=Context.prototype.createGain;Context.prototype.createGain=function(...args){const node=gain.apply(this,args);node.__automation=[]; for(const name of ["setValueAtTime","cancelScheduledValues"]){const original=node.gain[name];node.gain[name]=function(...values){node.__automation.push({name,values,time:node.context.currentTime,at:performance.now()});if(node.__automation.length>12)node.__automation.shift();return original.apply(this,values)}} __gainNodes.push(node);return node} }
@@ -305,6 +325,17 @@ try {
   const participants = await provider.listParticipants(`ktv-${room.room.id}`)
   check(participants.filter(item => item.identity === firstPublisher.identity).length === 1 && participants.find(item => item.identity === firstPublisher.identity).tracks.length === 2, 'actual SFU has one publisher with one mix and one lyric video')
   check(participants.find(item => item.identity === firstPublisher.identity).tracks.every(track=>track.stream==='performance'), 'SFU places performance audio and lyric video in the same synchronization stream')
+  const receiverGroups = await evaluate(audience, `(() => __peers.flatMap(peer => {
+    const sdp=peer.remoteDescription?.sdp||'';
+    return sdp.split(/(?:^|\\r?\\n)m=/).filter(section=>/^(audio|video) /.test(section))
+      .map(section=>({kind:section.startsWith('audio ')?'audio':'video',
+        cnames:[...new Set([...section.matchAll(/a=ssrc:\\d+ cname:([^\\r\\n]+)/g)].map(item=>item[1]))],
+        streams:[...new Set([...section.matchAll(/a=msid:([^ \\r\\n]+)/g)].map(item=>item[1]))]}));
+  }))()`)
+  console.log('Receiver synchronization group counts:',JSON.stringify(receiverGroups.map(item=>({kind:item.kind,cnameCount:item.cnames.length,streamCount:item.streams.length}))))
+  const syncAudio=receiverGroups.find(item=>item.kind==='audio'&&item.cnames.length),syncVideo=receiverGroups.find(item=>item.kind==='video'&&item.cnames.length)
+  check(Boolean(syncAudio&&syncVideo&&syncAudio.cnames.some(value=>syncVideo.cnames.includes(value))&&syncAudio.streams.some(value=>syncVideo.streams.includes(value))), 'negotiated receiver audio/video share an RTCP synchronization identity')
+
   const installSpectrum = () => evaluate(audience, `(() => { const element = document.querySelector('[data-party-media-screen] video'); window.__receiveContext = new AudioContext(); __receiveContext.resume();
     const source = __receiveContext.createMediaStreamSource(element.srcObject); window.__analyser = __receiveContext.createAnalyser(); __analyser.fftSize = 8192; __analyser.smoothingTimeConstant = 0;
     const silent = __receiveContext.createGain(); silent.gain.value = 0; source.connect(__analyser); __analyser.connect(silent); silent.connect(__receiveContext.destination); })()`)
@@ -329,14 +360,27 @@ try {
       .map(item=>Object.fromEntries(fields.filter(field=>item[field]!==undefined).map(field=>[field,item[field]]))));
   })()`)
   async function measureAv(phase) {
+    const transitions = phase==='baseline'&&mediaImpairment?6:avTransitions
     const inboundBefore = await inboundTiming()
     const begin=await evaluate(audience, `__avObserver.begin(${JSON.stringify(phase)})`)
+    let lastPhaseSample=0
     const result=await poll(async()=>{
+      if(Date.now()-lastPhaseSample>=1000) {
+        lastPhaseSample=Date.now()
+        const sample=await evaluate(phone,`(() => {
+          const node=document.querySelector('dl'),context=__contexts[0];
+          const sample={now:performance.now(),diagnostics:node?.textContent,
+            output:context?.getOutputTimestamp(),render:context?.currentTime};
+          __phaseEvidence.push(sample);if(__phaseEvidence.length>180)__phaseEvidence.shift();
+          return {failed:document.querySelector('[role=alert]')?.textContent};
+        })()`)
+        if(sample.failed) throw new Error('Publisher audio recovery interrupted A/V observation')
+      }
       const observed=await evaluate(audience,'__avObserver.evidence'), sources=await evaluate(phone,'__avSources')
       const audio=(await avBrowser.audioEvidence()).filter(item=>typeof item.on==='boolean'&&!item.initial&&item.time>=begin).map(item=>({...item,phase}))
       const measured=analyseAvObservations({...observed,audio,sources},phase)
-      return measured.count>=6?measured:false
-    },`six matched ${phase} audio/video marker transitions`,20000)
+      return measured.count>=transitions?measured:false
+    },`${transitions} matched ${phase} audio/video marker transitions`,(transitions+5)*2000)
     console.log('A/V receiver buffer diagnostics:',JSON.stringify({phase,before:inboundBefore,after:await inboundTiming()}))
     avMeasurements.push(result)
     console.log('A/V marker measurement:',JSON.stringify(result))
@@ -575,7 +619,7 @@ try {
   console.error('Media HTTP status (paths only):', JSON.stringify(mediaHttp))
   for (const session of sessionSockets.keys()) console.error('UI state:', JSON.stringify(await evaluate(session, ` (async () => ({status:document.querySelector('[data-party-media-status]')?.textContent,
     errors:[...document.querySelectorAll('[role=alert]')].map(item=>item.textContent), diagnostics:[...document.querySelectorAll('dl')].map(item=>item.textContent),
-    av:window.__avObserver?.evidence,avSources:window.__avSources,gains:window.__gainNodes.map(node=>({gain:node.gain.value,context:window.__contexts.indexOf(node.context),automation:node.__automation})),receivedPeaks:window.__analyser?(()=>{const data=new Float32Array(__analyser.frequencyBinCount);__analyser.getFloatFrequencyData(data);return [440,660,880].map(frequency=>{const center=Math.round(frequency*__analyser.fftSize/__receiveContext.sampleRate);const value=Math.max(...data.slice(center-2,center+3));return Number.isFinite(value)?value:-120})})():null,ice:window.__iceEvidence, output:window.__outputEvidence, sources:window.__sourceEvidence, contexts:window.__contexts.map(item=>({state:item.state,time:item.currentTime})), canvas:[...document.querySelectorAll('canvas')].map(item=>({width:item.width,height:item.height,connected:item.isConnected})),
+    av:window.__avObserver?.evidence,avSources:window.__avSources,phase:window.__phaseEvidence,clocks:window.__partyClocks,playbacks:window.__partyPlaybacks,gains:window.__gainNodes.map(node=>({gain:node.gain.value,context:window.__contexts.indexOf(node.context),automation:node.__automation})),receivedPeaks:window.__analyser?(()=>{const data=new Float32Array(__analyser.frequencyBinCount);__analyser.getFloatFrequencyData(data);return [440,660,880].map(frequency=>{const center=Math.round(frequency*__analyser.fftSize/__receiveContext.sampleRate);const value=Math.max(...data.slice(center-2,center+3));return Number.isFinite(value)?value:-120})})():null,ice:window.__iceEvidence, output:window.__outputEvidence, sources:window.__sourceEvidence, contexts:window.__contexts.map(item=>({state:item.state,time:item.currentTime})), canvas:[...document.querySelectorAll('canvas')].map(item=>({width:item.width,height:item.height,connected:item.isConnected})),
     video:[...document.querySelectorAll('video')].map(item=>({width:item.videoWidth,height:item.videoHeight,ready:item.readyState,paused:item.paused,muted:item.muted,tracks:item.srcObject?.getTracks().map(track=>({kind:track.kind,state:track.readyState,muted:track.muted,settings:track.getSettings()}))})),
     rtc:await Promise.all(window.__peers.map(async peer=>({state:peer.connectionState,tracks:[...await peer.getStats()].map(([,item])=>item).filter(item=>['inbound-rtp','outbound-rtp'].includes(item.type)).map(item=>({kind:item.kind,type:item.type,bytes:item.bytesSent??item.bytesReceived,frames:item.framesEncoded??item.framesDecoded,framesReceived:item.framesReceived,framesDropped:item.framesDropped}))})))
   }))()` ).catch(() => ({}))))

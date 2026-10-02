@@ -875,6 +875,24 @@ publish backing delay. Audio and video carry the same named WebRTC stream and
 attach to one audience video element so its media clock governs both tracks.
 Headphone audio and publisher render timing still require physical checks.
 
+SFU synchronization policy (2026-10-02): the generated LiveKit configuration now
+sets `room.sync_streams: true`. In pinned v1.13.7, subscriber synchronization
+depends on this flag as well as the published stream name and client support;
+Firefox is excluded by that server implementation. The stream identity is also
+used for RTCP CNAME. The real receiver test checks both negotiated MSID and CNAME,
+without logging SDP credentials. See the pinned
+[subscriber policy](https://github.com/livekit/livekit/blob/v1.13.7/pkg/rtc/participant.go)
+and [RTCP sender implementation](https://github.com/livekit/livekit/blob/v1.13.7/pkg/sfu/downtrack.go).
+The previous application stream name alone did not establish this SFU behavior.
+
+Adaptive video playout hints are enabled with minimum 0 and maximum 500 ms,
+using the server's [room configuration](https://github.com/livekit/livekit/blob/v1.13.7/config-sample.yaml).
+This is a buffering hint, not a promised end-to-end delay. No independent lyric
+clock or fixed receiver delay is added. Controlled impairment still fails timing
+acceptance, and sustained publisher drift remains under investigation; public
+media stays disabled. Firefox, Safari and mobile synchronization need explicit
+acceptance before support claims.
+
 Remote audiences hear a delayed performance. Their lyrics must follow the received
 media, not the current control-server playhead. Proposed first approach: render
 the lyric stage on the publisher, capture it as a video track, and transmit it with

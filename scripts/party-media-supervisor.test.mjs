@@ -36,7 +36,7 @@ backend.listen(0, '127.0.0.1'); await once(backend, 'listening')
 const origin = `http://127.0.0.1:${backend.address().port}`
 const provider = new RoomServiceClient(upstream, apiKey, apiSecret, { requestTimeout: 1, failover: false })
 const config = path.join(root, 'livekit.yaml'), env = path.join(root, 'worker.env')
-await fs.writeFile(config, `port: 17890\nbind_addresses: [127.0.0.1]\nrtc:\n  node_ip: 127.0.0.1\n  use_external_ip: false\n  tcp_port: 17891\n  udp_port: 17892\n  enable_loopback_candidate: true\n  interfaces:\n    includes: [lo]\nroom:\n  max_participants: 6\nkeys:\n  ${apiKey}: ${apiSecret}\nlogging:\n  level: warn\n`, { mode: 0o600 })
+await fs.writeFile(config, `port: 17890\nbind_addresses: [127.0.0.1]\nrtc:\n  node_ip: 127.0.0.1\n  use_external_ip: false\n  tcp_port: 17891\n  udp_port: 17892\n  enable_loopback_candidate: true\n  interfaces:\n    includes: [lo]\nroom:\n  max_participants: 6\n  sync_streams: true\n  playout_delay:\n    enabled: true\n    min: 0\n    max: 500\nkeys:\n  ${apiKey}: ${apiSecret}\nlogging:\n  level: warn\n`, { mode: 0o600 })
 await fs.writeFile(env, `KTV_SFU_CONFIG=/run/ktv/livekit.yaml\nKTV_SFU_URL=${upstream}\nKTV_MEDIA_WORKER_PORT=17893\nKTV_MEDIA_BACKEND_URL=${origin}\nKTV_MEDIA_ORIGINS=${origin}\nKTV_MEDIA_API_KEY=${apiKey}\nKTV_MEDIA_API_SECRET=${apiSecret}\nKTV_MEDIA_CONTROL_SECRET=${controlSecret}\n`, { mode: 0o600 })
 async function launch() {
   owned = `ktv-supervisor-test-${randomUUID().slice(0, 8)}`
