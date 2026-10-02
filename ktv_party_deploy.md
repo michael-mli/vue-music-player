@@ -583,9 +583,13 @@ Their root `ktv-codec-experiment.json` identifies them as non-release artifacts;
 do not publish them or remove the marker to bypass the publication whitelist.
 The builder verifies production sources and `dist` remain unchanged. Current
 VP9, H264 and VP8/NTP comparisons fail impaired timing or nominal quality gates;
-the periodic-keyframe candidate fails publisher readiness before measurement.
+the worker keyframe candidate fails publisher readiness before measurement and
+native diagnostics identify its absent `generateKeyFrame` API in Chrome 154.
 No production codec/controller change is approved by those results. See the
-implementation tracker for evidence and the remaining worker diagnostic work.
+implementation tracker for evidence: native sender keyframe requests work, but
+both 500-ms and one-second periods fail impaired timing and nominal frame rates.
+Fixture request promises require measured encoded cadence as proof; none of
+these options enable public media or change the deployed app.
 
 The current frontend preview is `d33b209`, deployed 2026-10-02; backend remains
 `f58a8f3`. Assets are `main-DU8DSm-f.js`, `main-DnE6rWx5.css`,

@@ -2475,8 +2475,68 @@ provider confirmation times out before any baseline/impaired marker measurement.
 Playback enters `recovering` / `stage.unavailable`, the publisher reports its
 performance connection ended, and browser runtime exceptions are zero. No actual
 keyframe cadence or A/V improvement is established. The precise worker/provider
-failure reason is not retained by this run; bounded worker failure diagnostics
-are the next useful step before changing or repeating the candidate.
+failure reason was not retained by this initial run.
+
+The diagnostic follow-up changes only passive fixture instrumentation, retaining
+bounded same-origin worker event types and fixed failure reasons, without identity,
+grants, URLs, arbitrary worker data or exception text. Native message delivery and
+transfer arguments are preserved. Units pass **24/24**
+(`/tmp/ktv-encoded-worker-diagnostic-fixtures-20261002.log`). The instrumented
+native run `/tmp/ktv-vp8-keyframe500-worker-diagnostic-20261002.log` exits 1 before
+readiness again and identifies **`keyframe-unsupported`**: the publisher worker
+emits `ready`, then `silent` with that reason. Runtime exception count is zero.
+This establishes that the worker method is absent in the tested Chrome 154;
+it does not establish that periodic reference recovery itself cannot help.
+
+The next private experiment uses the optional `encodingOptions: [{keyFrame:true}]`
+argument on the actual native video sender's `setParameters`. This follows the
+[WebRTC extension specification](https://w3c.github.io/webrtc-extensions/#rtcrtpsender-setparameters-keyframe).
+Fresh parameters retain the native transaction ID; no encoding settings, tracks,
+timestamps, grants or normal encoded-frame lease are modified. One video sender
+is required, pending calls are serialized, and ended/replaced tracks or changed
+nominal settings stop requests. Successful promises alone still cannot pass:
+the same whole-phase native encoded-keyframe cadence gate applies. The fixture
+option is `KTV_ROOM_TEST_SENDER_KEYFRAME_MS=500`, requires a marked private codec
+artifact without worker keyframe overrides, and defaults off. Timer disposal is
+included in owned fixture cleanup. Units pass **27/27**
+(`/tmp/ktv-native-sender-keyframe-fixtures-20261002.log`). The native sender path
+works in the tested browser: **210/210** requests fulfill, and baseline encodes
+23 keyframes over 11.62 seconds. That is actual encoder evidence, independent of
+the worker API failure.
+
+The 500-ms sender run exits 1
+(`/tmp/ktv-vp8-sender-keyframe500-continuous-udp-20261002.log`):
+
+| Phase | Matched pairs / unmatched audio-video | Absolute p95 / max | Measured source / receiver fps | Actual keyframes per second |
+| --- | --- | --- | --- | --- |
+| Baseline | 6 / 0-0 | 109.50 / 109.50 ms | 25.05 / 24.94 | 1.98 |
+| Impaired | 40 / 0-0 | 360.71 / 478.16 ms | 13.50 / 10.83 | 2.00 |
+
+Resolution remains 1280×720 and requested settings remain 25 fps / 350 kbit/s.
+The measured cadence and timing both fail; a lower actual frame rate cannot pass
+through the requested nominal settings. Browser runtime exceptions are zero;
+functional recovery and both hybrid directions finish before the quality gate
+rejects the run. The original sender ends normally after 210 requests. Native
+video target bitrate varies during impairment; this run does not establish a
+unique cause for frame-rate loss. The distinct one-second sender interval also
+exits 1 (`/tmp/ktv-vp8-sender-keyframe1000-continuous-udp-20261002.log`):
+
+| Phase | Matched pairs / unmatched audio-video | Absolute p95 / max | Measured source / receiver fps | Actual keyframes per second |
+| --- | --- | --- | --- | --- |
+| Baseline | 6 / 0-0 | 80.15 / 80.15 ms | 24.97 / 25.05 | 0.96 |
+| Impaired | 40 / 1-1 | 344.20 / 672.72 ms | 16.25 / 14.94 | 1.00 |
+
+All **104/104** requests fulfill, both phases retain 1280×720 and requested
+25-fps / 350-kbit/s settings, and runtime exceptions are zero. Functional audience
+recovery, singer replacement and both hybrid directions finish; the unchanged
+whole-phase nominal cadence gate rejects the run, with timing independently also
+outside limits. Source/receiver encode/decode cadence changes are measured;
+random loss sequences preclude a controlled claim of improvement between periods.
+Periodic keyframes alone have not satisfied the release contract. The next
+investigation should use measured native delay/frame progress for demand-driven
+recovery and retain nominal quality, rather than repeat either unchanged periodic
+candidate. No public app, backend, codec, guard, feature flag or infrastructure
+sizing changes. Owned profiles, SFU and forwarding ports are cleaned.
 
 Remaining acceptance: impaired and post-handover timing; sustained source/output
 stability and longer outages; five-minute physical phone/stage guide alignment,

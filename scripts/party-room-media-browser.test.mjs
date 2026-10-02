@@ -23,6 +23,8 @@ import { createOwnedRemoteBrowser } from './party-remote-browser.mjs'
 import { installAvSourceMarkers, installAvObserver, analyseAvObservations } from './party-av-observer.mjs'
 import { collectAvMediaStats } from './party-av-stats.mjs'
 import { analyseCodecQuality } from './party-av-codec-quality.mjs'
+import { installEncodedLeaseObserver } from './party-encoded-lease-observer.mjs'
+import { installSenderKeyframeExperiment } from './party-sender-keyframes.mjs'
 import { nativeSyncTargetStep, nativeNetworkTargetStep, nativeRepairTargetStep, installNativeSyncExperiment } from './party-av-native-sync.mjs'
 
 const clientLocation = process.env.KTV_ROOM_TEST_CLIENT || 'same-host'
@@ -43,6 +45,10 @@ if (codecExperiment) {
   console.log('Private codec comparison:',JSON.stringify(codecExperiment))
 }
 const avTiming = process.env.KTV_ROOM_TEST_AV_TIMING === '1'
+const senderKeyframeMs = process.env.KTV_ROOM_TEST_SENDER_KEYFRAME_MS === undefined ? null : Number(process.env.KTV_ROOM_TEST_SENDER_KEYFRAME_MS)
+assert.ok(senderKeyframeMs === null || avTiming && codecExperiment && codecExperiment.keyframeMs == null &&
+  Number.isInteger(senderKeyframeMs) && senderKeyframeMs >= 250 && senderKeyframeMs <= 5000,
+  'Sender keyframes require a private native comparison without the worker keyframe policy')
 const sourceStallMs = Number(process.env.KTV_ROOM_TEST_OUTPUT_STALL_MS || 0)
 assert.ok(sourceStallMs === 0 || avTiming && remoteMode && Number.isInteger(sourceStallMs) && sourceStallMs >= 20 && sourceStallMs <= 100,
   'Owned native output stall requires remote A/V timing and a bounded 20–100 ms pause')
@@ -89,7 +95,7 @@ const provider = new RoomServiceClient(upstreamUrl, apiKey, apiSecret, { request
 const db = initDb(root), contexts = [], debuggerSockets = [], pending = new Map(), sessionSockets = new Map(), errors = [], mediaHttp = []
 const ownedTcp = new Set()
 const trackTcp = server => server.on('connection', socket => { ownedTcp.add(socket); socket.once('close', () => ownedTcp.delete(socket)) })
-let mediaProxy, audienceCircuits, frontend, backend, worker, realtime, chrome, remoteBrowser, avBrowser, hostBrowser, pulseModule, pathRoom, nativeSyncAudience, running = false, nextId = 0, passed = 0
+let mediaProxy, audienceCircuits, frontend, backend, worker, realtime, chrome, remoteBrowser, avBrowser, hostBrowser, pulseModule, pathRoom, nativeSyncAudience, senderKeyframePage, running = false, nextId = 0, passed = 0
 const check = (value, label) => { assert.ok(value, label); passed++; console.log(`PASS ${label}`) }
 const poll = async (work, label, timeout = 20000) => {
   const deadline = Date.now() + timeout
@@ -267,6 +273,7 @@ try {
     await cdp(socket, 'Network.enable', {}, sessionId)
     await cdp(socket, 'Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', 'en');
       ${avTiming ? `(${installAvSourceMarkers.toString()})();` : ''}
+      (${installEncodedLeaseObserver.toString()})();
       window.__partyClocks=[]; window.__partyPlaybacks=[]; window.__phaseEvidence=[];
       window.__longTasks=[];
       if (${avTiming} && PerformanceObserver.supportedEntryTypes.includes('longtask')) {
@@ -372,6 +379,11 @@ try {
   await poll(() => evaluate(phone, "document.querySelector('[data-party-media-status]')?.textContent.includes('Sending live singing')"), 'publisher ready through provider acknowledgment')
   await poll(() => evaluate(audience, "(() => { const video = document.querySelector('[data-party-media-screen] video'); return video?.srcObject?.getAudioTracks().length === 1 && video.srcObject.getVideoTracks().length === 1; })()"), 'audience receives both performance tracks')
   await poll(async () => (await api(1, pathRoom)).playback.state === 'playing', 'room plays after ready countdown')
+  if (senderKeyframeMs !== null) {
+    await evaluate(phone, `(${installSenderKeyframeExperiment.toString()})(${senderKeyframeMs})`)
+    senderKeyframePage = phone
+    console.log('Private native sender keyframe interval:', senderKeyframeMs)
+  }
   const firstPublisher = db.prepare("SELECT * FROM ktv_media_grants WHERE scope = 'publisher' AND state = 'active'").get()
   check(Boolean(firstPublisher.ready_at), 'provider-confirmed audio/video readiness is persisted for the exact publisher')
   const participants = await provider.listParticipants(`ktv-${room.room.id}`)
@@ -732,8 +744,14 @@ try {
   }
   // Collect both phases before judging timing: a baseline failure must remain
   // a failed run, while still exposing the impaired measurements for diagnosis.
+  if (senderKeyframePage) {
+    const state = await evaluate(senderKeyframePage, 'window.__avSenderKeyframes.snapshot()')
+    console.log('Private native sender keyframe requests:', JSON.stringify(state))
+    check(state.requests > 0 && state.fulfilled > 0 && [null, 'sender-ended'].includes(state.failure),
+      'native sender keyframe requests complete without encoder or policy failure')
+  }
   const codecQualities=codecExperiment?avMeasurements.map(measurement=>
-    analyseCodecQuality(avTimingSamples,measurement.phase,codecExperiment.codec,codecExperiment.keyframeMs??null)):[]
+    analyseCodecQuality(avTimingSamples,measurement.phase,codecExperiment.codec,(senderKeyframeMs??codecExperiment.keyframeMs??null))):[]
   for (const quality of codecQualities) console.log('Native codec quality:',JSON.stringify(quality))
   for (const quality of codecQualities) {
     check(quality.errors.length===0,`${quality.phase} codec comparison preserves actual 1280x720 and nominal measured source/receiver cadence`)
@@ -745,7 +763,7 @@ try {
   console.error('Journey failure:', error.message)
   if(avTimingSamples.length) console.error('A/V timing timeline on failure:',JSON.stringify(avTimingSamples))
   if(codecExperiment) for(const phase of new Set(avTimingSamples.map(item=>item.phase)))
-    console.error('Native codec quality on failure:',JSON.stringify(analyseCodecQuality(avTimingSamples,phase,codecExperiment.codec,codecExperiment.keyframeMs??null)))
+    console.error('Native codec quality on failure:',JSON.stringify(analyseCodecQuality(avTimingSamples,phase,codecExperiment.codec,(senderKeyframeMs??codecExperiment.keyframeMs??null))))
   if(avBrowser) console.error('Private receiver output:',JSON.stringify(await avBrowser.audioEvidence().catch(()=>({error:'capture unavailable'}))))
   if(mediaProxy) console.error('Owned media proxy:',JSON.stringify(mediaProxy.snapshot()))
   console.error('Playback recovery:',JSON.stringify(db.prepare('SELECT state,recovery_reason FROM ktv_playback').all()))
@@ -754,7 +772,7 @@ try {
     'TypeError','RangeError','ReferenceError','NetworkError','AbortError','InvalidStateError','OperationError']
   console.error('Runtime error categories:',JSON.stringify(errors.slice(0,8).map(message=>known.find(code=>message.includes(code))||'RuntimeError')))
   console.error('Media HTTP status (paths only):', JSON.stringify(mediaHttp))
-  for (const session of sessionSockets.keys()) console.error('UI state:', JSON.stringify(await evaluate(session, ` (async () => ({status:document.querySelector('[data-party-media-status]')?.textContent,
+  for (const session of sessionSockets.keys()) console.error('UI state:', JSON.stringify(await evaluate(session, ` (async () => ({status:document.querySelector('[data-party-media-status]')?.textContent,encodedLeaseEvents:window.__encodedLeaseEvents,senderKeyframes:window.__avSenderKeyframes?.snapshot(),
     errors:[...document.querySelectorAll('[role=alert]')].map(item=>item.textContent), diagnostics:[...document.querySelectorAll('dl')].map(item=>item.textContent),
     av:window.__avObserver?.evidence,avSources:window.__avSources,phase:window.__phaseEvidence,clocks:window.__partyClocks,playbacks:window.__partyPlaybacks,gains:window.__gainNodes.map(node=>({gain:node.gain.value,context:window.__contexts.indexOf(node.context),automation:node.__automation})),receivedPeaks:window.__analyser?(()=>{const data=new Float32Array(__analyser.frequencyBinCount);__analyser.getFloatFrequencyData(data);return [440,660,880].map(frequency=>{const center=Math.round(frequency*__analyser.fftSize/__receiveContext.sampleRate);const value=Math.max(...data.slice(center-2,center+3));return Number.isFinite(value)?value:-120})})():null,ice:window.__iceEvidence, output:window.__outputEvidence, sources:window.__sourceEvidence, contexts:window.__contexts.map(item=>({state:item.state,time:item.currentTime})), canvas:[...document.querySelectorAll('canvas')].map(item=>({width:item.width,height:item.height,connected:item.isConnected})),
     video:[...document.querySelectorAll('video')].map(item=>({width:item.videoWidth,height:item.videoHeight,ready:item.readyState,paused:item.paused,muted:item.muted,tracks:item.srcObject?.getTracks().map(track=>({kind:track.kind,state:track.readyState,muted:track.muted,settings:track.getSettings()}))})),
@@ -762,6 +780,7 @@ try {
   }))()` ).catch(() => ({}))))
   throw error
 } finally {
+  if (senderKeyframePage) await evaluate(senderKeyframePage, 'window.__avSenderKeyframes?.close()').catch(() => {})
   if (nativeSyncAudience) await evaluate(nativeSyncAudience, 'window.__avNativeSync?.close()').catch(() => {})
   for (const { socket, browserContextId } of contexts) if (socket.readyState === WebSocket.OPEN) await cdp(socket, 'Target.disposeBrowserContext', { browserContextId }).catch(() => {})
   for (const socket of debuggerSockets) socket.close()
