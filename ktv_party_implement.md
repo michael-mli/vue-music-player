@@ -8,14 +8,41 @@ Design reference: [ktv_party.md](ktv_party.md)
 
 Implemented contracts: [ktv_party_protocol.md](ktv_party_protocol.md)
 
-Current status: The durable-room preview is deployed at
-`https://music.micstec.com/party` with frontend `ca6c757`, backend `f58a8f3`
-(`main-CgZ1TyOk.js`, `main-DnE6rWx5.css`,
+## Remaining release work
+
+The core room, invitation/guest, moderation, queue, shared-screen, phone-control,
+scheduled playback and private-guide software is implemented. The deployed app
+is a preview; public online media is still disabled.
+
+1. **Audio reliability:** extend sustained native and physical coverage of the
+   deployed bounded-rate and native lease scheduling changes. Exact native
+   interruption/recovery and stage replacement now pass; the previous candidate's
+   larger render-clock stall remains unexplained. Unit checks alone do not close
+   sustained stability or physical acceptance.
+2. **Streaming timing:** resolve impaired-network A/V timing, measure handover
+   timing and longer outages, and verify source-clock stability. Functional
+   reconnect/handover passes do not establish acceptable audible/video alignment.
+3. **Physical stage/phone measurements:** demonstrate five-minute guide/stage
+   acoustic alignment at p95 <= 50 ms; test pause/seek, calibration, output changes,
+   lease-expiry silence, wired/Bluetooth outputs, microphone delay and leakage.
+4. **Device acceptance:** test iOS/Android/Safari, autoplay, lock/background/resume,
+   installed-PWA upgrades and representative long-song memory/decode behavior.
+5. **Capacity and real networks:** validate nominal-quality 59-audience and
+   representative multi-room loads, plus distinct physical Wi-Fi/LTE paths.
+6. **Release:** complete a real multi-device party, deploy the persistent supervised
+   SFU/TURN service, run release/post-release checks and enable public media after
+   the applicable P06/P07/P08 gates pass.
+
+Recording/export, reactions, themes and remote duets remain optional P09 work.
+
+Current status: The bounded audio drift preview is deployed at
+`https://music.micstec.com/party` with frontend `7c1f583`, backend `f58a8f3`
+(`main-BRuMNKuZ.js`, `main-DnE6rWx5.css`,
 `partyLeaseGuard.worklet-5od8dAEf.js`). Online media remains disabled.
 Native rendering guards now keep expired stage and published mic/backing silent
 after a frozen audio clock resumes while page tasks remain blocked. Exact native
 lease checks 15/15, UI 45/45, PWA 10/10, full clean streaming/recovery/handover
-53/53 and public release 21/21 pass; party units 90/90 pass.
+56/56 and public release 21/21 pass; party units 94/94 pass.
 The deployed build also passes **41/41 integrated native stage-replacement checks**:
 two separate outputs, the actual room backend, blocked page tasks and a frozen/
 resumed audio clock. Early restart is refused and the old output remains quiet
@@ -24,7 +51,8 @@ The PWA activation fix is deployed: failed updates retain the current page and
 allow retry; empty catalogs no longer trigger phantom song downloads. Exact-build
 UI/PWA checks also reject malformed room responses without losing the form.
 Lyric capture cadence and authorized screen-content classification are deployed;
-clean sustained native A/V passes 40 transitions, with p95 **59.73 ms**.
+clean native A/V passes 40 transitions, with p95 **64.46 ms** after a real
+50 ms output interruption and bounded feedback correction.
 Impaired timing still fails. Matching worker image `ktv-party-media:f58a8f3`
 passes supervisor and public direct/TLS-TURN revocation checks; no persistent
 media container is running.
@@ -2162,6 +2190,40 @@ SQLite (integrity/FKs pass), the current frontend and private backend config;
 all files are 0600 under a 0700 directory. The original rollback tag is unchanged.
 All temporary fixture browser/output profiles and owned SFU containers are cleaned.
 
+#### Native verification of lease-control deduplication
+
+Exact candidate `7c1f583` builds and type-checks successfully
+(`/tmp/ktv-rate-renewal-dedup-exact-build.log`). Its native foreground Chrome
+streaming fixture passes **56/56**
+(`/tmp/ktv-rate-renewal-dedup-native-stream-20261002.log`), including a real
+**50.19 ms** pause of the owned output process, bounded rate correction below
+20 ms without replacing the song source, signaling recovery, token revocation
+and full hybrid handovers. All **40** baseline marker pairs are accounted for,
+with no unmatched audio/video edges: absolute A/V skew p50 **11.97 ms**, p95
+**64.46 ms**, maximum **86.51 ms**; source-to-video delay p95 **114.10 ms**,
+maximum **134.00 ms**. Resolution, frame rate and timing gates are unchanged.
+The fixture exits successfully and its local forwarding ports/SFU are cleaned.
+
+This run does not establish the cause of the earlier larger render stall or
+close sustained stability, impaired UDP, measured handover timing or physical
+acceptance. Exact native lease **15/15**, integrated stage replacement **41/41**,
+UI **45/45** and PWA **10/10** subsequently pass:
+`/tmp/ktv-rate-renewal-dedup-native-lease-20261002.log`,
+`/tmp/ktv-rate-renewal-dedup-stage-replacement-20261002.log`,
+`/tmp/ktv-rate-renewal-dedup-ui-pwa-20261002-ui.log` and
+`/tmp/ktv-rate-renewal-dedup-ui-pwa-20261002.log`.
+
+Frontend `7c1f583` is now published as `main-BRuMNKuZ.js`; CSS/worklet and
+backend remain unchanged. **21/21 public checks** pass
+(`/tmp/ktv-rate-preview-public-20261002.log`), including exact app/worker bytes,
+source SHA, HTTP/WSS/flags, pairing defaults, database integrity/FKs and temporary
+room cleanup without adding accounts. Private backup
+`/home/mli/ktv-party-rate-preview-predeploy.kodqxyuw` holds the consistent database,
+previous frontend and private config under 0700/0600 permissions. Publication
+preserves old hashed assets and atomically replaces entry/worker with zero active
+performances and no backend restart. Rooms/guide remain on; public media remains
+off and no persistent SFU is running. The original stable main tag is unchanged.
+
 ### Release record
 
 | Release | Build/commit | Environment/URL | Date | Gates and evidence | Remaining scope |
@@ -2191,5 +2253,6 @@ All temporary fixture browser/output profiles and owned SFU containers are clean
 | Lyric screen source preview | Frontend/backend `f58a8f3` (`main-CedlFAY-.js`); matching worker image `ktv-party-media:f58a8f3` | `https://music.micstec.com/party` | 2026-10-02 | Party 84/84, backend 128/128, exact UI 42/42, PWA 8/8, clean native 40-transition journey 26/26, supervisor 9/9, public direct/TLS-TURN 14/14, public release 18/18 | Media disabled, no persistent SFU; TCP/UDP impaired timing fails, intermittent PWA reload remains unresolved; physical/mobile, longer outages, representative/multi-room load and distinct networks open |
 | PWA activation preview | Frontend `fe4f216` (`main-9fvbdGW2.js`), backend `f58a8f3` | `https://music.micstec.com/party` | 2026-10-02 | Exact UI 42/42, PWA 10/10, clean native 40-transition journey 26/26, public release 18/18; party 84/84, update 3/3, catalog 2/2, fixture 12/12 | Media disabled, no persistent SFU; UDP impaired timing fails; physical/mobile, installed PWA, handover timing, representative capacity and distinct networks open |
 | Native lease guard preview | Frontend `ca6c757` (`main-CgZ1TyOk.js`, `partyLeaseGuard.worklet-5od8dAEf.js`), backend `f58a8f3` | `https://music.micstec.com/party` | 2026-10-02 | Party 90/90; exact UI 45/45, PWA 10/10, native lease 15/15, full clean 40-transition streaming/recovery/handover 53/53, public release 21/21; post-release integrated replacement 41/41 and fixture 14/14 | Media disabled, no persistent SFU; UDP timing and impaired source drift, physical replacement, mobile/field PWA, timing through handover, representative capacity and distinct networks remain open |
+| Bounded audio drift preview | Frontend `7c1f583` (`main-BRuMNKuZ.js`), backend `f58a8f3` | `https://music.micstec.com/party` | 2026-10-02 | Party 94/94; exact UI 45/45, PWA 10/10, native lease 15/15, integrated replacement 41/41, native output-interruption/full recovery/handover 56/56 and public release 21/21; 40 clean A/V pairs p95 64.46 ms/max 86.51 ms | Media disabled, no persistent SFU; unexplained earlier large render stall, sustained/UDP stability, physical/mobile, measured handover, real networks and representative capacity open |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |

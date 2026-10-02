@@ -450,7 +450,7 @@ passes, but UDP fails at p95 349.68 ms and maximum 699.93 ms. Physical/mobile,
 installed-PWA, handover timing, distinct networks and capacity acceptance are
 still open; this release does not enable online singing.
 
-Current frontend is **`ca6c757`**, backend stays **`f58a8f3`**. Assets:
+The preceding native lease guard frontend is **`ca6c757`**, backend **`f58a8f3`**. Assets:
 **`main-CgZ1TyOk.js`**, **`main-DnE6rWx5.css`** and
 **`partyLeaseGuard.worklet-5od8dAEf.js`**. The rendering guard prevents expired
 stage and published mic/backing from resuming while page tasks remain blocked.
@@ -480,6 +480,30 @@ build. The real isolated backend and two independently captured Chrome outputs
 verify early-start refusal, preserved checkpoint/generation, no measured output
 overlap through blocked tasks and actual render suspension/resume, and stale lease
 replay rejection. Observer fixtures pass **14/14**, including five PCM checks.
+
+Current frontend is **`7c1f583`**, backend remains **`f58a8f3`**. App asset is
+**`main-BRuMNKuZ.js`**; CSS and native guard remain **`main-DnE6rWx5.css`** and
+**`partyLeaseGuard.worklet-5od8dAEf.js`**. Small persistent rendered phase errors
+use bounded native rate feedback with integrated media-position tracking;
+unchanged leases no longer reschedule native stops/worklet grants every frame.
+Authority checks and large-error recovery remain active.
+
+Exact build/type check, party units **94/94**, UI **45/45**, PWA **10/10**, native
+lease **15/15**, integrated replacement **41/41**, full native streaming/output
+interruption/recovery/handover **56/56** and public release **21/21** pass.
+The clean native run includes a real 50.19 ms isolated output-process pause;
+40 A/V pairs have no unmatched edges, p95 **64.46 ms**, maximum **86.51 ms**.
+These are software measurements, not physical acoustic acceptance.
+
+Private rollback backup **`/home/mli/ktv-party-rate-preview-predeploy.kodqxyuw`**
+contains consistent SQLite, previous static frontend and private backend config
+(0700 directory/0600 files). Previous frontend/backend were `ca6c757`/`f58a8f3`.
+Old hashed assets remain; entry/worker were atomically replaced with zero active
+performances and no backend restart. Rooms/guide stay enabled, media disabled,
+no persistent SFU. Earlier unexplained larger render stalls, impaired UDP timing,
+physical/mobile/installed-PWA coverage, handover timing and representative load/
+real networks remain open. Rate correction can affect pitch slightly; physical
+listening and guide-alignment acceptance remain required.
 Evidence is in the implementation tracker. This adds software evidence; physical
 replacement and the other online release gates above remain open.
 
