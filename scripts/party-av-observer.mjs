@@ -64,7 +64,9 @@ export function analyseAvObservations({ audio, video, sources }, phase) {
   for (const frame of video.filter(item => item.phase === phase)) {
     const candidates = edges.map((edge, index) => ({ edge, index })).filter(({ edge, index }) => !used.has(index) && edge.on === frame.on && Math.abs(edge.time - frame.time) < 750)
       .sort((a, b) => Math.abs(a.edge.time - frame.time) - Math.abs(b.edge.time - frame.time))
-    const match = candidates[0], source = sources.find(item => item.id === frame.id)
+    // A new singer, seek or hybrid turn can reuse a marker ID. Match its latest
+    // preceding capture event, never an old performance or a future redraw.
+    const match = candidates[0], source = sources.findLast(item => item.id === frame.id && item.time <= frame.time)
     if (!match || !source) { unmatchedVideo.push(frame.id); continue }
     used.add(match.index)
     pairs.push({ id: frame.id, skewMs: frame.time - match.edge.time, videoDelayMs: frame.time - source.time,

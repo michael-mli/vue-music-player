@@ -64,6 +64,21 @@ test('wrong states, missing source markers and unmatched cycles remain visible',
   assert.equal(result.absoluteSkewMs.p95, null)
 })
 
+test('reused marker IDs select the current capture without borrowing future redraws', () => {
+  const video = [{ id: 2, phase: 'handover', on: true, time: 10100 }]
+  const audio = [{ phase: 'handover', on: true, time: 10080 }]
+  const sources = [{ id: 2, time: 2000 }, { id: 2, time: 10000 }, { id: 2, time: 12000 }]
+  const measured = analyseAvObservations({ audio, video, sources }, 'handover')
+  assert.equal(measured.count, 1)
+  assert.equal(measured.pairs[0].videoDelayMs, 100)
+  assert.equal(measured.pairs[0].audioObservationDelayMs, 80)
+  assert.equal(measured.pairs[0].skewMs, 20)
+  const missing = analyseAvObservations({ audio, video, sources: sources.slice(2) }, 'handover')
+  assert.equal(missing.count, 0)
+  assert.deepEqual(missing.unmatchedVideo, [2])
+  assert.equal(missing.unmatchedAudio, 1)
+})
+
 test('captured marker protocol crosses 63 and preserves full byte IDs and parity',t=>{
   const previous={window:globalThis.window,document:globalThis.document,canvas:globalThis.CanvasRenderingContext2D}
   const data=new Uint8ClampedArray(416*32*4)

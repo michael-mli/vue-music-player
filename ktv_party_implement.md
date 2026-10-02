@@ -2224,6 +2224,39 @@ preserves old hashed assets and atomically replaces entry/worker with zero activ
 performances and no backend restart. Rooms/guide remain on; public media remains
 off and no persistent SFU is running. The original stable main tag is unchanged.
 
+#### Post-handover native A/V measurements
+
+The owned room fixture now supports `KTV_ROOM_TEST_HANDOVER_AV=1` together with
+remote native A/V and full hybrid handover. It adds a third independently owned
+Chrome/Pulse output for the host, preventing simultaneous host/common-screen
+players from contaminating the receiver's captured output. Receiver policy,
+native clocks, recovery guards, 40-pair phases, marker matching and timing limits
+are unchanged. Each new performance gets a fresh frame observer; repeated marker
+IDs resolve to the latest preceding source capture, rather than an earlier singer
+or a future redraw. A regression covers this attribution and future-only rejection.
+The default 180-sample diagnostic bound remains; the additional-phase mode is
+bounded at 400 samples. All three browser/output fixtures are owned and cleaned.
+
+Fixture units **15/15** pass (`/tmp/ktv-post-handover-av-fixtures-20261002.log`).
+On the unchanged deployed frontend `7c1f583`, the extended clean native journey
+passes **61/61** (`/tmp/ktv-post-handover-native-av-20261002.log`):
+
+| Phase | Matched pairs | Unmatched audio/video | Absolute skew p95 / maximum |
+| --- | --- | --- | --- |
+| Initial performer | 40 | 0 / 0 | 69.24 / 81.85 ms |
+| Replacement singer | 40 | 0 / 0 | 42.67 / 54.51 ms |
+| Venue-to-remote singer | 40 | 0 / 0 | 60.43 / 75.72 ms |
+
+All observed source frame sizes remain 1280×720 using VP8 with the unchanged
+25-fps/350-kbit/s screen-share request. Native reported rates span 20–26 fps in
+the initial phase, 23–26 after singer replacement and 24–26 after venue-to-remote.
+This is post-handover playback timing after track attachment, not a measurement
+of the transition's audible gap or physical venue-mixer alignment. The synthetic
+venue microphone contains a continuous 880-Hz input, so it cannot prove
+remote-to-venue A/V alignment. Those gaps, continuously impaired post-handover
+timing, physical devices and representative capacity remain open. No new frontend
+publication, backend restart or persistent SFU is required for this fixture work.
+
 ### Release record
 
 | Release | Build/commit | Environment/URL | Date | Gates and evidence | Remaining scope |

@@ -1089,6 +1089,28 @@ in the sender's NTP clock domain; it is not a Unix timestamp or proof that the
 current caption has appeared. Missing frame metadata remains absent. These
 diagnostics help investigate failed timing without replacing the measured gate.
 
+Receiver buffering requests are not measured playback delay. The
+[WebRTC jitter-buffer contract](https://www.w3.org/TR/webrtc/#dom-rtcrtpreceiver-jitterbuffertarget)
+allows gradual adjustment, different audio/video adjustment speeds and targets
+clamped by the native implementation; reading the property reports the request,
+not the resulting buffer. Interval `jitterBufferDelay / jitterBufferEmittedCount`
+and actual output/frame observations remain required. In the owned impaired UDP
+experiment, equal requests near 1.1 seconds produced approximately 320 ms audio
+versus 726 ms video buffering early in the run. Audio approached the target over
+several seconds; the early skew still failed the unchanged timing gate.
+[NetEq's native behavior](https://chromium.googlesource.com/external/webrtc/+/master/modules/audio_coding/neteq/g3doc/index.md)
+includes acceleration/deceleration and A/V delay control. Those mechanisms make
+buffer convergence plausible, but do not prove synchronized outputs for this app.
+Receiver policies remain fixture experiments until actual timing passes.
+
+Optional `KTV_ROOM_TEST_HANDOVER_AV=1` extends the native fixture with 40-pair
+post-handover phases for a replacement remote singer and the venue-to-remote
+route. The host uses a third isolated output so two player instances cannot mix
+into the measured receiver. Observers restart for the new player, and reused
+caption IDs resolve to the latest preceding source capture. Clean post-handover
+timing passes on frontend `7c1f583`; this does not establish transition-gap timing,
+physical venue-mixer alignment or continuously impaired post-handover timing.
+
 ## 11. Operational behavior and limits
 
 Implemented defaults: 20 members per room, the original browser plus two paired

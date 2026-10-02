@@ -54,6 +54,9 @@ const mediaImpairment = impairmentMode !== 'off', impairmentProtocol = impairmen
 assert.ok(!mediaImpairment || remoteMode, 'Media impairment requires the owned remote browser topology')
 const networkRecovery = process.env.KTV_ROOM_TEST_NETWORK_RECOVERY === '1'
 const routeHandover = process.env.KTV_ROOM_TEST_ROUTE_HANDOVER === '1'
+const handoverAv = process.env.KTV_ROOM_TEST_HANDOVER_AV === '1'
+assert.ok(!handoverAv || avTiming && routeHandover && receiverSync === 'off' && receiverTargetMs === null,
+  'Post-handover A/V requires native timing, full hybrid handover and unmodified receiver policy')
 const continuousImpairment = process.env.KTV_ROOM_TEST_CONTINUOUS_IMPAIRMENT === '1'
 assert.ok(!continuousImpairment || mediaImpairment && networkRecovery && routeHandover,
   'Continuous impairment requires a media proxy, signaling recovery and hybrid handover')
@@ -71,7 +74,7 @@ const provider = new RoomServiceClient(upstreamUrl, apiKey, apiSecret, { request
 const db = initDb(root), contexts = [], debuggerSockets = [], pending = new Map(), sessionSockets = new Map(), errors = [], mediaHttp = []
 const ownedTcp = new Set()
 const trackTcp = server => server.on('connection', socket => { ownedTcp.add(socket); socket.once('close', () => ownedTcp.delete(socket)) })
-let mediaProxy, audienceCircuits, frontend, backend, worker, realtime, chrome, remoteBrowser, avBrowser, pulseModule, pathRoom, nativeSyncAudience, running = false, nextId = 0, passed = 0
+let mediaProxy, audienceCircuits, frontend, backend, worker, realtime, chrome, remoteBrowser, avBrowser, hostBrowser, pulseModule, pathRoom, nativeSyncAudience, running = false, nextId = 0, passed = 0
 const check = (value, label) => { assert.ok(value, label); passed++; console.log(`PASS ${label}`) }
 const poll = async (work, label, timeout = 20000) => {
   const deadline = Date.now() + timeout
@@ -234,10 +237,13 @@ try {
   const singerSocket = await debuggerConnection(singerDebugUrl)
   if(avTiming) avBrowser=await createOwnedRemoteBrowser({host:process.env.KTV_ROOM_TEST_SSH_HOST,
     knownHosts:process.env.KTV_ROOM_TEST_KNOWN_HOSTS,micFile,debugPort:Number(process.env.KTV_ROOM_TEST_AV_CHROME_PORT||9244),isolatedOutput:true})
+  if(handoverAv) hostBrowser=await createOwnedRemoteBrowser({host:process.env.KTV_ROOM_TEST_SSH_HOST,
+    knownHosts:process.env.KTV_ROOM_TEST_KNOWN_HOSTS,micFile,debugPort:9245,isolatedOutput:true,captureOutput:false})
   const audienceSocket = avBrowser ? await debuggerConnection(avBrowser.debuggerUrl) : remoteMode ? singerSocket : await debuggerConnection(process.env.CHROME_DEBUG_URL || 'http://127.0.0.1:9231')
+  const hostSocket = hostBrowser ? await debuggerConnection(hostBrowser.debuggerUrl) : audienceSocket
   console.log('Client topology:', clientLocation, '; native audio clocks; isolated synthetic room/microphone')
   async function page(actor, stage = false) {
-    const socket = actor === 2 || actor === 3 ? singerSocket : audienceSocket
+    const socket = actor === 2 || actor === 3 ? singerSocket : actor === 1 && !stage ? hostSocket : audienceSocket
     const { browserContextId } = await cdp(socket, 'Target.createBrowserContext'); contexts.push({ socket, browserContextId })
     await cdp(socket, 'Browser.grantPermissions', { browserContextId, origin, permissions: ['audioCapture'] })
     const { targetId } = await cdp(socket, 'Target.createTarget', { browserContextId, url: 'about:blank' })
@@ -407,7 +413,7 @@ try {
       selected.every(item=>item.protocol===impairmentProtocol&&item.port===(impairmentProtocol==='udp'?7882:7881)),
       'handover media keeps the configured delay/jitter/loss and selected proxy route')
   }
-  async function measureAv(phase) {
+  async function measureAv(phase, sourcePage = phone) {
     const transitions = phase==='baseline'&&mediaImpairment?6:avTransitions
     const inboundBefore = await inboundTiming()
     const begin=await evaluate(audience, `__avObserver.begin(${JSON.stringify(phase)})`)
@@ -415,15 +421,15 @@ try {
     const result=await poll(async()=>{
       if(Date.now()-lastPhaseSample>=1000) {
         lastPhaseSample=Date.now()
-        if(avTimingSamples.length>=180) throw new Error('AV_TIMING_SAMPLES_LIMIT')
+        if(avTimingSamples.length>=(handoverAv ? 400 : 180)) throw new Error('AV_TIMING_SAMPLES_LIMIT')
         const [source,receiver] = await Promise.all([
-          evaluate(phone,`(${collectAvMediaStats.toString()})()`),
+          evaluate(sourcePage,`(${collectAvMediaStats.toString()})()`),
           evaluate(audience,`(${collectAvMediaStats.toString()})()`),
         ])
         avTimingSamples.push({phase,source,receiver})
         if (receiverSync !== 'off') avTimingSamples.at(-1).nativeSync = await evaluate(audience,
           `__avNativeSync.sample(${JSON.stringify(receiver)}${receiverSync === 'repair' ? ',' + JSON.stringify(source) : ''})`)
-        const sample=await evaluate(phone,`(() => {
+        const sample=await evaluate(sourcePage,`(() => {
           const node=document.querySelector('dl'),context=__contexts[0];
           const sample={now:performance.now(),diagnostics:node?.textContent,
             rates:__bufferSources.filter(item=>item.__state.started&&!item.__state.ended).map(item=>item.playbackRate.value),
@@ -435,7 +441,7 @@ try {
         })()`)
         if(sample.failed) throw new Error('Publisher audio recovery interrupted A/V observation')
       }
-      const observed=await evaluate(audience,'__avObserver.evidence'), sources=await evaluate(phone,'__avSources')
+      const observed=await evaluate(audience,'__avObserver.evidence'), sources=await evaluate(sourcePage,'__avSources')
       const audio=(await avBrowser.audioEvidence()).filter(item=>typeof item.on==='boolean'&&!item.initial&&item.time>=begin).map(item=>({...item,phase}))
       const measured=analyseAvObservations({...observed,audio,sources},phase)
       return measured.count>=transitions?measured:false
@@ -603,6 +609,11 @@ try {
   await poll(() => evaluate(audience, "(() => { const video = document.querySelector('[data-party-media-screen] video'); return video?.srcObject?.getAudioTracks().length === 1 && video.srcObject.getVideoTracks().length === 1; })()"), 'audience receives replacement tracks')
   await poll(() => evaluate(audience, "document.querySelector('[data-party-media-screen] video')?.getVideoPlaybackQuality().totalVideoFrames >= 10"), 'replacement lyric video decodes ten frames')
   check(await evaluate(audience, "document.querySelectorAll('[data-party-media-screen] video').length === 1"), 'handover presents exactly one current audience player with decoded replacement video')
+  if (handoverAv) {
+    await evaluate(audience, `(${installAvObserver.toString()})()`)
+    await measureAv('next-singer', nextPhone)
+    await evaluate(audience, '__avObserver.stopRecording()')
+  }
   await click(nextPhone, 'Stop streaming on this device')
   check(await evaluate(nextPhone, "window.__micStreams.every(stream => stream.getTracks().every(track => track.readyState === 'ended'))"), 'replacement capture also releases its microphone')
   if (routeHandover) {
@@ -685,6 +696,11 @@ try {
     await received(audience, false)
     check(await evaluate(audience, 'window.__bufferSources.every(item => !item.__state.started || item.__state.ended || (item.__state.stopAt !== null && item.__state.stopAt <= item.__state.context.currentTime))'), 'all previous venue backing sources have stopped before remote media plays')
     check(await evaluate(audience, 'window.__sourceEvidence.length') === previousStageSources, 'venue common screen switches to received remote media without restarting local backing')
+    if (handoverAv) {
+      await evaluate(audience, `(${installAvObserver.toString()})()`)
+      await measureAv('venue-to-remote', nextPhone)
+      await evaluate(audience, '__avObserver.stopRecording()')
+    }
     await click(nextPhone, 'Stop streaming on this device'); await skipAfterRemoval(remotePublisher)
     await offerTurn(2, singer.self, 'Return venue turn')
     await stopAudience(audience)
@@ -719,7 +735,7 @@ try {
   if (nativeSyncAudience) await evaluate(nativeSyncAudience, 'window.__avNativeSync?.close()').catch(() => {})
   for (const { socket, browserContextId } of contexts) if (socket.readyState === WebSocket.OPEN) await cdp(socket, 'Target.disposeBrowserContext', { browserContextId }).catch(() => {})
   for (const socket of debuggerSockets) socket.close()
-  for(const ownedBrowser of [avBrowser,remoteBrowser]) if (ownedBrowser) await ownedBrowser.close().catch(() => {
+  for(const ownedBrowser of [hostBrowser,avBrowser,remoteBrowser]) if (ownedBrowser) await ownedBrowser.close().catch(() => {
     console.error('Owned remote browser cleanup was not verified; its 15-minute watchdog remains bounded')
     process.exitCode = 1
   })
