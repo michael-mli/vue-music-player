@@ -1477,6 +1477,48 @@ output remains `auto_null`; only the original three production Docker containers
 are running. Unrelated PM2 process PIDs are unchanged. The production backend is
 one online process with watching disabled.
 
+### 2026-10-02 — Capture cadence and bounded A/V diagnostics
+
+Added a bounded source/receiver RTC timeline sampled once per second, including
+encoded/sent frames, codec, encode/send delay, buffer residence, retransmission
+and quality-limitation counters. Optional received-frame arrival, decode and
+presentation metadata remains absent when unsupported. The whitelist excludes
+SDP, candidate addresses and credentials; tests cover redaction, missing fields,
+unsupported receiver hints and bounded peer history.
+
+The pre-fix UDP diagnostic fails during native publisher clock recovery at
+**116.8 ms**, 97 native samples (`/tmp/ktv-av-timeline-udp-diagnostic.log`, exit 1).
+Its baseline six pairs have p95/max **27.12 ms**, no unmatched edges. The impaired
+40-pair phase is incomplete and cannot establish a timing pass. Clean source
+video reports **19–21 fps**; impaired source video often reports **2–9 fps**,
+then returns to about 20 fps. Reported quality limitation remains `none`; frame
+decode metadata is generally a few milliseconds. These observations do not
+prove where the impaired delay originates.
+
+Fixed a concrete drawing-cadence error: resetting each 40 ms interval to the
+current animation callback rounds 25 fps to 20 fps on a 60 Hz display. Preserve
+the fractional interval and draw only the current frame after a stall. Use manual
+canvas capture where supported, requesting a frame after the complete draw;
+otherwise release the probe track and retain automatic capture. Resolution,
+bitrate, native audio recovery, permission and timing thresholds are unchanged.
+
+Party units **84/84**, A/V fixture units **6/6**, type-check/production build pass:
+`/tmp/ktv-capture-cadence-party.log`, `/tmp/ktv-capture-cadence-av-fixtures.log`,
+`/tmp/ktv-capture-cadence-build.log`. Cadence checks cover 60/120 Hz, stall behavior,
+fallback cleanup and background blanking. Built-app UI **38/38** and PWA **8/8**
+pass (`/tmp/ktv-capture-cadence-ui.log`, `/tmp/ktv-capture-cadence-pwa.log`). The
+continuous UDP timing run fails, exit 1 (`/tmp/ktv-capture-cadence-udp-av.log`):
+baseline source **24–26 encoded fps**, six pairs p95/max **103.32 ms**. Impaired
+40 matched pairs, one unmatched video/audio edge: skew p50 **168.41 ms**, p95
+**590.93 ms**, maximum **690.50 ms**. Functional recovery/handover completes;
+the final timing gate fails. Under impairment, video target bitrate falls near
+**30–36 kbit/s** and encoded cadence is commonly **3–5 fps**, with 28 video
+freezes by the phase end. The cadence fix corrects the baseline setting but does
+not resolve the impaired A/V failure. Next, compare encoder resolution/framerate
+adaptation with timing and readability evidence. This candidate is not deployed. Production
+remains `e88783a`, media disabled. Encoded cadence and impaired A/V must be measured
+before claiming improvement; physical/mobile/load/network gates remain open.
+
 ```text
 Date:
 Phase and item IDs:

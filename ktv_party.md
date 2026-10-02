@@ -900,6 +900,15 @@ the mixed audio through the same WebRTC publisher. Audience pages display that
 synchronized lyric video with local queue/participant controls around it. Validate
 capture support, mobile load, and actual audio/video synchronization in the spike.
 
+Canvas capture uses one drawing/capture cadence where manual
+[`requestFrame()`](https://w3c.github.io/mediacapture-fromelement/#html-canvas-element-media-capture-extensions)
+is available. Preserve the fractional frame interval across animation callbacks:
+resetting a 40 ms interval to each draw rounds it to 50 ms on a 60 Hz display.
+After a stall, capture one current frame. Browsers without manual capture use the
+automatic stream rate with the same drawing cadence. Backgrounding still blanks
+the canvas; authorization loss and close still release the track. Nominal 25 fps
+is a setting, not a guarantee of encoded or received throughput.
+
 A later native DOM lyric view needs a tested mapping from received media timestamps
 to song position, accounting for jitter-buffer playout. A WebSocket song position
 or data message arrival time alone cannot supply that mapping. If captured lyric
@@ -1007,6 +1016,14 @@ remain visible. The **150 ms p95 / 250 ms maximum** limits are software diagnost
 thresholds for this setup. They do not replace the physical 50 ms stage/guide
 target or establish a supported network/device matrix. Current TCP/UDP impairment
 measurements exceed these thresholds; online release remains gated.
+
+The fixture records a bounded, read-only source/receiver RTC statistics timeline
+and optional frame arrival/decode/presentation metadata. It exports selected
+numeric counters and codec fields only, excluding SDP, candidates and credentials.
+Interpret [`estimatedPlayoutTimestamp`](https://www.w3.org/TR/webrtc-stats/)
+in the sender's NTP clock domain; it is not a Unix timestamp or proof that the
+current caption has appeared. Missing frame metadata remains absent. These
+diagnostics help investigate failed timing without replacing the measured gate.
 
 ## 11. Operational behavior and limits
 

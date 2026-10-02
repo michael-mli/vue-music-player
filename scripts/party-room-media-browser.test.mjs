@@ -21,6 +21,7 @@ import { createMediaTcpProxy } from './party-media-tcp-proxy.mjs'
 import { createMediaUdpProxy } from './party-media-udp-proxy.mjs'
 import { createOwnedRemoteBrowser } from './party-remote-browser.mjs'
 import { installAvSourceMarkers, installAvObserver, analyseAvObservations } from './party-av-observer.mjs'
+import { collectAvMediaStats } from './party-av-stats.mjs'
 
 const clientLocation = process.env.KTV_ROOM_TEST_CLIENT || 'same-host'
 assert.ok(['same-host', 'remote-ec2'].includes(clientLocation), 'Unknown room-test client topology')
@@ -30,6 +31,7 @@ const avTransitions = Number(process.env.KTV_ROOM_TEST_AV_TRANSITIONS || 40)
 assert.ok(Number.isInteger(avTransitions)&&avTransitions>=6&&avTransitions<=60, 'A/V transitions must be 6–60')
 const fixtureSeconds = avTiming ? Math.max(60, (avTransitions + 6) * 2 + 40) : 60
 const avMeasurements = []
+const avTimingSamples = []
 const playoutHints = process.env.KTV_ROOM_TEST_PLAYOUT_HINTS || 'adaptive'
 assert.ok(['adaptive','off'].includes(playoutHints),'Unknown SFU playout hint mode')
 assert.ok(!avTiming || remoteMode, 'A/V fixture requires owned source/receiver browsers on one remote host clock domain')
@@ -389,6 +391,12 @@ try {
     const result=await poll(async()=>{
       if(Date.now()-lastPhaseSample>=1000) {
         lastPhaseSample=Date.now()
+        if(avTimingSamples.length>=180) throw new Error('AV_TIMING_SAMPLES_LIMIT')
+        const [source,receiver] = await Promise.all([
+          evaluate(phone,`(${collectAvMediaStats.toString()})()`),
+          evaluate(audience,`(${collectAvMediaStats.toString()})()`),
+        ])
+        avTimingSamples.push({phase,source,receiver})
         const sample=await evaluate(phone,`(() => {
           const node=document.querySelector('dl'),context=__contexts[0];
           const sample={now:performance.now(),diagnostics:node?.textContent,
@@ -404,7 +412,9 @@ try {
       return measured.count>=transitions?measured:false
     },`${transitions} matched ${phase} audio/video marker transitions`,(transitions+5)*2000)
     console.log('A/V receiver buffer diagnostics:',JSON.stringify({phase,before:inboundBefore,after:await inboundTiming()}))
+    console.log('A/V timing timeline:',JSON.stringify(avTimingSamples.filter(item=>item.phase===phase)))
     avMeasurements.push(result)
+    console.log('A/V received frame metadata:',JSON.stringify((await evaluate(audience,'__avObserver.evidence.video')).filter(item=>item.phase===phase)))
     console.log('A/V marker measurement:',JSON.stringify(result))
     check(result.unmatchedVideo.length<=1&&result.unmatchedAudio<=1, `${phase} marker matching accounts for observed audio/video edges without selecting only aligned pairs`)
     check(result.pairs.every(item=>item.videoDelayMs>=0&&item.videoDelayMs<2000), `${phase} captured marker has a valid source-to-received video observation delay`)
@@ -627,6 +637,7 @@ try {
   console.log(`${passed} built-app streaming checks passed. Client: ${clientLocation}; synthetic microphone, foreground Chrome, isolated policy/SFU. Remote HTTP/CDP use loopback SSH forwards; physical and distinct access-network acceptance remains open.`)
 } catch (error) {
   console.error('Journey failure:', error.message)
+  if(avTimingSamples.length) console.error('A/V timing timeline on failure:',JSON.stringify(avTimingSamples))
   if(avBrowser) console.error('Private receiver output:',JSON.stringify(await avBrowser.audioEvidence().catch(()=>({error:'capture unavailable'}))))
   if(mediaProxy) console.error('Owned media proxy:',JSON.stringify(mediaProxy.snapshot()))
   console.error('Playback recovery:',JSON.stringify(db.prepare('SELECT state,recovery_reason FROM ktv_playback').all()))

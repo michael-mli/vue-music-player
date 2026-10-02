@@ -44,7 +44,9 @@ export function installAvObserver() {
         if (evidence.video.length >= 128) throw new Error('AV_VIDEO_EVIDENCE_LIMIT')
         evidence.video.push({ phase, id, on: id % 2 === 0, time: performance.timeOrigin + metadata.expectedDisplayTime,
           observedAt: performance.timeOrigin + now, callbackLagMs: now - metadata.expectedDisplayTime,
-          rtpTimestamp: metadata.rtpTimestamp, mediaTime: metadata.mediaTime })
+          rtpTimestamp: metadata.rtpTimestamp, mediaTime: metadata.mediaTime,
+          ...Object.fromEntries(['captureTime', 'receiveTime', 'presentationTime', 'expectedDisplayTime', 'processingDuration', 'presentedFrames']
+            .filter(key => Number.isFinite(metadata[key])).map(key => [key, metadata[key]])) })
       }
       previousId = id
     }

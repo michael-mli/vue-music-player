@@ -3,6 +3,37 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { test } from 'node:test'
 import { analyseAvObservations, installAvSourceMarkers, installAvObserver } from './party-av-observer.mjs'
+import { collectAvMediaStats } from './party-av-stats.mjs'
+
+test('fixture RTC timeline retains encoder/buffer evidence without signaling credentials or missing counter inventions',async t=>{
+  const previous=globalThis.window;t.after(()=>{globalThis.window=previous})
+  const report=new Map([
+    ['audio',{type:'inbound-rtp',kind:'audio',timestamp:1000,ssrc:3,codecId:'codec',jitterBufferEmittedCount:0,
+      estimatedPlayoutTimestamp:3999900000000,address:'private-address',usernameFragment:'secret-ice'}],
+    ['video',{type:'outbound-rtp',kind:'video',framesEncoded:25,totalEncodeTime:.01,qualityLimitationReason:'bandwidth',
+      qualityLimitationDurations:{cpu:0,bandwidth:2,other:Infinity,access_token:'secret-token'},token:'secret-token'}],
+    ['codec',{mimeType:'audio/opus',clockRate:48000,channels:2,sdpFmtpLine:'secret-sdp'}],
+    ['ice',{type:'candidate-pair',url:'turns:private-host',credential:'secret-turn'}],
+  ])
+  const receiver={track:{kind:'audio'},jitterBufferTarget:null}
+  globalThis.window={__peers:[{getStats:async()=>report,getReceivers:()=>[receiver]}]}
+  const result=await collectAvMediaStats(),[audio,video]=result.reports
+  assert.deepEqual(audio.codec,{mimeType:'audio/opus',clockRate:48000,channels:2})
+  assert.equal(audio.jitterBufferEmittedCount,0);assert.equal('packetsLost' in audio,false)
+  assert.equal(audio.estimatedPlayoutTimestamp,3999900000000)
+  assert.equal(video.qualityLimitationReason,'bandwidth');assert.deepEqual(video.qualityLimitationDurations,{cpu:0,bandwidth:2})
+  assert.deepEqual(result.receiverTargets,[{peer:0,kind:'audio',targetSupported:true,targetMs:null}])
+  assert.equal(receiver.jitterBufferTarget,null)
+  for(const secret of ['private-address','secret-ice','secret-token','secret-sdp','secret-turn','turns:'])assert.ok(!JSON.stringify(result).includes(secret))
+})
+
+test('RTC timeline distinguishes unsupported buffering hints and refuses unbounded peer history',async t=>{
+  const previous=globalThis.window;t.after(()=>{globalThis.window=previous})
+  globalThis.window={__peers:[{getStats:async()=>new Map(),getReceivers:()=>[{track:{kind:'video'}}]}]}
+  assert.deepEqual((await collectAvMediaStats()).receiverTargets,[{peer:0,kind:'video',targetSupported:false,targetMs:null}])
+  window.__peers=Array(17).fill({})
+  await assert.rejects(collectAvMediaStats,/AV_STATS_PEER_LIMIT/)
+})
 
 test('actual output detector passes PCM edge timing and interrupted-input tests', async () => {
   const {stderr}=await promisify(execFile)('python3',['scripts/party-av-pulse-capture.test.py'],{timeout:10000})
@@ -52,6 +83,8 @@ test('captured marker protocol crosses 63 and preserves full byte IDs and parity
   frame(63);window.__avObserver.begin('baseline');frame(64);frame(255)
   assert.deepEqual(window.__avSources.map(item=>item.id),[63,64,255])
   assert.deepEqual(window.__avObserver.evidence.video.map(item=>[item.id,item.on]),[[64,true],[255,false]])
+  assert.equal(window.__avObserver.evidence.video[0].expectedDisplayTime,116)
+  assert.equal('captureTime' in window.__avObserver.evidence.video[0],false)
   assert.equal(context.draws.length,3)
   data[(16*416+12*32+16)*4]=data[(16*416+12*32+16)*4]>128?10:230
   callback(100,{expectedDisplayTime:116})

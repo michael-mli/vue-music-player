@@ -24,6 +24,7 @@ export class PartyLyricCapture {
   private frameId = 0
   private lastFrameMs = -Infinity
   private closed = false
+  private readonly manualTrack?: CanvasCaptureMediaStreamTrack
 
   constructor(readonly canvas: HTMLCanvasElement, private readonly readFrame: () => PartyLyricFrame | null,
     private readonly fps = 25) {
@@ -33,17 +34,37 @@ export class PartyLyricCapture {
     this.context = context
     canvas.width = 1280; canvas.height = 720
     this.draw(null)
-    this.stream = canvas.captureStream(fps)
-    if (!this.stream.getVideoTracks().length) throw new Error('LYRIC_CAPTURE_UNSUPPORTED')
+    // One cadence controls both drawing and capture where requestFrame is supported.
+    // Retain automatic capture as a fallback for browsers without that API.
+    let stream = canvas.captureStream(0)
+    const manualTrack = stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack | undefined
+    if (typeof manualTrack?.requestFrame === 'function') {
+      this.manualTrack = manualTrack
+    } else {
+      for (const track of stream.getTracks()) track.stop()
+      stream = canvas.captureStream(fps)
+    }
+    if (!stream.getVideoTracks().length) {
+      for (const track of stream.getTracks()) track.stop()
+      throw new Error('LYRIC_CAPTURE_UNSUPPORTED')
+    }
+    this.stream = stream
+    this.manualTrack?.requestFrame()
     document.addEventListener('visibilitychange', this.visibilityChanged)
     this.frameId = requestAnimationFrame(this.tick)
   }
 
   private tick = (time: number) => {
     if (this.closed) return
-    if (!document.hidden && time - this.lastFrameMs >= 1000 / this.fps) {
-      this.lastFrameMs = time
+    const period = 1000 / this.fps
+    if (!document.hidden && time - this.lastFrameMs >= period) {
+      // Preserve the fractional interval across animation frames. Resetting to
+      // `time` rounds 40 ms up to three 60 Hz frames, reducing 25 fps to 20 fps.
+      // After a stall, render one fresh frame rather than a burst of old frames.
+      this.lastFrameMs = Number.isFinite(this.lastFrameMs)
+        ? this.lastFrameMs + Math.floor((time - this.lastFrameMs) / period) * period : time
       this.draw(this.readFrame())
+      this.manualTrack?.requestFrame()
     }
     this.frameId = requestAnimationFrame(this.tick)
   }
