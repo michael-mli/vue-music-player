@@ -497,7 +497,9 @@ Likely files: `src/services/partyAudioEngine.ts`, `src/composables/usePartyClock
 - [x] P05.7 Add measured drift policy, fade/recovery, buffer health, clock uncertainty,
   and clear required-guide versus optional-guide failure behavior.
 - [ ] P05.8 Enforce output-lease silence using audio scheduling and recovery guards;
-  test a suspended old stage while a replacement is designated.
+  test a suspended old stage while a replacement is designated. Native rendering
+  guards now cover blocked tasks and suspended stage/publisher clocks; integrated
+  replacement and physical silence evidence remain open.
 - [x] P05.9 Add player diagnostics with no credentials/audio capture in logs and
   distinguish acoustic measurements from calculated timing estimates.
 
@@ -708,13 +710,13 @@ Completed software checks do not close a hardware or acoustic gate.
 | A07 | Stage and phone guide run for five minutes | Measured p95 error meets supported-setup target | P01/P05 | Unrun |
 | A08 | Host pauses, seeks, resumes; old ready/ended packet arrives | One valid timeline; obsolete packet ignored | P05 | Software pass: [playback boundaries](server/ktv-playback.test.js) and [built-app journey](scripts/party-browser.test.mjs); physical timing open |
 | A09 | Optional guide fails; repeat with guide marked required | Guide-only recovery, then room pause in required case | P05 | Software pass: [guide policy](server/ktv-playback.test.js) and [built-app recovery](scripts/party-browser.test.mjs); physical output open |
-| A10 | Stage loses connectivity and another device takes over | Old lease stops output before replacement becomes audible | P05/P06 | Unrun |
+| A10 | Stage loses connectivity and another device takes over | Old lease stops output before replacement becomes audible | P05/P06 | Native isolated stage/publisher expiry passes 15/15, including blocked tasks and suspended render clocks; integrated replacement and physical silence remain open; [fixture](scripts/party-audio-lease-browser.test.mjs) |
 | A11 | Backend restarts during a song | Paused checkpoint, new clock ID, explicit readiness/resume | P06 | Software pass: restart/checkpoint and new generation in [playback tests](server/ktv-playback.test.js) |
 | A12 | Host disconnects with/without co-host | Documented transfer or pause-before-next policy | P06 | Software pass: grace, co-host choice, return and rollback in [playback tests](server/ktv-playback.test.js) |
 | A13 | Kick member with several devices; reuse grants and tickets | All revoked room capabilities fail | P06 | Software pass: real socket revocation and paired-device scope in [room tests](server/ktv.test.js) |
 | A14 | Background/lock/unlock or change headphones | Honest suspended state, recalibration/recovery as needed | P06 | Unrun |
 | A15 | No instrumental, no LRC, changed asset version | Clear fallback/error; no silent original substitution | P05/P06 | Unrun |
-| A16 | Old installed PWA reconnects and new build becomes available | No stale authorized data; safe version/reload handling | P06/P08 | Synthetic old-worker upgrade passes 8/8; field-installed PWA open; [fixture](scripts/party-pwa-browser.test.mjs) |
+| A16 | Old installed PWA reconnects and new build becomes available | No stale authorized data; safe version/reload handling | P06/P08 | Synthetic old-worker upgrade/blocked-activation retry passes 10/10; field-installed PWA open; [fixture](scripts/party-pwa-browser.test.mjs) |
 | A17 | Remote singer enables original guide | Singer hears guide; audience gets backing and live mic only | P07 | Native synthetic room/mix isolation passes; physical singing/leakage open; [journey](scripts/party-room-media-browser.test.mjs) |
 | A18 | Add network jitter to remote audience | Received lyric video and audio remain aligned within measured support limits | P07 | Controlled TCP/UDP timing fails; field acceptance open |
 | A19 | Force TURN; remove active performer; reuse old media token | Relay works; publishing/access revocation is enforced | P07 | Public transport/revocation passes 14/14; distinct access networks open; [fixture](scripts/party-public-transport.test.mjs) |
@@ -1850,6 +1852,84 @@ frontend/backend were `f58a8f3`; old hashed assets remain available. Entry HTML
 and service worker were atomically replaced with zero preparing/scheduled/playing
 rooms. Native buffering experiments remain fixture-only; impaired UDP timing,
 physical/mobile, handover timing, capacity and online release remain open.
+
+
+### 2026-10-02 — Native lease-silence fix and repair-delay diagnosis
+
+Native private-output probe `/tmp/ktv-native-lease-boundary.log` exposes a real
+source-lifetime bug in the previous engine (SHA256
+`7f23c581f15f794466a90e93e09927f0aa5c52600cc750fe88588f2b3cb5e128`).
+A blocked page task with a running render clock stops on schedule. When the task
+requests context suspension, remains blocked past the lease, then resumes audio
+while still blocking, the old backing becomes audible for the observed **2.2 s**
+resume window. State-change callbacks arrive afterward. A stop scheduled only
+against `AudioContext.currentTime` cannot cover a frozen render clock.
+
+The production engine now requires a native worklet lease guard for each backing
+or guide source, before personal monitoring and its publisher tap. The publish
+mix adds its own guard after the limiter/gain, covering live mic as well as backing.
+Each guard checks a bounded wall expiry derived from the validated room clock,
+uncertainty and output margin; backwards wall time, render discontinuities above
+250 ms, invalid/replayed renewals and expiry latch silence. A renewal cannot
+revive that guard. Native source stops/gain schedules, generation/asset/clock and
+room authorization checks remain in place. The guard retains the existing
+**15-second maximum stage lease**; publishing still retains its existing tighter
+permit validation. Modules use a hashed asset included in PWA precaching.
+Failed module loads cannot enable audio, and a subsequent successful load can
+recover; failed preflight does not require registering an existing module twice.
+
+`/tmp/ktv-native-stage-publisher-lease-guard.log` passes **15/15** native checks:
+actual private output contains the authorized tone, then remains silent after
+wall expiry for stage and published mic, with both running and suspended render
+clocks under blocked page tasks. No runtime exception. This isolates the engine
+and graph; it does not prove physical replacement timing or mobile compatibility.
+`/tmp/ktv-lease-render-guard-party-complete.log` passes **88/88** before the added
+15-second-ceiling check. The earlier invalid zero-input/zero-output preflight
+attempt is preserved in `/tmp/ktv-native-lease-render-guard.log`; the corrected
+native run is `/tmp/ktv-native-lease-render-guard-retry.log` (8/8 stage checks).
+
+Built candidate `/tmp/ktv-lease-guard-final-candidate-clean-av.log` passes
+**53/53**, including real capture, private guide/mix separation, signaling
+recovery and complete hybrid handovers. All **40** clean marker transitions
+match with no unmatched edges: p95 **59.26 ms**, maximum **66.27 ms**;
+source-to-video p95 **114.80 ms**, maximum **122.60 ms**. This candidate precedes
+the later room-response guard and ceiling check; exact committed verification
+is still required before publication.
+
+The receiver repair experiment remains fixture-only and defaults off.
+`/tmp/ktv-native-repair-udp-av.log` completes all 40 impaired matches, no unmatched,
+but fails p95 **445.47 ms**, maximum **470.41 ms**. Source-to-video p95
+**1113.40 ms**, maximum **1531.60 ms**. The common hint uses interval network
+minimum plus one measured RTT for each hop with recent video NACK progress;
+it does not use marker skew/IDs or a new lyric clock. Audio accepts approximately
+745–1100 ms while native video target stays near **482–486 ms**, consistent with
+our sender maximum of 500 ms. The pinned Chrome 137 WebRTC source
+(`cec4daea7ed5da94fc38d790bd12694c86865447`) explicitly gives frame maximum delay
+priority over receiver and synchronization minimum delays:
+[UpdatePlayoutDelays](https://webrtc.googlesource.com/src/+/cec4daea7ed5da94fc38d790bd12694c86865447/video/video_receive_stream2.cc).
+[The WebRTC specification](https://w3c.github.io/webrtc-pc/#dom-rtcrtpreceiver-jitterbuffertarget)
+also states that a clamped effective target need not change the getter.
+
+`/tmp/ktv-native-repair-no-sfu-hint-udp-av.log` removes only the isolated SFU's
+sender hint, retaining loss/jitter, quality and timing limits. Video now accepts
+larger targets (e.g. ~1054 ms alongside audio ~1070 ms), confirming the clamp
+conflict. The run still fails before 40 impaired matches: source rendered drift
+reaches ~101 ms and the unchanged recovery guard stops publication; the experiment
+correctly refuses the replaced receiver pair. This is neither a timing pass nor
+justification to ship the controller or alter prepared SFU policy.
+
+A concurrent PWA candidate run fails with a bounded Vue console diagnostic
+(`/tmp/ktv-lease-guard-final-candidate-pwa.log`): the owned fixture omitted
+`GET /api/ktv/rooms` and served HTML, so the list became undefined and the view
+failed during render. This explains a fixture race beyond the earlier worker and
+catalog issues. The fixture now serves the real empty-array envelope with no-store.
+The app additionally rejects invalid response envelopes and non-array room lists,
+retaining the form and a translated recovery message. Native built-app coverage
+includes malformed HTML/list payloads and recovery on a valid reload. All earlier
+failed PWA evidence remains recorded; real installed-PWA acceptance stays open.
+
+Public frontend/backend remain **`fe4f216` / `f58a8f3`** until exact committed
+verification and publication. Online media remains disabled; no persistent SFU.
 
 ```text
 Date:

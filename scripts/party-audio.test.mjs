@@ -11,9 +11,10 @@ function compile(filename, replace = value => value) {
   return `data:text/javascript;base64,${Buffer.from(replace(result.outputText)).toString('base64')}`
 }
 const timingModule = compile('../src/utils/partyTimeline.ts')
+const guardModule = compile('../src/services/partyLeaseGuard.ts', source => source.replace("import moduleUrl from './partyLeaseGuard.worklet.js?url';", "const moduleUrl = '/owned-guard.js';"))
 const { partyPosition, serverToAudioTime, partyOutputClock } = await import(timingModule)
 const { partyOutputSignature } = await import(compile('../src/services/partyOutputMonitor.ts'))
-const { PartyAudioEngine, waitForPartyAudioClock } = await import(compile('../src/services/partyAudioEngine.ts', source => source.replace("'@/utils/partyTimeline'", JSON.stringify(timingModule))))
+const { PartyAudioEngine, waitForPartyAudioClock } = await import(compile('../src/services/partyAudioEngine.ts', source => source.replace("'@/utils/partyTimeline'", JSON.stringify(timingModule)).replace("'./partyLeaseGuard'", JSON.stringify(guardModule))))
 
 test('output readiness waits through a running context with a stalled startup clock', async t => {
   const original = globalThis.performance
@@ -83,12 +84,24 @@ test('output timestamp mapping accounts for local output delay once and has an e
 function fixture(t) {
   const originalContext = globalThis.AudioContext, originalWindow = globalThis.window, originalFetch = globalThis.fetch
   const originalPerformance = globalThis.performance
+  const originalWorklet = globalThis.AudioWorkletNode
   let nowMs = 1000, context
   globalThis.performance = { now: () => nowMs }
-  const nodes = [], gains = []
+  const nodes = [], gains = [], guards = []
+  globalThis.AudioWorkletNode = class {
+    constructor(context, name, options) {
+      this.context = context; this.outputs = new Set(); this.messages = []; this.closed = false
+      this.port = { postMessage: message => this.messages.push(message), close: () => { this.closed = true } }
+      if (options.processorOptions.preflight) queueMicrotask(() => this.port.onmessage?.({ data: { type: 'ready' } }))
+      else guards.push(this)
+    }
+    connect(target) { this.outputs.add(target) }
+    disconnect(target) { if (target) this.outputs.delete(target); else this.outputs.clear() }
+  }
   class Context {
     state = 'suspended'; currentTime = 100; sampleRate = 44100; baseLatency = 0.01; outputLatency = 0.05; destination = {}
     constructor() { context = this }
+    audioWorklet = { addModule: async () => {} }
     resume() { this.state = 'running'; return Promise.resolve() }
     close() { this.state = 'closed'; return Promise.resolve() }
     getOutputTimestamp() { return { contextTime: this.currentTime - 0.05, performanceTime: performance.now() } }
@@ -121,8 +134,8 @@ function fixture(t) {
   const playback = { state: 'scheduled', generation: 1, clockId: 'clock', performanceId: 'performance', entryId: 'entry',
     positionMs: 0, anchorServerMs: now + 2000, durationMs: 60000, pendingTransition: null, assets: { instrumental: asset, original: asset } }
   const lease = { id: 'lease', generation: 1, clockId: 'clock', performanceId: 'performance', expiresServerMs: now + 8000, sequence: 1 }
-  t.after(async () => { await engine.close(); globalThis.AudioContext = originalContext; globalThis.window = originalWindow; globalThis.fetch = originalFetch; globalThis.performance = originalPerformance })
-  return { engine, nodes, gains, asset, playback, clock, lease, get context() { return context },
+  t.after(async () => { await engine.close(); globalThis.AudioContext = originalContext; globalThis.window = originalWindow; globalThis.fetch = originalFetch; globalThis.performance = originalPerformance; globalThis.AudioWorkletNode = originalWorklet })
+  return { engine, nodes, gains, guards, asset, playback, clock, lease, get context() { return context },
     advance: ms => { nowMs += ms; context.currentTime += ms / 1000 } }
 }
 
@@ -142,6 +155,29 @@ test('decoded audio is hashed, bounded and remains silent without a current outp
   assert.equal(f.nodes[0].stops.at(-1)[0], f.context.currentTime)
   await assert.rejects(f.engine.prepare({ ...f.asset, sha256: 'wrong-hash' }), /AUDIO_ASSET_CHANGED/)
   await assert.rejects(f.engine.prepare({ ...f.asset, durationMs: 10000000 }), /AUDIO_MEMORY_LIMIT/)
+})
+
+test('failed native guard module loading cannot enable output and a later retry can recover', async t => {
+  const f = fixture(t)
+  await f.engine.enable()
+  await f.engine.close()
+  let calls = 0
+  const Context = globalThis.AudioContext
+  globalThis.AudioContext = class extends Context {
+    audioWorklet = { addModule: async () => { if (++calls === 1) throw new Error('OWNED_MODULE_NETWORK_FAILURE') } }
+  }
+  await assert.rejects(f.engine.enable(), /OWNED_MODULE_NETWORK_FAILURE/)
+  assert.equal(f.engine.enabled, false); assert.equal(f.nodes.length, 0)
+  await f.engine.enable(); assert.equal(f.engine.enabled, true); assert.equal(calls, 2)
+})
+
+test('render guard retains the configured fifteen-second stage lease ceiling', async t => {
+  const f = fixture(t)
+  await f.engine.enable(); await f.engine.prepare(f.asset)
+  const lease = { ...f.lease, expiresServerMs: performance.now() + f.clock.offsetMs + 15000 }
+  f.engine.sync(f.playback, f.clock, lease, 'stage')
+  assert.equal(f.nodes.length, 1)
+  assert.ok(f.guards[0].messages.at(-1).expiry > Date.now() + 14000)
 })
 
 test('seek prepares one next source and adopts it when the committed generation changes', async t => {
@@ -276,7 +312,8 @@ test('the integrated backing tap is independent of monitor volume and shares the
   const tap = f.engine.createPublisherTap(f.asset.sha256, 1)
   assert.equal(tap.active, true); assert.throws(() => f.engine.createPublisherTap(f.asset.sha256, 1), /PUBLISH_BACKING_IN_USE/)
   f.engine.sync(f.playback, f.clock, f.lease, 'stage')
-  const [monitor, publish] = [...f.nodes[0].outputs]
+  assert.deepEqual([...f.nodes[0].outputs], [f.guards[0]])
+  const [monitor, publish] = [...f.guards[0].outputs]
   assert.equal(monitor.outputs.has(f.context.destination), true); assert.equal(publish.outputs.has(tap.instrumental), true)
   f.engine.setVolume(0)
   assert.equal(monitor.gain.value, 0); assert.equal(publish.gain.value, 1)
@@ -304,7 +341,7 @@ test('a publisher tap never adopts a future seek generation under an old permit'
   const boundary = performance.now() + f.clock.offsetMs + 1500
   const pending = { state: 'playing', generation: 2, positionMs: 20000, anchorServerMs: boundary, effectiveServerMs: boundary }
   f.engine.sync({ ...f.playback, pendingTransition: pending }, f.clock, { ...f.lease, nextGeneration: 2 }, 'stage')
-  assert.equal(f.nodes[0].outputs.size, 2); assert.equal(f.nodes[1].outputs.size, 1)
+  assert.equal(f.guards[0].outputs.size, 2); assert.equal(f.guards[1].outputs.size, 1)
   tap.close()
-  assert.equal(f.nodes[0].outputs.size, 1) // Personal monitor remains attached.
+  assert.equal(f.guards[0].outputs.size, 1) // Personal monitor remains attached.
 })

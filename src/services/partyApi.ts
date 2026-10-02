@@ -213,7 +213,11 @@ async function call<T>(method: 'get' | 'post', path: string, body?: Record<strin
         headers: anonymous ? {} : { Authorization: paired ? `KtvDevice ${paired.credential}` : `Bearer ${auth.token}` },
         timeout: 10000,
       })
-      return response.data.data
+      const envelope = response.data
+      if (!envelope || typeof envelope !== 'object' || envelope.success !== true || !Object.prototype.hasOwnProperty.call(envelope, 'data')) {
+        throw new PartyApiError('Room response is invalid', 'INVALID_RESPONSE', 502)
+      }
+      return envelope.data
     } catch (error) {
       if (axios.isAxiosError(error)) {
         if (!error.response && retryOnNetworkError && attempt === 0) continue
@@ -249,7 +253,11 @@ export const partyApi = {
     call<{ ready: true }>('post', `/rooms/${encodeURIComponent(roomId)}/media/${encodeURIComponent(identity)}/ready`, { deviceId }),
   mediaRevoke: (roomId: string, identity: string) =>
     call<{ state: 'revoked' }>('post', `/rooms/${encodeURIComponent(roomId)}/media/${encodeURIComponent(identity)}/revoke`, {}),
-  list: () => call<PartyRoomSummary[]>('get', '/rooms'),
+  list: async () => {
+    const rooms = await call<PartyRoomSummary[]>('get', '/rooms')
+    if (!Array.isArray(rooms)) throw new PartyApiError('Room list response is invalid', 'INVALID_RESPONSE', 502)
+    return rooms
+  },
   get: (id: string) => call<PartySnapshot>('get', `/rooms/${encodeURIComponent(id)}`),
   socketTicket: (id: string, deviceId?: string) => call<PartySocketTicket>('post', `/rooms/${encodeURIComponent(id)}/socket-ticket`, { deviceId }),
   create: (name: string, displayName: string, approvalRequired: boolean) =>

@@ -60,6 +60,7 @@ try {
   app.get('/api/dig/songs', (req, res) => res.json({ success: true, data: [] }))
   app.get('/api/categories', (req, res) => res.json({ success: true, data: { categories: [], assignments: [], lockedSongIds: [] } }))
   app.get('/api/ktv/rooms/fixture', (req, res) => res.set('Cache-Control', 'no-store').json({ success: true, data: { room: 'fresh' } }))
+  app.get('/api/ktv/rooms', (_req, res) => res.set('Cache-Control', 'no-store').json({ success: true, data: [] }))
   app.get('/api/ktv/features', (_req, res) => res.set('Cache-Control', 'no-store').json({ success: true, data: { rooms: roomsEnabled, guide: roomsEnabled, media: false } }))
   app.get('/data/song_number.txt', (req, res) => res.type('text').send('0'))
   app.get('/data/metadata.json', (req, res) => res.json({}))

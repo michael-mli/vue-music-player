@@ -1,11 +1,19 @@
-import test from 'node:test'
+import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import ts from 'typescript'
 
 const source = await fs.readFile(new URL('../src/services/partyPublishGraph.ts', import.meta.url), 'utf8')
+const guardSource = ts.transpileModule(await fs.readFile(new URL('../src/services/partyLeaseGuard.ts', import.meta.url), 'utf8'),
+  { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText
+  .replace("import moduleUrl from './partyLeaseGuard.worklet.js?url';", "const moduleUrl = '/owned-guard.js';")
+const guardUrl = `data:text/javascript;base64,${Buffer.from(guardSource).toString('base64')}`
 const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText
+  .replace("'./partyLeaseGuard'", JSON.stringify(guardUrl))
 const { PartyPublishGraph } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`)
+const originalWorklet = globalThis.AudioWorkletNode
+globalThis.AudioWorkletNode = class { constructor(context) { return context.createFixtureGuard() } }
+after(() => { globalThis.AudioWorkletNode = originalWorklet })
 
 function fixture() {
   const param = () => ({ value: 0, commands: [], setTargetAtTime(...args) { this.commands.push(args); this.value = args[0] },
@@ -22,6 +30,7 @@ function fixture() {
     nodes.push(item); return item
   }
   context.destination = node()
+  context.createFixtureGuard = () => node({ guard: true, port: { messages: [], postMessage(message) { this.messages.push(message) }, close() {} } })
   const instrumental = node(), guide = node(), capture = { getAudioTracks: () => [micTrack] }
   const identity = { clockId: 'clock', performanceId: 'performance', generation: 1 }
   const clock = { clockId: 'clock', status: 'healthy', offsetMs: 0, uncertaintyMs: 10 }
@@ -57,9 +66,11 @@ test('an engine-backed publisher does not create a second physical monitor branc
 
 test('publish permission expires in the audio render thread and rejects stale clock/generation', () => {
   const f = fixture(), graph = new PartyPublishGraph(f.context, f.instrumental, f.capture, f.identity)
-  const gate = f.nodes.find(node => node.outputs.has(f.nodes.find(item => item.stream)))
   const expiresServerMs = performance.now() + 4000
   assert.equal(graph.renew({ ...f.identity, expiresServerMs }, f.clock), true)
+  const guard = f.nodes.find(node => node.guard)
+  const gate = f.nodes.find(node => node.outputs.has(guard))
+  assert.equal(guard.outputs.has(f.nodes.find(item => item.stream)), true)
   assert.equal(gate.gain.commands.at(-1)[0], 0); assert.ok(gate.gain.commands.at(-1)[1] < 14)
   assert.equal(graph.renew({ ...f.identity, generation: 2, expiresServerMs }, f.clock), false)
   assert.equal(gate.gain.value, 0)

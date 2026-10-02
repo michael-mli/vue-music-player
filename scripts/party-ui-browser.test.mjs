@@ -15,6 +15,7 @@ const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ktv-ui-')), db = initDb(ro
 const app = express(), contexts = [], pending = new Map(), errors = []
 const extraFixtures = []
 let socket, nextId = 0, passed = 0
+let malformedRoomList = null
 for (let i = 1; i <= 3; i++) db.prepare("INSERT INTO users (username, kind, created_at) VALUES (?, 'guest', ?)").run(`ui-${i}`, new Date().toISOString())
 app.use(express.json())
 const auth = (req, res, next) => {
@@ -30,6 +31,11 @@ app.get('/api/categories', (_req, res) => res.json({ success: true, data: { cate
 app.get('/data/song_number.txt', (_req, res) => res.type('text').send('1'))
 app.get('/data/metadata.json', (_req, res) => res.json({ '1': { title: 'Layout song', duration: 60 } }))
 app.get('/karaoke/karaoke_manifest.json', (_req, res) => res.json({ version: 1, ids: [1] }))
+app.get('/api/ktv/rooms', (_req, res, next) => {
+  if (malformedRoomList === 'html') return res.type('html').send('<!doctype html><title>private-proxy-response</title>')
+  if (malformedRoomList === 'object') return res.json({ success: true, data: {} })
+  next()
+})
 const realtime = registerKtvRoutes(app, { db, authMiddleware: auth, secret: 'isolated-ui-only-secret', isKaraokeSong: id => id === 1 })
 app.use(express.static(path.resolve('dist'))); app.get('*', (_req, res) => res.sendFile(path.resolve('dist/index.html')))
 const server = app.listen(0, '127.0.0.1'); await once(server, 'listening'); realtime.attach(server)
@@ -104,6 +110,18 @@ try {
   await api(2, `/rooms/${room.room.id}/queue`, { songId: 1, title: '长歌曲名称' + 'Q'.repeat(70), requestNext: false, singerMemberId: guest.self.id })
   const home = await page(1, '/party'); await poll(() => evaluate(home, '!!document.getElementById("party-room-name")'), 'create form')
   await layout(home, '320px home')
+  let failedHome
+  for (const [payload, language] of [['html', 'en'], ['object', 'zh']]) {
+    malformedRoomList = payload
+    failedHome = await page(1, '/party', language)
+    await poll(() => evaluate(failedHome, "!!document.querySelector('[role=alert]')"), 'malformed room response recovery message')
+    check(await evaluate(failedHome, "!!document.getElementById('party-room-name') && !document.body.innerText.includes('private-proxy-response')"),
+      `${language}: malformed ${payload} room response leaves the form available without rendering response details`)
+  }
+  malformedRoomList = null
+  await cdp('Page.reload', {}, failedHome)
+  await poll(() => evaluate(failedHome, `!!document.getElementById('party-room-name') && !document.querySelector('[role=alert]') && document.body.innerText.includes(${JSON.stringify(room.room.name)})`), 'room list recovers on a valid reload')
+  check(true, 'valid room response restores the existing room list after a malformed response')
   const join = await page(3, '/party/join', 'zh'); await poll(() => evaluate(join, '!!document.getElementById("party-code")'), 'join form')
   await layout(join, '320px Chinese join')
   await evaluate(join, `(() => { const input=document.getElementById('party-code'); input.value='ZZZZZZZZ'; input.dispatchEvent(new Event('input',{bubbles:true})); })()`)

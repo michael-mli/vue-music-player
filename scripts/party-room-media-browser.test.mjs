@@ -22,7 +22,7 @@ import { createMediaUdpProxy } from './party-media-udp-proxy.mjs'
 import { createOwnedRemoteBrowser } from './party-remote-browser.mjs'
 import { installAvSourceMarkers, installAvObserver, analyseAvObservations } from './party-av-observer.mjs'
 import { collectAvMediaStats } from './party-av-stats.mjs'
-import { nativeSyncTargetStep, nativeNetworkTargetStep, installNativeSyncExperiment } from './party-av-native-sync.mjs'
+import { nativeSyncTargetStep, nativeNetworkTargetStep, nativeRepairTargetStep, installNativeSyncExperiment } from './party-av-native-sync.mjs'
 
 const clientLocation = process.env.KTV_ROOM_TEST_CLIENT || 'same-host'
 assert.ok(['same-host', 'remote-ec2'].includes(clientLocation), 'Unknown room-test client topology')
@@ -30,7 +30,7 @@ const remoteMode = clientLocation === 'remote-ec2'
 const avTiming = process.env.KTV_ROOM_TEST_AV_TIMING === '1'
 const receiverTargetMs = process.env.KTV_ROOM_TEST_RECEIVER_TARGET_MS === undefined ? null : Number(process.env.KTV_ROOM_TEST_RECEIVER_TARGET_MS)
 const receiverSync = process.env.KTV_ROOM_TEST_RECEIVER_SYNC || 'off'
-assert.ok(['off', 'ntp', 'network'].includes(receiverSync) && (receiverSync === 'off' || avTiming && receiverTargetMs === null),
+assert.ok(['off', 'ntp', 'network', 'repair'].includes(receiverSync) && (receiverSync === 'off' || avTiming && receiverTargetMs === null),
   'Native sync experiment requires A/V timing and no fixed receiver target')
 assert.ok(receiverTargetMs === null || avTiming && Number.isInteger(receiverTargetMs) && receiverTargetMs >= 0 && receiverTargetMs <= 1000,
   'Receiver target experiment requires A/V timing and a 0–1000 ms target')
@@ -412,7 +412,7 @@ try {
         ])
         avTimingSamples.push({phase,source,receiver})
         if (receiverSync !== 'off') avTimingSamples.at(-1).nativeSync = await evaluate(audience,
-          `__avNativeSync.sample(${JSON.stringify(receiver)})`)
+          `__avNativeSync.sample(${JSON.stringify(receiver)}${receiverSync === 'repair' ? ',' + JSON.stringify(source) : ''})`)
         const sample=await evaluate(phone,`(() => {
           const node=document.querySelector('dl'),context=__contexts[0];
           const sample={now:performance.now(),diagnostics:node?.textContent,
@@ -439,7 +439,7 @@ try {
   if(avTiming) {
     if (receiverSync !== 'off') {
       nativeSyncAudience = audience
-      const step = receiverSync === 'ntp' ? nativeSyncTargetStep : nativeNetworkTargetStep
+      const step = receiverSync === 'ntp' ? nativeSyncTargetStep : receiverSync === 'repair' ? nativeRepairTargetStep : nativeNetworkTargetStep
       const receivers = await evaluate(audience, `(${installNativeSyncExperiment.toString()})(${step.toString()})`)
       check(receivers.length === 2, 'native sync experiment scopes hints to the two current player receivers')
     }

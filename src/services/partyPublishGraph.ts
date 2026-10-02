@@ -1,4 +1,5 @@
 import type { PartyClockEstimate } from '@/utils/partyClock'
+import { createPartyLeaseGuard } from './partyLeaseGuard'
 
 export interface PartyPublishPermit {
   clockId: string
@@ -20,6 +21,7 @@ export class PartyPublishGraph {
   private readonly gate: GainNode
   private readonly output: MediaStreamAudioDestinationNode
   private readonly mic: MediaStreamAudioSourceNode
+  private guard: ReturnType<typeof createPartyLeaseGuard> | null = null
   private closed = false
   private alignmentMs = 0
   private expiry = 0
@@ -46,7 +48,7 @@ export class PartyPublishGraph {
     instrumental.connect(this.monitor); if (monitorLocal) this.monitor.connect(context.destination)
     instrumental.connect(this.backing); this.backing.connect(this.backingDelay); this.backingDelay.connect(this.limiter)
     this.mic.connect(this.vocal); this.vocal.connect(this.vocalDelay); this.vocalDelay.connect(this.limiter)
-    this.limiter.connect(this.gate); this.gate.connect(this.output)
+    this.limiter.connect(this.gate)
     context.addEventListener('statechange', this.contextChanged)
     for (const track of capture.getAudioTracks()) track.addEventListener('ended', this.captureEnded)
   }
@@ -92,6 +94,15 @@ export class PartyPublishGraph {
     }
     this.usedPermit = true
     this.expiry = permit.expiresServerMs
+    if (!this.guard) {
+      this.guard = createPartyLeaseGuard(this.context, duration)
+      const guard = this.guard
+      guard.node.port.onmessage = ({ data }) => {
+        if (data?.type === 'silent' && this.guard === guard) { this.requiresNewGeneration = true; this.silence() }
+      }
+      guard.node.onprocessorerror = () => { if (this.guard === guard) { this.requiresNewGeneration = true; this.silence() } }
+      this.gate.connect(guard.node); guard.node.connect(this.output)
+    } else this.guard.renew(duration)
     const time = this.context.currentTime
     this.gate.gain.cancelScheduledValues(time)
     this.gate.gain.setValueAtTime(1, time)
@@ -102,6 +113,7 @@ export class PartyPublishGraph {
 
   silence() {
     this.expiry = 0
+    if (this.guard) { this.gate.disconnect(this.guard.node); this.guard.close(); this.guard = null }
     this.gate.gain.cancelScheduledValues(this.context.currentTime)
     this.gate.gain.setValueAtTime(0, this.context.currentTime)
   }

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { nativeSyncTargetStep, nativeNetworkTargetStep, installNativeSyncExperiment } from './party-av-native-sync.mjs'
+import { nativeSyncTargetStep, nativeNetworkTargetStep, nativeRepairTargetStep, installNativeSyncExperiment } from './party-av-native-sync.mjs'
 
 const report = (offset = 0, timestamp = 1000) => ({ estimatedPlayoutTimestamp: 3999900000000 + offset, timestamp })
 test('native hint experiment compares sender clocks at a common report time and bounds added delay', () => {
@@ -55,4 +55,27 @@ test('common native network hint uses interval minimum delay without AV-sync fee
   assert.equal(nativeNetworkTargetStep({ ...audio, jitterBufferMinimumDelay: 2 }, video, {}, previous), null)
   assert.equal(nativeNetworkTargetStep({}, video, {}, previous), null)
   assert.equal(nativeNetworkTargetStep({ ...audio, jitterBufferMinimumDelay: 400 }, video, {}, previous).audio, 500)
+})
+
+test('repair hypothesis budgets only lossy hops and retains measured repair allowance through brief quiet intervals', () => {
+  const audio = { ssrc: 1, jitterBufferMinimumDelay: 12, jitterBufferEmittedCount: 100 },
+    video = { ssrc: 2, jitterBufferMinimumDelay: 6, jitterBufferEmittedCount: 100, nackCount: 0 }
+  const context = { time: 1000, sourceVideo: { ssrc: 3, nackCount: 0 }, publisherRoundTripMs: 340, receiverRoundTripMs: 360 }
+  let next = nativeRepairTargetStep(audio, video, { audio: 0, video: 0 }, undefined, context)
+  assert.equal(next.audio, 120); assert.equal(next.repairMs, 0)
+  let previous = { audio, video, context, repair: next.repair }
+  const audio2 = { ...audio, jitterBufferMinimumDelay: 24, jitterBufferEmittedCount: 200 }
+  const video2 = { ...video, jitterBufferMinimumDelay: 12, jitterBufferEmittedCount: 200, nackCount: 1 }
+  const context2 = { ...context, time: 2000, sourceVideo: { ssrc: 3, nackCount: 1 } }
+  next = nativeRepairTargetStep(audio2, video2, next, previous, context2)
+  assert.equal(next.audio, 820); assert.equal(next.video, 820); assert.equal(next.repairMs, 700)
+  previous = { audio: audio2, video: video2, context: context2, repair: next.repair }
+  const audio3 = { ...audio2, jitterBufferMinimumDelay: 36, jitterBufferEmittedCount: 300 },
+    video3 = { ...video2, jitterBufferMinimumDelay: 18, jitterBufferEmittedCount: 300 }
+  next = nativeRepairTargetStep(audio3, video3, next, previous, { ...context2, time: 3000 })
+  assert.equal(next.audio, 820); assert.equal(next.repairMs, 700)
+  assert.equal(nativeRepairTargetStep(audio3, video3, next, previous, { ...context2, time: 6000 }), null)
+  assert.equal(nativeRepairTargetStep(audio3, video3, next, previous, { ...context2, time: 3000, sourceVideo: { ssrc: 4, nackCount: 1 } }), null)
+  assert.equal(nativeRepairTargetStep(audio3, video3, next, previous, { ...context2, time: 3000, publisherRoundTripMs: NaN }), null)
+  assert.equal(nativeRepairTargetStep(audio3, video3, next, previous, { ...context2, time: 3000, publisherRoundTripMs: 900, receiverRoundTripMs: 900 }), null)
 })

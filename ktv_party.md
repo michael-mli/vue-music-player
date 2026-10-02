@@ -673,6 +673,25 @@ views remain muted. A lease expires against the shared clock; the audio engine
 schedules a gain-to-zero deadline that is extended only by valid renewals. Merely
 checking a JavaScript timer is insufficient when a tab is suspended.
 
+An audio-clock deadline alone also fails if the audio context itself freezes:
+the old source can resume after wall-clock authority has expired. Each backing
+or guide source therefore passes through a rendering-thread lease guard before
+both its personal monitor and publisher tap. The published backing/mic mix has
+its own guard after the limiter and permit gain. The engine still validates room,
+clock, performance, generation and asset identity before creating or renewing it.
+
+The guard receives a bounded wall deadline derived from the already validated
+server-clock lease, including uncertainty and output-buffer reserve. It checks
+expiry on every render quantum and latches silence on backwards wall time or a
+wall/render-clock discontinuity above 250 ms. This check also runs before a renewal
+message can extend a live source; expired or failed guards cannot be revived.
+Page callbacks report recovery and release resources when they can run again.
+Native scheduled stops/gain deadlines remain in place. The hashed worklet asset
+is cached with the app build, and audio enablement fails if it cannot load or its
+rendering realm lacks a usable clock. Native private-output regression checks
+cover blocked tasks with running and suspended clocks for stage and microphone
+publication; physical replacement timing and mobile compatibility remain open.
+
 The server grants a replacement only after the old lease expires or its holder
 acknowledges stopping. Add a margin for already-buffered hardware audio. Clients
 returning from suspension validate the lease before making sound. These rules also

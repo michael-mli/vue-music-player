@@ -121,13 +121,18 @@ try {
   app.use('/api/ktv/media', (req, res) => { req.url = '/api/ktv/media' + req.url; void gateway.http(req, res) })
   app.get('/sdk.js', (req, res) => res.sendFile(path.resolve('node_modules/livekit-client/dist/livekit-client.umd.js')))
   const graphSource = await fs.readFile('src/services/partyPublishGraph.ts', 'utf8')
-  const graphJs = ts.transpileModule(graphSource, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText
+  const graphJs = ts.transpileModule(graphSource, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText.replace("'./partyLeaseGuard'", "'/lease-guard.js'")
+  const guardJs = ts.transpileModule(await fs.readFile('src/services/partyLeaseGuard.ts', 'utf8'),
+    { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText
+    .replace("import moduleUrl from './partyLeaseGuard.worklet.js?url';", "const moduleUrl = '/lease-guard.worklet.js';")
+  app.get('/lease-guard.js', (_req, res) => res.type('text/javascript').send(guardJs))
+  app.get('/lease-guard.worklet.js', (_req, res) => res.type('text/javascript').sendFile(path.resolve('src/services/partyLeaseGuard.worklet.js')))
   app.get('/graph.js', (req, res) => res.type('text/javascript').send(graphJs))
   const lyricsJs = ts.transpileModule(await fs.readFile('src/utils/lyricsTiming.ts', 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText
   const captureJs = ts.transpileModule(await fs.readFile('src/services/partyLyricCapture.ts', 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText.replace("'@/utils/lyricsTiming'", "'/lyrics-timing.js'")
   app.get('/lyrics-timing.js', (req, res) => res.type('text/javascript').send(lyricsJs))
   app.get('/capture.js', (req, res) => res.type('text/javascript').send(captureJs))
-  app.get('/', (req, res) => res.type('html').send('<!doctype html><html><body><script src="/sdk.js"></script><script type="module">import { PartyPublishGraph } from "/graph.js"; import { PartyLyricCapture } from "/capture.js"; window.PartyPublishGraph = PartyPublishGraph; window.PartyLyricCapture = PartyLyricCapture;</script></body></html>'))
+  app.get('/', (req, res) => res.type('html').send('<!doctype html><html><body><script src="/sdk.js"></script><script type="module">import { PartyPublishGraph } from "/graph.js"; import { PartyLyricCapture } from "/capture.js"; import { installPartyLeaseGuard } from "/lease-guard.js"; window.installPartyLeaseGuard = installPartyLeaseGuard; window.PartyPublishGraph = PartyPublishGraph; window.PartyLyricCapture = PartyLyricCapture;</script></body></html>'))
   server = app.listen(0, '127.0.0.1'); server.on('upgrade', (req, socket, head) => void gateway.upgrade(req, socket, head))
   await new Promise(resolve => server.once('listening', resolve)); origin = `http://127.0.0.1:${server.address().port}`
   const signalUrl = origin + '/api/ktv/media'
@@ -144,7 +149,7 @@ try {
   check(await evaluate(audience, 'room.localParticipant.permissions.canPublish === false'), 'SFU audience joins with no publishing permission')
   check(await evaluate(publisher, 'room.localParticipant.permissions.canSubscribe === false'), 'Publisher cannot subscribe to independent room audio')
   const publish = generation => evaluate(publisher, `(async () => {
-    const context = new AudioContext(); await context.resume(); window.publishContext = context;
+    const context = new AudioContext(); await context.resume(); await installPartyLeaseGuard(context); window.publishContext = context;
     const tone = hz => { const source = context.createOscillator(), level = context.createGain(); source.frequency.value = hz; level.gain.value = 0.1; source.connect(level); source.start(); return level; };
     const backing = tone(440), micOutput = context.createMediaStreamDestination(); tone(880).connect(micOutput);
     const guide = tone(1760), guideMonitor = context.createGain(); guideMonitor.gain.value = 0.7; guide.connect(guideMonitor); guideMonitor.connect(context.destination);

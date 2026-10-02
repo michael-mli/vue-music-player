@@ -1,10 +1,11 @@
 import type { PartyAudioAsset, PartyLease, PartyPlayback, PartySegment } from './partyApi'
 import type { PartyClockEstimate } from '@/utils/partyClock'
 import { serverToAudioTime, partyOutputClock, partyPosition } from '@/utils/partyTimeline'
+import { installPartyLeaseGuard, createPartyLeaseGuard } from './partyLeaseGuard'
 
 interface PublisherTap { output: GainNode; sources: Set<Source>; closed: boolean; generation: number }
 interface Source { node: AudioBufferSourceNode; gain: GainNode; generation: number; deadlineMs: number; when: number; offsetMs: number; stopAt?: number;
-  leaseStopAt: number; publish: { tap: PublisherTap; gain: GainNode } | null }
+  leaseStopAt: number; guard: ReturnType<typeof createPartyLeaseGuard>; publish: { tap: PublisherTap; gain: GainNode } | null }
 export interface PartyAudioDiagnostics {
   contextState: string
   sampleRate: number
@@ -95,6 +96,8 @@ export class PartyAudioEngine {
       await context.resume()
       if (context.state !== 'running') throw new Error('AUDIO_GESTURE_REQUIRED')
       await waitForPartyAudioClock(context, () => this.context === context && attempt === this.enableId)
+      await installPartyLeaseGuard(context)
+      if (this.context !== context || attempt !== this.enableId || context.state !== 'running') throw new Error('AUDIO_ENABLE_CANCELLED')
       this.outputReady = true
     } catch (error) {
       if (attempt === this.enableId) this.cancelEnable()
@@ -155,21 +158,21 @@ export class PartyAudioEngine {
   private attachPublish(source: Source, tap: PublisherTap) {
     const gain = this.context!.createGain(), when = Math.max(this.context!.currentTime, source.when)
     gain.gain.setValueAtTime(0, when); gain.gain.linearRampToValueAtTime(1, when + .02)
-    source.node.connect(gain); gain.connect(tap.output)
+    source.guard.node.connect(gain); gain.connect(tap.output)
     source.publish = { gain, tap }; tap.sources.add(source)
   }
   private closePublisherTap(tap: PublisherTap) {
     if (tap.closed) return
     tap.closed = true
     for (const source of tap.sources) if (source.publish?.tap === tap) {
-      try { source.node.disconnect(source.publish.gain) } catch { /* Source already released. */ }
+      try { source.guard.node.disconnect(source.publish.gain) } catch { /* Source already released. */ }
       source.publish.gain.disconnect(); source.publish = null
     }
     tap.sources.clear(); tap.output.disconnect()
     if (this.publisherTap === tap) this.publisherTap = null
   }
   private clearSource(source: Source) {
-    source.node.disconnect(); source.gain.disconnect()
+    source.node.disconnect(); source.guard.close(); source.gain.disconnect()
     if (source.publish) { source.publish.gain.disconnect(); source.publish.tap.sources.delete(source); source.publish = null }
   }
 
@@ -220,10 +223,18 @@ export class PartyAudioEngine {
     const when = Math.max(context.currentTime + 0.01, serverToAudioTime(context, intendedServerMs, clock.offsetMs, nowMs))
     const positionMs = segment.positionMs + Math.max(0, intendedServerMs + advanceMs - segment.anchorServerMs) + alignmentMs
     if (positionMs >= buffer.duration * 1000 || intendedServerMs >= deadlineMs - 100) return null
-    const node = context.createBufferSource(), gain = context.createGain()
-    node.buffer = buffer; node.connect(gain); gain.connect(context.destination)
+    const remainingMs = deadlineMs - serverNowMs - clock.uncertaintyMs - 50 - partyOutputClock(context, nowMs).latencyMs
+    if (!Number.isFinite(remainingMs) || remainingMs <= 0 || remainingMs > 15000) return null
+    const node = context.createBufferSource(), gain = context.createGain(), guard = createPartyLeaseGuard(context, remainingMs)
+    node.buffer = buffer; node.connect(guard.node); guard.node.connect(gain); gain.connect(context.destination)
     gain.gain.setValueAtTime(0, when); gain.gain.linearRampToValueAtTime(this.volume, when + 0.02)
-    const source: Source = { node, gain, generation: segment.generation, deadlineMs, when, offsetMs: Math.max(0, positionMs), leaseStopAt: Infinity, publish: null }
+    const source: Source = { node, gain, guard, generation: segment.generation, deadlineMs, when, offsetMs: Math.max(0, positionMs), leaseStopAt: Infinity, publish: null }
+    guard.node.port.onmessage = ({ data }) => {
+      if (data?.type !== 'silent' || this.source !== source && this.next !== source) return
+      if (data.reason === 'clock' || data.reason === 'invalid') this.recover('output')
+      else { this.cancel(source); if (this.source === source) this.source = null; if (this.next === source) this.next = null }
+    }
+    guard.node.onprocessorerror = () => { if (this.source === source || this.next === source) this.recover('output') }
     if (this.publisherTap?.generation === source.generation && this.assetRole === 'instrumental') this.attachPublish(source, this.publisherTap)
     node.onended = () => {
       this.clearSource(source)
@@ -239,10 +250,11 @@ export class PartyAudioEngine {
   private extend(source: Source, deadlineMs: number, clock: PartyClockEstimate) {
     if (!this.context || source.stopAt) return
     source.deadlineMs = deadlineMs
-    // Stop is scheduled on the audio clock, so a suspended JS task cannot leave
-    // backing audible indefinitely. Later stop() calls replace an earlier
-    // scheduled stop only for a current, renewed generation.
+    // The native stop covers blocked page tasks while rendering keeps running.
+    // The worklet additionally enforces wall expiry if the audio clock freezes.
+    // Later stops extend only a current, renewed source.
     const deadline = Math.max(this.context.currentTime, serverToAudioTime(this.context, deadlineMs - clock.uncertaintyMs - 50, clock.offsetMs))
+    source.guard.renew(deadlineMs - performance.now() - clock.offsetMs - clock.uncertaintyMs - 50 - partyOutputClock(this.context).latencyMs)
     source.leaseStopAt = deadline
     try { source.node.stop(deadline) } catch { /* Source already ended. */ }
   }
