@@ -28,6 +28,9 @@ const clientLocation = process.env.KTV_ROOM_TEST_CLIENT || 'same-host'
 assert.ok(['same-host', 'remote-ec2'].includes(clientLocation), 'Unknown room-test client topology')
 const remoteMode = clientLocation === 'remote-ec2'
 const avTiming = process.env.KTV_ROOM_TEST_AV_TIMING === '1'
+const sourceStallMs = Number(process.env.KTV_ROOM_TEST_OUTPUT_STALL_MS || 0)
+assert.ok(sourceStallMs === 0 || avTiming && remoteMode && Number.isInteger(sourceStallMs) && sourceStallMs >= 20 && sourceStallMs <= 100,
+  'Owned native output stall requires remote A/V timing and a bounded 20–100 ms pause')
 const receiverTargetMs = process.env.KTV_ROOM_TEST_RECEIVER_TARGET_MS === undefined ? null : Number(process.env.KTV_ROOM_TEST_RECEIVER_TARGET_MS)
 const receiverSync = process.env.KTV_ROOM_TEST_RECEIVER_SYNC || 'off'
 assert.ok(['off', 'ntp', 'network', 'repair'].includes(receiverSync) && (receiverSync === 'off' || avTiming && receiverTargetMs === null),
@@ -416,6 +419,7 @@ try {
         const sample=await evaluate(phone,`(() => {
           const node=document.querySelector('dl'),context=__contexts[0];
           const sample={now:performance.now(),diagnostics:node?.textContent,
+            rates:__bufferSources.filter(item=>item.__state.started&&!item.__state.ended).map(item=>item.playbackRate.value),
             output:context?.getOutputTimestamp(),render:context?.currentTime};
           __phaseEvidence.push(sample);if(__phaseEvidence.length>180)__phaseEvidence.shift();
           return {failed:document.querySelector('[role=alert]')?.textContent};
@@ -455,7 +459,26 @@ try {
     }
     await evaluate(audience,`(${installAvObserver.toString()})()`)
     await poll(async()=>await evaluate(audience,'__avObserver.evidence.ready')&&(await avBrowser.audioEvidence()).some(item=>typeof item.on==='boolean'),'actual private receiver output and decoded video marker available')
+    let nativeStall
+    if (sourceStallMs) {
+      const before = await api(1,pathRoom)
+      nativeStall = { generation: before.playback.generation, sources: await evaluate(phone, '__sourceEvidence.length') }
+      const outputBefore = await evaluate(phone,'({time:performance.now(),render:__contexts[0].currentTime,output:__contexts[0].getOutputTimestamp()})')
+      const pause = await remoteBrowser.pauseOutput(sourceStallMs)
+      const outputAfter = await evaluate(phone,'({time:performance.now(),render:__contexts[0].currentTime,output:__contexts[0].getOutputTimestamp()})')
+      console.log('Actual bounded native output pause:',JSON.stringify({pause,outputBefore,outputAfter}))
+      check(pause.elapsedMs>=sourceStallMs&&pause.elapsedMs<sourceStallMs+100,
+        'owned output process actually pauses without replacing browser timestamps or the room clock')
+    }
     await measureAv('baseline')
+    if (nativeStall) {
+      const evidence=await evaluate(phone, `({phase:__phaseEvidence, sources:__sourceEvidence.length})`)
+      const phases=evidence.phase.map(item=>Number(/Calculated sample phase(-?[0-9.]+) ms/.exec(item.diagnostics)?.[1])).filter(Number.isFinite)
+      check(evidence.phase.some(item=>item.rates.some(rate=>rate>1.0001&&rate<=1.005))&&
+        phases.length>=20&&Math.abs(phases.at(-1))<20, 'actual bounded rate feedback corrects the native source stall below twenty milliseconds')
+      check(evidence.sources===nativeStall.sources&&(await api(1,pathRoom)).playback.generation===nativeStall.generation,
+        'small source correction retains the actual source and playback generation without a hidden restart')
+    }
     await evaluate(audience,'__avObserver.begin(null)')
     if (receiverSync !== 'off' && !mediaImpairment) await evaluate(audience, '__avNativeSync.close()')
   }

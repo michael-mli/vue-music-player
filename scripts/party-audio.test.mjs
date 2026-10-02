@@ -12,7 +12,7 @@ function compile(filename, replace = value => value) {
 }
 const timingModule = compile('../src/utils/partyTimeline.ts')
 const guardModule = compile('../src/services/partyLeaseGuard.ts', source => source.replace("import moduleUrl from './partyLeaseGuard.worklet.js?url';", "const moduleUrl = '/owned-guard.js';"))
-const { partyPosition, serverToAudioTime, partyOutputClock } = await import(timingModule)
+const { partyPosition, serverToAudioTime, partyOutputClock, PartySourcePosition } = await import(timingModule)
 const { partyOutputSignature } = await import(compile('../src/services/partyOutputMonitor.ts'))
 const { PartyAudioEngine, waitForPartyAudioClock } = await import(compile('../src/services/partyAudioEngine.ts', source => source.replace("'@/utils/partyTimeline'", JSON.stringify(timingModule)).replace("'./partyLeaseGuard'", JSON.stringify(guardModule))))
 
@@ -115,6 +115,9 @@ function fixture(t) {
     createBufferSource() {
       const outputs = new Set()
       const node = { starts: [], stops: [], outputs, onended: null, connect(target) { outputs.add(target) }, disconnect(target) { if (target) outputs.delete(target); else outputs.clear() },
+        playbackRate: { value: 1, events: [], cancelScheduledValues(time) { this.events.push(['cancel', time]) },
+          setValueAtTime(value, time) { this.events.push(['set', value, time]); this.value = value },
+          linearRampToValueAtTime(value, time) { this.events.push(['ramp', value, time]); this.value = value } },
         start(...args) { this.starts.push(args) }, stop(...args) { this.stops.push(args) } }
       nodes.push(node); return node
     }
@@ -344,4 +347,53 @@ test('a publisher tap never adopts a future seek generation under an old permit'
   assert.equal(f.guards[0].outputs.size, 2); assert.equal(f.guards[1].outputs.size, 1)
   tap.close()
   assert.equal(f.guards[0].outputs.size, 1) // Personal monitor remains attached.
+})
+
+test('small-phase feedback requires persistent trustworthy samples and preserves large-error rejection', () => {
+  const timeline = new PartySourcePosition(0, 0)
+  assert.equal(timeline.correction(40, 5), 1)
+  assert.equal(timeline.correction(42, 5), 1)
+  assert.equal(timeline.correction(41, 5), .9959)
+  assert.equal(timeline.correction(-40, 5), 1)
+  assert.equal(timeline.correction(-40, 5), 1)
+  assert.equal(timeline.correction(-40, 5), 1.004)
+  for (const [phase, uncertainty] of [[81, 5], [-100, 5], [40, 26], [NaN, 5]]) assert.equal(timeline.correction(phase, uncertainty), 1)
+  assert.equal(timeline.correction(5, 5), 1)
+})
+
+test('source media integrates native ramps and preserves delayed timestamp history across updates', () => {
+  const timeline = new PartySourcePosition(10, 20000), events = []
+  const param = { cancelScheduledValues: time => events.push(['cancel', time]),
+    setValueAtTime: (value, time) => events.push(['set', value, time]),
+    linearRampToValueAtTime: (value, time) => events.push(['ramp', value, time]) }
+  assert.equal(timeline.positionAt(9), null)
+  timeline.apply(param, 11, 1.005)
+  assert.equal(timeline.positionAt(10.9), 20900)
+  assert.ok(Math.abs(timeline.positionAt(11.25) - 21250.03125) < .000001)
+  assert.ok(Math.abs(timeline.positionAt(12) - 22000.375) < .000001)
+  timeline.apply(param, 12, .995)
+  assert.ok(Math.abs(timeline.positionAt(11.25) - 21250.03125) < .000001)
+  assert.ok(Math.abs(timeline.positionAt(13) - 23000.5) < .000001)
+  assert.equal(events[2][1], 1.0005)
+  assert.equal(events[5][1], 1)
+  assert.throws(() => timeline.apply(param, 14, 1.01), /AUDIO_RATE_MAPPING_INVALID/)
+})
+
+test('rate feedback reduces a real media-position error while rendered capture includes every scheduled ramp', async t => {
+  const f = fixture(t)
+  await f.engine.enable(); await f.engine.prepare(f.asset)
+  f.engine.sync(f.playback, f.clock, f.lease, 'stage')
+  f.advance(3000); f.engine.sync(f.playback, f.clock, f.lease, 'stage')
+  f.clock.offsetMs += 40
+  for (let sample = 0; sample < 10; sample++) {
+    f.advance(1000)
+    const lease = { ...f.lease, expiresServerMs: performance.now() + f.clock.offsetMs + 8000 }
+    f.engine.sync(f.playback, f.clock, lease, 'stage')
+  }
+  assert.equal(f.engine.diagnostics.recovery, null)
+  assert.ok(f.nodes[0].playbackRate.value > 1 && f.nodes[0].playbackRate.value <= 1.005)
+  assert.ok(f.engine.diagnostics.phaseErrorMs > -40 && f.engine.diagnostics.phaseErrorMs < -20)
+  const [when, offset] = f.nodes[0].starts[0]
+  assert.ok(f.engine.renderPositionMs > (offset + f.context.currentTime - when) * 1000)
+  assert.equal(f.nodes.length, 1)
 })

@@ -92,7 +92,7 @@ cleanup() {
     kill -KILL -- "-$child" 2>/dev/null || true
   fi
   for owned in "$monitor" "$pulse"; do
-    if test -n "$owned"; then kill -TERM "$owned" 2>/dev/null || true; fi
+    if test -n "$owned"; then kill -CONT "$owned" 2>/dev/null || true; kill -TERM "$owned" 2>/dev/null || true; fi
   done
   for owned in "$monitor" "$pulse"; do
     if test -n "$owned"; then wait "$owned" 2>/dev/null || true; fi
@@ -112,6 +112,7 @@ set-default-sink ktv_av
 KTV_PRIVATE_PULSE
 DBUS_SESSION_BUS_ADDRESS="unix:path=$root/no-session-bus" /usr/bin/pulseaudio -n --daemonize=no --exit-idle-time=-1 --use-pid-file=no --disable-shm=yes --file="$root/pulse.pa" --log-target="file:$root/pulse.log" &
 pulse=$!
+printf '%s' "$pulse" > "$root/pulse.pid"
 for attempt in $(seq 1 50); do test -S "$root/pulse.sock" && break; sleep .1; done
 test -S "$root/pulse.sock" || exit 1
 for attempt in $(seq 1 50); do test "$(/usr/bin/pactl -s "$PULSE_SERVER" get-default-sink 2>/dev/null)" = ktv_av && break; sleep .1; done
@@ -163,7 +164,22 @@ echo $!
           const follower = spawn('ssh', [...options, host, command], { stdio: ['ignore', 'pipe', 'ignore'] })
           evidenceStream = createAvEvidenceStream(follower)
         }
-        return { debuggerUrl, close, ...(captureOutput ? { audioEvidence: evidenceStream.audioEvidence } : {}) }
+        const pauseOutput = async milliseconds => {
+          if (!isolatedOutput || !Number.isInteger(milliseconds) || milliseconds < 20 || milliseconds > 100) throw new Error('Invalid owned output pause')
+          const result = await ssh('python3 - ' + shell(root) + ' ' + milliseconds, `import json,os,pathlib,signal,sys,time
+root=pathlib.Path(sys.argv[1]);duration=int(sys.argv[2]);pid=int((root/'pulse.pid').read_text())
+args=pathlib.Path('/proc',str(pid),'cmdline').read_bytes().split(b'\\0')
+if str('--file='+str(root/'pulse.pa')).encode() not in args: raise RuntimeError('Owned output PID mismatch')
+begin=time.monotonic()
+try:
+ os.kill(pid,signal.SIGSTOP)
+ time.sleep(duration/1000)
+finally: os.kill(pid,signal.SIGCONT)
+print(json.dumps({'elapsedMs':(time.monotonic()-begin)*1000}))
+`)
+          return JSON.parse(result)
+        }
+        return { debuggerUrl, close, ...(isolatedOutput ? { pauseOutput } : {}), ...(captureOutput ? { audioEvidence: evidenceStream.audioEvidence } : {}) }
       }
       await new Promise(resolve => setTimeout(resolve, 100))
     }

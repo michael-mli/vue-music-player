@@ -1,11 +1,11 @@
 import type { PartyAudioAsset, PartyLease, PartyPlayback, PartySegment } from './partyApi'
 import type { PartyClockEstimate } from '@/utils/partyClock'
-import { serverToAudioTime, partyOutputClock, partyPosition } from '@/utils/partyTimeline'
+import { serverToAudioTime, partyOutputClock, partyPosition, PartySourcePosition } from '@/utils/partyTimeline'
 import { installPartyLeaseGuard, createPartyLeaseGuard } from './partyLeaseGuard'
 
 interface PublisherTap { output: GainNode; sources: Set<Source>; closed: boolean; generation: number }
 interface Source { node: AudioBufferSourceNode; gain: GainNode; generation: number; deadlineMs: number; when: number; offsetMs: number; stopAt?: number;
-  leaseStopAt: number; guard: ReturnType<typeof createPartyLeaseGuard>; publish: { tap: PublisherTap; gain: GainNode } | null }
+  leaseStopAt: number; position: PartySourcePosition; guard: ReturnType<typeof createPartyLeaseGuard>; publish: { tap: PublisherTap; gain: GainNode } | null }
 export interface PartyAudioDiagnostics {
   contextState: string
   sampleRate: number
@@ -74,7 +74,8 @@ export class PartyAudioEngine {
     const source = this.source, context = this.context
     if (!source || !context || context.state !== 'running' || context.currentTime < source.when ||
       context.currentTime >= Math.min(source.stopAt ?? Infinity, source.leaseStopAt)) return null
-    return Math.min(this.durationMs, source.offsetMs + (context.currentTime - source.when) * 1000)
+    const position = source.position.positionAt(context.currentTime)
+    return position === null ? null : Math.min(this.durationMs, position)
   }
   get decodedBytes() { return this.estimatedBytes }
   get sampleRate() { return this.context?.sampleRate || 0 }
@@ -228,7 +229,8 @@ export class PartyAudioEngine {
     const node = context.createBufferSource(), gain = context.createGain(), guard = createPartyLeaseGuard(context, remainingMs)
     node.buffer = buffer; node.connect(guard.node); guard.node.connect(gain); gain.connect(context.destination)
     gain.gain.setValueAtTime(0, when); gain.gain.linearRampToValueAtTime(this.volume, when + 0.02)
-    const source: Source = { node, gain, guard, generation: segment.generation, deadlineMs, when, offsetMs: Math.max(0, positionMs), leaseStopAt: Infinity, publish: null }
+    const source: Source = { node, gain, guard, generation: segment.generation, deadlineMs, when, offsetMs: Math.max(0, positionMs),
+      position: new PartySourcePosition(when, Math.max(0, positionMs)), leaseStopAt: Infinity, publish: null }
     guard.node.port.onmessage = ({ data }) => {
       if (data?.type !== 'silent' || this.source !== source && this.next !== source) return
       if (data.reason === 'clock' || data.reason === 'invalid') this.recover('output')
@@ -305,16 +307,24 @@ export class PartyAudioEngine {
     // Transition windows and future scheduled sources do not represent the
     // current audible sample. They must not create false drift recovery.
     if (!source || playback.pendingTransition || output.contextTime < source.when + 0.1 ||
-      (source.stopAt !== undefined && output.contextTime >= source.stopAt)) { this.stats.phaseErrorMs = null; this.badSamples = 0; return }
-    const renderedMs = source.offsetMs + (output.contextTime - source.when) * 1000
+      (source.stopAt !== undefined && output.contextTime >= source.stopAt)) {
+      this.stats.phaseErrorMs = null; this.badSamples = 0; source?.position.resetCorrection(); return
+    }
+    const renderedMs = source.position.positionAt(output.contextTime)
+    if (renderedMs === null) { this.recover('output'); return }
     const expectedMs = partyPosition(playback, nowMs + clock.offsetMs + advanceMs) + alignmentMs
     const errorMs = renderedMs - expectedMs
     this.stats.phaseErrorMs = Math.round(errorMs * 10) / 10
     this.stats.sampleCount++; this.stats.maxAbsPhaseErrorMs = Math.max(this.stats.maxAbsPhaseErrorMs, Math.abs(this.stats.phaseErrorMs))
     // The latency fallback is an estimate. It cannot establish rendered drift.
-    if (output.mode !== 'timestamp') { this.badSamples = 0; return }
+    if (output.mode !== 'timestamp') {
+      this.badSamples = 0; source.position.resetCorrection(); source.position.apply(source.node.playbackRate, this.context!.currentTime, 1); return
+    }
     this.badSamples = Math.abs(errorMs) > Math.max(80, clock.uncertaintyMs * 2 + 25) ? this.badSamples + 1 : 0
-    if (this.badSamples >= 3 || Math.abs(errorMs) > Math.max(250, clock.uncertaintyMs * 4 + 50)) this.recover('drift')
+    if (this.badSamples >= 3 || Math.abs(errorMs) > Math.max(250, clock.uncertaintyMs * 4 + 50)) { this.recover('drift'); return }
+    // Correct only measured, persistent small errors. Large-error recovery,
+    // authority/lease validation and output-change detection remain unchanged.
+    source.position.apply(source.node.playbackRate, this.context!.currentTime, source.position.correction(errorMs, clock.uncertaintyMs))
   }
 
   async close() {

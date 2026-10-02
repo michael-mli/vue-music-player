@@ -801,6 +801,12 @@ Physical replacement remains open. Exact UI 45/45, PWA 10/10,
 full clean streaming/recovery/handover 53/53 and public release 21/21 pass.
 Clean native A/V passes all 40 transitions (p95 59.73 ms, maximum 99.50 ms).
 
+Unpublished bounded-rate candidate adds measured small-phase feedback without
+changing the room clock or large-error/lease guards. Party checks 93/93, native
+rate-integral 13/13 and full built streaming/output-pause/recovery/handover 56/56
+pass; all 40 clean transitions match (p95 63.12 ms, maximum 87.82 ms).
+It is still a candidate until the remaining exact release checks/publication.
+
 Investigate UDP repair stalls, conflicting sender/receiver delay hints and source
 cadence/drift. Network-minimum hints fail UDP (p95 349.68 ms, maximum 699.93 ms);
 repair-budget hints also fail (p95 445.47 ms, maximum 470.41 ms). Removing only
@@ -2060,6 +2066,61 @@ Final cleanup verifies no owned remote profiles/processes or CDP listeners, and
 no local CDP listeners. A fresh public read confirms the party entry and exact
 `ca6c757` app/CSS/worklet bytes. The original main rollback tag still resolves to
 `6e8504bf0c68e7253286e3c7a1db2b5bd8c1b718`.
+
+### 2026-10-02 — Bounded source-phase correction and native rate verification
+
+Unpublished candidate adds a bounded source actuator for persistent small rendered
+errors. The room clock/generation, lease deadline, output-change detection and
+large-error recovery thresholds are unchanged. Three same-sign samples above
+15 ms, no sample above 80 ms and clock uncertainty at most 25 ms authorize feedback.
+The local rate stays within 0.995–1.005, with at most .0005 change per one-second
+sample and a half-second ramp. The source's actual scheduled-rate integral feeds
+both delayed-output diagnostics and publisher lyric capture; a new source has a
+fresh history. Physical pitch/listening and acoustic alignment are still open.
+
+Candidate evidence:
+
+- Party **93/93**, `/tmp/ktv-bounded-rate-candidate-units.log`: rate feedback sign,
+  persistence/uncertainty/large-error rejection, ramp integration across delayed
+  output timestamps and rendered capture; prior large-error/lease tests still pass.
+- Type-check/build pass, `/tmp/ktv-bounded-rate-candidate-build.log`.
+- Native rate integral **13/13**, `/tmp/ktv-bounded-rate-native-integral.log`:
+  Chrome 137's actual offline PCM rendering retains all nine transitions for each
+  fast/slow/reversed rate profile. Every marker and source completion matches the
+  scheduled-rate integral within **3 ms**. No PCM is exported. This validates the
+  media-position calculation independently of mocked AudioParams.
+- Full native built streaming/output-pause/recovery/handover **56/56**,
+  `/tmp/ktv-bounded-rate-native-output-pause-clean-av.log`. Pausing only the owned
+  source Pulse output for **50.20 ms** activates actual native rate feedback;
+  source phase returns below **20 ms**, with no new source or playback generation.
+  All **40** clean A/V transitions match with no unmatched edges: p50 **31.56 ms**,
+  p95 **63.12 ms**, maximum **87.82 ms**; source-to-video p95 **115 ms**.
+- Native lease **15/15**, `/tmp/ktv-bounded-rate-native-lease.log`.
+- Candidate UI **45/45** and PWA **10/10**,
+  `/tmp/ktv-bounded-rate-candidate-pwa-ui.log` and
+  `/tmp/ktv-bounded-rate-candidate-pwa.log`.
+
+The first attempted source fault used an actual AudioContext suspend/resume rather
+than an output-process pause. It correctly triggers `stage.suspended` and requires
+explicit recovery: `/tmp/ktv-bounded-rate-native-stall-clean-av.log`. No state-change
+guard is bypassed to make this a small-drift case. That experiment is replaced
+with the separately owned output-process pause, preserving native browser/room
+clocks and their guards. The new pause helper verifies private Pulse ownership,
+limits its duration and always resumes it; owned cleanup also sends SIGCONT before
+termination. The fault is opt-in; normal fixtures do not pause any output.
+
+UDP repair experiment remains a failure, `/tmp/ktv-bounded-rate-no-sfu-hint-udp-av.log`.
+All **40** impaired pairs match without unmatched edges; functional recovery and
+full continuously impaired handovers pass before the final timing gate fails.
+Skew p95 **326.23 ms**, maximum **527.44 ms**; source-to-video p95 **1548.20 ms**.
+Source rate stays exactly 1 in that run (phase −9.9 to +7.6 ms), so it does not
+prove feedback activation or resolve the earlier intermittent source-drift issue.
+The largest skews are early after impairment: actual audio buffering rises from
+~243 to ~955 ms over ten seconds while video rises to ~1054 ms much sooner,
+despite equal requested targets near 1100 ms. This identifies unequal native
+buffer growth as the next receiver investigation. No longer settle window,
+different pair selection, relaxed 150/250 ms gate, reduced quality, or production
+SFU-policy change is used. Public media stays disabled.
 
 ### Release record
 

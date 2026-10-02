@@ -805,6 +805,24 @@ This observes browser audio stream timing; it does not record the sound from a
 TV, speaker, Bluetooth headset or microphone, and cannot establish acoustic
 alignment. Hardware and external transport delay still require physical tests.
 
+Small persistent rendered errors now have bounded feedback: three consecutive
+timestamp samples with the same sign and magnitude above 15 ms, all within
+80 ms, and clock uncertainty at most 25 ms. The local source rate stays within
+0.995–1.005, changes by at most 0.0005 per one-second feedback step and uses a
+half-second native ramp. This adjusts the media, not the authoritative room clock
+or recovery limits. Missing/uncertain timestamps cannot authorize correction.
+Larger errors keep the recovery behavior below.
+
+The engine integrates each scheduled rate ramp for both rendered diagnostics
+and publisher lyric capture. It retains recent rate history to map delayed output
+timestamps across an update. A seek/next source starts with a new position history
+and rate 1. Native offline rendering verifies actual PCM transitions against that
+integral within 3 ms; a built-app test verifies feedback after a real 50 ms pause
+of its isolated output process. The source and performance generation are retained.
+Rate adjustment can change pitch slightly; physical listening, stage/phone timing
+and output-change acceptance remain required. Implementation uses native
+[Web Audio rate automation](https://www.w3.org/TR/webaudio/#dom-audiobuffersourcenode-playbackrate).
+
 Recovery defaults are three consecutive timestamp samples outside
 `max(80 ms, 2 × clock uncertainty + 25 ms)`, or one sample outside
 `max(250 ms, 4 × clock uncertainty + 50 ms)`. Estimate-only timing cannot trigger
