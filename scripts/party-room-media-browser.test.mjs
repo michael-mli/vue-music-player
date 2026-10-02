@@ -17,11 +17,17 @@ import { initDb } from '../server/db.js'
 import { registerKtvRoutes } from '../server/ktv-routes.js'
 import { createKtvAssets } from '../server/ktv-assets.js'
 import { createKtvMediaWorker } from '../server/ktv-media-worker.js'
+import { createMediaTcpProxy } from './party-media-tcp-proxy.mjs'
+import { createMediaUdpProxy } from './party-media-udp-proxy.mjs'
 import { createOwnedRemoteBrowser } from './party-remote-browser.mjs'
 
 const clientLocation = process.env.KTV_ROOM_TEST_CLIENT || 'same-host'
 assert.ok(['same-host', 'remote-ec2'].includes(clientLocation), 'Unknown room-test client topology')
 const remoteMode = clientLocation === 'remote-ec2'
+const impairmentMode = process.env.KTV_ROOM_TEST_MEDIA_IMPAIRMENT || 'off'
+assert.ok(['off', '1', 'tcp', 'udp'].includes(impairmentMode), 'Unknown media impairment mode')
+const mediaImpairment = impairmentMode !== 'off', impairmentProtocol = impairmentMode === 'udp' ? 'udp' : 'tcp'
+assert.ok(!mediaImpairment || remoteMode, 'Media impairment requires the owned remote browser topology')
 const networkRecovery = process.env.KTV_ROOM_TEST_NETWORK_RECOVERY === '1'
 const routeHandover = process.env.KTV_ROOM_TEST_ROUTE_HANDOVER === '1'
 assert.ok(!routeHandover || remoteMode, 'Hybrid fixture requires the owned remote fake-microphone browser')
@@ -38,7 +44,7 @@ const provider = new RoomServiceClient(upstreamUrl, apiKey, apiSecret, { request
 const db = initDb(root), contexts = [], debuggerSockets = [], pending = new Map(), sessionSockets = new Map(), errors = [], mediaHttp = []
 const ownedTcp = new Set()
 const trackTcp = server => server.on('connection', socket => { ownedTcp.add(socket); socket.once('close', () => ownedTcp.delete(socket)) })
-let frontend, backend, worker, realtime, chrome, remoteBrowser, pulseModule, pathRoom, running = false, nextId = 0, passed = 0
+let mediaProxy, audienceCircuits, frontend, backend, worker, realtime, chrome, remoteBrowser, pulseModule, pathRoom, running = false, nextId = 0, passed = 0
 const check = (value, label) => { assert.ok(value, label); passed++; console.log(`PASS ${label}`) }
 const poll = async (work, label, timeout = 20000) => {
   const deadline = Date.now() + timeout
@@ -98,8 +104,17 @@ try {
   await fs.writeFile(path.join(root, 'synced/link.1.lrc'), '[00:00]Singing together\n[00:10]Second lyric\n[00:25]Third lyric\n[00:50]Final lyric')
   const micFile = path.join(root, 'microphone.wav'); await fs.writeFile(micFile, wav(880))
   const config = path.join(root, 'livekit.yaml')
+  if (mediaImpairment) {
+    // ICE TCP muxes identify the local interface as well as the ICE username.
+    // Use the SFU's actual interface; loopback is excluded from its candidates.
+    const upstreamHost = os.networkInterfaces()[process.env.KTV_ROOM_TEST_INTERFACE]?.find(item=>item.family==='IPv4')?.address
+    assert.ok(upstreamHost, 'Owned SFU interface has an IPv4 address')
+    mediaProxy = await (impairmentProtocol === 'udp' ? createMediaUdpProxy : createMediaTcpProxy)({
+      listenPort: impairmentProtocol === 'udp' ? 7882 : 7881, upstreamPort: impairmentProtocol === 'udp' ? 17902 : 17901,
+      listenHost: '0.0.0.0', upstreamHost })
+  }
   const rtc = remoteMode
-    ? `  node_ip: ${process.env.KTV_ROOM_TEST_PUBLIC_IP}\n  use_external_ip: false\n  tcp_port: 7881\n  udp_port: 7882\n  interfaces:\n    includes: [${process.env.KTV_ROOM_TEST_INTERFACE}]\n`
+    ? `  node_ip: ${process.env.KTV_ROOM_TEST_PUBLIC_IP}\n  use_external_ip: false\n  tcp_port: ${mediaImpairment ? 17901 : 7881}\n  udp_port: ${mediaImpairment ? 17902 : 7882}\n  interfaces:\n    includes: [${process.env.KTV_ROOM_TEST_INTERFACE}]\n`
     : '  node_ip: 127.0.0.1\n  use_external_ip: false\n  tcp_port: 17901\n  udp_port: 17902\n  enable_loopback_candidate: true\n  interfaces:\n    includes: [lo]\n'
   await fs.writeFile(config, `port: 17900\nbind_addresses: [127.0.0.1]\nrtc:\n${rtc}room:\n  max_participants: 6\nkeys:\n  ${apiKey}: ${apiSecret}\nlogging:\n  level: warn\n`, { mode: 0o600 })
   await exec('docker', ['run', '-d', '--name', container, '--network', 'host', '--user', `${process.getuid()}:${process.getgid()}`,
@@ -154,7 +169,9 @@ try {
   async function api(actor, route, body) {
     const response = await fetch(origin + '/api/ktv' + route, { method: body === undefined ? 'GET' : 'POST',
       headers: { Authorization: `Bearer ${actor}`, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
-    const result = await response.json(); assert.ok(response.ok, `${route}: ${result.code || response.status}`); return result.data
+    const result = await response.json()
+    if(!response.ok) throw Object.assign(new Error(`${route}: ${result.code || response.status}`),{code:result.code,status:response.status})
+    return result.data
   }
   const room = await api(1, '/rooms', { commandId: randomUUID(), name: 'Integrated online room', displayName: 'Host', approvalRequired: false })
   pathRoom = `/rooms/${room.room.id}`
@@ -193,7 +210,35 @@ try {
       window.__sockets = []; const Socket = window.WebSocket; window.WebSocket = class extends Socket { constructor(...args) { super(...args); window.__sockets.push(this); } };
       window.__micStreams = []; window.__bufferSources = []; window.__sourceEvidence = []; window.__outputEvidence = []; window.__peers = []; window.__contexts = [];
       const Context = window.AudioContext; window.AudioContext = class extends Context { constructor(...args) { super(...args); window.__contexts.push(this); } };
-      const Peer = window.RTCPeerConnection; window.RTCPeerConnection = class extends Peer { constructor(...args) { super(...args); window.__peers.push(this); } };
+      window.__iceEvidence = [];
+      const Peer = window.RTCPeerConnection; window.RTCPeerConnection = class extends Peer { constructor(...args) { super(...args); window.__peers.push(this);
+        this.addEventListener('iceconnectionstatechange',()=>window.__iceEvidence.push({state:this.iceConnectionState,now:performance.now()})); } };
+      if (${mediaImpairment}) {
+        // Only fixture remote candidates are routed through the owned relay.
+        // Native media clocks, source timing, permissions and drift gates remain unchanged.
+        const candidate = text => {
+          if (!text) return text;
+          const parts=text.trim().split(/\\s+/);
+          if(parts[2]?.toLowerCase()!==${JSON.stringify(impairmentProtocol)}) return null;
+          if(parts[5]==='17901') parts[5]='7881';
+          if(parts[5]==='17902') parts[5]='7882';
+          window.__iceEvidence.push({protocol:parts[2],address:parts[4],port:parts[5]});
+          return parts.join(' ');
+        };
+        const add = Peer.prototype.addIceCandidate, remote = Peer.prototype.setRemoteDescription;
+        Peer.prototype.addIceCandidate = function(value) {
+          if(!value?.candidate) return add.call(this,value);
+          const rewritten=candidate(value.candidate); if(rewritten===null) return Promise.resolve();
+          return add.call(this,{...value.toJSON?.(),...value,candidate:rewritten});
+        };
+        Peer.prototype.setRemoteDescription = function(value) {
+          if(!value?.sdp) return remote.call(this,value);
+          const sdp=value.sdp.split('\\r\\n').map(line=>{
+            if(!line.startsWith('a=candidate:')) return line;
+            const rewritten=candidate(line.slice(2));return rewritten===null?null:'a='+rewritten;
+          }).filter(line=>line!==null).join('\\r\\n');return remote.call(this,{type:value.type,sdp});
+        };
+      }
       const timestamp = AudioContext.prototype.getOutputTimestamp;
       AudioContext.prototype.getOutputTimestamp = function() { const output = timestamp.call(this); window.__outputEvidence.push({ ...output, context: window.__contexts.indexOf(this), now: performance.now(), render: this.currentTime, latency: this.outputLatency }); if (__outputEvidence.length > 24) __outputEvidence.shift(); return output; };
       const getMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
@@ -237,6 +282,7 @@ try {
   await click(host, 'Prepare selected song')
   await poll(async () => { const current = await api(1, pathRoom); return current.presence.devices.some(item => item.id === device.id && item.ready && item.readyGeneration === current.playback.generation) }, 'decoded performer backing ready')
   await click(audience, 'Watch and listen')
+  if (mediaImpairment) audienceCircuits = await poll(() => { const ids=mediaProxy.snapshot().circuits.filter(item=>item.alive&&item.bytesToClient>0).map(item=>item.id); return ids.length ? ids : false }, 'initial audience media circuit')
   await click(host, 'Start countdown')
   await poll(() => evaluate(phone, "document.querySelector('[data-party-media-status]')?.textContent.includes('Sending live singing')"), 'publisher ready through provider acknowledgment')
   await poll(() => evaluate(audience, "(() => { const video = document.querySelector('[data-party-media-screen] video'); return video?.srcObject?.getAudioTracks().length === 1 && video.srcObject.getVideoTracks().length === 1; })()"), 'audience receives both performance tracks')
@@ -254,6 +300,41 @@ try {
   check(peaks[2] < Math.min(peaks[0], peaks[1]) - 25, `audience mix contains backing and live microphone without original-vocal tone (${peaks.map(value => value.toFixed(1)).join(', ')} dB)`)
   await poll(() => evaluate(audience, "document.querySelector('[data-party-media-screen] video')?.videoWidth > 0"), 'first captured lyric video decoded')
   check(await evaluate(audience, "(() => { const video = document.querySelector('[data-party-media-screen] video'); return video.videoWidth > 0 && Math.abs(video.videoWidth / video.videoHeight - 16/9) < .02; })()"), 'audience displays decoded captured lyric video')
+  if (mediaImpairment) {
+    const routes = async session => evaluate(session, `(async()=>{
+      return (await Promise.all(__peers.map(peer=>peer.getStats()))).flatMap(report=>{
+        const rows=[...report.values()];return rows.filter(item=>item.type==='transport'&&item.selectedCandidatePairId).map(item=>{
+          const pair=rows.find(value=>value.id===item.selectedCandidatePairId), remote=rows.find(value=>value.id===pair?.remoteCandidateId);
+          return {protocol:remote?.protocol,port:remote?.port};
+        });
+      });
+    })()`)
+    const selected = [...await routes(phone), ...await routes(audience)]
+    check(selected.length>=2 && selected.every(item=>item.protocol===impairmentProtocol&&item.port===(impairmentProtocol==='udp'?7882:7881)), `publisher and audience media traverse the owned ${impairmentProtocol.toUpperCase()} proxy with no bypass`)
+    mediaProxy.profile({delayMs:150,jitterMs:40,lossRate:impairmentProtocol==='udp'?0.05:0})
+    const frames=await evaluate(audience, "document.querySelector('[data-party-media-screen] video').getVideoPlaybackQuality().totalVideoFrames")
+    await poll(() => evaluate(audience, `document.querySelector('[data-party-media-screen] video').getVideoPlaybackQuality().totalVideoFrames>=${frames+40}`), 'video advances with bounded media delay')
+    const delayedPeaks=await poll(async()=>{const value=await spectrum();return value[0]>-55&&value[1]>-55?value:false}, 'audio with bounded media delay')
+    check(delayedPeaks[2]<Math.min(delayedPeaks[0],delayedPeaks[1])-25, `delayed ${impairmentProtocol.toUpperCase()} media preserves backing/microphone playback and private-vocal separation`)
+    if(impairmentProtocol==='udp') check(mediaProxy.snapshot().circuits.reduce((sum,item)=>sum+item.droppedToClient+item.droppedToSfu,0)>0, 'UDP loss profile drops real datagrams before the audience outage')
+    console.log('Delayed receiver RTP:',JSON.stringify(await evaluate(audience, `(async()=> (await Promise.all(__peers.map(peer=>peer.getStats()))).flatMap(report=>[...report.values()].filter(item=>item.type==='inbound-rtp').map(item=>({kind:item.kind,packetsReceived:item.packetsReceived,packetsLost:item.packetsLost,jitterMs:(item.jitter||0)*1000,bufferMs:item.jitterBufferEmittedCount?item.jitterBufferDelay*1000/item.jitterBufferEmittedCount:null,framesDecoded:item.framesDecoded}))))()`)))
+    const outageStarted=performance.now()
+    mediaProxy.pause(audienceCircuits,3000)
+    await new Promise(resolve=>setTimeout(resolve,900))
+    const stalled=await evaluate(audience, "document.querySelector('[data-party-media-screen] video').getVideoPlaybackQuality().totalVideoFrames")
+    await new Promise(resolve=>setTimeout(resolve,800))
+    check(await evaluate(audience, "document.querySelector('[data-party-media-screen] video').getVideoPlaybackQuality().totalVideoFrames")===stalled, 'a media-only outage stops decoded audience video while room controls stay connected')
+    check((await api(1,pathRoom)).playback.state==='playing'&&await evaluate(audience, "document.body.innerText.includes('Live room updates connected')&&__sockets.some(socket=>socket.readyState===WebSocket.OPEN&&new URL(socket.url).pathname==='/api/ktv/ws')"), 'media-only outage preserves the actual room-control socket and playing state')
+    mediaProxy.resume(audienceCircuits)
+    console.log('Audience media outage elapsed ms:',Math.round(performance.now()-outageStarted))
+    await poll(() => evaluate(audience, `document.querySelector('[data-party-media-screen] video').getVideoPlaybackQuality().totalVideoFrames>=${stalled+10}`), 'decoded video resumes after the reversible media outage')
+    check(await evaluate(audience, "!document.querySelector('[data-party-media-screen] video').paused"), 'audience resumes its received player after the media stall')
+    const resumedPeaks=await poll(async()=>{const value=await spectrum();return value[0]>-55&&value[1]>-55?value:false}, 'actual audio resumes after the media outage')
+    check(resumedPeaks[2]<Math.min(resumedPeaks[0],resumedPeaks[1])-25, 'resumed media restores both public tones without private vocals')
+    check(mediaProxy.snapshot().circuits.every(item=>!item.overflow), 'bounded impairment queues avoid overflow')
+    if(impairmentProtocol==='udp') check(mediaProxy.snapshot().circuits.reduce((sum,item)=>sum+item.droppedToClient+item.droppedToSfu,0)>0, 'UDP fixture drops real datagrams during packet loss and the audience outage')
+    console.log(`Media ${impairmentProtocol.toUpperCase()} fixture:`,JSON.stringify(mediaProxy.snapshot()))
+  }
   await click(phone, 'Listen to original vocals privately')
   await poll(() => evaluate(phone, "document.body.innerText.includes('Turn off private original vocals')"), 'private original enabled')
   await poll(() => evaluate(phone, 'window.__sourceEvidence.some(item => item.frequency > 1600 && item.frequency < 1850)'), 'native private original tone source actually scheduled')
@@ -261,6 +342,10 @@ try {
   peaks = await poll(async () => { const value = await spectrum(); return value[0] > -55 && value[1] > -55 ? value : false }, 'private guide keeps public backing intact')
   check(peaks[2] < Math.min(peaks[0], peaks[1]) - 25, `enabling the original guide in the built app keeps it outside the public mix (${peaks.map(value => value.toFixed(1)).join(', ')} dB)`)
   check(await evaluate(audience, 'window.__bufferSources.length === 0'), 'remote common screen creates no independent instrumental player')
+  // Keep imposed impairment scoped to the measured playback/guide segment.
+  // Recovery and subsequent performers still use this proxy, with its profile
+  // restored; combined handover under continuing impairment is a separate gate.
+  if(mediaProxy) mediaProxy.profile({delayMs:0,jitterMs:0,lossRate:0})
   if (networkRecovery) {
     await evaluate(audience, `(() => {
       window.__mediaHistory=[];
@@ -320,6 +405,7 @@ try {
   await click(nextPhone, 'Enable microphone and prepare')
   await poll(() => evaluate(nextPhone, "document.querySelector('[data-party-media-status]')?.textContent.includes('Microphone ready')"), 'next microphone ready')
   await click(host, 'Stage · Next singer'); await click(host, 'Prepare selected song')
+  await poll(async () => { const current=await api(1,pathRoom);return current.presence.devices.some(item=>item.memberId===nextSinger.self.id&&item.id===current.playback.stageDeviceId&&item.ready&&item.readyGeneration===current.playback.generation) }, 'replacement backing decoded')
   await click(host, 'Start countdown')
   await poll(() => evaluate(nextPhone, "document.querySelector('[data-party-media-status]')?.textContent.includes('Sending live singing')"), 'replacement publisher ready')
   const secondPublisher = db.prepare("SELECT * FROM ktv_media_grants WHERE scope = 'publisher' AND state = 'active'").get()
@@ -343,7 +429,13 @@ try {
     async function offerTurn(actor, member, title) {
       const queued = await api(actor, `${pathRoom}/queue`, { commandId: randomUUID(), songId: 1, title, requestNext: false, singerMemberId: member.id })
       let current = await api(1, pathRoom)
-      if (current.readiness.state === 'idle') current = await api(1, `${pathRoom}/readiness/offer`, { commandId: randomUUID(), entryId: queued.queue[0].id, clockId: current.clock.clockId, baseRevision: current.room.revision })
+      // Automatic fair-turn selection can commit between this read and offer.
+      // Refresh only a definitive revision conflict; each revised payload gets
+      // a new command ID, as it does in the application's command journal.
+      for(let attempt=0;current.readiness.state==='idle'&&attempt<3;attempt++) {
+        try { current = await api(1, `${pathRoom}/readiness/offer`, { commandId: randomUUID(), entryId: queued.queue[0].id, clockId: current.clock.clockId, baseRevision: current.room.revision }) }
+        catch(error) { if(error.code!=='REVISION_CONFLICT') throw error;current=await api(1,pathRoom) }
+      }
       current = await poll(async () => { const value = await api(1, pathRoom); return value.readiness.entryId === queued.queue[0].id && value.readiness.singerMemberId === member.id ? value : false }, 'hybrid singer readiness offer')
       await api(actor, `${pathRoom}/readiness/respond`, { commandId: randomUUID(), clockId: current.readiness.clockId, performanceId: current.readiness.performanceId, generation: current.readiness.generation, baseRevision: current.room.revision, ready: true })
     }
@@ -371,7 +463,9 @@ try {
     async function startTurn(session, stageLabel, previous, member) {
       await click(session, 'Enable microphone and prepare')
       await poll(() => evaluate(session, "document.querySelector('[data-party-media-status]')?.textContent.includes('Microphone ready')"), 'hybrid capture ready')
-      await click(host, stageLabel); await click(host, 'Prepare selected song'); await click(host, 'Start countdown')
+      await click(host, stageLabel); await click(host, 'Prepare selected song')
+      await poll(async()=>{const current=await api(1,pathRoom);return current.presence.devices.some(item=>item.memberId===member&&item.id===current.playback.stageDeviceId&&item.ready&&item.readyGeneration===current.playback.generation)},'hybrid backing decoded')
+      await click(host, 'Start countdown')
       await poll(() => evaluate(session, "document.querySelector('[data-party-media-status]')?.textContent.includes('Sending live singing')"), 'hybrid provider acknowledges publisher')
       await poll(async () => (await api(1, pathRoom)).playback.state === 'playing', 'hybrid playing')
       const active = db.prepare("SELECT * FROM ktv_media_grants WHERE scope = 'publisher' AND state = 'active'").get()
@@ -414,11 +508,13 @@ try {
   console.log(`${passed} built-app streaming checks passed. Client: ${clientLocation}; synthetic microphone, foreground Chrome, isolated policy/SFU. Remote HTTP/CDP use loopback SSH forwards; physical and distinct access-network acceptance remains open.`)
 } catch (error) {
   console.error('Journey failure:', error.message)
+  if(mediaProxy) console.error('Owned media proxy:',JSON.stringify(mediaProxy.snapshot()))
+  console.error('Playback recovery:',JSON.stringify(db.prepare('SELECT state,recovery_reason FROM ktv_playback').all()))
   console.error('Runtime exception count:', errors.length)
   console.error('Media HTTP status (paths only):', JSON.stringify(mediaHttp))
   for (const session of sessionSockets.keys()) console.error('UI state:', JSON.stringify(await evaluate(session, ` (async () => ({status:document.querySelector('[data-party-media-status]')?.textContent,
     errors:[...document.querySelectorAll('[role=alert]')].map(item=>item.textContent), diagnostics:[...document.querySelectorAll('dl')].map(item=>item.textContent),
-    output:window.__outputEvidence, sources:window.__sourceEvidence, contexts:window.__contexts.map(item=>({state:item.state,time:item.currentTime})), canvas:[...document.querySelectorAll('canvas')].map(item=>({width:item.width,height:item.height,connected:item.isConnected})),
+    ice:window.__iceEvidence, output:window.__outputEvidence, sources:window.__sourceEvidence, contexts:window.__contexts.map(item=>({state:item.state,time:item.currentTime})), canvas:[...document.querySelectorAll('canvas')].map(item=>({width:item.width,height:item.height,connected:item.isConnected})),
     video:[...document.querySelectorAll('video')].map(item=>({width:item.videoWidth,height:item.videoHeight,ready:item.readyState,paused:item.paused,muted:item.muted,tracks:item.srcObject?.getTracks().map(track=>({kind:track.kind,state:track.readyState,muted:track.muted,settings:track.getSettings()}))})),
     rtc:await Promise.all(window.__peers.map(async peer=>({state:peer.connectionState,tracks:[...await peer.getStats()].map(([,item])=>item).filter(item=>['inbound-rtp','outbound-rtp'].includes(item.type)).map(item=>({kind:item.kind,type:item.type,bytes:item.bytesSent??item.bytesReceived,frames:item.framesEncoded??item.framesDecoded,framesReceived:item.framesReceived,framesDropped:item.framesDropped}))})))
   }))()` ).catch(() => ({}))))
@@ -435,6 +531,7 @@ try {
     const timer = setTimeout(() => child.kill('SIGKILL'), 1000)
     try { await ended.catch(() => {}) } finally { clearTimeout(timer) }
   }
+  if (mediaProxy) await mediaProxy.close()
   if (worker) await worker.close().catch(() => {})
   realtime?.close()
   for (const socket of ownedTcp) socket.destroy()
