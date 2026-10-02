@@ -10,6 +10,8 @@ const port = Number(process.env.CHROME_DEBUG_URL ? new URL(process.env.CHROME_DE
 assert.ok(Number.isInteger(port) && port > 0 && port <= 65535, 'Invalid owned Chrome debugging port')
 const appRoot = path.resolve('dist'), pending = new Map()
 const failures = [], requests = new Map()
+let probeStep = 'initial entry'
+const noteFailure = item => { failures.push({ step: probeStep, ...item }); if (failures.length > 16) failures.shift() }
 let nextId = 0, passed = 0, browser, browserContextId, sessionId, server
 let roomsEnabled = true
 const check = (value, label) => { assert.ok(value, label); passed++; console.log(`PASS ${label}`) }
@@ -78,11 +80,21 @@ try {
       if (url.origin === origin) requests.set(result.params.requestId, url.pathname)
       if (requests.size > 128) requests.delete(requests.keys().next().value)
     }
-    if (result.method === 'Network.loadingFailed' && result.sessionId === sessionId && failures.length < 16) {
-      failures.push({ path: requests.get(result.params.requestId), type: result.params.type, error: result.params.errorText })
+    if (result.method === 'Network.loadingFailed' && result.sessionId === sessionId) {
+      noteFailure({ path: requests.get(result.params.requestId), type: result.params.type, error: result.params.errorText })
     }
-    if (result.method === 'Runtime.exceptionThrown' && result.sessionId === sessionId && failures.length < 16) {
-      failures.push({ exception: result.params.exceptionDetails.text })
+    if (result.method === 'Network.responseReceived' && result.sessionId === sessionId) {
+      const response = result.params.response, path = requests.get(result.params.requestId)
+      if (path && (response.status >= 400 || result.params.type === 'Script' && !/javascript/.test(response.mimeType))) {
+        noteFailure({ path, type: result.params.type, status: response.status, mime: response.mimeType })
+      }
+    }
+    if (result.method === 'Runtime.exceptionThrown' && result.sessionId === sessionId) {
+      noteFailure({ exception: result.params.exceptionDetails.text })
+    }
+    if (result.method === 'Runtime.consoleAPICalled' && result.sessionId === sessionId && result.params.type === 'error') {
+      noteFailure({ console: result.params.args.map(arg => String(arg.value ?? arg.description ?? arg.type)
+        .split('\n')[0].replace(/https?:\/\/\S+/g, '[url]').slice(0, 160)).slice(0, 3) })
     }
     if (!result.id) return
     const item = pending.get(result.id); if (!item) return
@@ -92,11 +104,25 @@ try {
   const { targetId } = await cdp('Target.createTarget', { browserContextId, url: 'about:blank' }, null)
   ;({ sessionId } = await cdp('Target.attachToTarget', { targetId, flatten: true }, null))
   await cdp('Page.enable'); await cdp('Runtime.enable'); await cdp('Network.enable')
-  await cdp('Page.addScriptToEvaluateOnNewDocument', { source: "localStorage.setItem('auth_token','3'); localStorage.setItem('language','en');" })
+  await cdp('Page.addScriptToEvaluateOnNewDocument', { source: `
+    localStorage.setItem('auth_token','3'); localStorage.setItem('language','en');
+    window.__pwaCacheEvidence = [];
+    if (${process.env.KTV_PWA_TEST_CACHE_DIAGNOSTICS === '1'}) for (const [object, names] of [[CacheStorage.prototype,['keys','open']],[Cache.prototype,['keys','delete']]]) {
+      for (const name of names) {
+        const original = object[name];
+        object[name] = function(...args) {
+          const event = {operation:name, started:performance.now(), state:'pending'};
+          __pwaCacheEvidence.push(event);if(__pwaCacheEvidence.length>24)__pwaCacheEvidence.shift();
+          return original.apply(this,args).then(value=>{event.state='done';event.ended=performance.now();return value},
+            error=>{event.state='failed';event.ended=performance.now();throw error});
+        };
+      }
+    }` })
   await cdp('Page.navigate', { url: origin + '/party' })
   await poll(() => evaluate("!!document.getElementById('party-room-name')"), 'built party entry opens')
   await poll(() => evaluate("navigator.serviceWorker?.getRegistrations().then(items => items.some(item => item.active?.state === 'activated'))"), 'generated worker installs')
   let oldTime = await evaluate('performance.timeOrigin')
+  probeStep = 'generated worker reload'
   await cdp('Page.reload')
   await poll(() => evaluate(`performance.timeOrigin !== ${oldTime} && !!navigator.serviceWorker?.controller && !!document.getElementById('party-room-name')`),
     'room entry reload is controlled by the generated worker')
@@ -113,21 +139,41 @@ try {
     return !entries.some(item => new URL(item.url).pathname.startsWith('/api/ktv') || new URL(item.url).searchParams.has('ktvAsset')) })()`),
     'current worker stores no room credentials or party audio')
   await cdp('Network.enable')
+  probeStep = 'offline authority check'
   try {
     await cdp('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 })
     check(await evaluate(`Promise.all(['${stateUrl}','${assetUrl}','/api/ktv/features'].map(async url => {try {await fetch(url); return false} catch{return true}})).then(values=>values.every(Boolean))`),
       'offline worker cannot replay old room authority or party audio')
   } finally { await cdp('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: 0, uploadThroughput: 0 }) }
   const currentWorkerUrl = await evaluate('navigator.serviceWorker.controller.scriptURL')
+  probeStep = 'legacy worker install'
   await evaluate("navigator.serviceWorker.register('/sw-legacy.js', {scope:'/'})")
   await poll(() => evaluate("navigator.serviceWorker.controller?.scriptURL.includes('/sw-legacy.js')"), 'installed legacy worker controls the page')
   check(await evaluate(`Promise.all([fetch('${stateUrl}'),fetch('/api/ktv/features')]).then(items=>items.every(item=>item.ok))`), 'legacy worker can fetch the room and feature flags')
   check(await evaluate("caches.open('legacy-ktv-test').then(cache=>cache.keys()).then(keys=>keys.some(item=>new URL(item.url).pathname.startsWith('/api/ktv')))"),
     'legacy worker caches a room response in the upgrade fixture')
   await evaluate(`navigator.serviceWorker.register(${JSON.stringify(currentWorkerUrl)}, {updateViaCache:'none'})`)
+  probeStep = 'new worker offer'
   await poll(() => evaluate("(async () => !!(await navigator.serviceWorker.getRegistration())?.waiting && !![...document.querySelectorAll('button')].find(item=>item.textContent.trim()==='Update'))()"),
     'new worker offers an explicit update')
   oldTime = await evaluate('performance.timeOrigin')
+  probeStep = 'blocked update activation'
+  await evaluate(`(async () => {
+    const worker = (await navigator.serviceWorker.getRegistration()).waiting;
+    window.__blockedUpdateWorker = worker;
+    window.__originalUpdatePost = worker.postMessage;
+    worker.postMessage = () => {};
+  })()`)
+  try {
+    await evaluate("[...document.querySelectorAll('button')].find(item=>item.textContent.trim()==='Update').click(); true")
+    await poll(() => evaluate("!![...document.querySelectorAll('[role=alert]')].find(item=>item.textContent.includes('The update could not finish'))"),
+      'activation timeout offers a retry')
+    check(await evaluate(`performance.timeOrigin === ${oldTime} && navigator.serviceWorker.controller.scriptURL.includes('/sw-legacy.js')`),
+      'blocked activation keeps the current page and worker instead of blindly reloading')
+    check(await evaluate("[...document.querySelectorAll('button')].some(item=>item.textContent.trim()==='Update' && !item.disabled)"),
+      'activation failure restores the enabled update button')
+  } finally { await evaluate('__blockedUpdateWorker.postMessage = __originalUpdatePost; true') }
+  probeStep = 'explicit update activation'
   await evaluate("[...document.querySelectorAll('button')].find(item=>item.textContent.trim()==='Update').click(); true").catch(() => {})
   await poll(() => evaluate(`performance.timeOrigin !== ${oldTime} && !!navigator.serviceWorker?.controller?.scriptURL.includes('/sw.js') && !!document.getElementById('party-room-name')`),
     'update activates the new worker and reloads the room entry')
@@ -137,8 +183,11 @@ try {
 } catch (error) {
   const state = await evaluate(`(async () => {
     const registration = await navigator.serviceWorker?.getRegistration();
+    const route = document.querySelector('#app')?.__vue_app__?.config.globalProperties.$route;
     return { timeOrigin: performance.timeOrigin, path: location.pathname, readyState: document.readyState,
+      route: route ? {path:route.path, name:route.name, matched:route.matched.map(item=>item.name)} : null,
       appChildren: document.querySelector('#app')?.childElementCount,
+      cacheOperations: window.__pwaCacheEvidence,
       text: document.body.innerText.slice(0,400),
       controller: navigator.serviceWorker?.controller?.scriptURL,
       active: registration?.active?.state, waiting: registration?.waiting?.state, installing: registration?.installing?.state,

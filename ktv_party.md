@@ -1099,7 +1099,13 @@ Party snapshots, tickets, media tokens, and grants use `Cache-Control: no-store`
 exclude their paths and versioned party assets explicitly from service-worker
 runtime caching. On room entry, remove old cached room responses before mounting.
 An installed worker update prompts the user, activates the waiting worker on
-request and reloads with current room authority.
+request and reloads after that exact worker becomes active. Activation timeout,
+replacement or unfinished installation keeps the current page open and offers
+a translated retry; it cannot trigger a blind reload. The Update action rejects
+duplicate clicks and installs its availability listener before catalog downloads.
+An authoritative zero-song catalog is valid and must not generate fallback songs
+or phantom title/lyric requests during startup. Native upgrade acceptance includes
+blocked activation, retained page/controller, retry and purge of legacy authority.
 Defer user-triggered app reloads during performances where possible and handle
 controller changes/reloads as reconnects. Browsers may suspend background audio;
 publish a measured support matrix rather than promise lock-screen operation.

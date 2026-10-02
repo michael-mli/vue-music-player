@@ -607,6 +607,8 @@
     "installDescription": "获得完整的应用体验，支持离线音乐、快速加载和主屏幕访问。",
     "updateAvailable": "有可用更新",
     "update": "更新",
+    "updating": "正在更新…",
+    "updateFailed": "更新未能完成，请重试。",
     "updateDescription": "新版本已发布，包含改进和错误修复。",
     "offline": "您当前处于离线状态"
   },

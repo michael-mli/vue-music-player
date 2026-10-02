@@ -607,6 +607,8 @@
     "installDescription": "Get the full app experience with offline music, faster loading, and home screen access.",
     "updateAvailable": "Update Available",
     "update": "Update",
+    "updating": "Updating…",
+    "updateFailed": "The update could not finish. Please try again.",
     "updateDescription": "A new version is available with improvements and bug fixes.",
     "offline": "You are offline"
   },

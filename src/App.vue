@@ -88,6 +88,8 @@
     <!-- Update Available Notification -->
     <UpdateNotification 
       v-if="updateAvailable" 
+      :updating="updating"
+      :failed="updateFailed"
       @update="handleUpdate" 
       @dismiss="updateAvailable = false"
     />
@@ -126,6 +128,7 @@ import { usePlaylistsStore } from '@/stores/playlists'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
 import { releaseAllMicStreams } from '@/composables/useMicDevices'
+import { applyPwaUpdate } from '@/services/pwaUpdate'
 
 // Components
 import Sidebar from '@/components/UI/Sidebar.vue'
@@ -162,6 +165,8 @@ watch(isPartyRoute, (inParty) => {
 }, { immediate: true, flush: 'sync' })
 const showInstallPrompt = ref(false)
 const updateAvailable = ref(false)
+const updating = ref(false)
+const updateFailed = ref(false)
 const showMobileSidebar = ref(false)
 const deferredPrompt = ref<any>(null)
 
@@ -191,6 +196,8 @@ watch(
 )
 
 onMounted(async () => {
+  // Update readiness must not wait for catalog or lyric downloads.
+  checkForUpdates()
   // Initialize audio
   playerStore.initializeAudio()
 
@@ -217,9 +224,6 @@ onMounted(async () => {
   
   // Check for PWA install prompt
   checkInstallPrompt()
-  
-  // Check for app updates
-  checkForUpdates()
   
   // Setup user activity listeners for auto-visualizer
   setupActivityListeners()
@@ -314,16 +318,11 @@ function checkForUpdates() {
 function showAvailableUpdate() { updateAvailable.value = true }
 
 async function handleUpdate() {
-  const waiting = (await navigator.serviceWorker?.getRegistration())?.waiting
-  if (waiting) {
-    await new Promise<void>(resolve => {
-      const done = () => { clearTimeout(timeout); resolve() }
-      const timeout = window.setTimeout(done, 8000)
-      if (waiting.state === 'activated') done()
-      else { waiting.addEventListener('statechange', () => { if (waiting.state === 'activated') done() }); waiting.postMessage({ type: 'SKIP_WAITING' }) }
-    })
-  }
-  window.location.reload()
+  if (updating.value) return
+  updating.value = true; updateFailed.value = false
+  try { await applyPwaUpdate(navigator.serviceWorker, () => window.location.reload()) }
+  catch { updateFailed.value = true }
+  finally { updating.value = false }
 }
 
 // Player modal handlers

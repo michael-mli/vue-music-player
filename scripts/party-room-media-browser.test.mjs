@@ -22,12 +22,16 @@ import { createMediaUdpProxy } from './party-media-udp-proxy.mjs'
 import { createOwnedRemoteBrowser } from './party-remote-browser.mjs'
 import { installAvSourceMarkers, installAvObserver, analyseAvObservations } from './party-av-observer.mjs'
 import { collectAvMediaStats } from './party-av-stats.mjs'
+import { nativeSyncTargetStep, nativeNetworkTargetStep, installNativeSyncExperiment } from './party-av-native-sync.mjs'
 
 const clientLocation = process.env.KTV_ROOM_TEST_CLIENT || 'same-host'
 assert.ok(['same-host', 'remote-ec2'].includes(clientLocation), 'Unknown room-test client topology')
 const remoteMode = clientLocation === 'remote-ec2'
 const avTiming = process.env.KTV_ROOM_TEST_AV_TIMING === '1'
 const receiverTargetMs = process.env.KTV_ROOM_TEST_RECEIVER_TARGET_MS === undefined ? null : Number(process.env.KTV_ROOM_TEST_RECEIVER_TARGET_MS)
+const receiverSync = process.env.KTV_ROOM_TEST_RECEIVER_SYNC || 'off'
+assert.ok(['off', 'ntp', 'network'].includes(receiverSync) && (receiverSync === 'off' || avTiming && receiverTargetMs === null),
+  'Native sync experiment requires A/V timing and no fixed receiver target')
 assert.ok(receiverTargetMs === null || avTiming && Number.isInteger(receiverTargetMs) && receiverTargetMs >= 0 && receiverTargetMs <= 1000,
   'Receiver target experiment requires A/V timing and a 0–1000 ms target')
 const avTransitions = Number(process.env.KTV_ROOM_TEST_AV_TRANSITIONS || 40)
@@ -64,7 +68,7 @@ const provider = new RoomServiceClient(upstreamUrl, apiKey, apiSecret, { request
 const db = initDb(root), contexts = [], debuggerSockets = [], pending = new Map(), sessionSockets = new Map(), errors = [], mediaHttp = []
 const ownedTcp = new Set()
 const trackTcp = server => server.on('connection', socket => { ownedTcp.add(socket); socket.once('close', () => ownedTcp.delete(socket)) })
-let mediaProxy, audienceCircuits, frontend, backend, worker, realtime, chrome, remoteBrowser, avBrowser, pulseModule, pathRoom, running = false, nextId = 0, passed = 0
+let mediaProxy, audienceCircuits, frontend, backend, worker, realtime, chrome, remoteBrowser, avBrowser, pulseModule, pathRoom, nativeSyncAudience, running = false, nextId = 0, passed = 0
 const check = (value, label) => { assert.ok(value, label); passed++; console.log(`PASS ${label}`) }
 const poll = async (work, label, timeout = 20000) => {
   const deadline = Date.now() + timeout
@@ -155,6 +159,9 @@ try {
   app.post('/api/auth/guest', (req, res) => res.json({ success: true, data: { token: '1', user: user(1) } }))
   app.get('/api/dig/songs', (req, res) => res.json({ success: true, data: [] }))
   app.get('/api/categories', (req, res) => res.json({ success: true, data: { categories: [], assignments: [], lockedSongIds: [] } }))
+  // This fixture owns one song. An absent count falls back to 1282 unrelated
+  // catalog entries and downloads; that is neither valid audio nor load evidence.
+  app.get('/data/song_number.txt', (_req, res) => res.type('text').send('1'))
   backend = app.listen(0, '127.0.0.1'); await once(backend, 'listening')
   trackTcp(backend)
   const backendUrl = `http://127.0.0.1:${backend.address().port}`
@@ -404,6 +411,8 @@ try {
           evaluate(audience,`(${collectAvMediaStats.toString()})()`),
         ])
         avTimingSamples.push({phase,source,receiver})
+        if (receiverSync !== 'off') avTimingSamples.at(-1).nativeSync = await evaluate(audience,
+          `__avNativeSync.sample(${JSON.stringify(receiver)})`)
         const sample=await evaluate(phone,`(() => {
           const node=document.querySelector('dl'),context=__contexts[0];
           const sample={now:performance.now(),diagnostics:node?.textContent,
@@ -428,6 +437,12 @@ try {
     check(result.pairs.every(item=>Number.isFinite(item.captureQueueMs)&&Math.abs(item.captureQueueMs)<100&&item.captureCallMs<20),`${phase} private output monitor capture queue and timing call remain bounded`)
   }
   if(avTiming) {
+    if (receiverSync !== 'off') {
+      nativeSyncAudience = audience
+      const step = receiverSync === 'ntp' ? nativeSyncTargetStep : nativeNetworkTargetStep
+      const receivers = await evaluate(audience, `(${installNativeSyncExperiment.toString()})(${step.toString()})`)
+      check(receivers.length === 2, 'native sync experiment scopes hints to the two current player receivers')
+    }
     if(receiverTargetMs !== null) {
       const targets=await evaluate(audience,`(() => {
         const tracks=document.querySelector('[data-party-media-screen] video').srcObject.getTracks();
@@ -442,12 +457,13 @@ try {
     await poll(async()=>await evaluate(audience,'__avObserver.evidence.ready')&&(await avBrowser.audioEvidence()).some(item=>typeof item.on==='boolean'),'actual private receiver output and decoded video marker available')
     await measureAv('baseline')
     await evaluate(audience,'__avObserver.begin(null)')
+    if (receiverSync !== 'off' && !mediaImpairment) await evaluate(audience, '__avNativeSync.close()')
   }
   if (mediaImpairment) {
     const selected = [...await routes(phone), ...await routes(audience)]
     check(selected.length>=2 && selected.every(item=>item.protocol===impairmentProtocol&&item.port===(impairmentProtocol==='udp'?7882:7881)), `publisher and audience media traverse the owned ${impairmentProtocol.toUpperCase()} proxy with no bypass`)
     mediaProxy.profile({delayMs:150,jitterMs:40,lossRate:impairmentProtocol==='udp'?0.05:0})
-    if(avTiming) { await new Promise(resolve=>setTimeout(resolve,2000));await measureAv('impaired');await evaluate(audience,'__avObserver.stopRecording()') }
+    if(avTiming) { await new Promise(resolve=>setTimeout(resolve,2000));await measureAv('impaired');await evaluate(audience,'__avObserver.stopRecording()');if(receiverSync!=='off')await evaluate(audience,'__avNativeSync.close()') }
     if(avTiming) await verifySpectrum()
     const frames=await evaluate(audience, "document.querySelector('[data-party-media-screen] video').getVideoPlaybackQuality().totalVideoFrames")
     await poll(() => evaluate(audience, `document.querySelector('[data-party-media-screen] video').getVideoPlaybackQuality().totalVideoFrames>=${frames+40}`), 'video advances with bounded media delay')
@@ -668,6 +684,7 @@ try {
   }))()` ).catch(() => ({}))))
   throw error
 } finally {
+  if (nativeSyncAudience) await evaluate(nativeSyncAudience, 'window.__avNativeSync?.close()').catch(() => {})
   for (const { socket, browserContextId } of contexts) if (socket.readyState === WebSocket.OPEN) await cdp(socket, 'Target.disposeBrowserContext', { browserContextId }).catch(() => {})
   for (const socket of debuggerSockets) socket.close()
   for(const ownedBrowser of [avBrowser,remoteBrowser]) if (ownedBrowser) await ownedBrowser.close().catch(() => {

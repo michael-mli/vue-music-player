@@ -81,7 +81,7 @@ export const songService = {
       if (response.ok) {
         const text = await response.text()
         const num = parseInt(text.trim(), 10)
-        if (!isNaN(num) && num > 0) {
+        if (!isNaN(num) && num >= 0) {
           return num
         }
       }
@@ -95,7 +95,7 @@ export const songService = {
       if (response.ok) {
         const text = await response.text()
         const num = parseInt(text.trim(), 10)
-        if (!isNaN(num) && num > 0) {
+        if (!isNaN(num) && num >= 0) {
           return num
         }
       }

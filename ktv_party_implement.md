@@ -1731,6 +1731,92 @@ are retained. Public HTTP/WSS, asset bytes/source SHA, timing defaults, SQLite
 integrity/foreign keys and no-account-creation checks pass; the probe room closes.
 Rooms/guide remain enabled, media disabled, and no persistent SFU is started.
 
+### 2026-10-02 — PWA activation/cold-catalog fixes and native buffer experiments
+
+Reproduced the PWA failure after a UI journey. A diagnostic series passes once,
+then fails explicit upgrade (`/tmp/ktv-pwa-reload-cache-diagnostic-2.log`): cache
+operations finish in approximately 15 ms, the app shell mounts, the legacy worker
+still controls the page and the new worker remains installed/waiting. This rules
+out unfinished cache cleanup for that occurrence. The Update handler previously
+reloaded after its eight-second timeout even when activation had not completed.
+
+Candidate implementation awaits activation of the exact requested worker, checks
+that it becomes registration.active, removes listeners on every outcome and
+keeps the current page on timeout/replacement/pending installation. The UI disables
+duplicate update clicks, shows progress, and offers a translated failure/retry
+message. Update listeners attach before catalog/auth downloads. Three focused
+unit checks pass (`npm run test:pwa:update`): timeout cannot reload; a retry can
+activate/reload exactly once; missing/replaced/pending workers cannot reload.
+
+Also corrected authoritative empty catalogs: count `0` previously triggered the
+fallback to 1282 phantom songs and background lyric downloads. Both primary and
+fallback count paths now accept zero. Two native-fetch catalog unit checks pass
+(`npm run test:songs`), including no fallback request for a valid primary zero.
+The PWA fixture keeps its original empty catalog. The combined candidate passes
+UI **42/42** and **three consecutive PWA 10/10 runs**, including a deliberately
+blocked native worker activation, unchanged current page/time origin, restored
+retry button, successful real retry and purge of cached legacy authority:
+`/tmp/ktv-pwa-activation-catalog-candidate-ui.log`,
+`/tmp/ktv-pwa-activation-catalog-candidate-{1,2,3}.log`.
+Cache API tracing is opt-in (`KTV_PWA_TEST_CACHE_DIAGNOSTICS=1`); those three runs
+use the original Cache API. Bounded diagnostics capture own-origin HTTP/mime
+failures, generic console/runtime errors and the matched route without headers,
+query strings or credentials. The earlier guard-only candidate passes timeout
+safety but fails retry (`/tmp/ktv-pwa-activation-candidate-1.log`); the catalog
+correction is included in the passing candidate. Physical installed-PWA coverage
+remains open. Type-check/build and party units **84/84** pass.
+
+Two **fixture-only** native buffer experiments retain the native renderer,
+audio/video stream, clock/lease/generation checks, resolution preference,
+1280×720/25 fps/350 kbit/s publication settings and unchanged timing thresholds.
+Neither adds an independent lyric clock or a production delay controller.
+`KTV_ROOM_TEST_RECEIVER_SYNC` defaults to `off`, requires native A/V mode when
+enabled, and excludes the fixed-target experiment. Hints scope to the two actual
+player receivers; originals are restored on completion/failure, before recovery
+and handover. Their timing is not handover timing evidence.
+
+- `ntp`: bounded relative hints from same-source sender NTP estimates, report-time
+  corrected, 40 ms deadband, 100 ms maximum update, no accumulated common delay.
+  **Rejected for production**: `/tmp/ktv-native-sync-tcp-av.log`, exit 1, full
+  impaired 40 matched pairs/no unmatched: p95 **337.50 ms**, maximum **655.16 ms**.
+  Baseline p95 **28.24 ms**. Hints oscillate and increase video observation delay.
+- `network`: equal audio/video hints derived from interval native
+  `jitterBufferMinimumDelay / jitterBufferEmittedCount`, rounded upward to 5 ms,
+  bounded at 500 ms. This avoids feeding estimated playout timing/AV-sync delay
+  back into the buffer controller. `/tmp/ktv-native-network-tcp-av.log`, exit 0,
+  **72/72** functional/timing checks. Baseline six matched, p95/max **77.49 ms**;
+  impaired **40 matched**, no unmatched: p95 **100.54 ms**, maximum **144.73 ms**,
+  source-to-video p95 **847.30 ms**, maximum **915.20 ms**.
+
+The corresponding UDP experiment still fails:
+`/tmp/ktv-native-network-catalog-udp-av.log`, exit 1. Baseline six matched,
+no unmatched, p95/max **36.76 ms**. Impaired **40 matched**, one unmatched audio
+and video edge, p95 **349.68 ms**, maximum **699.93 ms**; source-to-video p95
+**913.40 ms**, maximum **1248.30 ms**. Receiver interval mean audio/video buffers
+**207.5/282.7 ms**, 390/98 reported audio/video packets lost, 77 video freezes.
+Full 1280×720 remains; source encoded cadence is 24–26 fps at baseline and
+6–26 fps under impairment. Hints range 120–400 ms under impairment. The TCP pass
+does not justify enabling this controller or online media; UDP repair stalls
+and source cadence still require investigation.
+
+Two earlier UDP runs stop during browser-context creation, before timing
+measurement (`/tmp/ktv-native-network-udp-av.log`,
+`/tmp/ktv-native-network-udp-av-retry.log`). The media fixture had omitted its
+one-song count and requested the phantom fallback catalog. It now serves count
+`1`, matching its actual asset and metadata; the third run above reaches full
+measurement. This is a correction to the one-song fixture, not audience-capacity
+evidence or a reduced media-quality/clock gate. All failures remain recorded.
+
+Primary semantics: [native jitter buffer target](https://w3c.github.io/webrtc-pc/#dom-rtcrtpreceiver-jitterbuffertarget),
+[native stats](https://www.w3.org/TR/webrtc-stats/#dom-rtcinboundrtpstreamstats-estimatedplayouttimestamp).
+Targets are hints; the browser may clamp them and synchronized tracks should use
+the larger target. Estimated playout timestamps are sender NTP time and can
+extrapolate when no audio is playing. Fixture units **12/12** pass, including the
+final finite-counter guard; final exact-commit verification/release is next. Public
+preview remains frontend/backend `f58a8f3`, media disabled. P01/P05 physical
+alignment, P06 physical/mobile/installed-PWA, UDP and handover timing, representative
+capacity and persistent online release remain open.
+
 ```text
 Date:
 Phase and item IDs:

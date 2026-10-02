@@ -15,12 +15,14 @@
     "test:party:load": "node scripts/party-load.test.mjs",
     "test:party:tls": "node --test scripts/party-media-tls.test.mjs",
     "test:party:pwa": "node scripts/party-pwa-browser.test.mjs",
+    "test:pwa:update": "node --test scripts/pwa-update.test.mjs",
+    "test:songs": "node --test scripts/song-catalog.test.mjs",
     "test:party:media": "node scripts/party-media-browser.test.mjs",
     "test:party:supervisor": "node scripts/party-media-supervisor.test.mjs",
     "test:party:public-transport": "node scripts/party-public-transport.test.mjs",
     "test:party:room-media": "node scripts/party-room-media-browser.test.mjs",
     "test:party:impairment-fixtures": "node --test scripts/party-media-tcp-proxy.test.mjs scripts/party-media-udp-proxy.test.mjs",
-    "test:party:av-fixtures": "node --test scripts/party-av-observer.test.mjs scripts/party-av-evidence-stream.test.mjs"
+    "test:party:av-fixtures": "node --test scripts/party-av-observer.test.mjs scripts/party-av-evidence-stream.test.mjs scripts/party-av-native-sync.test.mjs"
   },
   "dependencies": {
     "@breezystack/lamejs": "^1.2.7",
