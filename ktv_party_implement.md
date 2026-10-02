@@ -805,7 +805,10 @@ Unpublished bounded-rate candidate adds measured small-phase feedback without
 changing the room clock or large-error/lease guards. Party checks 93/93, native
 rate-integral 13/13 and full built streaming/output-pause/recovery/handover 56/56
 pass; all 40 clean transitions match (p95 63.12 ms, maximum 87.82 ms).
-It is still a candidate until the remaining exact release checks/publication.
+Exact UI 45/45, PWA 10/10 and stage replacement 41/41 pass, but the exact streaming
+run hits a larger native output error and fails before 40 transitions. Publication
+is deferred. Further native-stop deduplication passes 94/94 units and is being
+verified with native control-call and main-thread task observations.
 
 Investigate UDP repair stalls, conflicting sender/receiver delay hints and source
 cadence/drift. Network-minimum hints fail UDP (p95 349.68 ms, maximum 699.93 ms);
@@ -2121,6 +2124,43 @@ despite equal requested targets near 1100 ms. This identifies unequal native
 buffer growth as the next receiver investigation. No longer settle window,
 different pair selection, relaxed 150/250 ms gate, reduced quality, or production
 SFU-policy change is used. Public media stays disabled.
+
+#### Exact candidate failure and native control work
+
+Commit `8429a9b` is not published. Exact build passes;
+`/tmp/ktv-bounded-rate-exact-pwa-ui.log` **45/45**,
+`/tmp/ktv-bounded-rate-exact-pwa.log` **10/10**, and
+`/tmp/ktv-bounded-rate-exact-stage-replacement.log` **41/41** pass.
+`/tmp/ktv-bounded-rate-exact-output-pause-clean-av.log` fails: a later actual
+render/wall interval loses approximately **181.28 ms** after about 66 seconds,
+calculated phase reaches **214.6 ms**, and the unchanged large-error guard enters
+room recovery. It does not complete the required 40-transition timing phase.
+The earlier 56/56 candidate pass is not used to waive this failure.
+
+The source synchronizer also performs unnecessary native `stop()` rescheduling
+and worklet renewals every animation frame for an unchanged lease/clock mapping.
+These are now deduplicated. A real deadline, clock offset or uncertainty change
+still renews both; every frame still validates authority, expiry and playback.
+The first source always gets its native deadline and worklet grant. **94/94**
+units pass (`/tmp/ktv-rate-renewal-dedup-units.log`), including 120 unchanged
+frame calls followed by real renewal and mapping changes. Native diagnostics now
+retain bounded stop-call counts and recent main-thread long tasks. This reduces
+known redundant control work; it is not yet proven to explain the larger stall.
+
+Read-only infrastructure checks show the four-vCPU/16-GiB `t3a.xlarge` client is
+in unlimited credit mode, has approximately **2302–2304 credits**, no surplus-credit
+balance, and five-minute mean CPU below 30% over the checked hour. Post-fixture
+sampling shows zero steal and no cgroup throttling, with over 10 GiB available.
+This does not establish what happened during the 181 ms interval, but depleted
+CPU credits are not supported by those records. No instance size, credit mode,
+scheduling priority or other infrastructure setting is changed.
+
+No publication has occurred. Production remains frontend `ca6c757`, backend
+`f58a8f3`, rooms/guide on, media off, no persistent SFU. Private pre-publication
+backup `/home/mli/ktv-party-bounded-rate-predeploy.n51pw2j0` contains consistent
+SQLite (integrity/FKs pass), the current frontend and private backend config;
+all files are 0600 under a 0700 directory. The original rollback tag is unchanged.
+All temporary fixture browser/output profiles and owned SFU containers are cleaned.
 
 ### Release record
 

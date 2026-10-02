@@ -5,7 +5,8 @@ import { installPartyLeaseGuard, createPartyLeaseGuard } from './partyLeaseGuard
 
 interface PublisherTap { output: GainNode; sources: Set<Source>; closed: boolean; generation: number }
 interface Source { node: AudioBufferSourceNode; gain: GainNode; generation: number; deadlineMs: number; when: number; offsetMs: number; stopAt?: number;
-  leaseStopAt: number; position: PartySourcePosition; guard: ReturnType<typeof createPartyLeaseGuard>; publish: { tap: PublisherTap; gain: GainNode } | null }
+  leaseStopAt: number; leaseMapping?: { offsetMs: number; uncertaintyMs: number }; position: PartySourcePosition;
+  guard: ReturnType<typeof createPartyLeaseGuard>; publish: { tap: PublisherTap; gain: GainNode } | null }
 export interface PartyAudioDiagnostics {
   contextState: string
   sampleRate: number
@@ -251,6 +252,10 @@ export class PartyAudioEngine {
 
   private extend(source: Source, deadlineMs: number, clock: PartyClockEstimate) {
     if (!this.context || source.stopAt) return
+    // sync runs every animation frame. A valid unchanged grant needs no native
+    // stop rescheduling or worklet message; renew on real deadline/clock changes.
+    if (source.leaseMapping && source.deadlineMs === deadlineMs && source.leaseMapping.offsetMs === clock.offsetMs &&
+      source.leaseMapping.uncertaintyMs === clock.uncertaintyMs) return
     source.deadlineMs = deadlineMs
     // The native stop covers blocked page tasks while rendering keeps running.
     // The worklet additionally enforces wall expiry if the audio clock freezes.
@@ -259,6 +264,7 @@ export class PartyAudioEngine {
     source.guard.renew(deadlineMs - performance.now() - clock.offsetMs - clock.uncertaintyMs - 50 - partyOutputClock(this.context).latencyMs)
     source.leaseStopAt = deadline
     try { source.node.stop(deadline) } catch { /* Source already ended. */ }
+    source.leaseMapping = { offsetMs: clock.offsetMs, uncertaintyMs: clock.uncertaintyMs }
   }
 
   sync(playback: PartyPlayback, clock: PartyClockEstimate | null, lease: PartyLease | null,

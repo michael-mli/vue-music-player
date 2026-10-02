@@ -174,6 +174,25 @@ test('failed native guard module loading cannot enable output and a later retry 
   await f.engine.enable(); assert.equal(f.engine.enabled, true); assert.equal(calls, 2)
 })
 
+test('unchanged animation-frame sync does not reschedule native lease stops, while real renewals and clock changes do', async t => {
+  const f = fixture(t)
+  await f.engine.enable(); await f.engine.prepare(f.asset)
+  f.engine.sync(f.playback, f.clock, f.lease, 'stage')
+  const initialStops = f.nodes[0].stops.length, initialMessages = f.guards[0].messages.length
+  assert.ok(initialStops > 0 && initialMessages > 0)
+  for (let frame = 0; frame < 120; frame++) { f.advance(1000 / 60); f.engine.sync(f.playback, f.clock, f.lease, 'stage') }
+  assert.equal(f.nodes[0].stops.length, initialStops)
+  assert.equal(f.guards[0].messages.length, initialMessages)
+  const renewed = { ...f.lease, expiresServerMs: f.lease.expiresServerMs + 2000 }
+  f.engine.sync(f.playback, f.clock, renewed, 'stage')
+  assert.equal(f.nodes[0].stops.length, initialStops + 1)
+  assert.equal(f.guards[0].messages.length, initialMessages + 1)
+  f.engine.sync(f.playback, { ...f.clock, offsetMs: f.clock.offsetMs + 10 }, renewed, 'stage')
+  assert.equal(f.nodes[0].stops.length, initialStops + 2)
+  f.engine.sync(f.playback, { ...f.clock, uncertaintyMs: f.clock.uncertaintyMs + 5 }, renewed, 'stage')
+  assert.equal(f.nodes[0].stops.length, initialStops + 3)
+})
+
 test('render guard retains the configured fifteen-second stage lease ceiling', async t => {
   const f = fixture(t)
   await f.engine.enable(); await f.engine.prepare(f.asset)

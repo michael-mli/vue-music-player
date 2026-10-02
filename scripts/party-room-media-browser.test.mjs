@@ -247,6 +247,13 @@ try {
     await cdp(socket, 'Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', 'en');
       ${avTiming ? `(${installAvSourceMarkers.toString()})();` : ''}
       window.__partyClocks=[]; window.__partyPlaybacks=[]; window.__phaseEvidence=[];
+      window.__longTasks=[];
+      if (${avTiming} && PerformanceObserver.supportedEntryTypes.includes('longtask')) {
+        new PerformanceObserver(list => {
+          for (const item of list.getEntries()) __longTasks.push({startTime:item.startTime,duration:item.duration});
+          if (__longTasks.length>128) __longTasks.splice(0,__longTasks.length-128);
+        }).observe({entryTypes:['longtask']});
+      }
       window.__sockets = []; const Socket = window.WebSocket; window.WebSocket = class extends Socket { constructor(...args) {
         super(...args); window.__sockets.push(this);
         this.addEventListener('message',event=>{
@@ -302,9 +309,9 @@ try {
       navigator.mediaDevices.getUserMedia = async (...args) => { const stream = await getMedia(...args); window.__micStreams.push(stream); return stream; };
       const source = AudioContext.prototype.createBufferSource;
       AudioContext.prototype.createBufferSource = function() { const item = source.call(this), start = item.start.bind(item), stop = item.stop.bind(item);
-        item.__state = { started: false, ended: false, stopAt: null, context: this };
+        item.__state = { started: false, ended: false, stopAt: null, stopCalls: 0, context: this };
         item.addEventListener('ended', () => { item.__state.ended = true; });
-        item.stop = (...args) => { const result = stop(...args); item.__state.stopAt = args[0] ?? this.currentTime; return result; };
+        item.stop = (...args) => { const result = stop(...args); item.__state.stopCalls++; item.__state.stopAt = args[0] ?? this.currentTime; return result; };
         item.start = (...args) => {
         const samples = item.buffer?.getChannelData(0), length = Math.min(samples?.length || 0, 4096); let crossings = 0;
         for (let index = 1; index < length; index++) if (samples[index-1] <= 0 && samples[index] > 0) crossings++;
@@ -420,6 +427,8 @@ try {
           const node=document.querySelector('dl'),context=__contexts[0];
           const sample={now:performance.now(),diagnostics:node?.textContent,
             rates:__bufferSources.filter(item=>item.__state.started&&!item.__state.ended).map(item=>item.playbackRate.value),
+            sourceStops:__bufferSources.filter(item=>item.__state.started&&!item.__state.ended).map(item=>item.__state.stopCalls),
+            recentLongTasks:__longTasks.filter(item=>performance.now()-item.startTime<3000),
             output:context?.getOutputTimestamp(),render:context?.currentTime};
           __phaseEvidence.push(sample);if(__phaseEvidence.length>180)__phaseEvidence.shift();
           return {failed:document.querySelector('[role=alert]')?.textContent};
