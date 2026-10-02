@@ -690,10 +690,16 @@ Native scheduled stops/gain deadlines remain in place. The hashed worklet asset
 is cached with the app build, and audio enablement fails if it cannot load or its
 rendering realm lacks a usable clock. Native private-output regression checks
 cover blocked tasks with running and suspended clocks for stage and microphone
-publication; physical replacement timing and mobile compatibility remain open.
+publication. The actual built app/backend also passes integrated replacement with
+two separately captured native outputs: early restart is rejected, the new output
+starts after the old safety boundary, and a frozen old render clock resumes without
+reactivating expired audio while page callbacks are blocked. Physical replacement
+timing and mobile compatibility remain open.
 
-The server grants a replacement only after the old lease expires or its holder
-acknowledges stopping. Add a margin for already-buffered hardware audio. Clients
+The server grants replacement playback only after the old lease expires or its
+holder acknowledges stopping, plus the safety margin. A replacement screen can be
+designated and prepared while the old lease is still outstanding. Add a margin
+for already-buffered hardware audio. Clients
 returning from suspension validate the lease before making sound. These rules also
 apply to online publishing authority, with media-server revocation as enforcement.
 

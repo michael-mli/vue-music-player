@@ -6,7 +6,7 @@ export function createAvEvidenceStream(child) {
   const decoder = new StringDecoder('utf8'), events = []
   const fields = ['ready', 'rate', 'fragmentFrames', 'windowFrames', 'signedMonitorLatency',
     'captureHeartbeat', 'time', 'captureQueueMs', 'captureCallMs', 'fragmentMs',
-    'onAmplitude', 'offAmplitude', 'on', 'initial', 'analysisWindowMs']
+    'onAmplitude', 'offAmplitude', 'on', 'audible', 'rmsAmplitude', 'initial', 'analysisWindowMs']
   let pending = '', failure = null, closed = false, ended = false
   function fail(message) {
     failure ||= new Error(message)
@@ -23,7 +23,7 @@ export function createAvEvidenceStream(child) {
       try {
         const item = JSON.parse(line)
         if (!item || Array.isArray(item) || typeof item !== 'object' ||
-          !(item.ready === true || item.captureHeartbeat === true || typeof item.on === 'boolean') ||
+          !(item.ready === true || item.captureHeartbeat === true || typeof item.on === 'boolean' || typeof item.audible === 'boolean') ||
           (!item.ready && !Number.isFinite(item.time))) throw new Error('invalid event')
         events.push(Object.fromEntries(fields.filter(key => typeof item[key] === 'boolean' ||
           typeof item[key] === 'number' && Number.isFinite(item[key])).map(key => [key, item[key]])))

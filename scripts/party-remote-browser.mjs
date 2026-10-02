@@ -21,12 +21,13 @@ async function unusedLocalPort(port) {
   await new Promise(resolve => server.close(resolve))
 }
 
-export async function createOwnedRemoteBrowser({ host, knownHosts, micFile, frontendPort, debugPort = 9243, isolatedOutput = false, captureOutput = isolatedOutput }) {
+export async function createOwnedRemoteBrowser({ host, knownHosts, micFile, frontendPort, debugPort = 9243, isolatedOutput = false, captureOutput = isolatedOutput, captureActivity = false }) {
   if (!/^[A-Za-z0-9_-]+@[A-Za-z0-9.-]+$/.test(host || '') || !knownHosts ||
     ![debugPort, ...(frontendPort === undefined ? [] : [frontendPort])].every(port => Number.isInteger(port) && port >= 1024 && port <= 65535) || frontendPort === debugPort) {
     throw new Error('Invalid owned remote browser fixture configuration')
   }
   if(captureOutput&&!isolatedOutput) throw new Error('Output capture requires an isolated output')
+  if(captureActivity&&!captureOutput) throw new Error('Output activity requires output capture')
   const remotePorts = [debugPort, ...(frontendPort === undefined ? [] : [frontendPort])]
   const portFilter = '( ' + remotePorts.map(port => `sport = :${port}`).join(' or ') + ' )'
   await unusedLocalPort(debugPort)
@@ -115,7 +116,7 @@ for attempt in $(seq 1 50); do test -S "$root/pulse.sock" && break; sleep .1; do
 test -S "$root/pulse.sock" || exit 1
 for attempt in $(seq 1 50); do test "$(/usr/bin/pactl -s "$PULSE_SERVER" get-default-sink 2>/dev/null)" = ktv_av && break; sleep .1; done
 test "$(/usr/bin/pactl -s "$PULSE_SERVER" get-default-sink 2>/dev/null)" = ktv_av || exit 1
-${captureOutput ? `python3 -u "$root/capture.py" > "$root/av-audio.jsonl" 2> "$root/capture-errors.log" &
+${captureOutput ? `${captureActivity ? 'KTV_CAPTURE_ACTIVITY=1 ' : ''}python3 -u "$root/capture.py" > "$root/av-audio.jsonl" 2> "$root/capture-errors.log" &
 monitor=$!` : ''}
 ${captureOutput ? `printf '%s' "$monitor" > "$root/monitor.pid"` : ''}
 ` : ''}

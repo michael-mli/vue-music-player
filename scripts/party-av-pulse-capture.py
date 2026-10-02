@@ -63,15 +63,55 @@ class Detector:
         return result
 
 
+class ActivityDetector:
+    """Observe quiet/audible output, separately from frequency marker edges.
+
+    The owned fixture's tone is far above .005 RMS. This threshold measures
+    digital fixture output, not acoustic silence at a physical speaker.
+    """
+    def __init__(self):
+        self.samples = deque(maxlen=WINDOW)
+        self.state = self.candidate = None
+        self.consecutive = 0
+        self.edge_time = 0
+        self.rms = None
+
+    def feed(self, values, end_ms):
+        self.samples.extend(values)
+        if len(self.samples) < WINDOW:
+            return None
+        self.rms = math.sqrt(sum(value * value for value in self.samples) / WINDOW)
+        next_state = self.rms >= .005
+        if next_state == self.state:
+            self.candidate = None
+            self.consecutive = 0
+            return None
+        if next_state != self.candidate:
+            self.candidate = next_state
+            self.consecutive = 0
+            self.edge_time = end_ms - WINDOW * 500 / RATE
+        self.consecutive += 1
+        if self.consecutive < 2:
+            return None
+        result = {'audible': next_state, 'time': self.edge_time, 'initial': self.state is None,
+                  'rmsAmplitude': self.rms, 'analysisWindowMs': WINDOW * 1000 / RATE}
+        self.state = next_state
+        self.candidate = None
+        self.consecutive = 0
+        return result
+
+
 class FragmentDetector:
     """Keep DSP hop timing independent of Pulse's variable fragment boundaries."""
-    def __init__(self):
+    def __init__(self, activity=False):
         self.detector = Detector()
+        self.activity = ActivityDetector() if activity else None
         self.pending = array.array('f')
 
     @property
     def last_magnitudes(self):
-        return self.detector.last_magnitudes
+        values = self.detector.last_magnitudes
+        return {**(values or {}), 'rmsAmplitude': self.activity.rms} if self.activity else values
 
     def feed(self, samples, first_ms):
         offset, edges = 0, []
@@ -82,6 +122,10 @@ class FragmentDetector:
             if len(self.pending) < FRAGMENT:
                 continue
             edge = self.detector.feed(self.pending, first_ms + offset * 1000 / RATE)
+            if self.activity:
+                activity = self.activity.feed(self.pending, first_ms + offset * 1000 / RATE)
+                if activity:
+                    edges.append(activity)
             self.pending = array.array('f')
             if edge:
                 edges.append(edge)
@@ -154,7 +198,7 @@ def capture():
         wait_ready(stream, lib.pa_stream_get_state, 2, [3, 4])
         print(json.dumps({'ready': True, 'rate': RATE, 'fragmentFrames': FRAGMENT,
                           'windowFrames': WINDOW, 'signedMonitorLatency': True}), flush=True)
-        detector = FragmentDetector()
+        detector = FragmentDetector(activity=os.environ.get('KTV_CAPTURE_ACTIVITY') == '1')
         started, events, last_heartbeat = time.monotonic(), 0, 0
         timing_deadline = started + 5
         while time.monotonic() - started < 880:

@@ -16,6 +16,10 @@ Native rendering guards now keep expired stage and published mic/backing silent
 after a frozen audio clock resumes while page tasks remain blocked. Exact native
 lease checks 15/15, UI 45/45, PWA 10/10, full clean streaming/recovery/handover
 53/53 and public release 21/21 pass; party units 90/90 pass.
+The deployed build also passes **41/41 integrated native stage-replacement checks**:
+two separate outputs, the actual room backend, blocked page tasks and a frozen/
+resumed audio clock. Early restart is refused and the old output remains quiet
+through replacement playback and queued callbacks. Physical output acceptance is open.
 The PWA activation fix is deployed: failed updates retain the current page and
 allow retry; empty catalogs no longer trigger phantom song downloads. Exact-build
 UI/PWA checks also reject malformed room responses without losing the form.
@@ -503,8 +507,9 @@ Likely files: `src/services/partyAudioEngine.ts`, `src/composables/usePartyClock
   and clear required-guide versus optional-guide failure behavior.
 - [ ] P05.8 Enforce output-lease silence using audio scheduling and recovery guards;
   test a suspended old stage while a replacement is designated. Native rendering
-  guards now cover blocked tasks and suspended stage/publisher clocks; integrated
-  replacement and physical silence evidence remain open.
+  guards cover blocked tasks and suspended stage/publisher clocks. Integrated
+  built-app replacement passes 41/41 with two actual native outputs; physical
+  speaker/output-buffer silence evidence remains open.
 - [x] P05.9 Add player diagnostics with no credentials/audio capture in logs and
   distinguish acoustic measurements from calculated timing estimates.
 
@@ -715,7 +720,7 @@ Completed software checks do not close a hardware or acoustic gate.
 | A07 | Stage and phone guide run for five minutes | Measured p95 error meets supported-setup target | P01/P05 | Unrun |
 | A08 | Host pauses, seeks, resumes; old ready/ended packet arrives | One valid timeline; obsolete packet ignored | P05 | Software pass: [playback boundaries](server/ktv-playback.test.js) and [built-app journey](scripts/party-browser.test.mjs); physical timing open |
 | A09 | Optional guide fails; repeat with guide marked required | Guide-only recovery, then room pause in required case | P05 | Software pass: [guide policy](server/ktv-playback.test.js) and [built-app recovery](scripts/party-browser.test.mjs); physical output open |
-| A10 | Stage loses connectivity and another device takes over | Old lease stops output before replacement becomes audible | P05/P06 | Native isolated stage/publisher expiry passes 15/15, including blocked tasks and suspended render clocks; integrated replacement and physical silence remain open; [fixture](scripts/party-audio-lease-browser.test.mjs) |
+| A10 | Stage loses connectivity and another device takes over | Old lease stops output before replacement becomes audible | P05/P06 | Isolated native expiry 15/15; integrated native blocked-task/suspended-clock replacement 41/41 with actual backend and two outputs; physical output/network acceptance open; [replacement fixture](scripts/party-stage-replacement-browser.test.mjs) |
 | A11 | Backend restarts during a song | Paused checkpoint, new clock ID, explicit readiness/resume | P06 | Software pass: restart/checkpoint and new generation in [playback tests](server/ktv-playback.test.js) |
 | A12 | Host disconnects with/without co-host | Documented transfer or pause-before-next policy | P06 | Software pass: grace, co-host choice, return and rollback in [playback tests](server/ktv-playback.test.js) |
 | A13 | Kick member with several devices; reuse grants and tickets | All revoked room capabilities fail | P06 | Software pass: real socket revocation and paired-device scope in [room tests](server/ktv.test.js) |
@@ -790,7 +795,9 @@ prototype result is not automatically a release result.
 
 Current preview is frontend `ca6c757`, backend `f58a8f3`; rooms and private guide
 are enabled, public media remains disabled. Native lease guards pass blocked-task
-and suspended-render-clock output checks 15/15. Exact UI 45/45, PWA 10/10,
+and suspended-render-clock output checks 15/15. Integrated replacement passes
+41/41 with two owned native browser outputs and the actual built app/backend.
+Physical replacement remains open. Exact UI 45/45, PWA 10/10,
 full clean streaming/recovery/handover 53/53 and public release 21/21 pass.
 Clean native A/V passes all 40 transitions (p95 59.73 ms, maximum 99.50 ms).
 
@@ -803,7 +810,7 @@ Do not ship these fixture-only controllers from partial evidence.
 Measure A/V timing through handover, longer outages and sustained representative
 load, including the full device ceiling and nominal frame rate.
 
-Complete acoustic stage/guide and microphone/backing alignment, stale-stage
+Complete acoustic stage/guide and microphone/backing alignment, physical stale-stage
 silence at the replacement boundary, Android/iOS/Safari, background/lock,
 output-switch/Bluetooth, field-installed PWA and real Wi-Fi/LTE acceptance.
 Synthetic EC2 runs do not close physical or access-network gates. Enable
@@ -2003,6 +2010,57 @@ Design/decision changes:
 Next action:
 ```
 
+### 2026-10-02 — Integrated native stage replacement verified
+
+The unchanged deployed application build `ca6c757` now has an integrated native
+replacement regression, [party-stage-replacement-browser.test.mjs](scripts/party-stage-replacement-browser.test.mjs).
+It serves the actual built app with an isolated real room backend/database and
+uses two separate Chrome 137.0.7151.68 processes/private Pulse outputs on the
+same EC2 client. A third room page keeps the host controller present. No live
+rooms, production identities, app audio clocks or output timestamps are modified.
+
+**41/41 pass**, `/tmp/ktv-integrated-stage-replacement-final.log`:
+
+- The old stage plays a real 44.1 kHz tone, then its page task blocks for 22 seconds.
+  Both running-render-clock and actual suspend/resume cases are exercised.
+- Replacement designation preserves the selected song/singer/performance and
+  paused checkpoint under a new generation. The actual replacement decodes audio.
+- An early start returns `OUTPUT_STOPPING`. The default 8,000 ms lease,
+  500 ms safety margin and 2,000 ms countdown remain unchanged.
+- The replacement becomes audible while old-page callbacks are still blocked.
+  Measured quiet-to-new-output gaps are **2,613.10 ms** (running clock) and
+  **10,032.70 ms** (suspended clock). Subtracting the conservative DSP/capture
+  timing uncertainty of **66.45 ms** still preserves the 500 ms margin.
+- In the running-clock case old output becomes quiet approximately **36.92 ms
+  before** the estimated lease deadline. The suspension case freezes native
+  `currentTime` exactly, then advances **10.02 seconds** after resume while the
+  page remains blocked. The old sink has RMS **0** on all 10 resume heartbeats;
+  the new sink stays audible on all 10 corresponding heartbeats in each case.
+- Queued old-page callbacks and an explicitly replayed stale heartbeat cannot
+  regain current authority or reactivate the old output. Browser exceptions: zero.
+- Edge analysis uses a 23.22 ms window/10 ms hop and signed native capture latency;
+  capture queue/call bounds remain enforced. PCM stays on the owned remote client.
+
+Activity measurement is opt-in in the remote fixture. Its .005 RMS quiet threshold
+describes digital fixture output, not physical acoustic silence. Existing frequency
+marker behavior remains unchanged when activity observation is disabled. Observer/
+receiver fixtures pass **14/14**, including **5/5 Python PCM checks**:
+`/tmp/ktv-integrated-stage-replacement-final-fixtures.log`. The first wrapper run
+failed solely because it still expected three Python tests after two were added;
+the explicit expected count is corrected. Initial browser proof was 39/39 before
+adding conservative gap uncertainty and post-callback output observations.
+
+This closes the integrated native software replacement gap. P05.8/A10 physical
+speaker/output-buffer and real-network acceptance remain open. The app/backend,
+production flags, public release, prepared SFU policy and rollback tag are unchanged;
+no deployment is needed for these fixture/documentation changes. UDP timing/source
+drift, timing through streaming handover, physical audio alignment, mobile/Safari/
+field PWA, representative capacity and Wi-Fi/LTE release gates remain open.
+Final cleanup verifies no owned remote profiles/processes or CDP listeners, and
+no local CDP listeners. A fresh public read confirms the party entry and exact
+`ca6c757` app/CSS/worklet bytes. The original main rollback tag still resolves to
+`6e8504bf0c68e7253286e3c7a1db2b5bd8c1b718`.
+
 ### Release record
 
 | Release | Build/commit | Environment/URL | Date | Gates and evidence | Remaining scope |
@@ -2031,6 +2089,6 @@ Next action:
 | Capture cadence preview | Frontend `ea986cd` (`main-1zcZhmf9.js`), backend `e88783a` | `https://music.micstec.com/party` | 2026-10-02 | Party 84/84, fixture 9/9, exact UI 42/42, PWA 8/8, native clean 40-transition journey 26/26, public 18/18; P06.7 software acceptance complete | Media disabled; impaired A/V still fails; physical/mobile, longer outages, representative/multi-room load and distinct networks open |
 | Lyric screen source preview | Frontend/backend `f58a8f3` (`main-CedlFAY-.js`); matching worker image `ktv-party-media:f58a8f3` | `https://music.micstec.com/party` | 2026-10-02 | Party 84/84, backend 128/128, exact UI 42/42, PWA 8/8, clean native 40-transition journey 26/26, supervisor 9/9, public direct/TLS-TURN 14/14, public release 18/18 | Media disabled, no persistent SFU; TCP/UDP impaired timing fails, intermittent PWA reload remains unresolved; physical/mobile, longer outages, representative/multi-room load and distinct networks open |
 | PWA activation preview | Frontend `fe4f216` (`main-9fvbdGW2.js`), backend `f58a8f3` | `https://music.micstec.com/party` | 2026-10-02 | Exact UI 42/42, PWA 10/10, clean native 40-transition journey 26/26, public release 18/18; party 84/84, update 3/3, catalog 2/2, fixture 12/12 | Media disabled, no persistent SFU; UDP impaired timing fails; physical/mobile, installed PWA, handover timing, representative capacity and distinct networks open |
-| Native lease guard preview | Frontend `ca6c757` (`main-CgZ1TyOk.js`, `partyLeaseGuard.worklet-5od8dAEf.js`), backend `f58a8f3` | `https://music.micstec.com/party` | 2026-10-02 | Party 90/90; exact UI 45/45, PWA 10/10, native lease 15/15, full clean 40-transition streaming/recovery/handover 53/53, public release 21/21; fixture 13/13 | Media disabled, no persistent SFU; UDP timing and impaired source drift, integrated/physical replacement, mobile/field PWA, timing through handover, representative capacity and distinct networks remain open |
+| Native lease guard preview | Frontend `ca6c757` (`main-CgZ1TyOk.js`, `partyLeaseGuard.worklet-5od8dAEf.js`), backend `f58a8f3` | `https://music.micstec.com/party` | 2026-10-02 | Party 90/90; exact UI 45/45, PWA 10/10, native lease 15/15, full clean 40-transition streaming/recovery/handover 53/53, public release 21/21; post-release integrated replacement 41/41 and fixture 14/14 | Media disabled, no persistent SFU; UDP timing and impaired source drift, physical replacement, mobile/field PWA, timing through handover, representative capacity and distinct networks remain open |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |

@@ -475,6 +475,14 @@ stage replacement, mobile/field PWA, impaired A/V and source drift, handover tim
 distinct networks and representative capacity remain open. Receiver buffering
 experiments are fixture-only; prepared SFU policy is unchanged.
 
+Post-release integrated native replacement also passes **41/41** on this unchanged
+build. The real isolated backend and two independently captured Chrome outputs
+verify early-start refusal, preserved checkpoint/generation, no measured output
+overlap through blocked tasks and actual render suspension/resume, and stale lease
+replay rejection. Observer fixtures pass **14/14**, including five PCM checks.
+Evidence is in the implementation tracker. This adds software evidence; physical
+replacement and the other online release gates above remain open.
+
 Before enabling online rooms publicly, record these results:
 
 - HTTPS/WSS admission through the gateway, while raw signaling/admin ports remain private.

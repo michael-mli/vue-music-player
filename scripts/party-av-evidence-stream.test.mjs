@@ -44,3 +44,16 @@ test('unexpected evidence channel loss fails instead of reusing stale output eve
   await unavailable.stream.close()
   assert.deepEqual(unavailable.child.kills, [])
 })
+
+test('activity evidence retains quiet edges without inventing frequency markers', async () => {
+  const { child, stream } = fixture()
+  child.stdout.write('{"audible":true,"time":1000,"rmsAmplitude":0.04}\n')
+  child.stdout.write('{"audible":false,"time":2000,"rmsAmplitude":0,"pcm":"discard"}\n')
+  assert.deepEqual(await stream.audioEvidence(), [
+    { time: 1000, audible: true, rmsAmplitude: 0.04 },
+    { time: 2000, audible: false, rmsAmplitude: 0 },
+  ])
+  child.stdout.write('{"audible":"false","time":2001}\n')
+  await assert.rejects(stream.audioEvidence, /AV_EVIDENCE_INVALID_EVENT/)
+  await stream.close()
+})

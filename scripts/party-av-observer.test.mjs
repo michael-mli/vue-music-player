@@ -39,7 +39,7 @@ test('RTC timeline distinguishes unsupported buffering hints and refuses unbound
 
 test('actual output detector passes PCM edge timing and interrupted-input tests', async () => {
   const {stderr}=await promisify(execFile)('python3',['scripts/party-av-pulse-capture.test.py'],{timeout:10000})
-  assert.match(stderr,/Ran 3 tests/);assert.match(stderr,/OK/)
+  assert.match(stderr,/Ran 5 tests/);assert.match(stderr,/OK/)
 })
 
 test('measurement pairs matching states within one clock domain and reports signed skew', () => {

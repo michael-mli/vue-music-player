@@ -60,6 +60,37 @@ class OutputDetectorTests(unittest.TestCase):
         self.assertEqual(len(edges), 1)
         self.assertTrue(edges[0]['on'])
 
+    def test_activity_measures_quiet_start_stop_and_reactivation(self):
+        # A non-marker tone proves silence detection does not depend on 440/660.
+        values = [0 if int(frame / capture.RATE) % 2 == 0 else
+                  .06 * math.sin(2 * math.pi * 900 * frame / capture.RATE)
+                  for frame in range(capture.RATE * 5)]
+        results = []
+        for sizes in [[capture.FRAGMENT], [1, 7, 341, 440, 29, 1200]]:
+            detector, edges, offset, part = capture.FragmentDetector(activity=True), [], 0, 0
+            while offset < len(values):
+                chunk = values[offset:offset + sizes[part % len(sizes)]]
+                edges.extend(detector.feed(chunk, 5000 + offset * 1000 / capture.RATE))
+                offset += len(chunk)
+                part += 1
+            results.append([edge for edge in edges if 'audible' in edge])
+        self.assertEqual([edge['audible'] for edge in results[0]], [False, True, False, True, False])
+        self.assertTrue(results[0][0]['initial'])
+        for expected, actual in zip(*results):
+            self.assertAlmostEqual(expected['time'], actual['time'], places=6)
+        for index, edge in enumerate(results[0][1:], 1):
+            self.assertFalse(edge['initial'])
+            self.assertLess(abs(edge['time'] - (5000 + index * 1000)), 35)
+        self.assertEqual(detector.last_magnitudes['rmsAmplitude'], 0)
+
+    def test_activity_is_opt_in_and_does_not_change_frequency_edges(self):
+        values = [.06 * math.sin(2 * math.pi * 440 * frame / capture.RATE)
+                  for frame in range(capture.RATE)]
+        normal = capture.FragmentDetector().feed(values, 5000)
+        observed = capture.FragmentDetector(activity=True).feed(values, 5000)
+        self.assertEqual(normal, [edge for edge in observed if 'on' in edge])
+        self.assertEqual(len([edge for edge in observed if edge.get('audible')]), 1)
+
 
 if __name__ == '__main__':
     unittest.main()
