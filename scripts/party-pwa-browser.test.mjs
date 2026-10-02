@@ -6,8 +6,10 @@ import { once } from 'node:events'
 import path from 'node:path'
 import WebSocket from '../server/node_modules/ws/wrapper.mjs'
 
-const port = Number(process.env.CHROME_DEBUG_URL?.split(':').at(-1) || 9231)
+const port = Number(process.env.CHROME_DEBUG_URL ? new URL(process.env.CHROME_DEBUG_URL).port : 9231)
+assert.ok(Number.isInteger(port) && port > 0 && port <= 65535, 'Invalid owned Chrome debugging port')
 const appRoot = path.resolve('dist'), pending = new Map()
+const failures = [], requests = new Map()
 let nextId = 0, passed = 0, browser, browserContextId, sessionId, server
 let roomsEnabled = true
 const check = (value, label) => { assert.ok(value, label); passed++; console.log(`PASS ${label}`) }
@@ -69,14 +71,27 @@ try {
   const info = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json()
   browser = new WebSocket(info.webSocketDebuggerUrl); await once(browser, 'open')
   browser.on('message', raw => {
-    const result = JSON.parse(raw); if (!result.id) return
+    const result = JSON.parse(raw)
+    if (result.method === 'Network.requestWillBeSent' && result.sessionId === sessionId) {
+      // Fixture paths only; omit queries, headers, bodies and credentials.
+      const url = new URL(result.params.request.url)
+      if (url.origin === origin) requests.set(result.params.requestId, url.pathname)
+      if (requests.size > 128) requests.delete(requests.keys().next().value)
+    }
+    if (result.method === 'Network.loadingFailed' && result.sessionId === sessionId && failures.length < 16) {
+      failures.push({ path: requests.get(result.params.requestId), type: result.params.type, error: result.params.errorText })
+    }
+    if (result.method === 'Runtime.exceptionThrown' && result.sessionId === sessionId && failures.length < 16) {
+      failures.push({ exception: result.params.exceptionDetails.text })
+    }
+    if (!result.id) return
     const item = pending.get(result.id); if (!item) return
     pending.delete(result.id); result.error ? item.reject(new Error(result.error.message)) : item.resolve(result.result)
   })
   ;({ browserContextId } = await cdp('Target.createBrowserContext', {}, null))
   const { targetId } = await cdp('Target.createTarget', { browserContextId, url: 'about:blank' }, null)
   ;({ sessionId } = await cdp('Target.attachToTarget', { targetId, flatten: true }, null))
-  await cdp('Page.enable'); await cdp('Runtime.enable')
+  await cdp('Page.enable'); await cdp('Runtime.enable'); await cdp('Network.enable')
   await cdp('Page.addScriptToEvaluateOnNewDocument', { source: "localStorage.setItem('auth_token','3'); localStorage.setItem('language','en');" })
   await cdp('Page.navigate', { url: origin + '/party' })
   await poll(() => evaluate("!!document.getElementById('party-room-name')"), 'built party entry opens')
@@ -122,12 +137,16 @@ try {
 } catch (error) {
   const state = await evaluate(`(async () => {
     const registration = await navigator.serviceWorker?.getRegistration();
-    return { timeOrigin: performance.timeOrigin, controller: navigator.serviceWorker?.controller?.scriptURL,
+    return { timeOrigin: performance.timeOrigin, path: location.pathname, readyState: document.readyState,
+      appChildren: document.querySelector('#app')?.childElementCount,
+      text: document.body.innerText.slice(0,400),
+      controller: navigator.serviceWorker?.controller?.scriptURL,
       active: registration?.active?.state, waiting: registration?.waiting?.state, installing: registration?.installing?.state,
       entry: !!document.getElementById('party-room-name'),
       updateButton: !![...document.querySelectorAll('button')].find(item=>item.textContent.trim()==='Update') };
   })()`).catch(() => null)
   console.error('PWA failure state:', JSON.stringify(state))
+  console.error('PWA fixture failures:', JSON.stringify(failures))
   throw error
 } finally {
   if (browser?.readyState === WebSocket.OPEN && browserContextId) await cdp('Target.disposeBrowserContext', { browserContextId }, null).catch(() => {})

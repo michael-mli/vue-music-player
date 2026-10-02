@@ -9,10 +9,13 @@ Design reference: [ktv_party.md](ktv_party.md)
 Implemented contracts: [ktv_party_protocol.md](ktv_party_protocol.md)
 
 Current status: The durable-room preview is deployed at
-`https://music.micstec.com/party` with frontend `ea986cd`, backend implementation
-`e88783a` (`main-1zcZhmf9.js`, `main-D0gBov56.css`). Online media remains disabled.
-The lyric capture cadence fix is deployed; clean sustained native A/V passes
-40 transitions, with p95 **57.30 ms**. Impaired timing still fails.
+`https://music.micstec.com/party` with frontend/backend `f58a8f3`
+(`main-CedlFAY-.js`, `main-D0gBov56.css`). Online media remains disabled.
+Lyric capture cadence and authorized screen-content classification are deployed;
+clean sustained native A/V passes 40 transitions, with p95 **58.48 ms**.
+Impaired timing still fails. Matching worker image `ktv-party-media:f58a8f3`
+passes supervisor and public direct/TLS-TURN revocation checks; no persistent
+media container is running.
 Output lease renewal and bounded provider-readiness retries are deployed.
 Continuous TCP/UDP impairment passes functional audience recovery and full hybrid
 handovers; shared receiver CNAME/MSID passes. Impaired A/V timing, sustained native
@@ -1660,6 +1663,74 @@ delay policy is added to the app. Next measurement uses the screen source under
 continuous TCP delay/jitter with native receiver defaults, to separate added loss
 from ordered transport impairment.
 
+### 2026-10-02 — Screen-content release verification and TCP timing diagnosis
+
+Native continuous TCP run `/tmp/ktv-lyric-source-tcp-av.log`, exit 1, completes
+functional recovery and hybrid handover, then fails unchanged timing acceptance.
+Baseline six matched pairs, no unmatched edges: p95/max **103.00 ms**. Impaired
+**40 matched pairs**, no unmatched edges: absolute skew p50 **67.99 ms**,
+p95 **257.96 ms**, maximum **392.66 ms**. Receiver reports zero packet loss and
+NACKs, four video freezes, and interval mean audio/video buffer residence
+**204.7/268.3 ms**. Source preserves **1280×720**, but encoded frame rate varies
+**7–26 fps** after the TCP profile is applied, versus 25 fps at baseline.
+This is a source cadence limitation as well as a timing failure.
+
+The worst pair has signed skew **−392.66 ms** (video before audio); later pairs
+include approximately **+214 ms** (video after audio). Receiver video arrival to
+display and native sender-domain estimated playout timestamps vary across the
+same interval. These are diagnostics, not an independent lyric clock or proof of
+physical output timing. Packet repair alone cannot explain this TCP failure.
+Next timing investigation must distinguish source capture/encoding, native audio
+buffer convergence and native A/V synchronization. Neither this result nor the
+incomplete 500 ms experiment justifies a production fixed receiver delay.
+
+Exact committed frontend/backend **`f58a8f3`** is deployed at the public party URL,
+assets **`main-CedlFAY-.js` / `main-D0gBov56.css`**. Matching media image is tagged
+`ktv-party-media:f58a8f3` and `ktv-party-media:lyric-source`, local image ID
+`sha256:8c5ad85c703d975f77ed63fca30c367973be503d665f988308b9a5f40bf3ad11`.
+All four shipped gateway/ICE/worker/supervisor file SHA-256 hashes match repository
+files. Supervisor **9/9** and public remote direct/trusted TLS-TURN/revocation
+**14/14** pass (`/tmp/ktv-lyric-source-supervisor.log`,
+`/tmp/ktv-lyric-source-public-transport.log`); neither run uses production room
+policy or changes the persistent media flag.
+
+Exact release build/type check, UI **42/42**, PWA **8/8**, clean native room journey
+**26/26** and public release **18/18** pass. Evidence:
+`/tmp/ktv-lyric-source-release-build.log`,
+`/tmp/ktv-lyric-source-release-ui-final.log`,
+`/tmp/ktv-lyric-source-release-pwa-diagnostic.log`,
+`/tmp/ktv-lyric-source-release-clean-av.log`,
+`/tmp/ktv-lyric-source-public-release.log`. Clean **40 matched transitions**, no
+unmatched edges: absolute skew p50 **28.58 ms**, p95 **58.48 ms**, maximum
+**75.30 ms**; source-to-presented-video p95 **114.90 ms**, maximum **125.80 ms**.
+Party units **84/84** and backend **128/128** remain the source-contract evidence
+recorded above. Physical/mobile and distinct access-network acceptance remain open.
+
+Two initial UI launches supplied the CDP base URL where that fixture expects
+`/json/version` and failed before any UI check; failed logs are retained as
+`/tmp/ktv-lyric-source-release-ui.log` and
+`/tmp/ktv-lyric-source-release-ui-retry.log`. The corrected launch passes 42 checks.
+The first subsequent PWA run fails at worker-controlled entry reload
+(`/tmp/ktv-lyric-source-release-pwa-final.log`); the worker is activated but the
+entry is absent. A fresh owned browser passes all eight checks with the same app
+build. The cause of that intermittent reload failure remains unresolved.
+PWA fixture diagnostics now retain bounded own-origin failed request paths/types,
+generic runtime failure text and synthetic page state, without queries, headers
+or credentials. Its CDP setting accepts the base URL or `/json/version` URL.
+No acceptance deadline, state assertion or cache exclusion is weakened.
+
+Predeployment backup **`/home/mli/ktv-party-lyric-source-predeploy.kih_i_94`** holds
+the consistent SQLite backup, prior frontend archive and private backend config;
+directory mode 0700, files 0600, SQLite integrity/foreign keys pass. The previous
+release was frontend `ea986cd`, backend `e88783a`. Backend restart and atomic
+entry/worker publication occur with zero preparing/scheduled/playing rooms. A
+health probe initially used unrelated port 3003 and halted entry publication;
+the actual `karaoke-auth` listener is **127.0.0.1:3101**, where health and flags
+pass before publication. No unrelated service is changed. Old hashed assets
+are retained. Public HTTP/WSS, asset bytes/source SHA, timing defaults, SQLite
+integrity/foreign keys and no-account-creation checks pass; the probe room closes.
+Rooms/guide remain enabled, media disabled, and no persistent SFU is started.
+
 ```text
 Date:
 Phase and item IDs:
@@ -1699,5 +1770,6 @@ Next action:
 | Output lease correction preview | Frontend `29a62cf` (`main-_4MVKaX7.js`), app fix `301d5c3`, backend `9b74e8f` | `https://music.micstec.com/party` | 2026-10-02 | Party 73/73; candidate UI 38/38, PWA 8/8 and no-impairment A/V/reconnect/hybrid 51/51; exact public 18/18 | TCP/UDP impaired A/V fails; media disabled; physical/mobile, distinct networks, continuing impairment/handover and sustained representative load open |
 | Provider confirmation preview | Frontend/backend `e88783a` (`main-CXsosxfb.js`) | `https://music.micstec.com/party` | 2026-10-02 | Backend 127/127, party 81/81, exact UI 38/38, PWA 8/8, continuous TCP handover 63/63, same-source UDP candidate 65/65, public 18/18 | Media disabled; sustained native drift/A/V, physical/mobile, longer outages, representative/multi-room load and distinct networks open; 59-audience setup failed |
 | Capture cadence preview | Frontend `ea986cd` (`main-1zcZhmf9.js`), backend `e88783a` | `https://music.micstec.com/party` | 2026-10-02 | Party 84/84, fixture 9/9, exact UI 42/42, PWA 8/8, native clean 40-transition journey 26/26, public 18/18; P06.7 software acceptance complete | Media disabled; impaired A/V still fails; physical/mobile, longer outages, representative/multi-room load and distinct networks open |
+| Lyric screen source preview | Frontend/backend `f58a8f3` (`main-CedlFAY-.js`); matching worker image `ktv-party-media:f58a8f3` | `https://music.micstec.com/party` | 2026-10-02 | Party 84/84, backend 128/128, exact UI 42/42, PWA 8/8, clean native 40-transition journey 26/26, supervisor 9/9, public direct/TLS-TURN 14/14, public release 18/18 | Media disabled, no persistent SFU; TCP/UDP impaired timing fails, intermittent PWA reload remains unresolved; physical/mobile, longer outages, representative/multi-room load and distinct networks open |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |

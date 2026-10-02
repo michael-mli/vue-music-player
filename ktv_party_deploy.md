@@ -388,7 +388,7 @@ Backend restarted with zero active audio rooms. Rollback backup:
 Rooms/guide stay enabled and media disabled. Failed impaired timing and the
 59-audience setup failure remain open in the tracker.
 
-Current frontend preview is **`ea986cd`**, assets **`main-1zcZhmf9.js` /
+Capture cadence frontend preview was **`ea986cd`**, assets **`main-1zcZhmf9.js` /
 `main-D0gBov56.css`**; backend implementation remains **`e88783a`**, no restart.
 Capture preserves its 25 fps cadence and uses manual frame requests when supported.
 Party units 84/84, A/V fixture units 9/9, exact UI 42/42, PWA 8/8, native clean
@@ -401,6 +401,34 @@ still fail; this is not an online beta. Evidence is in the implementation tracke
 The fixture now follows timing events over one bounded owned SSH channel;
 `KTV_ROOM_TEST_PLAYOUT_MAX_MS` changes only the isolated SFU (50–500, default 500).
 It changes neither prepared production policy nor the timing acceptance thresholds.
+
+Current frontend/backend preview is **`f58a8f3`**, assets
+**`main-CedlFAY-.js` / `main-D0gBov56.css`**. Lyrics now use the authorized
+`screen_share` source, explicitly retaining 1280×720, 350 kbit/s and 25 fps.
+JWT sources, gateway validation, provider readiness and audience filtering share
+that contract. Upgrade these components together with media disabled and no
+active publisher. Matching worker image **`ktv-party-media:f58a8f3`** has local
+image ID `sha256:8c5ad85c703d975f77ed63fca30c367973be503d665f988308b9a5f40bf3ad11`;
+its four control source file hashes match the committed repository. Supervisor
+9/9 and public direct/trusted TLS-TURN/revocation 14/14 pass on isolated policy.
+No persistent SFU is started.
+
+Exact build/type check, UI 42/42, PWA 8/8, clean native 40-transition journey
+26/26 and public release 18/18 pass; party units 84/84 and backend 128/128 pass.
+Clean skew p95 **58.48 ms**, maximum **75.30 ms**, no unmatched edges. TCP/UDP
+impaired timing remains a failure. The earlier PWA reload failure is retained;
+a fresh owned browser passes on the same app build, and bounded fixture diagnostics
+help investigate recurrence. This is a preview with room/guide enabled and media
+disabled. Physical, mobile, distinct-network and capacity gates remain open.
+
+Rollback backup **`/home/mli/ktv-party-lyric-source-predeploy.kih_i_94`** includes
+consistent SQLite, previous frontend and private backend configuration, with
+integrity/foreign keys verified. Previous frontend/backend were `ea986cd`/`e88783a`.
+Old hashed assets remain available; backend restart and atomic entry/worker
+publication used zero active audio rooms. Actual backend health is
+**`http://127.0.0.1:3101/api/health`**; do not infer this port from other applications.
+Public HTTP/WSS, feature flags, exact asset bytes/SHA, SQLite and temporary-room
+cleanup pass. See the implementation tracker for individual evidence paths.
 
 Before enabling online rooms publicly, record these results:
 
