@@ -113,3 +113,13 @@ test('user Stop cancels an in-flight audio enable before its late reply can play
   const enabling = f.transport.enableAudio(); await f.transport.close(); resolve(); await enabling; await settled()
   assert.equal(f.elements.size, 0); assert.equal(audio.element, null); assert.equal(f.ended, 0)
 })
+
+test('performance audio and lyric video publish in the same receiver synchronization stream', async t=>{
+  const f=await fixture(t,'publisher'), published=[]
+  f.room.localParticipant={async publishTrack(track,options){published.push({track,options})}}
+  const mix={kind:'audio'},lyrics={kind:'video'}
+  await f.transport.publish({getAudioTracks:()=>[mix]},{getVideoTracks:()=>[lyrics]})
+  assert.deepEqual(published.map(item=>item.track),[mix,lyrics])
+  assert.deepEqual(published.map(item=>item.options.stream),['performance','performance'])
+  assert.deepEqual(published.map(item=>item.options.name),['performance-mix','performance-lyrics'])
+})
