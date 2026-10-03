@@ -608,9 +608,11 @@ post-buffer receiver graph now passes 20 isolated native checks with that target
 including blocked/frozen/resumed receiver clocks and rejected late renewal. The
 new admitted listener output API binds the exact ready publisher nonce/deadline;
 its clean app integration/recovery/handover passes 64/64 with three 40-pair
-phases. Buffered stalled/early-stop handovers still need server reservations for
-already issued receiver deadlines; that safety requirement and full acceptance
-remain open. Deploy frontend and
+phases. Backend reservations now preserve already issued receiver deadlines
+across early source stop, provider removal and scheduled transitions. Actual
+playback/grant authority with direct native WebRTC passes 31 early-stop checks,
+including blocked and frozen/resumed listener clocks and sustained separation
+of old/new outputs. This is not full SFU fault or physical acceptance. Deploy frontend and
 backend together for this contract, validate old-client behavior before enabling
 media, and keep the feature disabled until full gates pass. Source guards, expiry
 margins and all measured quality/timing gates remain unchanged.

@@ -14,7 +14,8 @@ export function registerKtvMediaRoutes(app, { db, clock, playback, realtime, con
     throw new Error('KTV media control must use a private loopback URL and a strong shared secret')
   }
   const grants = createKtvMediaGrants({ db, clock, apiKey: config.apiKey, apiSecret: config.apiSecret,
-    getPlayback: id => playback.snapshot(id), getDevices: id => playback.presence(id).devices })
+    getPlayback: id => playback.snapshot(id), getDevices: id => playback.presence(id).devices,
+    reserveReceiveOutput: permit => playback.reserveReceiveOutput(permit) })
   const expected = Buffer.from(`Bearer ${config.controlSecret}`)
   async function control(path, body) {
     try {

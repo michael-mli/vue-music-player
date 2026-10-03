@@ -8,12 +8,21 @@ import { createHash } from 'node:crypto'
 import ts from 'typescript'
 import WebSocket from '../server/node_modules/ws/wrapper.mjs'
 import { createOwnedRemoteBrowser } from './party-remote-browser.mjs'
+import { createReceiverAuthorityFixture } from './party-receiver-authority-fixture.mjs'
 
 const receiverTargetMs = process.env.KTV_LEASE_TEST_RECEIVER_TARGET_MS === undefined ? null : Number(process.env.KTV_LEASE_TEST_RECEIVER_TARGET_MS)
 assert.ok(receiverTargetMs === null || Number.isInteger(receiverTargetMs) && receiverTargetMs >= 0 && receiverTargetMs <= 1000,
   'Native receiver buffering experiment requires a 0–1000 ms target')
 assert.ok([undefined, '0', '1'].includes(process.env.KTV_LEASE_TEST_RECEIVER_GUARD), 'Receiver guard must be explicitly 0 or 1')
 const receiverGuard = process.env.KTV_LEASE_TEST_RECEIVER_GUARD === '1'
+assert.ok([undefined, '0', '1'].includes(process.env.KTV_LEASE_TEST_RECEIVER_HANDOVER), 'Receiver handover fault must be explicitly 0 or 1')
+const receiverHandover = process.env.KTV_LEASE_TEST_RECEIVER_HANDOVER === '1'
+assert.ok([undefined, '0', '1'].includes(process.env.KTV_LEASE_TEST_RECEIVER_HANDOVER_ONLY), 'Handover-only selection must be explicitly 0 or 1')
+const handoverOnly = process.env.KTV_LEASE_TEST_RECEIVER_HANDOVER_ONLY === '1'
+assert.ok(!handoverOnly || receiverHandover, 'Handover-only selection requires receiver handover faults')
+assert.ok(!receiverHandover || receiverGuard && receiverTargetMs === 1000,
+  'Receiver handover fault requires the output guard and actual 1000-ms native buffer target')
+let authority
 
 const source = await fs.readFile('src/services/partyAudioEngine.ts', 'utf8')
 const compile = text => ts.transpileModule(text, {
@@ -59,16 +68,16 @@ const html = `<!doctype html><title>Owned native lease fixture</title><script ty
     if (!graph.renew(permit,clock) || !encodedLease.renew(permit,clock)) throw new Error('PUBLISH_LEASE_REJECTED');
     return { start:performance.timeOrigin+now,expiry:performance.timeOrigin+leaseEnd };
   };
-  window.start = async (profile) => {
+  window.start = async (profile, binding={clockId:'owned-clock',performanceId:'owned-performance',generation:1}) => {
     await engine.enable();
     context.addEventListener('statechange', () => stateEvents.push({ state: context.state, time: performance.timeOrigin + performance.now() }));
     const now = performance.now(), offset = 5000;
     window.leaseEnd = now + 3500;
-    const clock = { clockId: 'owned-clock', status: 'healthy', offsetMs: offset, uncertaintyMs: 5 };
-    const playback = { state: 'scheduled', generation: 1, clockId: clock.clockId, performanceId: 'owned-performance',
+    const clock = { clockId: binding.clockId, status: 'healthy', offsetMs: offset, uncertaintyMs: 5 };
+    const playback = { state: 'scheduled', generation: binding.generation, clockId: clock.clockId, performanceId: binding.performanceId,
       entryId: 'owned-entry', positionMs: 0, anchorServerMs: now + offset + 200, durationMs: 60000,
       pendingTransition: null, assets: { instrumental: ${JSON.stringify(asset)}, original: ${JSON.stringify(asset)} } };
-    const lease = { id: 'owned-lease', generation: 1, clockId: clock.clockId, performanceId: playback.performanceId,
+    const lease = { id: 'owned-lease', generation: binding.generation, clockId: clock.clockId, performanceId: playback.performanceId,
       expiresServerMs: leaseEnd + offset, sequence: 1 };
     if (profile === 'stage') {
       await engine.prepare(${JSON.stringify(asset)});
@@ -78,7 +87,7 @@ const html = `<!doctype html><title>Owned native lease fixture</title><script ty
       tone.frequency.value = 440; gain.gain.value = .15; tone.connect(gain); gain.connect(capture); tone.start();
       window.publisherTone = tone;
       window.graph = new PartyPublishGraph(context, context.createGain(), capture.stream,
-        { clockId: clock.clockId, performanceId: playback.performanceId, generation: 1 }, 'clean-mic', false);
+        { clockId: clock.clockId, performanceId: playback.performanceId, generation: binding.generation }, 'clean-mic', false);
       // Negotiate an independent receiver while the publish gate is still closed.
       // A same-context loopback can retain samples when that consumer is frozen.
     }
@@ -88,7 +97,10 @@ const html = `<!doctype html><title>Owned native lease fixture</title><script ty
 </script>`
 const sockets = new Set(), server = http.createServer((req, res) => {
   res.setHeader('Cache-Control', 'no-store')
-  if (req.url === '/tone.wav') { res.setHeader('Content-Type', 'audio/wav'); res.end(bytes) }
+  if (req.url === '/authority/clock' && authority) {
+    res.setHeader('Content-Type', 'application/json');res.end(JSON.stringify({clockId:authority.clock.id,nowMs:authority.clock.nowMs()}))
+  }
+  else if (req.url === '/tone.wav') { res.setHeader('Content-Type', 'audio/wav'); res.end(bytes) }
   else if (modules[req.url]) { res.setHeader('Content-Type', 'text/javascript'); res.end(modules[req.url]) }
   else if (req.url === '/receiver') {
     res.setHeader('Content-Type', 'text/html')
@@ -132,7 +144,7 @@ async function receiverEvaluate(expression) {
   if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text)
   return result.result.value
 }
-async function connectPublisherReceiver() {
+async function connectPublisherReceiver(binding={clockId:'owned-clock',performanceId:'owned-performance',generation:1}, publisherIdentity='owned-publisher') {
   if (!receiverBrowser) {
     receiverBrowser = await createOwnedRemoteBrowser({ host:process.env.KTV_ROOM_TEST_SSH_HOST,
       knownHosts:process.env.KTV_ROOM_TEST_KNOWN_HOSTS,
@@ -165,7 +177,7 @@ async function connectPublisherReceiver() {
   const offer = await evaluate(`(async()=>{
     window.encodedLease?.close(); window.publisherPeer?.close();
     window.publisherPeer=new RTCPeerConnection(partyEncodedRTCConfiguration());
-    window.encodedLease = new PartyEncodedLease({clockId:'owned-clock',performanceId:'owned-performance',generation:1},()=>{});
+    window.encodedLease = new PartyEncodedLease(${JSON.stringify(binding)},()=>{});
     graph.stream.getTracks().forEach(track=>encodedLease.attach(publisherPeer.addTrack(track,graph.stream),'audio'));
     await publisherPeer.setLocalDescription(await publisherPeer.createOffer());
     await (${gather})(publisherPeer);return publisherPeer.localDescription.toJSON();
@@ -195,13 +207,126 @@ async function connectPublisherReceiver() {
     window.receiverContext=new AudioContext();await receiverContext.resume();await installPartyLeaseGuard(receiverContext);
     window.receiverGuardFailures=0;
     window.receiverGraph=new PartyReceiveGraph(receiverContext,receiverAudio.srcObject,
-      {publisherIdentity:'owned-publisher',clockId:'owned-clock',performanceId:'owned-performance',generation:1},
+      ${JSON.stringify({publisherIdentity,...binding})},
       ()=>receiverGuardFailures++);
   })()`)
   if (receiverTargetMs !== null) {
     const targets = await receiverEvaluate("receiverPeer.getReceivers().filter(receiver=>receiver.track.kind==='audio').map(receiver=>receiver.jitterBufferTarget)")
     assert.deepEqual(targets, [receiverTargetMs], 'Native publisher expiry fixture applies the actual receiver buffering target')
     console.log('Native publisher expiry receiver target:', receiverTargetMs)
+  }
+}
+async function authorityClock(evaluatePage) {
+  const clock = await evaluatePage(`(async()=>{
+    const samples=[];
+    for(let i=0;i<5;i++){
+      const before=performance.now(),reply=await(await fetch('/authority/clock',{cache:'no-store'})).json(),after=performance.now();
+      samples.push({clockId:reply.clockId,status:'healthy',offsetMs:reply.nowMs-(before+after)/2,uncertaintyMs:(after-before)/2});
+    }
+    return samples.sort((a,b)=>a.uncertaintyMs-b.uncertaintyMs)[0];
+  })()`)
+  assert.ok(clock.clockId===authority.clock.id && clock.uncertaintyMs<=80, 'Native fixture measures a usable actual backend clock')
+  return clock
+}
+async function receiverHandoverFault(mode) {
+  authority = await createReceiverAuthorityFixture()
+  const label = `receiver-early-stop/${mode}`
+  let renewTimer, renewTask=Promise.resolve(), renewing=false
+  const renewalErrors=[]
+  try {
+    const binding = await authority.start()
+    await evaluate(`start('publisher',${JSON.stringify(binding)})`)
+    const preliminary = await authority.authorize()
+    await connectPublisherReceiver(binding,preliminary.publisher.identity)
+    const sourceClock = await authorityClock(evaluate), receiverClock = await authorityClock(receiverEvaluate)
+    const granted = await authority.authorize()
+    assert.equal(granted.publisher.identity,preliminary.publisher.identity)
+    check(await evaluate(`graph.renew(${JSON.stringify(granted.publisher.permit)},${JSON.stringify(sourceClock)})&&
+      encodedLease.renew(${JSON.stringify(granted.publisher.permit)},${JSON.stringify(sourceClock)})`),
+      `${label}: native publisher uses an actual backend source permit`)
+    check(await receiverEvaluate(`receiverGraph.renew(${JSON.stringify(granted.permit)},${JSON.stringify(receiverClock)})`),
+      `${label}: native listener uses authority reserved by actual playback service`)
+    const timing = await receiverEvaluate(`({start:performance.timeOrigin+performance.now(),
+      expiry:performance.timeOrigin+${granted.permit.expiresServerMs}-${receiverClock.offsetMs}})`)
+    await poll(async()=> (await receiverBrowser.audioEvidence()).some(item=>item.captureHeartbeat&&item.time>=timing.start&&item.onAmplitude>.02),
+      'actual received old-source tone before early stop',2000)
+    const stalled = receiverEvaluate(`(()=>{
+      const before=receiverContext.currentTime,begin=performance.timeOrigin+performance.now();
+      ${mode==='suspend-task-stall'?'receiverContext.suspend();':''}
+      while(performance.timeOrigin+performance.now()<${timing.expiry}+750){}
+      const suspendedTime=receiverContext.currentTime,resume=performance.timeOrigin+performance.now();
+      ${mode==='suspend-task-stall'?'receiverContext.resume();':''}
+      const until=performance.now()+6500;while(performance.now()<until){}
+      return {before,suspendedTime,after:receiverContext.currentTime,begin,resume,finish:performance.timeOrigin+performance.now()};
+    })()`)
+    // Observe rejection even if another assertion fails before this task is
+    // awaited; owned-browser teardown may then reject the pending CDP request.
+    stalled.catch(()=>{})
+    // The received audio and its graph are left intact. Closing the native
+    // source proves its stop; the listener cannot process a snapshot meanwhile.
+    await evaluate(`(async()=>{encodedLease.close();publisherPeer.close();graph.close();publisherTone.stop();await engine.close();})()`)
+    const stopped = authority.stop()
+    check(stopped.lease.expiresServerMs<granted.permit.expiresServerMs,
+      `${label}: real source acknowledgment precedes the listener cutoff`)
+    check(stopped.lease.safeAfterServerMs>=granted.permit.expiresServerMs+authority.timing.outputMarginMs,
+      `${label}: acknowledged source stop retains listener authority plus safety margin`)
+    assert.throws(()=>authority.tryReplacement(),error=>error.code==='OUTPUT_STOPPING')
+    check(true,`${label}: backend blocks replacement while the listener page cannot run`)
+    await new Promise(resolve=>setTimeout(resolve,Math.max(0,stopped.lease.safeAfterServerMs-authority.clock.nowMs()-30)))
+    assert.throws(()=>authority.tryReplacement(),error=>error.code==='OUTPUT_STOPPING')
+    check(true,`${label}: backend still refuses output immediately before the reserved boundary`)
+    await poll(()=>authority.clock.nowMs()>=stopped.lease.safeAfterServerMs,'actual backend safe-after boundary',2000)
+    const replacement = authority.tryReplacement(), replacementPermit = await authority.replacementPermit()
+    check(replacement.lease.id!==granted.playback.lease.id,`${label}: replacement receives a fresh source lease`)
+    const newBinding={clockId:replacement.clockId,performanceId:replacement.performanceId,generation:replacement.generation}
+    await evaluate(`(async()=>{
+      await start('publisher',${JSON.stringify(newBinding)});
+      if(!graph.renew(${JSON.stringify(replacementPermit)},${JSON.stringify(sourceClock)}))throw new Error('REPLACEMENT_PERMIT_REJECTED');
+      window.replacementAudio=document.createElement('audio');replacementAudio.srcObject=graph.stream;
+      document.body.append(replacementAudio);await replacementAudio.play();
+    })()`)
+    const newAudible = await poll(async()=> (await browser.audioEvidence()).find(item=>item.audible===true&&item.time>=timing.start),
+      'actual replacement output during blocked listener',2000)
+    renewTimer=setInterval(()=>{
+      if(renewing)return
+      renewing=true
+      renewTask=(async()=>{
+        const permit=await authority.renewReplacementPermit()
+        assert.equal(await evaluate(`graph.renew(${JSON.stringify(permit)},${JSON.stringify(sourceClock)})`),true,
+          'Replacement remains authorized during stalled-listener observation')
+      })().catch(error=>renewalErrors.push(error.message)).finally(()=>{renewing=false})
+    },1000)
+    const observed = await stalled
+    clearInterval(renewTimer);await renewTask
+    check(renewalErrors.length===0,`${label}: replacement source renews real server authority during listener recovery`)
+    check(newAudible.time<observed.finish,`${label}: replacement is audible before listener page callbacks resume`)
+    if(mode==='suspend-task-stall')check(observed.suspendedTime-observed.before<.2,
+      `${label}: the listener audio render clock actually freezes`)
+    await new Promise(resolve=>setTimeout(resolve,300))
+    const evidence=(await receiverBrowser.audioEvidence()).filter(item=>item.time>=timing.start&&item.time<=observed.finish+100)
+    const atNew=evidence.filter(item=>typeof item.audible==='boolean'&&item.time<=newAudible.time).at(-1)
+    const afterNew=evidence.filter(item=>item.time>=newAudible.time&&(item.captureHeartbeat||typeof item.audible==='boolean'))
+    console.log('Native early-stop handover measurement:',JSON.stringify({mode,timing,sourceClock,receiverClock,
+      issued:granted.permit,stoppedLease:stopped.lease,replacementLease:replacement.lease,newAudible,stalled:observed,
+      atNew,afterNewHeartbeats:afterNew.filter(item=>item.captureHeartbeat).length,evidence}))
+    check(atNew?.audible===false&&afterNew.filter(item=>item.captureHeartbeat).length>=5&&
+      afterNew.every(item=>!(item.audible===true||item.onAmplitude>.015)),
+      `${label}: actual buffered old output remains silent throughout replacement and native resume`)
+    const newEvidence=(await browser.audioEvidence()).filter(item=>item.captureHeartbeat&&item.time>=newAudible.time&&item.time<=observed.finish)
+    check(newEvidence.length>=5&&newEvidence.every(item=>item.rmsAmplitude>=.02),
+      `${label}: actual replacement stays audible through the blocked-listener observation`)
+    const gapUncertaintyMs=atNew.analysisWindowMs+atNew.fragmentMs+atNew.captureCallMs/2+
+      newAudible.analysisWindowMs+newAudible.fragmentMs+newAudible.captureCallMs/2
+    check([atNew,newAudible].every(item=>Math.abs(item.captureQueueMs)<100&&item.captureCallMs<20&&item.analysisWindowMs<24),
+      `${label}: native output edge capture retains its timing and analysis bounds`)
+    check(newAudible.time-atNew.time-gapUncertaintyMs>=authority.timing.outputMarginMs,
+      `${label}: measured old/new output edges retain the configured safety margin`)
+    check(!await receiverEvaluate(`receiverGraph.renew(${JSON.stringify({...granted.permit,expiresServerMs:granted.permit.expiresServerMs+10000})},
+      ${JSON.stringify(receiverClock)})`),`${label}: stale listener authority cannot resurrect the old graph`)
+  } finally {
+    clearInterval(renewTimer);await renewTask
+    await evaluate(`(async()=>{window.replacementAudio?.remove();window.graph?.close();window.publisherTone?.stop();await engine.close();})()`).catch(()=>{})
+    await authority.close();authority=null
   }
 }
 try {
@@ -220,7 +345,7 @@ try {
   await poll(() => evaluate('window.ready'), 'production engine module ready')
   await poll(async () => (await browser.audioEvidence()).some(item => item.ready), 'private output detector ready')
   const measurements = []
-  for (const [profile, mode] of [['stage', 'task-stall'], ['stage', 'suspend-task-stall'], ['publisher', 'task-stall'], ['publisher', 'suspend-task-stall']]) {
+  for (const [profile, mode] of handoverOnly ? [] : [['stage', 'task-stall'], ['stage', 'suspend-task-stall'], ['publisher', 'task-stall'], ['publisher', 'suspend-task-stall']]) {
     const label = `${profile}/${mode}`
     let timing = await evaluate(`start(${JSON.stringify(profile)})`)
     if (profile === 'publisher') {
@@ -281,7 +406,9 @@ try {
   check(errors.length === 0, 'native lease fixture has no runtime exception')
   for (const measurement of measurements) check(!measurement.activeAtBoundary&&measurement.expiredAudible.length === 0,
     `${measurement.label}: old output remains silent after lease expiry despite blocked page tasks`)
-  console.log(`${passed} native lease checks passed; isolated engine experiment only`)
+  if(receiverHandover)for(const mode of ['task-stall','suspend-task-stall'])await receiverHandoverFault(mode)
+  check(errors.length===0,'all native output fault journeys have no runtime exception')
+  console.log(`${passed} native lease checks passed; ${receiverHandover?'actual playback/grant authority and direct native WebRTC':'isolated engine'}; physical/SFU acceptance remains open`)
 } finally {
   if (socket?.readyState === WebSocket.OPEN && contextId) await cdp('Target.disposeBrowserContext', { browserContextId: contextId }).catch(() => {})
   if (receiverSocket?.readyState === WebSocket.OPEN && receiverContextId)

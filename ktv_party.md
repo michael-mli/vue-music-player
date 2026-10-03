@@ -1128,9 +1128,12 @@ clocks. The shared video element retains both tracks but stays muted; only the
 guarded received mix reaches the output. Private vocal-guide audio is never an
 input. The changed playback path must pass native A/V and recovery/handover
 acceptance before release. Backend early-stop acknowledgments and planned
-transition boundaries also must respect previously issued receiver deadlines,
-including listeners whose page tasks cannot process a new snapshot; that reservation
-work remains open. Public online media is still disabled.
+transition boundaries respect previously issued receiver deadlines, including
+listeners whose page tasks cannot process a new snapshot. The backend now reserves
+each issued cutoff, retains it across source-stop/provider-removal acknowledgments,
+and defers transitions until that cutoff. The native direct-WebRTC early-stop
+fixture passes 31 checks across blocked and suspended/resumed receiver clocks;
+full SFU fault and physical acceptance remain open. Public online media is still disabled.
 
 Optional `KTV_ROOM_TEST_HANDOVER_AV=1` extends the native fixture with 40-pair
 post-handover phases for a replacement remote singer and the venue-to-remote

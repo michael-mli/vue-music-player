@@ -2,7 +2,7 @@
 
 Created: 2026-09-29
 
-Last updated: 2026-10-02
+Last updated: 2026-10-03 (UTC; 2026-10-02 Toronto)
 
 Design reference: [ktv_party.md](ktv_party.md)
 
@@ -18,8 +18,9 @@ is a preview; public online media is still disabled.
    receiver output guard. The deployed raw receiver can remain audible until expiry
    +273.08 ms with a 1000-ms target. The private guard passes 20 isolated native
    checks and a 64-check clean room/recovery/handover journey. Early stage-stop
-   acknowledgments must respect already issued receiver deadlines before replacement
-   output starts; that backend reservation is still open. Old-client compatibility,
+   acknowledgments now preserve already issued receiver deadlines before replacement
+   output starts; backend regressions and 31 native direct-WebRTC checks pass.
+   Full SFU fault acceptance, old-client compatibility,
    sustained/physical output and the earlier render-clock stall also remain open.
 2. **Streaming timing:** resolve impaired-network A/V timing, measure handover
    timing and longer outages, and verify source-clock stability. Functional
@@ -2828,6 +2829,70 @@ long-outage, nominal capacity and public-release acceptance remain open.
 
 Public frontend `d33b209`, backend `f58a8f3`, production assets and media-disabled
 configuration remain unchanged; no persistent SFU is running.
+
+### 2026-10-03 UTC — Reserve received audio across early source stop
+
+Two real playback/grant regressions initially fail: a source-stop acknowledgment
+shortens the stage safe-after bound below an already delivered receiver cutoff,
+and a planned pause changes generation before that cutoff
+(`/tmp/ktv-receiver-reservation-red-20261003.log`).
+
+The listener output API now reserves authority in the actual playback lease
+before returning it. Reservations bind room, lease, clock, performance and
+generation, reject past/non-finite/overlong deadlines and retain the greatest
+issued cutoff. Source-stop acknowledgments, pending-pause sweep and heartbeat
+renewal retain that cutoff plus the configured output margin. Transitions wait
+until previously issued authority expires; output permits also observe a pending
+boundary before sweep, preventing a renewal race. Provider removal cannot discard
+an already delivered reservation. Publisher expiry and reservation ceilings share
+the existing five-second constant; the durable stage restart bound covers it even
+after a shorter new configuration. No timing/quality gate is relaxed.
+
+Evidence:
+
+- Targeted playback/grant/HTTP checks pass **50/50**
+  (`/tmp/ktv-receiver-reservation-final-20261003.log`). The full backend suite,
+  including an actual HTTP-output-to-stop reservation assertion, passes **138/138**
+  (`/tmp/ktv-receiver-reservation-backend-all-20261003.log`).
+- The native early-stop fixture passes **31/31**
+  (`/tmp/ktv-receiver-early-stop-native-final-20261003.log`), using
+  Chrome **154.0.8037.92**, actual SQLite playback/grant services, separate native
+  peer/output contexts and the receiver's verified **1000-ms** buffer target.
+  The native source closes before acknowledging stop. The listener page remains
+  blocked, including a separate suspended/resumed-render-clock case. Replacement
+  is refused before the actual reserved safe-after boundary and receives a fresh
+  lease/generation afterward. Six independently captured old-output samples per
+  case remain silent through replacement; the replacement stays actually audible
+  under renewed real source permits. Output edges retain the unchanged **500-ms**
+  safety margin, edge capture satisfies its queue/call/analysis bounds, and late
+  renewal cannot revive the old graph. No browser exception. The earlier 29-check
+  pass is retained in `/tmp/ktv-receiver-early-stop-native-long-observation-20261003.log`.
+- Initial native attempts fail the observer's five-sample requirement because
+  its window contains only two samples; observed old output is already silent.
+  The corrected fixture extends its blocked observation and renews the new source,
+  preserving the sample requirement. The real device-message service is called
+  directly; this fault fixture does **not** establish HTTP/SFU fault acceptance
+  or physical speaker/phone behavior.
+- The full clean SFU room/recovery/handover rerun passes **64/64**
+  (`/tmp/ktv-receiver-reserved-room-handover-20261003.log`) using the unchanged
+  private typed receiver artifact and the new actual backend. All three phases
+  match **40** markers, with **zero** unmatched audio/video edges. Received p95/
+  maximum skew is **67.39/67.78 ms** at baseline, **87.87/107.57 ms** for the next
+  singer and **75.22/76.01 ms** after venue-to-remote handover. Actual source/
+  receiver cadence is approximately **25 fps** throughout; all nominal resolution,
+  cadence, capture and timing gates pass, and browser exceptions are zero. This
+  remains a clean-network private VP8 comparison, not impaired/SFU-fault release
+  acceptance or an approved production codec change.
+
+Native fault command: `KTV_LEASE_TEST_RECEIVER_HANDOVER=1` with
+`KTV_LEASE_TEST_RECEIVER_GUARD=1` and `KTV_LEASE_TEST_RECEIVER_TARGET_MS=1000`.
+Optional `KTV_LEASE_TEST_RECEIVER_HANDOVER_ONLY=1` selects those two fault journeys;
+the default continues to run the existing stage/publisher expiry journeys.
+
+The backend reservation requirement recorded above is now implemented and has
+native direct-WebRTC evidence. Full SFU fault, old-client compatibility, impaired
+A/V, physical/mobile, capacity and release acceptance remain open. Public frontend
+`d33b209`, backend `f58a8f3` and disabled-media configuration remain unchanged.
 
 ### Release record
 

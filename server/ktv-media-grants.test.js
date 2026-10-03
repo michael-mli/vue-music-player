@@ -25,11 +25,15 @@ function fixture(t) {
     singerMemberId: memberIds[1], stageMemberId: memberIds[1], stageDeviceId: devices[1].id,
     lease: { id: randomUUID(), deviceId: devices[1].id, expiresServerMs: 9000 } }
   const apiKey = 'grant-tests', apiSecret = 'test-only-grant-secret-with-more-than-thirty-two-bytes'
-  const start = () => { service = createKtvMediaGrants({ db, clock, getPlayback: () => playback, getDevices: () => devices, apiKey, apiSecret }) }
+  const reservations = []
+  let reservationAllowed = true
+  const start = () => { service = createKtvMediaGrants({ db, clock, getPlayback: () => playback, getDevices: () => devices,
+    reserveReceiveOutput: permit => { reservations.push(permit); return reservationAllowed }, apiKey, apiSecret }) }
   start(); db.prepare("UPDATE ktv_rooms SET performance_mode = 'online' WHERE id = ?").run(roomId)
   const issue = (index, scope, extra = {}) => service.issue({ roomId, memberId: memberIds[index], deviceId: devices[index].id, scope, commandId: randomUUID(), ...extra })
   t.after(() => { db.close(); fs.rmSync(root, { recursive: true, force: true }) })
   return { get db() { return db }, get service() { return service }, roomId, memberIds, devices, playback, clock, issue,
+    reservations, allowReservation: allowed => { reservationAllowed = allowed },
     verifier: new TokenVerifier(apiKey, apiSecret), restart() { db.close(); db = initDb(root); start() } }
 }
 
@@ -77,6 +81,9 @@ test('receiver permits bind a ready source nonce and never borrow the longer aud
   assert.equal(permit.clockId, f.playback.clockId); assert.equal(permit.performanceId, f.playback.performanceId)
   assert.equal(permit.generation, f.playback.generation)
   assert.equal(permit.expiresServerMs, publisher.permit.expiresServerMs)
+  assert.deepEqual(f.reservations.at(-1), { roomId: f.roomId, leaseId: f.playback.lease.id,
+    clockId: permit.clockId, performanceId: permit.performanceId, generation: permit.generation,
+    expiresServerMs: permit.expiresServerMs })
   f.playback.lease.expiresServerMs = 2500
   assert.equal(output().expiresServerMs, 2500)
   f.service.revoke({ identity: publisher.identity }); assert.equal(output(), null)
@@ -84,6 +91,22 @@ test('receiver permits bind a ready source nonce and never borrow the longer aud
   const replacement = await f.issue(1, 'publisher'); f.service.acknowledgeReady(replacement.identity)
   assert.equal(output().publisherIdentity, replacement.identity)
   f.playback.generation++; assert.equal(output(), null)
+})
+
+test('receiver output fails closed if backend reservation rejects it and observes unswept transitions', async t => {
+  const f = fixture(t), audience = await f.issue(2, 'audience'), publisher = await f.issue(1, 'publisher')
+  f.service.acknowledgeReady(publisher.identity)
+  const output = () => f.service.receivePermit(audience.identity, f.memberIds[2], f.devices[2].id)
+  f.allowReservation(false)
+  assert.equal(output(), null)
+  f.allowReservation(true)
+  f.playback.pendingTransition = { effectiveServerMs: 3000, generation: 2, state: 'paused' }
+  assert.equal(output().expiresServerMs, 3000)
+  assert.equal(f.reservations.at(-1).expiresServerMs, 3000)
+  f.playback.pendingTransition.effectiveServerMs = 1100
+  const reserved = f.reservations.length
+  assert.equal(output(), null)
+  assert.equal(f.reservations.length, reserved)
 })
 
 test('a restarted service cannot invent a source deadline before returning a current source permit', async t => {

@@ -85,6 +85,117 @@ function fixture(t, settings = {}) {
     restart: (updated = {}) => { service.close(); clock.id = randomUUID(); Object.assign(options, updated); service = createKtvPlayback(options); return service } }
 }
 
+async function streamingOutputFixture(t) {
+  const f = fixture(t)
+  f.prepare(); f.time(9000)
+  const status = () => f.message({ type: 'device.status', purpose: 'stage', label: 'Publisher', audioEnabled: true,
+    clockHealthy: true, mediaProtocol: 1 })
+  status()
+  const grants = createKtvMediaGrants({ db: f.db, clock: f.clock,
+    getPlayback: id => f.service.snapshot(id), getDevices: id => f.service.presence(id).devices,
+    reserveReceiveOutput: permit => f.service.reserveReceiveOutput(permit),
+    apiKey: 'receiver-safety-tests', apiSecret: 'test-only-receiver-safety-secret-more-than-thirty-two-bytes' })
+  f.service.media = { grants }
+  f.db.prepare("UPDATE ktv_rooms SET performance_mode = 'online' WHERE id = ?").run(f.roomId)
+  f.service.start(f.roomId); f.service.sweep()
+  const receiverMember = f.member('Receiver'), receiver = f.device(receiverMember, 'viewer')
+  const publisher = await grants.issue({ roomId: f.roomId, memberId: f.memberId, deviceId: f.ws.clientDeviceId,
+    scope: 'publisher', commandId: randomUUID() })
+  const audience = await grants.issue({ roomId: f.roomId, memberId: receiverMember, deviceId: receiver.ws.clientDeviceId,
+    scope: 'audience', commandId: randomUUID() })
+  grants.acknowledgeReady(publisher.identity)
+  const output = () => grants.receivePermit(audience.identity, receiverMember, receiver.ws.clientDeviceId)
+  return { ...f, get service() { return f.service }, status, grants, publisher, audience, receiver, receiverMember, output }
+}
+
+test('source stop acknowledgment cannot shorten already issued receiver authority', async t => {
+  const f = await streamingOutputFixture(t), before = f.service.snapshot(f.roomId), permit = f.output()
+  assert.ok(permit && permit.expiresServerMs > 13000)
+  f.time(9500)
+  f.message({ type: 'device.stopped', clockId: f.clock.id, leaseId: before.lease.id, generation: before.generation })
+  const stopped = f.service.snapshot(f.roomId)
+  assert.equal(stopped.lease.expiresServerMs, 9500)
+  assert.ok(stopped.lease.safeAfterServerMs >= permit.expiresServerMs + f.service.timing.outputMarginMs,
+    'queued receiver output remains reserved even after the source has stopped')
+  f.service.mediaFailed(f.roomId, before.performanceId, before.generation)
+  f.status(); f.ready()
+  assert.throws(() => f.service.start(f.roomId), error => error.code === 'OUTPUT_STOPPING')
+  f.time(stopped.lease.safeAfterServerMs); f.status(); f.ready(); f.service.start(f.roomId); f.service.sweep()
+  assert.notEqual(f.service.snapshot(f.roomId).lease.id, before.lease.id)
+})
+
+test('planned streaming pause waits for prior receiver authority and cannot extend it past the boundary', async t => {
+  const f = await streamingOutputFixture(t), permit = f.output()
+  f.time(9500)
+  f.service.transition(f.roomId, 'pause')
+  const pending = f.service.snapshot(f.roomId).pendingTransition
+  assert.ok(pending.effectiveServerMs >= permit.expiresServerMs,
+    'a stalled listener must reach its granted cutoff before the generation changes')
+  // Renewal can race the sweep that truncates the stage lease. The returned
+  // listener authority must already obey the scheduled boundary.
+  await f.grants.renew(f.publisher.identity, f.memberId, f.ws.clientDeviceId)
+  assert.ok(f.output().expiresServerMs <= pending.effectiveServerMs)
+  f.message({ type: 'device.heartbeat', leaseId: f.service.snapshot(f.roomId).lease.id,
+    clockId: f.clock.id, performanceId: f.performanceId, generation: f.service.snapshot(f.roomId).generation })
+  f.service.sweep()
+  const next = f.output()
+  assert.ok(next && next.expiresServerMs <= pending.effectiveServerMs)
+  assert.ok(f.service.snapshot(f.roomId).lease.safeAfterServerMs >= permit.expiresServerMs + f.service.timing.outputMarginMs)
+})
+
+test('receiver reservations reject foreign namespaces, obsolete generations and unbounded deadlines', t => {
+  const f = fixture(t)
+  f.prepare(); f.time(9000); f.status(); f.service.start(f.roomId); f.service.sweep()
+  const playback = f.service.snapshot(f.roomId)
+  const permit = { roomId: f.roomId, leaseId: playback.lease.id, clockId: f.clock.id,
+    performanceId: playback.performanceId, generation: playback.generation, expiresServerMs: 14000 }
+  for (const change of [{ roomId: randomUUID() }, { leaseId: randomUUID() }, { clockId: randomUUID() },
+    { performanceId: randomUUID() }, { generation: playback.generation + 1 }, { expiresServerMs: NaN },
+    { expiresServerMs: Infinity }, { expiresServerMs: 9000 }, { expiresServerMs: 14001 }, { expiresServerMs: 18000 }]) {
+    assert.equal(f.service.reserveReceiveOutput({ ...permit, ...change }), false)
+  }
+  assert.equal(f.service.reserveReceiveOutput(permit), true)
+  // A replay with a shorter bound cannot discard previously granted output.
+  assert.equal(f.service.reserveReceiveOutput({ ...permit, expiresServerMs: 12000 }), true)
+  f.time(9500)
+  f.message({ type: 'device.stopped', clockId: f.clock.id, leaseId: playback.lease.id, generation: playback.generation })
+  assert.equal(f.service.snapshot(f.roomId).lease.safeAfterServerMs, 14500)
+  assert.equal(f.service.reserveReceiveOutput({ ...permit, expiresServerMs: 13500 }), false)
+  f.service.close()
+  assert.equal(f.service.reserveReceiveOutput(permit), false)
+})
+
+test('provider removal cannot discard a receiver deadline already delivered to a stalled listener', async t => {
+  const f = await streamingOutputFixture(t), permit = f.output(), before = f.service.snapshot(f.roomId)
+  f.time(9500)
+  f.grants.revoke({ identity: f.publisher.identity }); f.grants.acknowledgeRemoval(f.publisher.identity)
+  assert.equal(f.output(), null)
+  f.message({ type: 'device.stopped', clockId: f.clock.id, leaseId: before.lease.id, generation: before.generation })
+  f.service.mediaFailed(f.roomId, before.performanceId, before.generation)
+  f.status(); f.ready()
+  f.time(permit.expiresServerMs + f.service.timing.outputMarginMs - 1)
+  f.status(); f.ready()
+  assert.throws(() => f.service.start(f.roomId), error => error.code === 'OUTPUT_STOPPING')
+  f.advance(1); f.service.start(f.roomId); f.service.sweep()
+  assert.notEqual(f.service.snapshot(f.roomId).lease.id, before.lease.id)
+})
+
+test('durable restart silence covers previously issued receiver output with a new room clock', async t => {
+  const f = await streamingOutputFixture(t), permit = f.output()
+  f.time(9500)
+  const restartedAt = f.clock.nowMs(), previousClock = f.clock.id
+  f.restart({ timing: { outputLeaseMs: 7000 } })
+  const restarted = f.service.snapshot(f.roomId)
+  assert.notEqual(f.clock.id, previousClock)
+  assert.equal(restarted.state, 'paused')
+  assert.equal(restarted.lease, null)
+  assert.ok(restarted.restartSafeAfterMs - restartedAt >=
+    permit.expiresServerMs + f.service.timing.outputMarginMs - restartedAt)
+  assert.ok(restarted.restartSafeAfterMs - restartedAt >= 8500,
+    'lowering the new stage lease cannot shorten durable authority from the previous process')
+  assert.throws(() => f.output(), error => error.code === 'MEDIA_REVOKED')
+})
+
 test('guide disablement clears persisted requirements on restart and rejects guide device readiness', t => {
   const f = fixture(t)
   f.prepare()

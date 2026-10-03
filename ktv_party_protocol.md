@@ -292,7 +292,12 @@ expiresServerMs } }`. The route requires current audience membership, owned devi
 and nonce, paired-device scope and room binding. Responses are `no-store` and
 contain no JWT, private guide or display name. The deadline is bounded by the
 exact permit last returned to the publisher, its stage lease and the listener's
-own expiry. A restarted service cannot invent a cached publisher deadline.
+own expiry, plus any scheduled transition boundary. Before returning a permit,
+the media service reserves its deadline in the actual playback lease. A failed
+reservation returns no output authority. Reservations bind room, stage lease,
+clock, performance and generation and cannot exceed the shared five-second
+publisher-permit ceiling. A restarted service cannot invent a cached publisher
+deadline; its durable stage silence bound also covers this receiver ceiling.
 
 The client allows one output-authority request at a time per listener attempt,
 at most once per second after transport initialization, and ignores replies
@@ -301,11 +306,15 @@ are subscribed. Performance/generation/clock changes close previous output;
 expired render guards, ended tracks and suspended contexts cannot be rearmed.
 The guard applies the existing 100-ms early silence policy and independent
 absolute wall deadline, protecting output even while page tasks are blocked.
-Public media remains disabled. Backend handover scheduling still must reserve
-already issued listener deadlines: a source-stop acknowledgment must not free
-replacement output while a blocked receiver can retain queued old audio. Planned
-transition boundaries need the same protection. Old-client compatibility, impaired
-timing and full device/release acceptance also remain required before shipping.
+Public media remains disabled. Source-stop acknowledgments, heartbeat renewal and
+pause commits retain the greatest issued receiver deadline plus the configured
+output margin before replacement may start. Scheduled transitions wait until
+already issued receiver authority expires; later permits cannot cross that
+boundary, including before the next sweep. Provider removal does not discard
+the reservation. Private native early-stop tests cover blocked and suspended/
+resumed listeners with actual playback/grant services and direct WebRTC. Full
+SFU fault acceptance, old-client compatibility, impaired timing and physical/
+device/release acceptance remain required before shipping.
 
 Room media grants bind current admission, paired scope, device, selected singer,
 performance, generation and output lease. Provider-confirmed audio/video readiness

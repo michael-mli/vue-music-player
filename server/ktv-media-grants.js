@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { AccessToken, TrackSource } from 'livekit-server-sdk'
 import { fail } from './ktv-errors.js'
+import { KTV_MEDIA_OUTPUT_PERMIT_MS } from './ktv-timing.js'
 
 const stamp = () => new Date().toISOString()
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
@@ -9,7 +10,7 @@ export const ktvMediaRoom = roomId => `ktv-${roomId}`
 // Room authorization is re-read for every signaling join and watchdog check.
 // Provider removal must be acknowledged before replacing a publisher. This
 // service stores identities/receipts, never the SFU secret or a bearer JWT.
-export function createKtvMediaGrants({ db, clock, getPlayback, getDevices, apiKey, apiSecret, audienceLifetimeMs = 120000 }) {
+export function createKtvMediaGrants({ db, clock, getPlayback, getDevices, reserveReceiveOutput = () => false, apiKey, apiSecret, audienceLifetimeMs = 120000 }) {
   if (!apiKey || !apiSecret || apiSecret.length < 32 || !Number.isSafeInteger(audienceLifetimeMs) || audienceLifetimeMs < 30000 || audienceLifetimeMs > 120000) {
     throw new Error('Invalid KTV media configuration')
   }
@@ -108,7 +109,7 @@ export function createKtvMediaGrants({ db, clock, getPlayback, getDevices, apiKe
     return current
   }
   function expiry(scope, playback) {
-    const remaining = scope === 'publisher' ? Math.min(5000, playback.lease.expiresServerMs - clock.nowMs()) : audienceLifetimeMs
+    const remaining = scope === 'publisher' ? Math.min(KTV_MEDIA_OUTPUT_PERMIT_MS, playback.lease.expiresServerMs - clock.nowMs()) : audienceLifetimeMs
     if (!Number.isFinite(remaining) || remaining <= 100) fail(409, 'MEDIA_LEASE_EXPIRED', 'Prepare the current performance again')
     return new Date(Date.now() + remaining).toISOString()
   }
@@ -184,8 +185,11 @@ export function createKtvMediaGrants({ db, clock, getPlayback, getDevices, apiKe
     // A listener's two-minute grant cannot prolong a performer's short lease.
     // Return no tokens or member names; bind output to the exact provider nonce.
     const expiresServerMs = Math.min(sourceDeadline, current.playback.lease.expiresServerMs,
+      current.playback.pendingTransition?.effectiveServerMs ?? Infinity,
       clock.nowMs() + Math.max(0, Date.parse(audience.expires_at) - Date.now()))
     if (!Number.isFinite(expiresServerMs) || expiresServerMs <= clock.nowMs() + 100) return null
+    if (!reserveReceiveOutput({ roomId: audience.room_id, leaseId: publisher.lease_id, clockId: publisher.clock_id,
+      performanceId: publisher.performance_id, generation: publisher.generation, expiresServerMs })) return null
     return { publisherIdentity: publisher.identity, clockId: publisher.clock_id,
       performanceId: publisher.performance_id, generation: publisher.generation, expiresServerMs }
   }

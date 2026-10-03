@@ -1,5 +1,6 @@
 // Operator timing policy, in milliseconds. Client render-clock thresholds and
 // acoustic acceptance targets are separate; these options cannot weaken them.
+export const KTV_MEDIA_OUTPUT_PERMIT_MS = 5000
 export const KTV_TIMING_DEFAULTS = Object.freeze({
   prepareTimeoutMs: 30000, playbackLeadMs: 2000, onlineLeadMs: 6000,
   outputLeaseMs: 8000, outputMarginMs: 500, hostGraceMs: 30000,

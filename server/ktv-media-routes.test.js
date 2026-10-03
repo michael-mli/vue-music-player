@@ -138,6 +138,15 @@ test('audience output route returns only current authority and denies foreign ac
   const reply = await f.request('POST', endpoint, 3, { deviceId: f.devices[2].id })
   assert.equal(reply.data.permit.publisherIdentity, publisher.data.identity)
   assert.ok(!JSON.stringify(reply.data).includes(publisher.data.token))
+  const beforeStop = f.realtime.playback.snapshot(f.views[0].room.id)
+  f.time(20100)
+  f.devices[1].message({ type: 'device.stopped', clockId: beforeStop.clockId,
+    leaseId: beforeStop.lease.id, generation: beforeStop.generation })
+  const stopped = f.realtime.playback.snapshot(f.views[0].room.id)
+  assert.equal(stopped.lease.expiresServerMs, 20100)
+  assert.equal(stopped.lease.safeAfterServerMs, reply.data.permit.expiresServerMs + f.realtime.playback.timing.outputMarginMs,
+    'the actual HTTP output route reserves the authority it delivered, even after a source stop')
+  assert.deepEqual((await f.request('POST', endpoint, 3, { deviceId: f.devices[2].id })).data, { permit: null })
   await f.request('POST', `${f.route}/media/${audience.data.identity}/revoke`, 3, {})
   assert.equal((await f.request('POST', endpoint, 3, { deviceId: f.devices[2].id })).status, 403)
 })

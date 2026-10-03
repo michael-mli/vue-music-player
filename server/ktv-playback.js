@@ -3,7 +3,7 @@ import { fail } from './ktv-errors.js'
 import { invalidateReadiness } from './ktv-readiness.js'
 import { recordTurn, requestNextTurn, offerNextTurn } from './ktv-turns.js'
 import { timelinePosition } from './ktv-timeline.js'
-import { ktvTiming, ktvRestartSilenceMs } from './ktv-timing.js'
+import { ktvTiming, ktvRestartSilenceMs, KTV_MEDIA_OUTPUT_PERMIT_MS } from './ktv-timing.js'
 import { ktvFeatures, ktvGuideAssets } from './ktv-features.js'
 
 const stamp = () => new Date().toISOString()
@@ -107,6 +107,30 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
   function activeLease(roomId) {
     const lease = leases.get(roomId)
     return lease && clock.nowMs() < lease.safeAfterServerMs ? lease : null
+  }
+  // Receiver buffers outlive source shutdown. Reserve every deadline before it
+  // leaves the server, so a source acknowledgment cannot authorize overlapping
+  // replacement output while a listener's page tasks are stalled.
+  function reserveReceiveOutput({ roomId, leaseId, clockId, performanceId, generation, expiresServerMs }) {
+    if (closed) return false
+    const row = read(roomId), lease = leases.get(roomId), nowMs = clock.nowMs()
+    const pending = row?.pending_json && JSON.parse(row.pending_json)
+    if (!row || !['scheduled', 'playing'].includes(row.state) || !lease ||
+      lease.id !== leaseId || lease.deviceId !== row.stage_device_id ||
+      clockId !== clock.id || row.clock_id !== clockId || lease.clockId !== clockId ||
+      row.performance_id !== performanceId || lease.performanceId !== performanceId ||
+      row.generation !== generation || lease.generation !== generation ||
+      !Number.isFinite(expiresServerMs) || expiresServerMs <= nowMs ||
+      expiresServerMs > nowMs + KTV_MEDIA_OUTPUT_PERMIT_MS || expiresServerMs > lease.expiresServerMs ||
+      (pending && expiresServerMs > pending.effectiveServerMs)) return false
+    // Five seconds is the publisher grant ceiling, below the minimum stage
+    // lease. The durable restart silence bound therefore also covers receivers.
+    lease.receiverDeadlineServerMs = Math.max(lease.receiverDeadlineServerMs || 0, expiresServerMs)
+    lease.safeAfterServerMs = Math.max(lease.safeAfterServerMs, lease.receiverDeadlineServerMs + timing.outputMarginMs)
+    return true
+  }
+  function receiverSafeAfter(lease) {
+    return lease.receiverDeadlineServerMs === undefined ? 0 : lease.receiverDeadlineServerMs + timing.outputMarginMs
   }
   function ready(device, row, purpose = 'stage') {
     return device?.purpose === purpose && device.audioEnabled && device.clockHealthy && clock.nowMs() - device.lastSeenMs <= 4000 &&
@@ -274,7 +298,7 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
     if (action === 'seek' && (!Number.isFinite(positionMs) || positionMs < 0 || positionMs >= row.duration_ms)) {
       fail(400, 'INVALID_POSITION', 'Choose a position inside the song')
     }
-    const effectiveServerMs = nowMs + timing.playbackLeadMs
+    const effectiveServerMs = Math.max(nowMs + timing.playbackLeadMs, leases.get(roomId)?.receiverDeadlineServerMs || 0)
     const state = action === 'pause' || !['playing', 'scheduled'].includes(row.state) ? 'paused' : 'playing'
     const pending = { state, generation: row.generation + 1, effectiveServerMs, anchorServerMs: effectiveServerMs,
       positionMs: action === 'seek' ? positionMs : timelinePosition(view(row), effectiveServerMs) }
@@ -393,7 +417,7 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
         ['scheduled', 'playing'].includes(row.state) && nowMs < lease.expiresServerMs && ready(device, row) &&
         (!row.guide_required || guideReady(row))) {
         lease.sequence++; lease.expiresServerMs = pending?.state === 'paused' ? Math.min(nowMs + timing.outputLeaseMs, pending.effectiveServerMs) : nowMs + timing.outputLeaseMs
-        lease.safeAfterServerMs = lease.expiresServerMs + timing.outputMarginMs
+        lease.safeAfterServerMs = Math.max(lease.expiresServerMs + timing.outputMarginMs, receiverSafeAfter(lease))
         lease.nextGeneration = pending?.generation; lease.effectiveServerMs = pending?.effectiveServerMs
         broadcastLease(ws.roomId, publicLease(lease))
         return { type: 'lease', lease: publicLease(lease) }
@@ -403,7 +427,7 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
       if (lease && lease.deviceId === device.id && message.leaseId === lease.id && message.generation === lease.generation &&
         message.clockId === lease.clockId) {
         lease.expiresServerMs = Math.min(lease.expiresServerMs, nowMs)
-        lease.safeAfterServerMs = Math.min(lease.safeAfterServerMs, nowMs + timing.outputMarginMs)
+        lease.safeAfterServerMs = Math.max(receiverSafeAfter(lease), Math.min(lease.safeAfterServerMs, nowMs + timing.outputMarginMs))
         lease.sequence++
         broadcastLease(ws.roomId, publicLease(lease))
       }
@@ -453,7 +477,7 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
           pendingLease.sequence++
           if (pending.state === 'paused') {
             pendingLease.expiresServerMs = Math.min(pendingLease.expiresServerMs, pending.effectiveServerMs)
-            pendingLease.safeAfterServerMs = pendingLease.expiresServerMs + timing.outputMarginMs
+            pendingLease.safeAfterServerMs = Math.max(pendingLease.expiresServerMs + timing.outputMarginMs, receiverSafeAfter(pendingLease))
           }
           changed.add(row.room_id)
         }
@@ -527,6 +551,6 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
     return changed
   }
   const api = { timing, snapshot, presence, connected, disconnected, deviceMessage, current, assign, prepare, start,
-    transition, guide, invalidate, finish, decline, read, sweep, mediaFailed, features, close: () => { closed = true; clearInterval(timer) } }
+    transition, guide, invalidate, finish, decline, read, sweep, mediaFailed, reserveReceiveOutput, features, close: () => { closed = true; clearInterval(timer) } }
   return api
 }
