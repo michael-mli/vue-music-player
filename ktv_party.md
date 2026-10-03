@@ -1133,7 +1133,7 @@ listeners whose page tasks cannot process a new snapshot. The backend now reserv
 each issued cutoff, retains it across source-stop/provider-removal acknowledgments,
 and defers transitions until that cutoff. The native direct-WebRTC early-stop
 fixture passes 31 checks across blocked and suspended/resumed receiver clocks;
-integrated SFU faults now pass 70 checks with actual buffered residence above
+integrated SFU faults now pass 78 checks with actual buffered residence above
 500 ms. Early-stop and source-stall expiry, blocked/frozen/resumed listener output
 and replacement separation pass on independent native monitors. Sustained and
 physical acceptance remain open. Public online media is still disabled.

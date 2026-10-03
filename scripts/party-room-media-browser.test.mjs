@@ -284,7 +284,7 @@ try {
   if (remoteMode) remoteBrowser = await createOwnedRemoteBrowser({ host: process.env.KTV_ROOM_TEST_SSH_HOST,
     knownHosts: process.env.KTV_ROOM_TEST_KNOWN_HOSTS, micFile, frontendPort: frontend.address().port,
     debugPort: Number(process.env.KTV_ROOM_TEST_CHROME_PORT || 9243), isolatedOutput: avTiming||receiverFault!=='off',
-    captureOutput: receiverFault!=='off', captureActivity: receiverFault!=='off' })
+    captureOutput: false })
   else chrome = spawn(process.env.CHROME_BIN || '/usr/bin/google-chrome', ['--headless', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu',
     '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--no-first-run', '--no-default-browser-check', '--no-proxy-server',
     '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', `--use-file-for-fake-audio-capture=${micFile}`,
@@ -296,7 +296,8 @@ try {
     knownHosts:process.env.KTV_ROOM_TEST_KNOWN_HOSTS,micFile,debugPort:Number(process.env.KTV_ROOM_TEST_AV_CHROME_PORT||9244),isolatedOutput:true,
     captureActivity:receiverFault!=='off'})
   if(handoverAv||receiverFault!=='off') hostBrowser=await createOwnedRemoteBrowser({host:process.env.KTV_ROOM_TEST_SSH_HOST,
-    knownHosts:process.env.KTV_ROOM_TEST_KNOWN_HOSTS,micFile,debugPort:9245,isolatedOutput:true,captureOutput:false})
+    knownHosts:process.env.KTV_ROOM_TEST_KNOWN_HOSTS,micFile,debugPort:9245,isolatedOutput:true,
+    captureOutput:receiverFault!=='off',captureActivity:receiverFault!=='off'})
   const audienceSocket = avBrowser ? await debuggerConnection(avBrowser.debuggerUrl) : remoteMode ? singerSocket : await debuggerConnection(process.env.CHROME_DEBUG_URL || 'http://127.0.0.1:9231')
   const hostSocket = hostBrowser ? await debuggerConnection(hostBrowser.debuggerUrl) : audienceSocket
   console.log('Client topology:', clientLocation, '; native audio clocks; isolated synthetic room/microphone')
@@ -506,7 +507,7 @@ try {
 
   if(receiverFault!=='off') {
     await runRoomReceiverFault({mode:receiverFault,phone,audience,host,origin,pathRoom,firstPublisher,
-      api,evaluate,click,poll,check,db,provider,sourceBrowser:remoteBrowser,receiverBrowser:avBrowser})
+      api,evaluate,click,poll,check,db,provider,replacementBrowser:hostBrowser,receiverBrowser:avBrowser})
   } else {
   const installSpectrum = () => evaluate(audience, `(() => { const element = document.querySelector('[data-party-media-screen] video'); window.__receiveContext = new AudioContext(); __receiveContext.resume();
     const source = __receiveContext.createMediaStreamSource(element.srcObject); window.__analyser = __receiveContext.createAnalyser(); __analyser.fftSize = 8192; __analyser.smoothingTimeConstant = 0;

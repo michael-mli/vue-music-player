@@ -612,7 +612,7 @@ phases. Backend reservations now preserve already issued receiver deadlines
 across early source stop, provider removal and scheduled transitions. Actual
 playback/grant authority with direct native WebRTC passes 31 early-stop checks,
 including blocked and frozen/resumed listener clocks and sustained separation
-of old/new outputs. Subsequent integrated SFU fault journeys pass 70 checks, requiring measured
+of old/new outputs. Subsequent integrated SFU fault journeys pass 78 checks, requiring measured
 native buffered residence above 500 ms, deadline silence and independent old/new
 output separation. These are not physical acceptance. Deploy frontend and
 backend together for this contract, validate old-client behavior before enabling
@@ -626,7 +626,7 @@ but receive `409 MEDIA_CLIENT_UPDATE` for streaming tokens; existing downgraded
 media grants cannot renew, rejoin or obtain output authority. The unchanged
 version-1 browser is verified against the candidate backend with no nonce/peer/
 output, while room access remains connected. The production candidate passes
-143 backend, 124 party, 69 native room/legacy, 70 integrated SFU fault, 45 UI and
+143 backend, 124 party, 69 native room/legacy, 78 integrated SFU fault, 45 UI and
 10 PWA checks; these do not satisfy sustained output, impaired, physical/mobile
 or capacity release gates. Keep
 media disabled during the coupled preview rollout. Candidate index SHA256 is

@@ -18,7 +18,7 @@ is a preview; public online media is still disabled.
    physical output acceptance and investigation of the earlier render-clock stall.
    The deployed raw receiver can remain audible until expiry +273.08 ms with a
    1000-ms target. The version-2 candidate passes 31 native direct-WebRTC checks,
-   69 clean room/legacy checks and **70 integrated SFU fault checks** across early
+   69 clean room/legacy checks and **78 integrated SFU fault checks** across early
    source stop, listener render freeze/resume and source page stall. Actual buffered
    residence exceeds 500 ms; reservations, expiry silence and replacement separation
    pass. Legacy clients retain local controls without receiving streaming tokens.
@@ -833,7 +833,7 @@ guide enabled and online media disabled. The unpublished receiver-safe version-2
 production candidate passes 143 backend, 124 party, 69 native room/legacy, 45 UI
 and 10 PWA checks. All three clean 40-pair A/V phases retain nominal quality.
 
-Integrated SFU stalled/early-stop fault checks now pass 70 checks. Complete
+Integrated SFU stalled/early-stop fault checks now pass 78 checks. Complete
 sustained native output and impaired-network A/V timing. Preserve the 150-ms p95 / 250-ms maximum targets,
 nominal 1280x720/25-fps policy and all capture/matching bounds. Failed private codec,
 transport and buffer experiments do not justify changing production policy.
@@ -3034,3 +3034,63 @@ Public features were rechecked: rooms/guide enabled, media disabled. Deployed
 `dist` index SHA256 remains
 `22029bb64d1efd421e73be97a3b681b238b8267424e5af9c7a42855202abf1d5`.
 No public deployment or persistent media service was started.
+
+### 2026-10-03 — Measure received replacement microphone output and UDP timing
+
+The preceding 70-check fault checkpoint monitored the replacement performer's
+local backing output. That output starts after the countdown; transmitted
+microphone audio can arrive earlier. The strengthened fixture now uses the host's
+independent SFU listener and private output monitor for the replacement mix.
+The source sink remains isolated but its unused monitor is disabled. No product
+code, default SFU policy, transport, codec, audio clock or expiry margin changes.
+
+| Fault | Final checks | Actual received mean buffer | Old quiet / new received samples | New mic precedes backing by |
+| --- | --- | --- | --- | --- |
+| Early stop and blocked listener | 26/26 | 555.00 ms | 19 / 18 | 4547.07 ms |
+| Early stop and frozen/resumed listener | 28/28 | 524.17 ms | 19 / 19 | 4563.59 ms |
+| Source task stall across expiry | 24/24 | 508.29 ms | 16 / 16 | 4545.32 ms |
+
+All **78 checks** pass. The replacement listener receives exactly the guarded
+SFU audio/video mix and creates no local backing source. Its first audible edge
+must precede the actual backing anchor, so the safety check covers transmitted
+microphone output during the countdown. Native old/new edge separation remains
+at least the configured 500-ms margin after capture uncertainty. Each case now
+explicitly checks the unchanged 150-ms expiry limit. In the stalled-source case,
+old output goes quiet **41.61 ms before expiry**, with **37.97 ms** combined
+clock/capture uncertainty. All final runtime exception counts are zero. The
+received-mix result supersedes the earlier replacement-backing measurement.
+
+Final evidence:
+
+- `/tmp/ktv-protocol2-sfu-received-replacement-task-stall-20261003.log`
+- `/tmp/ktv-protocol2-sfu-received-mix-suspend-task-stall-final-20261003.log`
+- `/tmp/ktv-protocol2-sfu-received-mix-source-task-stall-final-20261003.log`
+- `/tmp/ktv-protocol2-sfu-received-mix-suite-20261003.log`
+
+The same frozen production candidate was also measured with continuous **UDP**
+impairment: 150-ms delay, 0–40-ms jitter and 5% loss per leg remain active through
+recovery and subsequent singers. The run **fails**, exit 1,
+`/tmp/ktv-protocol2-production-continuous-udp-20261003.log`:
+
+| Phase | Matched pairs / unmatched audio / video | p95 / max skew | Measured source / receiver fps |
+| --- | --- | --- | --- |
+| Clean baseline before impairment | 6 / 0 / 0 | 125.47 / 125.47 ms | 25.02 / 25.10 |
+| Impaired | 40 / 0 / 0 | 493.03 / 625.49 ms | 22.57 / 22.49 |
+| Next singer under impairment | 40 / 0 / 0 | 683.17 / 732.60 ms | 25.00 / 24.95 |
+| Venue-to-remote | Incomplete | No accepted timing result | No accepted quality result |
+
+The first three phases retain nominal encoding/resolution/cadence and capture/
+matching/video-delay bounds. The impaired phases fail the unchanged 150-ms p95 /
+250-ms maximum skew target. Before failure, **65 functional checks** pass,
+including real UDP loss, media-only outage/recovery, fresh audience/publisher
+nonces, guide exclusion, singer replacement and venue routing. During the final
+venue-to-remote measurement, the source audio engine enters drift recovery after
+three out-of-bound samples; recorded phase error reaches **88.6 ms**. The fixture
+correctly rejects `Publisher audio recovery interrupted A/V observation` and its
+partial phase cannot establish nominal quality or timing. No drift threshold,
+quality target, matching window, settle interval or expiry bound was relaxed.
+
+Next: diagnose the varying received audio/video playout and sustained source
+clock behavior under this load. Complete remaining physical/mobile, capacity,
+real-network and release gates. Public frontend/backend and media-disabled
+configuration remain unchanged; all owned native fixture ports are released.

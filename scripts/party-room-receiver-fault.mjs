@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 
 export async function runRoomReceiverFault({ mode, phone, audience, host, origin, pathRoom,
-  firstPublisher, api, evaluate, click, poll, check, db, provider, sourceBrowser, receiverBrowser }) {
+  firstPublisher, api, evaluate, click, poll, check, db, provider, replacementBrowser, receiverBrowser }) {
   const label = `SFU receiver/${mode}`
   const view = await api(1,pathRoom)
   const clock = await evaluate(audience, `(async()=>{
@@ -101,6 +101,12 @@ export async function runRoomReceiverFault({ mode, phone, audience, host, origin
       'actual worker acknowledges old publisher removal')
     check(!(await provider.listParticipants(`ktv-${firstPublisher.room_id}`)).some(item=>item.identity===firstPublisher.identity),
       `${label}: the old publisher is removed from the actual SFU`)
+    // This independent listener is silent until the new publisher exists. Its
+    // monitor measures transmitted microphone audio during the countdown,
+    // rather than waiting for the performer's later local backing output.
+    await click(host,'Watch and listen')
+    await poll(()=>evaluate(host,"document.querySelector('[data-party-media-status]')?.textContent.includes('Connected to the live performance')"),
+      'independent replacement listener is connected before the fresh publisher')
     if(sourceStalled){
       const sourceObservation=await sourceStalled
       check(sourceObservation.begin<deadline&&sourceObservation.finish>=deadline+750,
@@ -144,8 +150,14 @@ export async function runRoomReceiverFault({ mode, phone, audience, host, origin
     const replacement=db.prepare("SELECT * FROM ktv_media_grants WHERE scope='publisher' AND state='active'").get()
     check(replacement.identity!==firstPublisher.identity&&replacement.generation>firstPublisher.generation&&replacement.lease_id!==firstPublisher.lease_id,
       `${label}: real replacement has a fresh nonce, generation and output lease`)
-    const newAudible=await poll(async()=> (await sourceBrowser.audioEvidence()).find(item=>item.audible===true&&item.time>=start+1000),
-      'independent actual replacement source output')
+    const newAudible=await poll(async()=> (await replacementBrowser.audioEvidence()).find(item=>item.audible===true&&item.time>=start),
+      'independent actual replacement SFU mix output')
+    const newPlayback=(await api(1,pathRoom)).playback
+    const anchorWall=newPlayback.anchorServerMs+deadline-issued.permit.expiresServerMs
+    check(newAudible.time+clock.uncertaintyMs+newAudible.analysisWindowMs+newAudible.fragmentMs<anchorWall,
+      `${label}: replacement microphone audio is actually received before the backing countdown finishes`)
+    check(await evaluate(host,"(()=>{const video=document.querySelector('[data-party-media-screen] video');return video?.muted&&video.srcObject?.getAudioTracks().length===1&&video.srcObject.getVideoTracks().length===1&&__bufferSources.length===0})()"),
+      `${label}: measured replacement is the guarded SFU mix without a local backing player`)
     const observation=await stalled
     if(mode==='suspend-task-stall') check(observation.frozen-observation.before<.2,
       `${label}: the received audio render clock actually freezes`)
@@ -156,14 +168,14 @@ export async function runRoomReceiverFault({ mode, phone, audience, host, origin
     const receiverEvidence=(await receiverBrowser.audioEvidence()).filter(item=>item.time>=start&&item.time<observation.finish)
     const quietAtNew=receiverEvidence.filter(item=>typeof item.audible==='boolean'&&item.time<=newAudible.time).at(-1)
     const afterNew=receiverEvidence.filter(item=>item.time>=newAudible.time&&(item.captureHeartbeat||typeof item.audible==='boolean'))
-    const sourceEvidence=(await sourceBrowser.audioEvidence()).filter(item=>item.captureHeartbeat&&item.time>=newAudible.time&&item.time<observation.finish)
+    const replacementEvidence=(await replacementBrowser.audioEvidence()).filter(item=>item.captureHeartbeat&&item.time>=newAudible.time&&item.time<observation.finish)
     console.log('Integrated SFU receiver fault:',JSON.stringify({mode,clock,start,deadline,issued:issued.permit,
       stoppedLease:recovered.playback.lease,newAudible,quietAtNew,observation,
-      receiverHeartbeats:afterNew.filter(item=>item.captureHeartbeat).length,sourceHeartbeats:sourceEvidence.length}))
+      anchorWall,receiverHeartbeats:afterNew.filter(item=>item.captureHeartbeat).length,replacementHeartbeats:replacementEvidence.length}))
     check(quietAtNew?.audible===false&&afterNew.filter(item=>item.captureHeartbeat).length>=5&&
       afterNew.every(item=>!(item.audible===true||item.rmsAmplitude>.005)),
       `${label}: buffered old SFU output stays silent throughout replacement and render resume`)
-    check(sourceEvidence.length>=5&&sourceEvidence.every(item=>item.rmsAmplitude>.02),
+    check(replacementEvidence.length>=5&&replacementEvidence.every(item=>item.rmsAmplitude>.02),
       `${label}: actual replacement output stays audible during the blocked-listener observation`)
     check([quietAtNew,newAudible].every(item=>Math.abs(item.captureQueueMs)<100&&item.captureCallMs<20&&item.analysisWindowMs<24),
       `${label}: independent output captures retain their timing bounds`)

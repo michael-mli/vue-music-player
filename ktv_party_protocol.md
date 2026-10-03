@@ -313,7 +313,7 @@ already issued receiver authority expires; later permits cannot cross that
 boundary, including before the next sweep. Provider removal does not discard
 the reservation. Private native early-stop tests cover blocked and suspended/
 resumed listeners with actual playback/grant services and direct WebRTC. Full
-Integrated built-app/HTTP/gateway/SFU faults now pass 70 checks with measured
+Integrated built-app/HTTP/gateway/SFU faults now pass 78 checks with measured
 received buffering above 500 ms, early source acknowledgment, blocked/frozen/
 resumed listener clocks and source task stall across expiry. Independent native
 outputs verify deadline silence and old/new separation. Sustained output, impaired
