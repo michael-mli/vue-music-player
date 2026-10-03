@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **68/68** pass.
+checks pass; party units **125/125** and timing/capability fixtures **85/85** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -839,13 +839,16 @@ prototype result is not automatically a release result.
 
 ### Current next action
 
-Public preview remains frontend `d33b209`, backend `f58a8f3`, with rooms/private
-guide enabled and online media disabled. The unpublished receiver-safe version-2
-production candidate passes 143 backend, 124 party, 69 native room/legacy, 45 UI
-and 10 PWA checks. All three clean 40-pair A/V phases retain nominal quality.
+Public preview remains frontend/backend `acb583b`, with rooms/private guide
+enabled and online media disabled. The receiver guard and encoded activation
+fix are deployed; private decoder/controller experiments remain unpublished.
+Current timing/capability fixtures pass 85 checks. The native owned Opus/PCM
+prototype passes nine page-stall checks but fails suspension/resume expiry:
+the output detector observes a brief stale burst after the old deadline.
 
-Integrated SFU stalled/early-stop fault checks now pass 78 checks. Complete
-sustained native output and impaired-network A/V timing. Preserve the 150-ms p95 / 250-ms maximum targets,
+Resolve that output burst and connect the bounded PCM decoder/renderer to actual
+received SFU audio and the controlled video scheduler. Complete sustained native
+output and impaired-network A/V timing. Preserve the 150-ms p95 / 250-ms maximum targets,
 nominal 1280x720/25-fps policy and all capture/matching bounds. Failed private codec,
 transport and buffer experiments do not justify changing production policy.
 
@@ -3667,3 +3670,53 @@ prototype should schedule decoded PCM and video against that common clock,
 apply backpressure across worker/renderer queues, and keep the current lease
 guard after the final PCM buffer. Codec/source cadence, recovery, adaptive minimum
 latency and all physical/mobile/release acceptance remain open.
+
+### Bounded streaming PCM and native output expiry — 2026-10-03
+
+Added private `CapturePcmQueue` and `createOpusPcmStream` primitives. The decoder
+associates native PCM with packet sample counts, maintains an RTP sample timeline
+across capture-header jitter and timestamp wrap, and retains capture metadata
+separately. It limits outstanding PCM reservations to **48 chunks / 1 MiB** and
+encoded payloads to **512 KiB**. Renderer consumption releases explicit credits;
+invalid credits, malformed PCM, clock discontinuities and overflow close the
+stream. Missing packets currently produce silence; RED recovery, reordering and
+Opus concealment are not implemented or accepted.
+
+The AudioWorklet renders exact 48-kHz sample positions without a custom music
+resampler, duplicates mono into stereo, returns silence for gaps and releases
+all owned chunks on stop. The browser handles hardware-rate conversion. The
+existing production lease worklet remains downstream and supplies all output
+authority. These primitives are not connected to the product receive graph.
+
+All timing/capability fixtures pass **85/85**, including eight new PCM/decoder
+checks for waveform continuity, sample deadlines, RTP wrap, gaps, decoder/render
+stalls, memory ceilings, malformed output, duplicate payload exclusion and
+cleanup: `/tmp/ktv-opus-pcm-fixtures-20261003.log`.
+
+An isolated Chrome **154.0.8037.92** fixture natively encodes and decodes 45 stereo
+Opus packets, transfers **900 ms** of PCM into the actual worklet, and observes
+the isolated output through independent PulseAudio capture. The strict page-task
+stall run passes **9/9**, detects silence **72.02 ms** after expiry, observes two
+post-expiry heartbeats with zero RMS, and verifies all 45 credits are released:
+`/tmp/ktv-opus-pcm-render-native-buffered-expiry-strict-20261003.log`.
+This is synthetic native decoder/render evidence, not actual SFU playout or
+physical acoustic alignment.
+
+Suspension/resume **fails**. The strict run confirms the render clock actually
+freezes, resumes after expiry and the guard latches silence, but the independent
+detector observes an approximately **20-ms** audible burst at expiry +2535 ms:
+`/tmp/ktv-opus-pcm-render-native-frozen-expiry-strict-20261003.log` (exit 1).
+The burst's location within native buffers is not established. A first version
+of the fixture checked only periodic heartbeat amplitudes and incorrectly
+reported a pass; it now rejects every post-expiry audible edge, including bursts
+between heartbeats. That earlier suspension result is superseded and is not
+acceptance evidence. Initial unwarmed startup and too-short heartbeat observation
+runs also failed and remain recorded in `/tmp/ktv-pcm-render-native-20261003.log`,
+`/tmp/ktv-pcm-render-native-warmed-20261003.log` and
+`/tmp/ktv-pcm-render-native-expiry-diagnostic-20261003.log`.
+
+Next: locate and eliminate post-resume stale output without loosening expiry,
+integrate direct worker/renderer credits and actual received Opus with controlled
+video, then re-run output timing, loss, handover and resource gates. Source FPS
+under loss, minimum practical latency, sustained clocks, physical/mobile/capacity
+and public-media release remain open. No product source or deployment changed.

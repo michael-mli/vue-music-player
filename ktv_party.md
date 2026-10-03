@@ -1078,6 +1078,19 @@ evidence, not output alignment or a browser support claim. The owned PCM/video
 scheduler still needs bounded queues, backpressure, final-buffer expiry protection
 and actual output acceptance.
 
+Private streaming PCM primitives now enforce 48 chunks / 1 MiB of outstanding
+PCM and 512 KiB of encoded packets, with renderer consumption returning credits.
+An AudioWorklet schedules exact 48-kHz sample positions; missing packets produce
+silence, while clock discontinuities or malformed/overflowing input close the
+stream. Recovery and concealment remain unimplemented. Native synthetic Opus
+decode/render passes page-task-stall expiry behind the existing lease guard.
+Suspension/resume fails: an independently detected brief audible burst follows
+resume after expiry, despite the guard clearing its output. Every output edge
+must be checked; periodic quiet heartbeats can miss short bursts. The buffer
+origin of that burst, actual received-SFU integration, PCM/video alignment and
+physical/device acceptance remain unresolved. These primitives stay private
+until the original gates pass.
+
 The lyric video is declared as `screen_share`, with `screenShareEncoding` explicitly
 limited to 350 kbit/s and 25 fps on the existing 1280×720 canvas. Audience filters,
 publisher JWT source grants and provider readiness use that same source contract;
