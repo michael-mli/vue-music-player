@@ -1059,6 +1059,16 @@ checks but ultimately fails when a replacement controller rejects an 89-ms
 audio capture-clock residual above the existing 80-ms bound. That bound is
 preserved. No public controller or codec change is selected.
 
+Native received-audio decoding is now verified in an isolated eight-packet probe:
+actual RED-wrapped Opus produces 48-kHz stereo frames, with sample counts checked
+against the packet TOC. It creates no audible path and forwards the original RTC
+frames unchanged. Capture/RTP metadata remain separate from PCM timestamps:
+native WebCodecs can advance PCM by its 20-ms sample duration while capture
+headers vary slightly. The probe does not establish packet loss, reordering,
+concealment or playback alignment. A later owned PCM scheduler must associate
+capture metadata explicitly and preserve the receiver deadline guard after every
+buffer. The original timing, quality, resource and expiry requirements remain.
+
 The lyric video is declared as `screen_share`, with `screenShareEncoding` explicitly
 limited to 350 kbit/s and 25 fps on the existing 1280×720 canvas. Audience filters,
 publisher JWT source grants and provider readiness use that same source contract;

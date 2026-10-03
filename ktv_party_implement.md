@@ -3591,3 +3591,52 @@ Any later PCM scheduling must retain the deadline worklet after all buffering
 and pass the same quality, timing and expiry requirements.
 [Native receive/NetEq ordering](https://webrtc.googlesource.com/src/+/refs/heads/main/audio/channel_receive.cc),
 [Opus WebCodecs packet registration](https://www.w3.org/TR/webcodecs-opus-codec-registration/).
+
+### Native Opus capture association — 2026-10-03
+
+Added an eight-packet receiver capability probe. It reads payloads only in the
+explicit private Opus experiment, identifies negotiated payload types, extracts
+primary Opus from bounded RFC 2198 RED packets, and decodes with native WebCodecs.
+It does not read PCM samples, create an output path, alter forwarded RTC frames,
+or change permits. Pending packets are limited to eight / 512 KiB; every decoded
+frame closes immediately. Decoder resources close on completion, error,
+unsupported configuration or timeout. Ordinary timing observation never reads
+payloads.
+
+The first native run decodes a valid 20-ms / 960-sample / 48-kHz stereo frame but
+fails an assumed exact decoder/header timestamp match on the next frame. A
+diagnostic rerun shows native decoded PCM advancing **20 ms** while the encoded
+capture header advances **22 ms**. Both runs are terminal exit 1 and identify a
+clock distinction. Logs:
+
+- `/tmp/ktv-opus-decode-native-capability-20261003.log`
+- `/tmp/ktv-opus-decode-native-timestamp-diagnostic-20261003.log`
+
+The corrected probe keeps encoded capture/RTP metadata separate from native PCM
+timestamps. It associates ordered decoder output with packet metadata and
+requires decoded sample counts/durations to match each packet's RFC 6716 TOC.
+PCM timestamps never substitute for capture headers. This revises the capability
+hypothesis; existing A/V, quality, source-clock and expiry gates are unchanged.
+Reordering, recovery and packet-loss concealment are not established by this probe.
+
+Fixture checks pass **75/75**, covering RED bounds, Opus durations, distinct
+capture/PCM clocks, original frame/payload preservation, fixed diagnostics,
+unsupported configurations and cleanup:
+`/tmp/ktv-opus-clock-association-fixtures-20261003.log`.
+
+The native association run passes **39/39** built-app checks, including guide
+exclusion, real SFU publication/readiness, revocation, fresh publisher handover and
+zero browser exceptions. Eight actual RED-wrapped packets each decode to
+**960 stereo samples / 20 ms at 48 kHz**, with a largest encoded packet of
+**327 bytes**. RTP advances by 960 samples per packet; PCM follows its continuous
+sample clock, with a largest **5-ms** difference from capture-header time.
+Capture/RTP metadata remain attached to their decoded sample counts:
+`/tmp/ktv-opus-capture-association-native-20261003.log`.
+
+Next: verify a common capture-clock epoch, build a bounded owned PCM schedule
+paired with decoded video, and retain the existing deadline worklet after all
+buffering. Output alignment, native source cadence under loss, adaptive delay,
+deep-buffer expiry, sustained clocks, physical/mobile/capacity and release remain
+open. No product source or public deployment changed.
+[RED payload structure](https://www.rfc-editor.org/rfc/rfc2198.html),
+[Opus packet TOC/sample durations](https://www.rfc-editor.org/rfc/rfc6716.html).

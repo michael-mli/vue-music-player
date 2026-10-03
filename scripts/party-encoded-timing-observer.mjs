@@ -1,8 +1,9 @@
 // Private native timing probe. Forward every frame unchanged and retain only
 // allowlisted timing/codec scalars, never payloads, grants, identities or URLs.
-export function encodedTimingWorker() {
+export function encodedTimingWorker(createAudioProbe = null, primaryPayload = null, packetFrames = null) {
   const Stream = self.TransformStream
   const counts = { audio: 0, video: 0 }, captureSamples = { audio: 0, video: 0 }
+  let audioProbe
   function observe(frame, kind) {
     if (!['audio','video'].includes(kind)) return
     const count = ++counts[kind]
@@ -11,6 +12,10 @@ export function encodedTimingWorker() {
     if (!regular && captureSamples[kind] >= 8) return
     let metadata = {}, metadataSupported = false
     try { if(typeof frame.getMetadata==='function'){metadata=frame.getMetadata()||{};metadataSupported=true} } catch {}
+    if (kind === 'audio' && self.__encodedTimingDirection === 'receive' && typeof createAudioProbe === 'function') {
+      audioProbe ??= createAudioProbe(primaryPayload, packetFrames)
+      audioProbe.observe(frame, metadata)
+    }
     const capture = Number.isFinite(metadata.captureTime) && captureSamples[kind] < 8
     if (!regular && !capture) return
     if (capture) captureSamples[kind]++
@@ -41,7 +46,7 @@ export function encodedTimingWorker() {
 
 export function installEncodedTimingProbe(workerSource) {
   const Worker = window.Worker
-  const receiverUrl = URL.createObjectURL(new Blob([workerSource + `
+  const receiverUrl = URL.createObjectURL(new Blob([`self.__encodedTimingDirection='receive';\n` + workerSource + `
     self.postMessage({type:'timing-probe-state',state:'boot'});
     const attach=(readable,writable,kind)=>{
       self.__encodedTimingKind=kind;
@@ -49,16 +54,28 @@ export function installEncodedTimingProbe(workerSource) {
       self.__encodedTimingKind=null;
       readable.pipeThrough(stream).pipeTo(writable).catch(()=>self.postMessage({type:'timing-probe-error'}));
     };
-    self.onrtctransform=({transformer})=>attach(transformer.readable,transformer.writable,transformer.options.kind);
-    self.onmessage=({data})=>attach(data.readable,data.writable,data.kind);
+    self.onrtctransform=({transformer})=>{self.__encodedTimingCodecs=transformer.options.codecs;attach(transformer.readable,transformer.writable,transformer.options.kind)};
+    self.onmessage=({data})=>{self.__encodedTimingCodecs=data.codecs;attach(data.readable,data.writable,data.kind)};
   `], { type: 'text/javascript' }))
-  const records = [], states=[], workers = new Set(), urls = new Set([receiverUrl]), observedReceivers=new WeakSet()
+  const records = [], states=[], audioDecoders=[], workers = new Set(), urls = new Set([receiverUrl]), observedReceivers=new WeakSet()
   let errors = 0, sequence = 0, wrappedSenders = 0
   const failures = { worker:0, pipe:0, occupied:0, unsupported:0 }
   function track(worker, direction) {
     const id = ++sequence
     workers.add(worker)
     worker.addEventListener('message', ({ data }) => {
+      if (direction === 'receive' && data?.type === 'encoded-audio-decode' &&
+        ['complete','error','unsupported','timeout'].includes(data.status)) {
+        const row = { worker: id, status: data.status,
+          reason: [null,'API','CONFIG','PAYLOAD_TYPE','PAYLOAD_SIZE','RED_PACKET','TIMESTAMP','DECODE','OUTPUT','OUTPUT_COUNT','TIMEOUT'].includes(data.reason) ? data.reason : 'OUTPUT',
+          records: (Array.isArray(data.records) ? data.records.slice(0,8) : []).map(record =>
+            Object.fromEntries(['timestamp','duration','sampleRate','numberOfChannels','numberOfFrames','captureUnixMs','captureTimestamp','rtpTimestamp']
+              .filter(key => Number.isFinite(record?.[key])).map(key => [key, record[key]]))),
+          packetModes: (Array.isArray(data.packetModes) ? data.packetModes : []).filter(value => ['opus','red'].includes(value)).slice(0,2) }
+        for (const key of ['inputCount','decodedCount','maximumPacketBytes','maximumTimestampDifferenceUs']) if (Number.isSafeInteger(data[key])) row[key] = data[key]
+        audioDecoders.push(row); if (audioDecoders.length > 16) audioDecoders.shift()
+        return
+      }
       if(data?.type==='timing-probe-state'&&['boot','stream','frame'].includes(data.state)) {
         states.push({worker:id,direction,state:data.state,kind:['audio','video'].includes(data.kind)?data.kind:null})
         if(states.length>64)states.shift()
@@ -126,14 +143,22 @@ export function installEncodedTimingProbe(workerSource) {
         const worker=track(new Worker(receiverUrl,{type:'module'}),'receive'),kind=receiver.track.kind
         if(legacyReceiver&&typeof receiver.createEncodedStreams==='function') {
           const {readable,writable}=receiver.createEncodedStreams()
-          worker.postMessage({kind,readable,writable},[readable,writable])
-        } else if(!legacyReceiver&&scriptTransform) receiver.transform=new RTCRtpScriptTransform(worker,{kind})
+          const codecs=(receiver.getParameters?.().codecs || []).filter(item=>Number.isInteger(item.payloadType)&&
+            item.payloadType>=0&&item.payloadType<=127&&['audio/opus','audio/red'].includes(item.mimeType?.toLowerCase()))
+            .slice(0,16).map(item=>({payloadType:item.payloadType,mimeType:item.mimeType.toLowerCase()}))
+          worker.postMessage({kind,codecs,readable,writable},[readable,writable])
+        } else if(!legacyReceiver&&scriptTransform) {
+          const codecs=(receiver.getParameters?.().codecs || []).filter(item=>Number.isInteger(item.payloadType)&&
+            item.payloadType>=0&&item.payloadType<=127&&['audio/opus','audio/red'].includes(item.mimeType?.toLowerCase()))
+            .slice(0,16).map(item=>({payloadType:item.payloadType,mimeType:item.mimeType.toLowerCase()}))
+          receiver.transform=new RTCRtpScriptTransform(worker,{kind,codecs})
+        }
         else {errors++;failures.unsupported++}
         observedReceivers.add(receiver)
       })
     }
   }
-  window.__encodedTimingProbe = { records,states, features:{scriptTransform,
+  window.__encodedTimingProbe = { records,states,audioDecoders, features:{scriptTransform,
     legacySender:typeof RTCRtpSender.prototype.createEncodedStreams==='function',
     legacyReceiver, receiverApi:legacyReceiver?'legacy':scriptTransform?'standard':'unsupported'},
     failures,get wrappedSenders(){return wrappedSenders},get workerCount(){return workers.size},

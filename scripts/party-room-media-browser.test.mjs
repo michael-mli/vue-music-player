@@ -23,6 +23,7 @@ import { createOwnedRemoteBrowser } from './party-remote-browser.mjs'
 import { runRoomReceiverFault } from './party-room-receiver-fault.mjs'
 import { installAbsoluteCaptureExperiment } from './party-absolute-capture-experiment.mjs'
 import { probeDecodedTracks } from './party-decoded-track-probe.mjs'
+import { createOpusDecodeProbe, primaryOpusPayload, opusPacketFrames } from './party-opus-decode-probe.mjs'
 import { RtpCaptureClock, analyseCaptureClocks } from './party-rtp-capture-clock.mjs'
 import { CaptureFrameQueue } from './party-capture-frame-queue.mjs'
 import { installControlledReceiver, analyseControlledReceiverQuality, hasSingleAudienceOutput } from './party-controlled-receiver.mjs'
@@ -67,6 +68,9 @@ if (codecExperiment) {
 const avTiming = process.env.KTV_ROOM_TEST_AV_TIMING === '1'
 const encodedTiming = process.env.KTV_ROOM_TEST_ENCODED_TIMING === '1'
 const absoluteCapture = process.env.KTV_ROOM_TEST_ABSOLUTE_CAPTURE === '1'
+const opusDecodeProbe = process.env.KTV_ROOM_TEST_OPUS_DECODE === '1'
+assert.ok(!opusDecodeProbe || encodedTiming && absoluteCapture && !avTiming && !codecExperiment,
+  'Opus capability decoding requires native capture evidence separately from output timing or codec comparisons')
 const senderCadence = process.env.KTV_ROOM_TEST_SENDER_CADENCE === 'text-l1t2'
 assert.ok(process.env.KTV_ROOM_TEST_SENDER_CADENCE === undefined || senderCadence,
   'Unknown sender cadence experiment')
@@ -343,7 +347,7 @@ try {
     await cdp(socket, 'Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', 'en');
       ${avTiming ? `(${installAvSourceMarkers.toString()})();` : ''}
       ${encodedApi==='legacy' ? 'window.RTCRtpScriptTransform=undefined;' : ''}
-      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify('('+encodedTimingWorker.toString()+')();')});` : ''}
+      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify('('+encodedTimingWorker.toString()+')('+ (opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : '') +');')});` : ''}
       (${installEncodedLeaseObserver.toString()})();
       ${absoluteCapture ? `(${installAbsoluteCaptureExperiment.toString()})();` : ''}
       ${senderCadence ? `(${installSenderCadenceExperiment.toString()})();` : ''}
@@ -503,6 +507,16 @@ try {
     'actual SFU audio/video capture timestamps',60000)
   if(controlledPlayoutMs !== null) await poll(()=>evaluate(audience,'__controlledReceiver.snapshot().active?.ready'),
     'actual capture-clock-controlled receiver presentation',15000)
+  if(opusDecodeProbe) {
+    const evidence=await poll(()=>evaluate(audience,'__encodedTimingProbe.audioDecoders[0]'),
+      'actual received Opus decoder capability',40000)
+    console.log('Native received Opus decoding:',JSON.stringify(evidence))
+    check(evidence.status==='complete'&&evidence.inputCount===8&&evidence.decodedCount===8&&evidence.records.length===8,
+      'actual received Opus packets decode with capture/RTP metadata associated by bounded packet sample counts')
+    check(evidence.records.every(row=>row.sampleRate===48000&&row.numberOfChannels===2&&row.numberOfFrames>0&&
+      Math.abs(row.duration-row.numberOfFrames/row.sampleRate*1000000)<=1),
+      'native Opus decoding returns bounded 48-kHz stereo audio frames without output')
+  }
   if(decodedTrackProbe) {
     const evidence=await evaluate(audience,`(${probeDecodedTracks.toString()})(document.querySelector('[data-party-media-screen] video').srcObject,__peers)`)
     console.log('Native decoded track capability:',JSON.stringify(evidence))
