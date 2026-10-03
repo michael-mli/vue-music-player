@@ -9,7 +9,7 @@ function fixture() {
     postMessage: message => allMessages.push(message) }
   realm.self = realm
   vm.runInNewContext('('+encodedTimingWorker.toString()+')()', realm)
-  return { get messages(){return allMessages.filter(message=>message.type==='encoded-timing')}, stream: (original,kind='audio') => {realm.__encodedTimingKind=kind;return new realm.TransformStream(original)} }
+  return { realm, get messages(){return allMessages.filter(message=>message.type==='encoded-timing')}, stream: (original,kind='audio') => {realm.__encodedTimingKind=kind;return new realm.TransformStream(original)} }
 }
 test('timing observation preserves frame identity and delivery without touching encoded payload', () => {
   const f = fixture(), frame = { constructor: { name: 'RTCEncodedVideoFrame' }, timestamp: 1234, type: 'key',
@@ -43,6 +43,15 @@ test('long streams have a fixed metadata message ceiling and forward every frame
   for (let i = 0; i < 5000; i++) stream.transformer.transform(frame, { enqueue: () => delivered++ })
   assert.equal(delivered, 5000)
   assert.equal(f.messages.length, 48)
+})
+
+test('a bound copied PCM receiver keeps observing after the sparse timing ceiling without altering forwarded frames',()=>{
+  const f=fixture(),frame={timestamp:1,getMetadata:()=>({captureTime:1})}
+  let copied=0,forwarded=0
+  f.realm.__encodedTimingDirection='receive';f.realm.__observeOwnedPcm=received=>{assert.equal(received,frame);copied++}
+  const stream=f.stream({transform(received,controller){controller.enqueue(received)}})
+  for(let i=0;i<5000;i++)stream.transformer.transform(frame,{enqueue:received=>{assert.equal(received,frame);forwarded++}})
+  assert.equal(copied,5000);assert.equal(forwarded,5000);assert.equal(f.messages.length,48)
 })
 
 import { installEncodedTimingProbe } from './party-encoded-timing-observer.mjs'

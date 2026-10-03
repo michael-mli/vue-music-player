@@ -64,3 +64,21 @@ test('stop releases credit once and cannot revive; worklet failure clears its fi
   assert.ok(last.every(plane=>plane.every(value=>value===0)))
   assert.equal(messages.filter(message=>message.type==='silent').length,1)
 })
+
+test('direct decoder port returns renderer credits and control stop permanently closes both paths',()=>{
+  let Processor
+  class Port {constructor(){this.messages=[];this.closed=false}postMessage(data){this.messages.push(data)}start(){}close(){this.closed=true}}
+  const control=new Port(),direct=new Port()
+  const realm={Float32Array,MessagePort:Port,sampleRate:48000,currentFrame:0,
+    AudioWorkletProcessor:class{constructor(){this.port=control}},registerProcessor:(name,processor)=>{Processor=processor}}
+  vm.runInNewContext(`(${pcmSourceWorklet.toString()})(${CapturePcmQueue.toString()})`,realm)
+  const node=new Processor();control.onmessage({data:{type:'bind',port:direct}})
+  direct.onmessage({data:{type:'pcm',id:1,startFrame:0,planes:[new Float32Array([.5])]}})
+  const first=output(2);node.process([], [first])
+  assert.equal(first[0][0],.5);assert.equal(direct.messages.length,1)
+  assert.equal(direct.messages[0].type,'consumed');assert.equal(direct.messages[0].id,1);assert.equal(direct.messages[0].bytes,4)
+  assert.equal(control.messages.length,0)
+  control.onmessage({data:{type:'stop'}});assert.equal(direct.closed,true)
+  direct.onmessage({data:{type:'pcm',id:2,startFrame:2,planes:[new Float32Array([.5])]}})
+  const last=output(2);assert.equal(node.process([], [last]),false);assert.ok(last[0].every(value=>value===0))
+})

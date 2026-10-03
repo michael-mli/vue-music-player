@@ -1093,10 +1093,21 @@ until the original gates pass.
 
 An isolated variant feeds a 48-kHz PCM context through a captured MediaStream
 into a separate, continuously rendering output context with the original final
-lease guard. It passes PCM-context freeze/resume expiry, suggesting a layout to
-evaluate for the owned renderer. Freezing the final output context or all audio
-contexts remains unaccepted; the observed same-context burst is still an open
-gate. Keeping the guard processor alive after failure did not remove that burst.
+lease guard. The initial test passes PCM-context freeze/resume expiry; subsequent
+tests exercise final-output suspension through the complete production graph.
+Keeping the guard processor alive after failure did not remove the observed
+same-context burst.
+
+The direct receiver-worker/worklet channel is now verified with actual SFU Opus
+behind an inaudible diagnostic gain: renderer credits continue during a blocked
+page task, queues remain bounded and copied audio excludes the private guide.
+The next renderer should retain a 48-kHz decode context feeding captured media
+into the browser's default output context, followed by the existing production
+receive graph. In the owned Chrome/44.1-kHz setup, this complete graph passes
+both-context freeze/resume expiry even with page callbacks blocked. Forcing the
+final context to 48 kHz still produces a brief stale burst. This supports the
+tested default-output layout; the exact native buffer cause, other output rates,
+physical devices and actual audible PCM/video integration remain unverified.
 
 The lyric video is declared as `screen_share`, with `screenShareEncoding` explicitly
 limited to 350 kbit/s and 25 fps on the existing 1280×720 canvas. Audience filters,

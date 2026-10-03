@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **85/85** pass.
+checks pass; party units **125/125** and timing/capability fixtures **91/91** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -842,12 +842,14 @@ prototype result is not automatically a release result.
 Public preview remains frontend/backend `acb583b`, with rooms/private guide
 enabled and online media disabled. The receiver guard and encoded activation
 fix are deployed; private decoder/controller experiments remain unpublished.
-Current timing/capability fixtures pass 85 checks. The native owned Opus/PCM
-prototype passes nine page-stall checks but fails suspension/resume expiry:
-the output detector observes a brief stale burst after the old deadline.
+Current timing/capability fixtures pass 91 checks. Direct receiver-worker/PCM
+render credits pass 41 built-app checks, including actual SFU audio and a blocked
+page task. The native 48-kHz decoder/default-rate final-output layout passes ten
+expiry checks with both contexts frozen and page callbacks blocked. Forced
+48-kHz final-output variants still replay a brief stale burst in this setup.
 
-Resolve that output burst and connect the bounded PCM decoder/renderer to actual
-received SFU audio and the controlled video scheduler. Complete sustained native
+Integrate the proven separate decoder/default-output layout with the guarded
+audible path and controlled video scheduler. Complete sustained native
 output and impaired-network A/V timing. Preserve the 150-ms p95 / 250-ms maximum targets,
 nominal 1280x720/25-fps policy and all capture/matching bounds. Failed private codec,
 transport and buffer experiments do not justify changing production policy.
@@ -3744,3 +3746,63 @@ freeze. The earlier same-context suspension failure remains a release gate.
 The fixture explicitly labels graph/lifetime variants; neither changes product
 sources or public deployment. Actual SFU integration, continuous worker credits,
 end-to-end latency and aggregate native-buffer bounds still need verification.
+
+### Direct receiver PCM credits and output-rate boundary — 2026-10-03
+
+Implemented a direct MessageChannel from the encoded receiver worker to the PCM
+AudioWorklet. PCM planes transfer to the renderer; consumption credits return
+without page callbacks. The adapter validates render/capture mapping, bounded
+delay, deadline extension and wall/monotonic continuity. Invalid controls,
+expired or reversed clocks, decoder failure and stop close both endpoints.
+The final application receive graph retains output authority. Ordinary timing
+observation still leaves encoded payloads unread and forwards the original
+frames unchanged; copied PCM observes every receiver frame beyond the sparse
+timing-record ceiling. Diagnostic records contain bounded scalar counters.
+
+`KTV_ROOM_TEST_PCM_PORT=1` explicitly enables an inaudible native received-audio
+probe. It copies actual SFU Opus into the owned worklet behind zero gain, leaving
+the app's guarded audible graph in place. The full journey passes **41/41**:
+`/tmp/ktv-received-pcm-port-native-20261003.log`. The decoder advances from
+**22 to 87 packets** across a **1.2-second** blocked page task, with a maximum
+**11 chunks / 84,480 bytes** of PCM. Copied backing/microphone peaks are
+**-36.41/-32.77 dB** and original-guide leakage is **-125.05 dB**. Stop closes the
+decoder after 91 packets with zero outstanding PCM/encoded bytes and credits.
+Provider readiness, guide exclusion, revocation, replacement publisher and
+ordinary forwarding checks also pass. This proves component transport and
+cleanup; copied PCM has not replaced the product's audible source.
+
+Fixtures pass **91/91**:
+`/tmp/ktv-received-pcm-port-fixtures-20261003.log`. New checks cover direct-port
+credits/control stop, mapping, expiry/non-revival, monotonic continuity, invalid
+renewals, receiver-only binding and continuous copying beyond sparse diagnostics.
+
+The native PCM fixture now exercises the **actual production PartyReceiveGraph**,
+including its scheduled gain, 100-ms early margin, source identity/clock checks,
+context-state handling and final worklet. Both decoder and final output contexts
+are independently verified frozen, then resumed after expiry; the stricter fault
+blocks page callbacks immediately after suspend/resume requests. The default-rate
+separate layout passes **10/10** with no late audible edges and four zero-RMS
+post-expiry heartbeats. Its measured rates are **48,000 Hz for PCM decode/render**
+and **44,100 Hz for the final output context**:
+`/tmp/ktv-opus-pcm-native-device-rate-production-graph-frozen-20261003.log`.
+The prior yielding and blocked versions also pass:
+
+- `/tmp/ktv-opus-pcm-native-production-graph-both-frozen-20261003.log`
+- `/tmp/ktv-opus-pcm-native-production-graph-blocked-frozen-20261003.log`
+
+Forcing the final context to 48 kHz on this 44.1-kHz owned output again **fails**,
+even with the production graph and both contexts frozen: an approximately 20-ms
+burst appears at expiry +2535 ms. Log:
+`/tmp/ktv-opus-pcm-native-forced-rate-production-graph-frozen-20261003.log` (exit 1).
+This comparison associates the failure with the forced output-rate layout; it
+does not locate the exact retained native buffer. Keeping the guard processor
+alive after failure was already refuted. The next owned renderer should keep
+48-kHz decode scheduling separate from the browser's default output context and
+place the original receive graph after the captured-media boundary.
+
+This is tested native synthetic output safety on Chrome 154 and the owned
+44.1-kHz sink. Real SFU audible PCM/video timing, other output rates/browsers,
+OS background/lock, physical outputs, long-song drift and aggregate native-buffer
+bounds still require acceptance. Impaired source FPS, adaptive minimum latency,
+handover timing, capacity and public-media release remain open. Product sources,
+the frozen public artifact and deployment are unchanged.

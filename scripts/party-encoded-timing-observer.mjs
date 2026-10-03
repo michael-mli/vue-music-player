@@ -6,6 +6,10 @@ export function encodedTimingWorker(createAudioProbe = null, primaryPayload = nu
   let audioProbe
   function observe(frame, kind) {
     if (!['audio','video'].includes(kind)) return
+    if(kind==='audio'&&self.__encodedTimingDirection==='receive'&&typeof self.__observeOwnedPcm==='function') {
+      let metadata={};try{metadata=frame.getMetadata?.() || {}}catch{}
+      self.__observeOwnedPcm(frame,metadata)
+    }
     const count = ++counts[kind]
     if (count > 4000) return
     const regular = count <= 8 || count % 100 === 0
@@ -56,15 +60,23 @@ export function installEncodedTimingProbe(workerSource) {
       readable.pipeThrough(stream).pipeTo(writable).catch(()=>self.postMessage({type:'timing-probe-error'}));
     };
     self.onrtctransform=({transformer})=>{self.__encodedTimingCodecs=transformer.options.codecs;attach(transformer.readable,transformer.writable,transformer.options.kind)};
-    self.onmessage=({data})=>{self.__encodedTimingCodecs=data.codecs;attach(data.readable,data.writable,data.kind)};
+    self.onmessage=({data})=>{if(data?.type==='pcm-bind')return;self.__encodedTimingCodecs=data.codecs;attach(data.readable,data.writable,data.kind)};
   `], { type: 'text/javascript' }))
   const records = [], states=[], audioDecoders=[], workers = new Set(), urls = new Set([receiverUrl]), observedReceivers=new WeakSet()
+  const receiverWorkers=new WeakMap(),pcmStates=[]
   let errors = 0, sequence = 0, wrappedSenders = 0
   const failures = { worker:0, pipe:0, occupied:0, unsupported:0 }
   function track(worker, direction) {
     const id = ++sequence
     workers.add(worker)
     worker.addEventListener('message', ({ data }) => {
+      if(direction==='receive'&&data?.type==='pcm-port-state') {
+        const row={worker:id,closed:data.closed===true,configured:data.configured===true}
+        for(const key of ['decoded','gaps','duplicates','chunks','encodedBytes','pcmBytes','maximumChunks','maximumBytes'])
+          if(Number.isSafeInteger(data[key])&&data[key]>=0)row[key]=data[key]
+        pcmStates.push(row);if(pcmStates.length>64)pcmStates.shift();return
+      }
+      if(direction==='receive'&&data?.type==='pcm-port-error'){errors++;failures.pipe++;return}
       if (direction === 'receive' && data?.type === 'encoded-audio-decode' &&
         ['complete','error','unsupported','timeout'].includes(data.status)) {
         const row = { worker: id, status: data.status,
@@ -143,6 +155,7 @@ export function installEncodedTimingProbe(workerSource) {
         if(observedReceivers.has(receiver))return
         if(receiver.transform){errors++;failures.occupied++;return}
         const worker=track(new Worker(receiverUrl,{type:'module'}),'receive'),kind=receiver.track.kind
+        receiverWorkers.set(receiver.track,worker)
         if(legacyReceiver&&typeof receiver.createEncodedStreams==='function') {
           const {readable,writable}=receiver.createEncodedStreams()
           const codecs=(receiver.getParameters?.().codecs || []).filter(item=>Number.isInteger(item.payloadType)&&
@@ -160,7 +173,8 @@ export function installEncodedTimingProbe(workerSource) {
       })
     }
   }
-  window.__encodedTimingProbe = { records,states,audioDecoders, features:{scriptTransform,
+  window.__encodedTimingProbe = { records,states,audioDecoders,pcmStates,
+    receiverWorker(track){return receiverWorkers.get(track)}, features:{scriptTransform,
     legacySender:typeof RTCRtpSender.prototype.createEncodedStreams==='function',
     legacyReceiver, receiverApi:legacyReceiver?'legacy':scriptTransform?'standard':'unsupported'},
     failures,get wrappedSenders(){return wrappedSenders},get workerCount(){return workers.size},

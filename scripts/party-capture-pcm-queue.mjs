@@ -64,17 +64,27 @@ export function pcmSourceWorklet(Queue) {
   class Source extends AudioWorkletProcessor {
     constructor() {
       super(); this.alive = true
-      this.queue = new Queue(sampleRate, packet=>this.port.postMessage({type:'consumed',...packet}))
-      this.port.onmessage = ({data}) => {
+      this.dataPort = null
+      this.queue = new Queue(sampleRate, packet=>(this.dataPort || this.port).postMessage({type:'consumed',...packet}))
+      this.receive = ({data}) => {
         if (!this.alive) return
         try {
-          if (data?.type === 'stop') { this.alive=false;this.queue.close() }
+          if (data?.type === 'stop') { this.alive=false;this.queue.close();this.dataPort?.postMessage({type:'stop'});this.dataPort?.close() }
           else if (data?.type === 'pcm') this.queue.push(data)
           else throw new Error('PLAYOUT_PCM_MESSAGE')
         } catch { this.fail() }
       }
+      this.port.onmessage = ({data}) => {
+        if (!this.alive) return
+        try {
+          if (data?.type === 'bind' && !this.dataPort && data.port instanceof MessagePort) {
+            this.dataPort=data.port;this.dataPort.onmessage=this.receive;this.dataPort.start()
+          } else if (data?.type === 'stop' || !this.dataPort) this.receive({data})
+          else throw new Error('PLAYOUT_PCM_MESSAGE')
+        } catch { this.fail() }
+      }
     }
-    fail() { if(this.alive)this.port.postMessage({type:'silent'});this.alive=false;this.queue.close() }
+    fail() { if(this.alive)this.port.postMessage({type:'silent'});this.alive=false;this.queue.close();this.dataPort?.postMessage({type:'stop'});this.dataPort?.close() }
     process(inputs,outputs) {
       try { this.queue.render(currentFrame,outputs[0]); }
       catch { this.fail();for(const output of outputs)for(const plane of output)plane.fill(0) }

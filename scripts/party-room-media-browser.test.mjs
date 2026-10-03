@@ -25,6 +25,11 @@ import { installAbsoluteCaptureExperiment } from './party-absolute-capture-exper
 import { probeDecodedTracks } from './party-decoded-track-probe.mjs'
 import { createOpusDecodeProbe, primaryOpusPayload, opusPacketFrames } from './party-opus-decode-probe.mjs'
 import { probeCaptureEpoch } from './party-capture-epoch-probe.mjs'
+import { createOpusPcmStream } from './party-opus-pcm-stream.mjs'
+import { bindOpusPcmPort } from './party-opus-pcm-port.mjs'
+import { installOpusPcmWorker } from './party-opus-pcm-worker.mjs'
+import { CapturePcmQueue, pcmSourceWorklet } from './party-capture-pcm-queue.mjs'
+import { probeReceivedPcm } from './party-received-pcm-probe.mjs'
 import { RtpCaptureClock, analyseCaptureClocks } from './party-rtp-capture-clock.mjs'
 import { CaptureFrameQueue } from './party-capture-frame-queue.mjs'
 import { installControlledReceiver, analyseControlledReceiverQuality, hasSingleAudienceOutput } from './party-controlled-receiver.mjs'
@@ -70,6 +75,9 @@ const avTiming = process.env.KTV_ROOM_TEST_AV_TIMING === '1'
 const encodedTiming = process.env.KTV_ROOM_TEST_ENCODED_TIMING === '1'
 const absoluteCapture = process.env.KTV_ROOM_TEST_ABSOLUTE_CAPTURE === '1'
 const opusDecodeProbe = process.env.KTV_ROOM_TEST_OPUS_DECODE === '1'
+const pcmPortProbe = process.env.KTV_ROOM_TEST_PCM_PORT === '1'
+assert.ok(!pcmPortProbe || encodedTiming && absoluteCapture && !avTiming && !codecExperiment && !opusDecodeProbe,
+  'Received PCM port capability requires native capture separately from output timing and the eight-packet probe')
 assert.ok(!opusDecodeProbe || encodedTiming && absoluteCapture && !avTiming && !codecExperiment,
   'Opus capability decoding requires native capture evidence separately from output timing or codec comparisons')
 const senderCadence = process.env.KTV_ROOM_TEST_SENDER_CADENCE === 'text-l1t2'
@@ -348,7 +356,7 @@ try {
     await cdp(socket, 'Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', 'en');
       ${avTiming ? `(${installAvSourceMarkers.toString()})();` : ''}
       ${encodedApi==='legacy' ? 'window.RTCRtpScriptTransform=undefined;' : ''}
-      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify('('+encodedTimingWorker.toString()+')('+ (opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : '') +');')});` : ''}
+      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify('('+encodedTimingWorker.toString()+')('+ (opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : '') +');'+(pcmPortProbe ? '('+installOpusPcmWorker.toString()+')('+bindOpusPcmPort.toString()+','+createOpusPcmStream.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString()+');' : ''))});` : ''}
       (${installEncodedLeaseObserver.toString()})();
       ${absoluteCapture ? `(${installAbsoluteCaptureExperiment.toString()})();` : ''}
       ${senderCadence ? `(${installSenderCadenceExperiment.toString()})();` : ''}
@@ -522,6 +530,26 @@ try {
     console.log('Native encoded/delivery capture epochs:',JSON.stringify(epochs))
     check(epochs.length===2&&epochs.every(row=>row.status==='verified')&&epochs[0].epoch===epochs[1].epoch,
       'actual audio/video encoded capture clocks independently match the same native delivery epoch')
+  }
+  if(pcmPortProbe) {
+    const setup=await evaluate(audience,`(${probeReceivedPcm.toString()})(${CapturePcmQueue.toString()},${pcmSourceWorklet.toString()})`)
+    check(setup.sampleRate===48000&&setup.muted,'actual receiver PCM instrumentation is 48-kHz and permanently inaudible')
+    const before=await poll(()=>evaluate(audience,'__encodedTimingProbe.pcmStates.findLast(row=>!row.closed&&row.decoded>=20)'),
+      'native received PCM decoder and renderer credits')
+    const peaks=await poll(async()=>{const values=await evaluate(audience,'__receivedPcmProbe.spectrum()');
+      return values[0]>-55&&values[1]>-55?values:false},'native copied PCM backing and microphone')
+    check(peaks[2]<Math.min(peaks[0],peaks[1])-25,'actual decoded PCM includes backing/microphone and excludes original vocal guide')
+    await evaluate(audience,'(()=>{const until=performance.now()+1200;while(performance.now()<until){};})()')
+    const after=await poll(()=>evaluate(audience,`__encodedTimingProbe.pcmStates.findLast(row=>!row.closed&&row.decoded>=${before.decoded+45})`),
+      'native worker/renderer progress across page stall')
+    check(after.maximumChunks<=48&&after.maximumBytes<=1024*1024,
+      'actual receiver worker keeps decoding through page stall within PCM credit bounds')
+    await evaluate(audience,'__receivedPcmProbe.close()')
+    const ended=await poll(()=>evaluate(audience,'__encodedTimingProbe.pcmStates.findLast(row=>row.closed)'),
+      'native receiver PCM port cleanup')
+    check(ended.chunks===0&&ended.pcmBytes===0&&ended.encodedBytes===0,
+      'stopping native received PCM releases outstanding decoder/render buffers')
+    console.log('Native received PCM port:',JSON.stringify({before,after,ended,peaks}))
   }
   if(decodedTrackProbe) {
     const evidence=await evaluate(audience,`(${probeDecodedTracks.toString()})(document.querySelector('[data-party-media-screen] video').srcObject,__peers)`)
@@ -1058,6 +1086,7 @@ try {
   }))()` ).catch(() => ({}))))
   throw error
 } finally {
+  if(pcmPortProbe)for(const session of sessionSockets.keys())await evaluate(session,'__receivedPcmProbe?.close()').catch(()=>{})
   if(controlledPlayoutMs !== null)for(const session of sessionSockets.keys()) await evaluate(session,'__controlledReceiver?.close()').catch(()=>{})
   if(encodedTiming) for(const session of sessionSockets.keys()) await evaluate(session,'__encodedTimingProbe?.close()').catch(()=>{})
   if (senderKeyframePage) await evaluate(senderKeyframePage, 'window.__avSenderKeyframes?.close()').catch(() => {})
