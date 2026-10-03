@@ -24,6 +24,7 @@ import { runRoomReceiverFault } from './party-room-receiver-fault.mjs'
 import { installAbsoluteCaptureExperiment } from './party-absolute-capture-experiment.mjs'
 import { probeDecodedTracks } from './party-decoded-track-probe.mjs'
 import { createOpusDecodeProbe, primaryOpusPayload, opusPacketFrames } from './party-opus-decode-probe.mjs'
+import { probeCaptureEpoch } from './party-capture-epoch-probe.mjs'
 import { RtpCaptureClock, analyseCaptureClocks } from './party-rtp-capture-clock.mjs'
 import { CaptureFrameQueue } from './party-capture-frame-queue.mjs'
 import { installControlledReceiver, analyseControlledReceiverQuality, hasSingleAudienceOutput } from './party-controlled-receiver.mjs'
@@ -516,6 +517,11 @@ try {
     check(evidence.records.every(row=>row.sampleRate===48000&&row.numberOfChannels===2&&row.numberOfFrames>0&&
       Math.abs(row.duration-row.numberOfFrames/row.sampleRate*1000000)<=1),
       'native Opus decoding returns bounded 48-kHz stereo audio frames without output')
+    const epochs=await evaluate(audience,`(${probeCaptureEpoch.toString()})(__encodedTimingProbe.records,
+      document.querySelector('[data-party-media-screen] video').srcObject,__peers,${RtpCaptureClock.toString()})`)
+    console.log('Native encoded/delivery capture epochs:',JSON.stringify(epochs))
+    check(epochs.length===2&&epochs.every(row=>row.status==='verified')&&epochs[0].epoch===epochs[1].epoch,
+      'actual audio/video encoded capture clocks independently match the same native delivery epoch')
   }
   if(decodedTrackProbe) {
     const evidence=await evaluate(audience,`(${probeDecodedTracks.toString()})(document.querySelector('[data-party-media-screen] video').srcObject,__peers)`)

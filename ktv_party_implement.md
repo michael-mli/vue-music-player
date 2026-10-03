@@ -3640,3 +3640,30 @@ deep-buffer expiry, sustained clocks, physical/mobile/capacity and release remai
 open. No product source or public deployment changed.
 [RED payload structure](https://www.rfc-editor.org/rfc/rfc2198.html),
 [Opus packet TOC/sample durations](https://www.rfc-editor.org/rfc/rfc6716.html).
+
+### Independent audio/video capture epoch — 2026-10-03
+
+Timing workers now include their numeric realm time origin, allowing each
+worker's capture timestamp to be converted independently. A new probe projects
+encoded capture/RTP observations to actual native delivery sources using the
+existing 48-kHz/90-kHz clock mapper. It accepts only explicitly verified Unix or
+NTP epochs, rejects arbitrary offsets, stale sources, worker ambiguity, invalid
+clocks and implausible capture ages, and emits no source identifiers.
+
+Fixture checks pass **77/77**:
+`/tmp/ktv-capture-epoch-fixtures-20261003.log`.
+The native probe passes **40/40** built-app/SFU/decoder/authority checks:
+`/tmp/ktv-opus-common-capture-epoch-native-20261003.log`.
+Actual audio/video sources both use the NTP epoch. Audio has nine advancing
+anchors, **9-ms maximum anchor residual** and **33.90-ms** encoded-to-native
+delivery residual; video has eight anchors and **0-ms** residuals. Native source
+age is fresh, with projected capture ages **98.90/97 ms**. Eight RED-wrapped Opus
+packets again decode successfully, with a maximum **6-ms** native PCM/header
+timestamp difference. The unchanged 80-ms clock bound is preserved.
+
+This verifies clock-domain conversion for the tested foreground Chrome setup,
+not exact audible alignment, sustained drift or other browsers. The next private
+prototype should schedule decoded PCM and video against that common clock,
+apply backpressure across worker/renderer queues, and keep the current lease
+guard after the final PCM buffer. Codec/source cadence, recovery, adaptive minimum
+latency and all physical/mobile/release acceptance remain open.

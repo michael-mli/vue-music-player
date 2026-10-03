@@ -26,6 +26,7 @@ export function encodedTimingWorker(createAudioProbe = null, primaryPayload = nu
     }
     const mimeType = /^(audio|video)\/[a-zA-Z0-9-]+$/.test(metadata.mimeType || '') ? metadata.mimeType : null
     self.postMessage({ type: 'encoded-timing', kind, count, time: performance.timeOrigin + performance.now(),
+      realmTimeOrigin: performance.timeOrigin,
       rtpTimestamp: Number.isFinite(frame.timestamp) ? frame.timestamp : null,
       frameType: ['key', 'delta'].includes(frame.type) ? frame.type : null, mimeType, metadataSupported, values })
   }
@@ -90,6 +91,7 @@ export function installEncodedTimingProbe(workerSource) {
         if (Number.isFinite(data.values?.[key])) values[key] = data.values[key]
       }
       records.push({ worker: id, direction, kind: data.kind, count: data.count, time: data.time, values,
+        realmTimeOrigin: Number.isFinite(data.realmTimeOrigin) ? data.realmTimeOrigin : null,
         rtpTimestamp: Number.isFinite(data.rtpTimestamp) ? data.rtpTimestamp : null,
         frameType: ['key', 'delta'].includes(data.frameType) ? data.frameType : null,
         metadataSupported:data.metadataSupported===true,

@@ -1069,6 +1069,15 @@ concealment or playback alignment. A later owned PCM scheduler must associate
 capture metadata explicitly and preserve the receiver deadline guard after every
 buffer. The original timing, quality, resource and expiry requirements remain.
 
+An independent native epoch probe now verifies both media kinds against actual
+delivery sources. Each encoded worker supplies its own time origin; RTP clock
+projection uses the appropriate 48-kHz/90-kHz rate and accepts only a verified
+Unix or NTP epoch within the existing 80-ms bound. The tested sources both use
+NTP, with approximately 34-ms audio and zero video residual. This is clock-domain
+evidence, not output alignment or a browser support claim. The owned PCM/video
+scheduler still needs bounded queues, backpressure, final-buffer expiry protection
+and actual output acceptance.
+
 The lyric video is declared as `screen_share`, with `screenShareEncoding` explicitly
 limited to 350 kbit/s and 25 fps on the existing 1280×720 canvas. Audience filters,
 publisher JWT source grants and provider readiness use that same source contract;
