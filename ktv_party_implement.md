@@ -3900,3 +3900,33 @@ All timing fixtures pass **100/100**:
 clock correction is pending. Product sources and the public deployment remain
 unchanged; late video, bounded packet reordering/PLC, rate correction and all
 previous physical/mobile/capacity/release gates remain open.
+
+### Bounded Opus packet reorder window — 2026-10-03
+
+The advancing-clock UDP rerun does not satisfy full acceptance:
+`/tmp/ktv-owned-pcm-red-rolling-clock-full-udp-native-20261003.log`. Initial
+impairment matches 40 pairs with zero unmatched edges and passes timing at
+76.07-ms p95 / 186.53-ms maximum. Next singer matches 40 pairs but reaches
+280.43 / 380.78 ms and stops at the unchanged capture-monitor queue-age gate
+(106.127 ms, limit below 100 ms). Its decoder remains open with a 34.10-ms
+maximum advancing residual and 32-ms maximum cumulative phase. Later handover
+phases were not reached, so the original venue clock failure is not yet
+verified fixed by native evidence.
+
+The private decoder now holds an out-of-order primary for up to **80 ms**,
+allowing missing earlier primaries or contiguous RED repairs before committing
+a gap. This wait uses the existing PCM hold; it does not raise the configured
+200–800-ms delay. The held queue has at most **8 encoded packets**, charged
+against the existing shared **512-KiB encoded budget**, alongside pending decoder
+input. A later packet cannot extend an earlier packet's wait. Late/duplicate
+packets cannot refresh capture authority. Timeout, stop, overflow, invalid
+repair and decoder failure clear held buffers and timers. Unrecoverable samples
+remain silence; PLC and rate correction are still pending.
+
+Native decoded-video arrival and release counters now distinguish frames
+already late at the processor from lateness added after queue release. Only
+bounded scalar counts, means and maxima are retained; no extra frame history is
+allocated. The full timing fixtures pass **102/102**:
+`/tmp/ktv-owned-pcm-reorder-fixtures-20261003.log`. Native reordering acceptance
+and the new causal video measurements are pending. No product or public
+deployment changes are included.

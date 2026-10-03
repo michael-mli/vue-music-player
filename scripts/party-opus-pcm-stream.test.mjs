@@ -6,8 +6,10 @@ import { createOpusPcmStream } from './party-opus-pcm-stream.mjs'
 import { primaryOpusPayload, opusPacketFrames } from './party-opus-decode-probe.mjs'
 import { CapturePcmQueue } from './party-capture-pcm-queue.mjs'
 
-function fixture({delayed=false,invalid=false}={}) {
+function fixture({delayed=false,invalid=false,reorderMs=0}={}) {
   const messages=[],packets=[],outputs=[],waiting=[]
+  let now=0,timerId=0
+  const timers=new Map()
   let decoder
   class Decoder {
     static async isConfigSupported(config) {return {supported:true,config}}
@@ -23,13 +25,17 @@ function fixture({delayed=false,invalid=false}={}) {
     }
     close(){this.state='closed'}
   }
-  const realm={Number,ArrayBuffer,Float32Array,Uint8Array,Map,Array,performance:{timeOrigin:1000},
+  const realm={Number,ArrayBuffer,Float32Array,Uint8Array,Map,Array,performance:{timeOrigin:1000,now:()=>now},
+    setTimeout(callback,delay){const id=++timerId;timers.set(id,{callback,at:now+delay});return id},
+    clearTimeout(id){timers.delete(id)},reorderMs,
     AudioDecoder:Decoder,EncodedAudioChunk:class{constructor(config){Object.assign(this,config)}},
     __encodedTimingCodecs:[{payloadType:111,mimeType:'audio/opus'},{payloadType:63,mimeType:'audio/red'}],deliver:packet=>packets.push(packet),report:row=>messages.push(row)}
   realm.self=realm
-  const stream=vm.runInNewContext(`(${createOpusPcmStream.toString()})(${primaryOpusPayload.toString()},${opusPacketFrames.toString()},deliver,report)`,realm)
+  const stream=vm.runInNewContext(`(${createOpusPcmStream.toString()})(${primaryOpusPayload.toString()},${opusPacketFrames.toString()},deliver,report,{reorderMs})`,realm)
   const send=(rtp,captureTime=rtp/48)=>stream.observe({timestamp:rtp>>>0,data:new Uint8Array([1]).buffer},{captureTime,payloadType:111})
-  return {stream,send,packets,messages,outputs,waiting,flush(){while(waiting.length)decoder.callbacks.output(waiting.shift())}}
+  return {stream,send,packets,messages,outputs,waiting,timers,
+    advance(value){now=value;for(const [id,timer] of [...timers])if(timer.at<=now){timers.delete(id);timer.callback()}},
+    flush(){while(waiting.length)decoder.callbacks.output(waiting.shift())}}
 }
 
 function red(offsets){return new Uint8Array([...offsets.flatMap(offset=>[239,offset>>6,(offset&63)<<2,1]),111,
@@ -57,6 +63,27 @@ test('RED recovery across RTP wrap preserves credits; overlapping repair or boun
   const full=fixture();await tick();for(let i=0;i<47;i++)full.send(i*960)
   full.stream.observe({timestamp:49*960,data:red([1920,960]).buffer},{captureTime:980,payloadType:63})
   assert.equal(full.messages[0].reason,'PCM_BOUND');assert.equal(full.stream.snapshot().pcmBytes,0)
+})
+test('bounded reordering admits an earlier primary without silence, handles wrap and cannot refresh capture authority',async()=>{
+  const f=fixture({reorderMs:80});await tick();const start=0xfffffe00
+  f.send(start,0);f.send((start+1920)>>>0,40)
+  assert.equal(f.packets.length,1);assert.equal(f.stream.snapshot().heldPackets,1)
+  f.advance(60);f.send((start+960)>>>0,20)
+  assert.deepEqual(f.packets.map(packet=>packet.rtpTimestamp),[start,(start+960)>>>0,(start+1920)>>>0])
+  assert.equal(f.stream.snapshot().gaps,0);assert.equal(f.stream.snapshot().reordered,1)
+  assert.equal(f.stream.snapshot().lastCaptureUnixMs,1040)
+  assert.equal(f.stream.snapshot().encodedBytes,0);assert.equal(f.timers.size,0);f.stream.close()
+})
+test('reorder wait expires once without extension; stop and bounded overflow release held payloads',async()=>{
+  const f=fixture({reorderMs:80});await tick();f.send(0);f.send(1920)
+  f.advance(60);f.send(2880);f.advance(79);assert.equal(f.packets.length,1)
+  f.advance(80);assert.equal(f.packets.length,3);assert.equal(f.stream.snapshot().gaps,960)
+  f.stream.close();assert.equal(f.timers.size,0)
+  const full=fixture({reorderMs:80});await tick();full.send(0)
+  for(let i=2;i<11;i++)full.send(i*960)
+  assert.equal(full.messages[0].reason,'PCM_BOUND');assert.equal(full.stream.snapshot().maximumHeld,8)
+  assert.equal(full.stream.snapshot().encodedBytes,0);assert.equal(full.timers.size,0)
+  full.advance(100);assert.equal(full.packets.length,1)
 })
 test('decoded PCM retains an RTP sample clock despite jittery capture headers and closes every native frame',async()=>{
   const f=fixture();await tick()

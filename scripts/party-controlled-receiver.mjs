@@ -44,10 +44,14 @@ export function installControlledReceiver(Clock, FrameQueue, delayMs = 800, crea
     let closed = false, frameId, presentationId, presented = 0, drawn = 0, missing = 0, maximumBytes = 0, maximumQueued = 0
     let firstPresentation = null, lastPresentation = null, error = null, ready = false, writing = false, lastOutputTimestamp = -Infinity
     let decodedAudio = 0
+    const videoArrival={count:0,totalMs:0,maximumMs:0,afterHold:0}
+    const videoRelease={count:0,totalLateMs:0,maximumLateMs:0,over150:0,over250:0}
     const item = { original, state, snapshot() { return { session, ready, closed, error,
       delayMs, audioDelayMs: ownedPcm?delayMs:state.delay.delayTime.value * 1000,
       ...(ownedPcm?{pcm:state.pcm.snapshot(),epochOffset}:{}),
       drawn, presented, missing, decodedAudio, maximumBytes, maximumQueued,
+      ...(ownedPcm?{videoArrival:{...videoArrival,meanMs:videoArrival.count?videoArrival.totalMs/videoArrival.count:null},
+        videoRelease:{...videoRelease,meanLateMs:videoRelease.count?videoRelease.totalLateMs/videoRelease.count:null}}:{}),
       firstPresentation, lastPresentation, width: player.videoWidth, height: player.videoHeight, ...queue.snapshot(),
       audioClock: ownedPcm?pcmClock():audioClock.snapshot(performance.now()), videoClock: videoClock.snapshot(performance.now()) } },
       close() {
@@ -102,6 +106,11 @@ export function installControlledReceiver(Clock, FrameQueue, delayMs = 800, crea
               epochOffset=epochs[0].epoch==='ntp'?2208988800000:0
             }
             capture-=epochOffset
+            const age=Date.now()-capture
+            if(!Number.isFinite(age)||age< -80||age>5000){frame.close();throw new Error('PLAYOUT_VIDEO_AGE')}
+            videoArrival.count++;videoArrival.totalMs+=age
+            videoArrival.maximumMs=Math.max(videoArrival.maximumMs,age)
+            if(age>delayMs)videoArrival.afterHold++
           }
           if ((ownedPcm?pcmClock():audioClock.snapshot(now)).status === 'waiting') queue.discardPending()
           queue.push(frame, capture)
@@ -123,6 +132,13 @@ export function installControlledReceiver(Clock, FrameQueue, delayMs = 800, crea
           if (!Number.isFinite(latency) || latency < 0 || latency > 200) throw new Error('PLAYOUT_OUTPUT_CLOCK')
           const selected = writing ? null : queue.take(ownedPcm?capture:capture + stamp.age - delayMs - latency)
           if (selected) {
+            if(ownedPcm){
+              const late=Math.max(0,capture-selected.captureTime)
+              videoRelease.count++;videoRelease.totalLateMs+=late
+              videoRelease.maximumLateMs=Math.max(videoRelease.maximumLateMs,late)
+              if(late>150)videoRelease.over150++
+              if(late>250)videoRelease.over250++
+            }
             let frame
             try {
               lastOutputTimestamp = Math.max(lastOutputTimestamp + 1, Math.round(performance.now() * 1000))
