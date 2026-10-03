@@ -85,3 +85,17 @@ test('native capture cadence is distinct from encoding and keeps diagnostic outp
     assert.ok(analyseCaptureCadence(invalid, 'impaired').errors.length)
   }
 })
+
+test('declared smaller bitrate caps retain nominal cadence, resolution and the original ceiling', () => {
+  const rows = fixture()
+  rows.forEach(row => { row.source.senderParameters[0].encodings[0].maxBitrate = 175000 })
+  assert.deepEqual(analyseCodecQuality(rows, 'impaired', 'vp9', null, 175000).errors, [])
+  assert.ok(analyseCodecQuality(rows, 'impaired', 'vp9').errors.includes('encoding-policy-changed'))
+  rows.forEach(row => { row.source.senderParameters[0].encodings[0].maxBitrate = 500000 })
+  assert.ok(analyseCodecQuality(rows, 'impaired', 'vp9', null, 500000).errors.includes('invalid-bitrate-cap'))
+  rows.forEach((row, index) => {
+    row.source.senderParameters[0].encodings[0].maxBitrate = 175000
+    row.source.reports[0].framesEncoded = index * 50
+  })
+  assert.ok(analyseCodecQuality(rows, 'impaired', 'vp9', null, 175000).errors.includes('sourceFps-outside-nominal-range'))
+})

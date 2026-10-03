@@ -56,7 +56,8 @@ catch (error) { if (error.code !== 'ENOENT') throw error }
 if (codecExperiment) {
   assert.ok(codecExperiment.version===1&&codecExperiment.privateCodecExperiment===true&&
     ['vp8','vp9','h264'].includes(codecExperiment.codec)&&codecExperiment.backupCodec===false&&
-    codecExperiment.width===1280&&codecExperiment.height===720&&codecExperiment.fps===25&&codecExperiment.maxBitrate===350000&&
+    codecExperiment.width===1280&&codecExperiment.height===720&&codecExperiment.fps===25&&
+    Number.isInteger(codecExperiment.maxBitrate)&&codecExperiment.maxBitrate>=64000&&codecExperiment.maxBitrate<=350000&&
     (codecExperiment.transport==null||['default','dual'].includes(codecExperiment.transport))&&
     (codecExperiment.keyframeMs==null||(Number.isInteger(codecExperiment.keyframeMs)&&codecExperiment.keyframeMs>=250&&codecExperiment.keyframeMs<=5000)),
     'Malformed private codec experiment marker')
@@ -90,6 +91,8 @@ assert.ok(publisherFeedback === 'default' || codecExperiment.transport !== 'dual
   'Legacy dual-peer publisher feedback must retain its negotiated TWCC estimator')
 const senderKeyframeMs = process.env.KTV_ROOM_TEST_SENDER_KEYFRAME_MS === undefined ? null : Number(process.env.KTV_ROOM_TEST_SENDER_KEYFRAME_MS)
 const demandKeyframes = process.env.KTV_ROOM_TEST_DEMAND_KEYFRAMES === '1'
+assert.ok(!codecExperiment || codecExperiment.maxBitrate === 350000 || senderKeyframeMs === null && !demandKeyframes,
+  'Native sender keyframe comparisons require the original bitrate policy')
 assert.ok(!demandKeyframes || avTiming && codecExperiment && codecExperiment.keyframeMs == null && senderKeyframeMs === null,
   'Demand recovery requires a private native comparison without another keyframe policy')
 assert.ok(senderKeyframeMs === null || avTiming && codecExperiment && codecExperiment.keyframeMs == null &&
@@ -953,7 +956,7 @@ try {
   // VP8; comparison artifacts declare their own expected codec explicitly.
   const expectedCodec=codecExperiment?.codec || 'vp8'
   const codecQualities=avMeasurements.map(measurement=>
-    analyseCodecQuality(avTimingSamples,measurement.phase,expectedCodec,(senderKeyframeMs??codecExperiment?.keyframeMs??null)))
+    analyseCodecQuality(avTimingSamples,measurement.phase,expectedCodec,(senderKeyframeMs??codecExperiment?.keyframeMs??null),codecExperiment?.maxBitrate ?? 350000))
   for (const quality of codecQualities) console.log('Native codec quality:',JSON.stringify(quality))
   for (const phase of new Set(avTimingSamples.map(item => item.phase)))
     console.log('Native capture versus encoding:',JSON.stringify(analyseCaptureCadence(avTimingSamples,phase)))
@@ -1009,7 +1012,7 @@ try {
   for(const phase of new Set(avTimingSamples.map(item=>item.phase)))
     console.error('Native capture versus encoding on failure:',JSON.stringify(analyseCaptureCadence(avTimingSamples,phase)))
   for(const phase of new Set(avTimingSamples.map(item=>item.phase)))
-    console.error('Native codec quality on failure:',JSON.stringify(analyseCodecQuality(avTimingSamples,phase,codecExperiment?.codec || 'vp8',(senderKeyframeMs??codecExperiment?.keyframeMs??null))))
+    console.error('Native codec quality on failure:',JSON.stringify(analyseCodecQuality(avTimingSamples,phase,codecExperiment?.codec || 'vp8',(senderKeyframeMs??codecExperiment?.keyframeMs??null),codecExperiment?.maxBitrate ?? 350000)))
   if(controlledPlayoutMs !== null)for(const phase of new Set(avTimingSamples.map(item=>item.phase)))
     console.error('Controlled native presentation quality on failure:',JSON.stringify(analyseControlledReceiverQuality(avTimingSamples,phase)))
   if(avBrowser) console.error('Private receiver output:',JSON.stringify(await avBrowser.audioEvidence().catch(()=>({error:'capture unavailable'}))))

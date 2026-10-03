@@ -3559,3 +3559,35 @@ minimum latency and product integration. The private 200-ms task-stall and
 freeze/resume results remain valid for their measured setup. Sustained clocks,
 physical/mobile/capacity/distinct networks and persistent release remain open.
 Public preview is still `acb583b`, with media disabled.
+
+The private comparison builder now accepts a declared **64–350-kbit/s** video
+ceiling. A smaller ceiling does not change 720p, requested 25 fps, actual required
+20–30 fps, codec matching, timing, expiry or queue bounds. The quality analyzer
+requires the actual sender cap to match the artifact declaration and rejects
+anything above the original 350-kbit/s ceiling. Undeclared cap changes and slow
+encoded/decoded cadence still fail. The fixture suite passes **69/69**:
+`/tmp/ktv-controlled-bitrate-cap-fixtures-20261003.log`.
+
+The H.264 **175-kbit/s** / 1000-ms controller run is terminal exit 1 in the
+impaired phase. Capture remains **24.99 fps**, but source/decoder/presented rates
+fall to **14.03/14.12/13.72 fps**. Forty transitions match with no unmatched edges;
+skew is **161.78-ms p95 / 511.48-ms maximum**, and maximum video delay is
+**2031.50 ms**. Cadence, timing and video-delay gates fail. A smaller cap does not
+establish reliable source or output behavior in this run; no cap or codec change
+is applied to production. Logs:
+
+- `/tmp/ktv-controlled-h264-175k-private-build-20261003.log`
+- `/tmp/ktv-controlled-h264-175k-continuous-udp-20261003.log`
+
+Further cap/codec variations are deferred pending a different causal finding.
+Primary source review identifies an explicit pre-jitter-buffer audio access point:
+the receiver encoded-frame transformer returns payloads to
+`ChannelReceive::OnReceivedPayloadData`, which then inserts them into NetEq.
+Native delivery-source observations alone therefore do not provide an owned PCM
+playout schedule. The next capability investigation should verify actual received
+Opus/RED payload identification, bounded WebCodecs decoding and preservation of
+capture timestamps, without producing audio or changing the existing output path.
+Any later PCM scheduling must retain the deadline worklet after all buffering
+and pass the same quality, timing and expiry requirements.
+[Native receive/NetEq ordering](https://webrtc.googlesource.com/src/+/refs/heads/main/audio/channel_receive.cc),
+[Opus WebCodecs packet registration](https://www.w3.org/TR/webcodecs-opus-codec-registration/).

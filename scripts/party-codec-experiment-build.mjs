@@ -11,16 +11,19 @@ import { periodicKeyframeWorker } from './party-codec-keyframes.mjs'
 
 const args = process.argv.slice(2), options = {}
 if (args.length===1&&args[0]==='--help') {
-  console.log('Use --codec vp8|vp9|h264 --out-dir /tmp/ktv-codec-candidate-NAME [--keyframe-ms 250..5000] [--transport default|dual]; creates a private, non-publishable comparison build.')
+  console.log('Use --codec vp8|vp9|h264 --out-dir /tmp/ktv-codec-candidate-NAME [--keyframe-ms 250..5000] [--transport default|dual] [--max-bitrate 64000..350000]; creates a private, non-publishable comparison build.')
   process.exit(0)
 }
 for (let index = 0; index < args.length; index += 2) {
-  assert.ok(['--codec', '--out-dir','--keyframe-ms','--transport'].includes(args[index]) && args[index + 1], 'Use --codec vp8|vp9|h264 --out-dir /tmp/ktv-codec-candidate-NAME [--keyframe-ms 250..5000] [--transport default|dual]')
+  assert.ok(['--codec', '--out-dir','--keyframe-ms','--transport','--max-bitrate'].includes(args[index]) && args[index + 1], 'Use --codec vp8|vp9|h264 --out-dir /tmp/ktv-codec-candidate-NAME [--keyframe-ms 250..5000] [--transport default|dual] [--max-bitrate 64000..350000]')
   assert.ok(!Object.hasOwn(options, args[index]), 'Duplicate experiment option')
   options[args[index]] = args[index + 1]
 }
 const codec = options['--codec'], directory = path.resolve(options['--out-dir'] || '.')
 const transport = options['--transport'] || 'default'
+const maxBitrate = Number(options['--max-bitrate'] ?? 350000)
+assert.ok(Number.isInteger(maxBitrate) && maxBitrate >= 64000 && maxBitrate <= 350000,
+  'Private bitrate cap must retain the original 350-kbit/s ceiling')
 assert.ok(['default', 'dual'].includes(transport), 'Unsupported private transport topology')
 const keyframeMs = options['--keyframe-ms'] === undefined ? null : Number(options['--keyframe-ms'])
 assert.ok(keyframeMs===null||Number.isInteger(keyframeMs)&&keyframeMs>=250&&keyframeMs<=5000,'Invalid keyframe interval')
@@ -47,6 +50,8 @@ const source = await fs.readFile(transportPath, 'utf8')
 const needle = "degradationPreference: 'maintain-resolution', simulcast: false, screenShareEncoding: { maxBitrate: 350000, maxFramerate: 25 }"
 assert.equal(source.split(needle).length, 2, 'Production publisher options changed; inspect the experiment transform')
 let transformed = source.replace(needle, `videoCodec: '${codec}', backupCodec: false, ${needle}`)
+transformed = transformed.replace('screenShareEncoding: { maxBitrate: 350000, maxFramerate: 25 }',
+  `screenShareEncoding: { maxBitrate: ${maxBitrate}, maxFramerate: 25 }`)
 if (transport === 'dual') {
   const roomNeedle = 'const room = new Room({ adaptiveStream: false, dynacast: false, disconnectOnPageLeave: true,'
   assert.equal(transformed.split(roomNeedle).length, 2, 'Inspect changed Room configuration before comparing transport topology')
@@ -56,7 +61,7 @@ const workerPath=path.join(root,'src/services/partyEncodedLease.worker.js')
 const workerSource=await fs.readFile(workerPath,'utf8')
 const modifiedWorker=keyframeMs===null?workerSource:periodicKeyframeWorker(workerSource,keyframeMs)
 const marker = { version: 1, privateCodecExperiment: true, codec, backupCodec: false,keyframeMs,transport,
-  width: 1280, height: 720, fps: 25, maxBitrate: 350000,
+  width: 1280, height: 720, fps: 25, maxBitrate,
   sourceCommit: execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim(),
   transportSha256: createHash('sha256').update(source).digest('hex'),
   effectiveTransportSha256: createHash('sha256').update(transformed).digest('hex'),
