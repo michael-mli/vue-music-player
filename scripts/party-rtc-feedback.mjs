@@ -16,6 +16,7 @@ export function collectRtcFeedback() {
       transportCcFeedback: /(?:^|\r?\n)a=rtcp-fb:(?:\d+|\*) transport-cc(?:\r?\n|$)/.test(section),
       rembFeedback: /(?:^|\r?\n)a=rtcp-fb:(?:\d+|\*) goog-remb(?:\r?\n|$)/.test(section),
       transportCcExtension: /(?:^|\r?\n)a=extmap:\d+(?:\/\w+)? http:\/\/www\.ietf\.org\/id\/draft-holmer-rmcat-transport-wide-cc-extensions-01(?:\r?\n|$)/.test(section),
+      absoluteCaptureTimeExtension: /(?:^|\r?\n)a=extmap:\d+(?:\/\w+)? http:\/\/www\.webrtc\.org\/experiments\/rtp-hdrext\/abs-capture-time(?:[ \t]|\r?\n|$)/.test(section),
       absoluteSendTimeExtension: /(?:^|\r?\n)a=extmap:\d+(?:\/\w+)? http:\/\/www\.webrtc\.org\/experiments\/rtp-hdrext\/abs-send-time(?:\r?\n|$)/.test(section),
     }))
   }))

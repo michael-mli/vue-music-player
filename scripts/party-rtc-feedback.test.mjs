@@ -10,13 +10,15 @@ test('negotiation evidence exposes only fixed booleans, direction and descriptio
     'a=rtcp-fb:96 transport-cc', 'a=rtcp-fb:96 goog-remb',
     'a=extmap:4 http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01',
     'a=extmap:5/sendonly http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time',
+    'a=extmap:6/sendrecv http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time',
     'a=msid:private-stream private-track'].join('\r\n') + '\r\n'
   globalThis.window = { __peers: [{ localDescription: { type: 'answer', sdp }, remoteDescription: null }] }
   const rows = collectRtcFeedback()
   assert.equal(rows.length, 2)
   assert.deepEqual(rows[0], { peer: 0, side: 'local', type: 'answer', kind: 'audio', direction: 'sendonly',
-    transportCcFeedback: false, rembFeedback: false, transportCcExtension: false, absoluteSendTimeExtension: false })
+    transportCcFeedback: false, rembFeedback: false, transportCcExtension: false, absoluteSendTimeExtension: false, absoluteCaptureTimeExtension: false })
   assert.equal(rows[1].transportCcFeedback, true); assert.equal(rows[1].rembFeedback, true)
+  assert.equal(rows[1].absoluteCaptureTimeExtension, true)
   assert.equal(rows[1].transportCcExtension, true); assert.equal(rows[1].absoluteSendTimeExtension, true)
   for (const secret of ['secret', 'private-address', 'private-stream', 'private-track']) assert.ok(!JSON.stringify(rows).includes(secret))
 })

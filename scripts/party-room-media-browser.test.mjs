@@ -21,6 +21,9 @@ import { createMediaTcpProxy } from './party-media-tcp-proxy.mjs'
 import { createMediaUdpProxy } from './party-media-udp-proxy.mjs'
 import { createOwnedRemoteBrowser } from './party-remote-browser.mjs'
 import { runRoomReceiverFault } from './party-room-receiver-fault.mjs'
+import { installAbsoluteCaptureExperiment } from './party-absolute-capture-experiment.mjs'
+import { probeDecodedTracks } from './party-decoded-track-probe.mjs'
+import { analyseCaptureClocks } from './party-rtp-capture-clock.mjs'
 import { encodedTimingWorker, installEncodedTimingProbe } from './party-encoded-timing-observer.mjs'
 import { installAvSourceMarkers, installAvObserver, analyseAvObservations } from './party-av-observer.mjs'
 import { collectAvMediaStats } from './party-av-stats.mjs'
@@ -59,6 +62,11 @@ if (codecExperiment) {
 }
 const avTiming = process.env.KTV_ROOM_TEST_AV_TIMING === '1'
 const encodedTiming = process.env.KTV_ROOM_TEST_ENCODED_TIMING === '1'
+const absoluteCapture = process.env.KTV_ROOM_TEST_ABSOLUTE_CAPTURE === '1'
+assert.ok(!absoluteCapture||encodedTiming,'Absolute capture negotiation requires actual frame timing observation')
+const decodedTrackProbe = process.env.KTV_ROOM_TEST_DECODED_TRACKS === '1'
+assert.ok(!decodedTrackProbe||absoluteCapture&&!avTiming,
+  'Decoded capability observation requires actual capture timestamps and runs separately from A/V timing measurement')
 const encodedApi = process.env.KTV_ROOM_TEST_ENCODED_API || 'native'
 assert.ok(['native','legacy'].includes(encodedApi)&&(encodedApi==='native'||encodedTiming),
   'A private encoded API comparison requires timing observation')
@@ -321,6 +329,7 @@ try {
       ${encodedApi==='legacy' ? 'window.RTCRtpScriptTransform=undefined;' : ''}
       ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify('('+encodedTimingWorker.toString()+')();')});` : ''}
       (${installEncodedLeaseObserver.toString()})();
+      ${absoluteCapture ? `(${installAbsoluteCaptureExperiment.toString()})();` : ''}
       window.__partyClocks=[]; window.__partyPlaybacks=[]; window.__phaseEvidence=[];
       window.__receivedPermits=[];
       if(${receiverFault!=='off'}) {
@@ -423,6 +432,8 @@ try {
     return sessionId
   }
   const host = await page(1), phone = await page(2), audience = await page(1, true)
+  if(absoluteCapture) check(await evaluate(phone,'__absoluteCaptureExperiment.supported'),
+    'native transceiver APIs support absolute capture negotiation without SDP rewriting')
   await poll(() => evaluate(host, "[...document.querySelectorAll('select')].some(item => [...item.options].some(option => option.value === 'online') && !item.disabled)"), 'host mode selector ready')
   await evaluate(host, "(() => { const item = [...document.querySelectorAll('select')].find(item => [...item.options].some(option => option.value === 'online')); item.value = 'online'; item.dispatchEvent(new Event('change', {bubbles:true})); })()")
   await poll(async () => (await api(1, pathRoom)).room.performanceMode === 'online', 'room switches online')
@@ -469,6 +480,19 @@ try {
   await poll(() => evaluate(phone, "document.querySelector('[data-party-media-status]')?.textContent.includes('Sending live singing')"), 'publisher ready through provider acknowledgment')
   await poll(() => evaluate(audience, "(() => { const video = document.querySelector('[data-party-media-screen] video'); return video?.srcObject?.getAudioTracks().length === 1 && video.srcObject.getVideoTracks().length === 1; })()"), 'audience receives both performance tracks')
   await poll(async () => (await api(1, pathRoom)).playback.state === 'playing', 'room plays after ready countdown')
+  if(absoluteCapture) await poll(()=>evaluate(audience,
+    "['audio','video'].every(kind=>__encodedTimingProbe.records.filter(row=>row.direction==='receive'&&row.kind===kind&&Number.isFinite(row.values.captureTime)).length>=8)"),
+    'actual SFU audio/video capture timestamps',60000)
+  if(decodedTrackProbe) {
+    const evidence=await evaluate(audience,`(${probeDecodedTracks.toString()})(document.querySelector('[data-party-media-screen] video').srcObject,__peers)`)
+    console.log('Native decoded track capability:',JSON.stringify(evidence))
+    const video=evidence.find(row=>row.kind==='video')
+    check(video.status==='complete'&&video.records.length===8&&video.records.every(row=>
+      Number.isInteger(row.rtpTimestamp)&&row.codedWidth===1280&&row.codedHeight===720),
+      'actual decoded video frames expose RTP timestamps at the nominal 1280x720 size')
+    check(video.records.every((row,index)=>index===0||row.timestamp>video.records[index-1].timestamp),
+      'actual decoded video presentation timestamps advance')
+  }
   if (senderKeyframeMs !== null || demandKeyframes) {
     await evaluate(phone, `(${installSenderKeyframeExperiment.toString()})(${senderKeyframeMs ?? 5000}, ${demandKeyframes})`)
     senderKeyframePage = phone
@@ -911,18 +935,27 @@ try {
   for(const result of avMeasurements) check(result.absoluteSkewMs.p95<=150&&result.absoluteSkewMs.max<=250, `${result.phase} received audio/video marker presentation skew passes the 150 ms p95 / 250 ms maximum software target`)
   }
   check(errors.length === 0, `no browser runtime exceptions (${errors.length})`)
+  if(absoluteCapture) for(const session of sessionSockets.keys()) {
+    const evidence=await evaluate(session,'({supported:__absoluteCaptureExperiment.supported,configured:__absoluteCaptureExperiment.configured,missing:__absoluteCaptureExperiment.missing,failures:__absoluteCaptureExperiment.failures,evidence:__absoluteCaptureExperiment.evidence})')
+    console.log('Private absolute capture negotiation:',JSON.stringify(evidence))
+    check(evidence.failures===0,'native absolute capture negotiation has no failed API requests')
+  }
   if(encodedTiming) {
     console.log('Private encoded API selection:',encodedApi)
     const observed=[]
     for(const session of sessionSockets.keys()) {
       const evidence=await evaluate(session,'({records:__encodedTimingProbe.records,states:__encodedTimingProbe.states,errors:__encodedTimingProbe.errors,features:__encodedTimingProbe.features,failures:__encodedTimingProbe.failures,wrappedSenders:__encodedTimingProbe.wrappedSenders,workerCount:__encodedTimingProbe.workerCount})')
       console.log('Native encoded timing evidence:',JSON.stringify(evidence))
+      console.log('Native RTP capture clock study:',JSON.stringify(analyseCaptureClocks(evidence.records)))
       check(evidence.errors===0,'encoded timing observers forward native frames without errors')
       observed.push(...evidence.records)
     }
     for(const direction of ['send','receive'])for(const kind of ['audio','video'])
       check(observed.filter(row=>row.direction===direction&&row.kind===kind&&Number.isFinite(row.rtpTimestamp)).length>=8,
         `native ${direction} ${kind} observation contains actual frame timestamps`)
+    if(absoluteCapture)for(const kind of ['audio','video'])
+      check(observed.filter(row=>row.direction==='receive'&&row.kind===kind&&Number.isFinite(row.values.captureTime)).length>=8,
+        `received ${kind} exposes actual capture timestamps through the SFU`)
   }
   console.log(`${passed} built-app streaming checks passed. Client: ${clientLocation}; synthetic microphone, foreground Chrome, isolated policy/SFU. Remote HTTP/CDP use loopback SSH forwards; physical and distinct access-network acceptance remains open.`)
 } catch (error) {
@@ -934,8 +967,11 @@ try {
   if(mediaProxy) console.error('Owned media proxy:',JSON.stringify(mediaProxy.snapshot()))
   console.error('Playback recovery:',JSON.stringify(db.prepare('SELECT state,recovery_reason FROM ktv_playback').all()))
   console.error('Runtime exception count:', errors.length)
-  if(encodedTiming) for(const session of sessionSockets.keys()) console.error('Native encoded timing on failure:',JSON.stringify(
-    await evaluate(session,'({records:__encodedTimingProbe.records,states:__encodedTimingProbe.states,errors:__encodedTimingProbe.errors,features:__encodedTimingProbe.features,failures:__encodedTimingProbe.failures,wrappedSenders:__encodedTimingProbe.wrappedSenders,workerCount:__encodedTimingProbe.workerCount})').catch(()=>({unavailable:true}))))
+  if(encodedTiming) for(const session of sessionSockets.keys()) {
+    const evidence=await evaluate(session,'({records:__encodedTimingProbe.records,states:__encodedTimingProbe.states,errors:__encodedTimingProbe.errors,features:__encodedTimingProbe.features,failures:__encodedTimingProbe.failures,wrappedSenders:__encodedTimingProbe.wrappedSenders,workerCount:__encodedTimingProbe.workerCount})').catch(()=>({unavailable:true}))
+    console.error('Native encoded timing on failure:',JSON.stringify(evidence))
+    if(evidence.records) console.error('Native RTP capture clock study on failure:',JSON.stringify(analyseCaptureClocks(evidence.records)))
+  }
   const known=['AV_VIDEO_EVIDENCE_LIMIT','AV_MARKER_ID_LIMIT','AV_STATS_SENDER_LIMIT','AV_STATS_PEER_LIMIT',
     'TypeError','RangeError','ReferenceError','NetworkError','AbortError','InvalidStateError','OperationError']
   console.error('Runtime error categories:',JSON.stringify(errors.slice(0,8).map(message=>known.find(code=>message.includes(code))||'RuntimeError')))

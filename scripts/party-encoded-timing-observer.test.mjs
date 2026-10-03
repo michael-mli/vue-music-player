@@ -107,3 +107,17 @@ test('standard-only probe retains native configuration and existing transforms c
   assert.equal(f.realm.window.__encodedTimingProbe.failures.occupied, 1)
   assert.equal(f.workers.length, 1)
 })
+
+
+test('sparse capture timestamps receive a bounded sample window without reading payloads or dropping frames', () => {
+  const f = fixture()
+  let count = 0, delivered = 0
+  const stream = f.stream({ transform(frame, controller) { controller.enqueue(frame) } })
+  const frame = { timestamp: 1, get data() { throw new Error('Do not read payload') },
+    getMetadata: () => (++count > 300 ? { captureTime: count } : {}) }
+  for (let i = 0; i < 5000; i++) stream.transformer.transform(frame, { enqueue: () => delivered++ })
+  assert.equal(delivered, 5000)
+  assert.equal(f.messages.length, 56)
+  assert.deepEqual(f.messages.filter(row => row.count > 300 && row.count < 400).map(row => row.values.captureTime),
+    [301, 302, 303, 304, 305, 306, 307, 308])
+})

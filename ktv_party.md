@@ -915,8 +915,11 @@ The original guide is decoded in a separate engine and cannot obtain a publish
 tap. Publish mixing and the render-thread expiry gate operate independently of
 personal volume. Captured lyrics use the rendered source position minus any
 publish backing delay. Audio and video carry the same named WebRTC stream and
-attach to one audience video element so its media clock governs both tracks.
-Headphone audio and publisher render timing still require physical checks.
+attach to one always-muted audience video element. Audible audio passes through
+the separate receiver graph and its post-buffer deadline guard. That graph and
+the native video's playout clock are separate; a shared stream/RTCP identity
+does not establish synchronized output under loss. Headphone audio and publisher
+render timing still require physical checks.
 
 A second local expiry barrier sits between the publisher encoders and RTP
 packetization, using a dedicated worker. It starts closed, receives only validated
@@ -933,6 +936,47 @@ impaired networks and physical outputs remain required. The gate is deployed in
 the preview and passes independent Chrome 137/154 native receiver checks plus
 the complete isolated room journey; public media remains disabled.
 [WebRTC encoded transform specification](https://www.w3.org/TR/webrtc-encoded-transform/)
+
+### Receiver capture clocks and controlled playout study
+
+The private native fixture can request the supported Absolute Capture Time RTP
+extension through `getHeaderExtensionsToNegotiate` /
+`setHeaderExtensionsToNegotiate`. It preserves all other extensions, directions
+and ordering and uses no SDP rewriting or browser feature flags. Actual Chrome
+154 frames received through the owned LiveKit 1.13.7 SFU expose audio and video
+capture timestamps after negotiation; the default candidate does not negotiate
+this extension. This is a private experiment, not deployed playback behavior.
+[Native header extension negotiation](https://w3c.github.io/webrtc-extensions/#dom-rtcrtptransceiver-setheaderextensionstonegotiate)
+
+Encoded `captureTime` belongs to the reporting worker's performance clock domain.
+Keep audio/video observations separate until their clock origins are explicitly
+mapped. LiveKit normalizes Absolute Capture Time using sender reports; do not
+assume its received values preserve the publisher's original wall clock.
+A bounded diagnostic projects actual RTP/capture anchors using Opus 48-kHz and
+video 90-kHz clocks with rollover handling. Missing/stale anchors and clock
+discontinuities cannot produce guessed timestamps. Projection consistency is
+diagnostic evidence and grants no output permission.
+[Encoded capture timestamp semantics](https://www.w3.org/TR/webrtc-encoded-transform/),
+[Pinned SFU capture-time normalization](https://github.com/livekit/livekit/blob/v1.13.7/pkg/sfu/downtrack.go)
+
+A separate cloned-track probe confirms eight actual 1280x720 decoded video frames
+with RTP timestamps in Chrome 154. Its decoded audio data is available at 48 kHz,
+but uses a different timestamp domain; treating audio/video decoded timestamps as
+one capture clock would be incorrect. All probe frames are closed, cloned tracks
+are stopped, evidence is bounded and payload/SSRC data is excluded. Native frame
+metadata remains an optional browser capability requiring device checks.
+[Native RTP frame metadata test](https://chromium.googlesource.com/chromium/src/+/HEAD/third_party/blink/web_tests/external/wpt/webcodecs/videoFrame-metadata-rtpTimestamp.https.html)
+
+Capture metadata alone still fails impaired A/V acceptance. The next receiver
+controller must explicitly map capture time to audible output and video
+presentation, bound queued frames/PCM and latency, and close resources on
+handover, leave, loss and expiry. Its sole audible path must retain the receiver
+deadline guard after all buffering. It must pass the existing 40-pair matching,
+150-ms p95 / 250-ms maximum, nominal quality, source-clock and recovery gates
+before being selected for public media. A native MediaStream video player in the
+inspected Chromium implementation has no Web Audio source provider; routing its
+element through `MediaElementAudioSourceNode` is not an established safe solution.
+[MediaStream player implementation](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/third_party/blink/public/web/modules/mediastream/web_media_player_ms.h)
 
 The lyric video is declared as `screen_share`, with `screenShareEncoding` explicitly
 limited to 350 kbit/s and 25 fps on the existing 1280×720 canvas. Audience filters,

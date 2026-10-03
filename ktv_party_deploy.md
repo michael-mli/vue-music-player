@@ -643,10 +643,10 @@ production artifact is `/tmp/ktv-party-candidate-encoded-activation-20261003`,
 Build/type-check, 125 party tests, 41 fixture tests, 35 native clean room/A/V checks
 with actual frame callbacks, 24 independent SFU stalled-source checks and 16
 independent native stage/source freeze/expiry checks pass.
-Continuous UDP timing/matching still fails. This candidate is not deployed;
-keep public media disabled during any coupled preview rollout.
+Continuous UDP timing/matching still fails. This candidate was deployed as the
+coupled media-disabled preview on 2026-10-03; public media remains disabled.
 
-The current frontend preview is `d33b209`, deployed 2026-10-02; backend remains
+The preceding frontend preview was `d33b209`, deployed 2026-10-02; backend was
 `f58a8f3`. Assets are `main-DU8DSm-f.js`, `main-DnE6rWx5.css`,
 `partyLeaseGuard.worklet-BWdT3O5D.js` and `partyEncodedLease.worker-BxVsrNxp.js`.
 Serve both native modules as JavaScript at their hashed same-origin paths and
@@ -656,6 +656,25 @@ backup is `/home/mli/ktv-party-encoded-expiry-predeploy.p_7g43dq`, holding the
 previous frontend `7c1f583`, unchanged backend configuration, consistent checked
 database backup and static archive. Public media remains disabled; impaired timing,
 physical/mobile, capacity and online deployment gates remain open.
+
+The current coupled preview is frontend/backend **`acb583b`**, deployed
+2026-10-03. Exact assets are `main-iUMKk7ov.js`, `main-DnE6rWx5.css`,
+`partyLeaseGuard.worklet-BWdT3O5D.js` and `partyEncodedLease.worker-BxVsrNxp.js`.
+Backend 143/143, exact UI 45/45, PWA 10/10 and public release 23/23 pass.
+The release includes media protocol 2 and receiver output reservations/guards;
+older clients retain local controls but cannot obtain unsafe streaming tokens.
+Private native capture timestamp/decoded-track experiments are not in the public
+bundle. No persistent SFU was enabled. Impaired A/V and other online gates remain
+open. PM2 retains the original server command/cwd with watch off; tracked backend
+sources match `acb583b` and the tested server archive includes
+`ktv-media-protocol.js`.
+
+Rollback backup **`/home/mli/ktv-party-receiver-safe-predeploy.ehv22v0u`** contains
+the preceding frontend, previous/candidate backend source archives, consistent
+checked database backup, private runtime environment/PM2 state and nginx config.
+The directory is 0700 and files are 0600. No active performance existed during
+rollout. Restore software while retaining current additive database data unless
+a separate disaster recovery operation is intended.
 
 Before changing the backend, capture the deployed frontend asset names and build
 SHA, backend commit, nginx site configuration and private runtime configuration.

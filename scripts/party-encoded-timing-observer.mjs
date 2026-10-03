@@ -2,13 +2,18 @@
 // allowlisted timing/codec scalars, never payloads, grants, identities or URLs.
 export function encodedTimingWorker() {
   const Stream = self.TransformStream
-  const counts = { audio: 0, video: 0 }
+  const counts = { audio: 0, video: 0 }, captureSamples = { audio: 0, video: 0 }
   function observe(frame, kind) {
     if (!['audio','video'].includes(kind)) return
     const count = ++counts[kind]
-    if (count > 8 && count % 100 !== 0 || count > 4000) return
+    if (count > 4000) return
+    const regular = count <= 8 || count % 100 === 0
+    if (!regular && captureSamples[kind] >= 8) return
     let metadata = {}, metadataSupported = false
     try { if(typeof frame.getMetadata==='function'){metadata=frame.getMetadata()||{};metadataSupported=true} } catch {}
+    const capture = Number.isFinite(metadata.captureTime) && captureSamples[kind] < 8
+    if (!regular && !capture) return
+    if (capture) captureSamples[kind]++
     const values = {}
     for (const key of ['rtpTimestamp', 'timestamp', 'captureTime', 'receiveTime', 'senderCaptureTimeOffset',
       'width', 'height', 'spatialIndex', 'temporalIndex']) {
