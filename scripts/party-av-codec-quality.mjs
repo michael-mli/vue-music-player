@@ -58,3 +58,35 @@ export function analyseCodecQuality(samples, phase, expectedCodec, keyframeMs = 
     .filter(value=>typeof value==='string'))]
   return result
 }
+
+// Distinguish actual native capture from encoding. A steady capture source
+// cannot establish encoder cadence; requested frame rates are not counters.
+export function analyseCaptureCadence(samples, phase) {
+  const errors = [], rows = samples.filter(item => item.phase === phase)
+  const result = { phase, samples: rows.length, errors }
+  if (rows.length < 2) { errors.push('insufficient-samples'); return result }
+  const selected = rows.map(sample => ({ time: sample.source?.time,
+    capture: sample.source?.reports?.filter(row => row.type === 'media-source' && row.kind === 'video') || [],
+    encoded: sample.source?.reports?.filter(row => row.type === 'outbound-rtp' && row.kind === 'video') || [],
+  }))
+  if (selected.some(row => row.capture.length !== 1 || row.encoded.length !== 1)) {
+    errors.push('ambiguous-capture-path'); return result
+  }
+  const duration = selected.at(-1).time - selected[0].time
+  if (selected.some((row, index) => !Number.isFinite(row.time) || index && row.time <= selected[index - 1].time) ||
+    !Number.isFinite(duration) || duration < 5000) { errors.push('invalid-observation-clock'); return result }
+  if (selected.some(row => !Number.isFinite(row.encoded[0].ssrc) ||
+    row.encoded[0].ssrc !== selected[0].encoded[0].ssrc)) errors.push('video-path-changed')
+  if (selected.some(row => row.capture[0].width !== 1280 || row.capture[0].height !== 720)) errors.push('capture-resolution-changed')
+  result.durationMs = duration
+  for (const [name, field, counter] of [['capture', 'capture', 'frames'], ['encoded', 'encoded', 'framesEncoded']]) {
+    const counts = selected.map(row => row[field][0][counter])
+    if (!counts.every(value => Number.isSafeInteger(value) && value >= 0) ||
+      counts.some((value, index) => index && value < counts[index - 1])) {
+      errors.push('invalid-' + counter); continue
+    }
+    result[name + 'Frames'] = counts.at(-1) - counts[0]
+    result[name + 'Fps'] = result[name + 'Frames'] * 1000 / duration
+  }
+  return result
+}

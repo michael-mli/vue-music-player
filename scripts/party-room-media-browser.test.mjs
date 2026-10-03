@@ -29,9 +29,10 @@ import { installControlledReceiver, analyseControlledReceiverQuality, hasSingleA
 import { encodedTimingWorker, installEncodedTimingProbe } from './party-encoded-timing-observer.mjs'
 import { installAvSourceMarkers, installAvObserver, analyseAvObservations } from './party-av-observer.mjs'
 import { collectAvMediaStats } from './party-av-stats.mjs'
-import { analyseCodecQuality } from './party-av-codec-quality.mjs'
+import { analyseCodecQuality, analyseCaptureCadence } from './party-av-codec-quality.mjs'
 import { installEncodedLeaseObserver } from './party-encoded-lease-observer.mjs'
 import { installSenderKeyframeExperiment } from './party-sender-keyframes.mjs'
+import { installSenderCadenceExperiment } from './party-sender-cadence-experiment.mjs'
 import { keyframeRecoveryStep } from './party-keyframe-recovery.mjs'
 import { collectRtcFeedback } from './party-rtc-feedback.mjs'
 import { publisherRembSdp, installPublisherRembExperiment } from './party-publisher-feedback.mjs'
@@ -65,7 +66,11 @@ if (codecExperiment) {
 const avTiming = process.env.KTV_ROOM_TEST_AV_TIMING === '1'
 const encodedTiming = process.env.KTV_ROOM_TEST_ENCODED_TIMING === '1'
 const absoluteCapture = process.env.KTV_ROOM_TEST_ABSOLUTE_CAPTURE === '1'
-assert.ok(!absoluteCapture||encodedTiming,'Absolute capture negotiation requires actual frame timing observation')
+const senderCadence = process.env.KTV_ROOM_TEST_SENDER_CADENCE === 'text-l1t2'
+assert.ok(process.env.KTV_ROOM_TEST_SENDER_CADENCE === undefined || senderCadence,
+  'Unknown sender cadence experiment')
+assert.ok(!senderCadence || avTiming && encodedTiming && !codecExperiment,
+  'Sender cadence requires native capture and encoding evidence on the default codec build')
 const decodedTrackProbe = process.env.KTV_ROOM_TEST_DECODED_TRACKS === '1'
 assert.ok(!decodedTrackProbe||absoluteCapture&&!avTiming,
   'Decoded capability observation requires actual capture timestamps and runs separately from A/V timing measurement')
@@ -76,8 +81,8 @@ const receiverFault = process.env.KTV_ROOM_TEST_RECEIVER_FAULT || 'off'
 assert.ok(['off','task-stall','suspend-task-stall','source-task-stall'].includes(receiverFault), 'Unknown integrated receiver fault')
 assert.ok(receiverFault==='off'||remoteMode&&!avTiming&&!codecExperiment,
   'Integrated output faults require the production build and independent native outputs, without A/V marker experiments')
-assert.ok(!encodedTiming||remoteMode&&receiverFault==='off'&&!codecExperiment,
-  'Encoded timing observation requires an owned remote production build without output faults or codec comparisons')
+assert.ok(!encodedTiming||remoteMode&&receiverFault==='off',
+  'Encoded timing observation requires an owned remote build without output faults; marked codecs retain their own quality gates')
 const publisherFeedback = process.env.KTV_ROOM_TEST_PUBLISHER_FEEDBACK || 'default'
 assert.ok(['default', 'remb'].includes(publisherFeedback) && (publisherFeedback === 'default' || avTiming && codecExperiment),
   'Publisher feedback comparison requires a marked private build and native A/V evidence')
@@ -96,9 +101,11 @@ assert.ok(sourceStallMs === 0 || avTiming && remoteMode && Number.isInteger(sour
 const receiverTargetMs = process.env.KTV_ROOM_TEST_RECEIVER_TARGET_MS === undefined ? null : Number(process.env.KTV_ROOM_TEST_RECEIVER_TARGET_MS)
 const receiverSync = process.env.KTV_ROOM_TEST_RECEIVER_SYNC || 'off'
 const controlledPlayoutMs = process.env.KTV_ROOM_TEST_CONTROLLED_PLAYOUT_MS === undefined ? null : Number(process.env.KTV_ROOM_TEST_CONTROLLED_PLAYOUT_MS)
-assert.ok(controlledPlayoutMs === null || avTiming && absoluteCapture && receiverSync === 'off' && receiverTargetMs === null &&
+assert.ok(!absoluteCapture || encodedTiming || controlledPlayoutMs !== null && receiverFault !== 'off',
+  'Absolute capture negotiation requires native frame timing or controlled native expiry evidence')
+assert.ok(controlledPlayoutMs === null || (avTiming || receiverFault !== 'off') && absoluteCapture && receiverSync === 'off' && receiverTargetMs === null &&
   Number.isInteger(controlledPlayoutMs) && controlledPlayoutMs >= 200 && controlledPlayoutMs <= 1000,
-  'Controlled receiver playout requires actual capture/A/V evidence without another receiver policy')
+  'Controlled receiver playout requires native timing or expiry evidence without another receiver policy')
 assert.ok(['off', 'ntp', 'network', 'repair'].includes(receiverSync) && (receiverSync === 'off' || avTiming && receiverTargetMs === null),
   'Native sync experiment requires A/V timing and no fixed receiver target')
 assert.ok(receiverTargetMs === null || avTiming && Number.isInteger(receiverTargetMs) && receiverTargetMs >= 0 && receiverTargetMs <= 1000,
@@ -336,6 +343,7 @@ try {
       ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify('('+encodedTimingWorker.toString()+')();')});` : ''}
       (${installEncodedLeaseObserver.toString()})();
       ${absoluteCapture ? `(${installAbsoluteCaptureExperiment.toString()})();` : ''}
+      ${senderCadence ? `(${installSenderCadenceExperiment.toString()})();` : ''}
       window.__partyClocks=[]; window.__partyPlaybacks=[]; window.__phaseEvidence=[];
       window.__receivedPermits=[];
       if(${receiverFault!=='off'}) {
@@ -487,7 +495,7 @@ try {
   await poll(() => evaluate(phone, "document.querySelector('[data-party-media-status]')?.textContent.includes('Sending live singing')"), 'publisher ready through provider acknowledgment')
   await poll(() => evaluate(audience, "(() => { const video = document.querySelector('[data-party-media-screen] video'); return video?.srcObject?.getAudioTracks().length === 1 && video.srcObject.getVideoTracks().length === 1; })()"), 'audience receives both performance tracks')
   await poll(async () => (await api(1, pathRoom)).playback.state === 'playing', 'room plays after ready countdown')
-  if(absoluteCapture) await poll(()=>evaluate(audience,
+  if(absoluteCapture && encodedTiming) await poll(()=>evaluate(audience,
     "['audio','video'].every(kind=>__encodedTimingProbe.records.filter(row=>row.direction==='receive'&&row.kind===kind&&Number.isFinite(row.values.captureTime)).length>=8)"),
     'actual SFU audio/video capture timestamps',60000)
   if(controlledPlayoutMs !== null) await poll(()=>evaluate(audience,'__controlledReceiver.snapshot().active?.ready'),
@@ -549,7 +557,8 @@ try {
 
   if(receiverFault!=='off') {
     await runRoomReceiverFault({mode:receiverFault,phone,audience,host,origin,pathRoom,firstPublisher,
-      api,evaluate,click,poll,check,db,provider,replacementBrowser:hostBrowser,receiverBrowser:avBrowser})
+      api,evaluate,click,poll,check,db,provider,replacementBrowser:hostBrowser,receiverBrowser:avBrowser,
+      controlledDelayMs: controlledPlayoutMs})
   } else {
   const installSpectrum = () => evaluate(audience, `(() => { const element = document.querySelector('[data-party-media-screen] video'); window.__receiveContext = new AudioContext(); __receiveContext.resume();
     const source = __receiveContext.createMediaStreamSource(element.srcObject); window.__analyser = __receiveContext.createAnalyser(); __analyser.fftSize = 8192; __analyser.smoothingTimeConstant = 0;
@@ -946,6 +955,13 @@ try {
   const codecQualities=avMeasurements.map(measurement=>
     analyseCodecQuality(avTimingSamples,measurement.phase,expectedCodec,(senderKeyframeMs??codecExperiment?.keyframeMs??null)))
   for (const quality of codecQualities) console.log('Native codec quality:',JSON.stringify(quality))
+  for (const phase of new Set(avTimingSamples.map(item => item.phase)))
+    console.log('Native capture versus encoding:',JSON.stringify(analyseCaptureCadence(avTimingSamples,phase)))
+  if(senderCadence) check(avTimingSamples.length > 1 && avTimingSamples.every(sample => {
+    const senders = sample.source?.senderParameters?.filter(sender => sender.kind === 'video') || []
+    return senders.length === 1 && senders[0].contentHint === 'text' &&
+      senders[0].encodings?.length === 1 && senders[0].encodings[0].scalabilityMode === 'L1T2'
+  }), 'native sender retains actual text hint and L1T2 throughout every measured phase')
   if(controlledPlayoutMs !== null)for(const phase of new Set(avTimingSamples.map(item=>item.phase))) {
     const quality=analyseControlledReceiverQuality(avTimingSamples,phase)
     console.log('Controlled native presentation quality:',JSON.stringify(quality))
@@ -990,6 +1006,8 @@ try {
 } catch (error) {
   console.error('Journey failure:', error.message)
   if(avTimingSamples.length) console.error('A/V timing timeline on failure:',JSON.stringify(avTimingSamples))
+  for(const phase of new Set(avTimingSamples.map(item=>item.phase)))
+    console.error('Native capture versus encoding on failure:',JSON.stringify(analyseCaptureCadence(avTimingSamples,phase)))
   for(const phase of new Set(avTimingSamples.map(item=>item.phase)))
     console.error('Native codec quality on failure:',JSON.stringify(analyseCodecQuality(avTimingSamples,phase,codecExperiment?.codec || 'vp8',(senderKeyframeMs??codecExperiment?.keyframeMs??null))))
   if(controlledPlayoutMs !== null)for(const phase of new Set(avTimingSamples.map(item=>item.phase)))

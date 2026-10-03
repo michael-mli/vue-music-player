@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { analyseCodecQuality } from './party-av-codec-quality.mjs'
+import { analyseCodecQuality, analyseCaptureCadence } from './party-av-codec-quality.mjs'
 
 test('periodic keyframes require measured cadence and reject missing, reset or ineffective counters', () => {
   const rows = fixture()
@@ -58,5 +58,30 @@ test('counter reset, hidden sender replacement, missing counters and short obser
   ]) {
     const rows = fixture(); change(rows)
     assert.ok(analyseCodecQuality(rows, 'impaired', 'vp9').errors.length)
+  }
+})
+
+test('native capture cadence is distinct from encoding and keeps diagnostic output bounded', () => {
+  const rows = fixture()
+  rows.forEach((row, index) => {
+    row.source.reports[0].framesEncoded = index * 65
+    row.source.reports.push({ type: 'media-source', kind: 'video', frames: index * 125,
+      width: 1280, height: 720, trackIdentifier: 'private-track', secret: 'secret' })
+  })
+  const result = analyseCaptureCadence(rows, 'impaired')
+  assert.deepEqual(result.errors, [])
+  assert.equal(result.captureFps, 25); assert.equal(result.encodedFps, 13)
+  assert.equal(result.captureFrames, 250); assert.equal(result.encodedFrames, 130)
+  assert.equal(/private-track|secret|ssrc/.test(JSON.stringify(result)), false)
+  for (const change of [
+    items => { items[1].source.reports.pop() },
+    items => { items[2].source.reports[1].frames = 1 },
+    items => { items[2].source.reports[0].ssrc = 99 },
+    items => { items[1].source.reports[1].width = 640 },
+    items => { items[1].source.time = items[0].source.time },
+    items => { items[1].source.reports.push({ ...items[1].source.reports[1] }) },
+  ]) {
+    const invalid = structuredClone(rows); change(invalid)
+    assert.ok(analyseCaptureCadence(invalid, 'impaired').errors.length)
   }
 })

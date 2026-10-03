@@ -3436,3 +3436,107 @@ output clocks and longer recovery. Physical/mobile, capacity, distinct networks
 and persistent online release gates remain part of the original objective.
 Public preview remains `acb583b`, media disabled; these controller experiments
 are private and no further public deployment occurred.
+
+### Native capture isolation and buffered expiry work — 2026-10-03
+
+The follow-up actual input-counter run is terminal exit 1. Baseline capture and
+encoding are **25.00/25.00 fps**; impaired native capture remains **25.01 fps at
+1280×720**, but encoding/decoding/presentation falls to **13.78/13.71/13.45 fps**.
+Capture produces **1987** frames during the measured impaired interval while the
+encoder produces **1095**. Capture scheduling is not the observed cadence loss.
+The impaired 40-pair result has one unmatched edge of each kind, skew **208.91-ms
+p95 / 309.62-ms maximum**, and **2114.40-ms maximum video delay**. Timing, video
+latency and quality fail. Do not generalize the earlier passing timing summaries
+to another loss trace. Log:
+`/tmp/ktv-controlled-source-capture-counters-20261003.log`.
+
+Added a bounded native `text` / `L1T2` sender experiment, preserving caller/native
+objects, audio/receive paths, 350-kbit/s/25-fps caps and 720p dimensions. Native
+sender parameters verify both settings throughout collected phases. Actual
+impaired capture/encoding/decoding/presentation is **25.01/11.01/10.92/10.61 fps**.
+It obtains 40 impaired pairs without unmatched edges, skew **120.43-ms p95 /
+334.78-ms maximum**, and **1981.70-ms maximum video delay**. Source clock recovery
+interrupts the next-singer observation; the run is terminal exit 1. The setting
+does not resolve cadence and is not applied to the product. Log:
+`/tmp/ktv-controlled-text-l1t2-continuous-udp-20261003.log`.
+
+Added a compact native capture-versus-encoding analyzer. It rejects missing or
+ambiguous input paths, resets, source replacement and invalid observation clocks,
+keeps capture dimensions explicit, and returns no raw track identifiers. The
+timing/capability suite passes **68/68**:
+`/tmp/ktv-controlled-capture-expiry-fixtures-20261003.log`.
+
+The controlled receiver can now enter the independent native expiry fixtures
+without installing A/V markers or encoded timing observers. Its snapshot includes
+the actual native DelayNode value. The fixture verifies that value, decoded
+1280×720 output, native buffered audio residence and fresh audible output before
+stalling the listener. It preserves all original permit, silence, separation and
+capture-uncertainty requirements.
+
+The first controlled 1000-ms / audio-only native deep-buffer run is terminal
+exit 1 after 21 functional checks. Actual audio residence reaches **511.89 ms**,
+but the video queue reaches its byte bound and the controller closes before the
+stall begins. The old output is already silent during the measured fault interval;
+this cannot establish expiry silence. Queue limits are not raised. Log:
+`/tmp/ktv-controlled-buffer-expiry-task-stall-20261003.log`.
+
+Controlled deep-buffer variants now request the same native 1000-ms target for
+video so the additional one-second decoded hold can remain within its queue.
+The original production fault fixture keeps its audio-only request. The first
+symmetric run is terminal exit 1 before the stall: publisher clock recovery
+removes the stream during native-buffer observation. Controller closure is
+error-free with peak **28 frames / 38,707,200 bytes**; this is not fault acceptance.
+Log: `/tmp/ktv-controlled-buffer-expiry-symmetric-task-stall-20261003.log`.
+The corrected fixture handles a removed stream explicitly and requires a fresh
+post-buffer audible heartbeat, preventing pre-fault silence from counting as a
+successful expiry test.
+
+The next 1000-ms symmetric run still closes at the bounded video queue before
+the actual stall. It is terminal exit 1; the old output is already silent and no
+new silence edge occurs during the stalled interval. Log:
+`/tmp/ktv-controlled-buffer-expiry-symmetric-fresh-task-stall-20261003.log`.
+An additional pre-stall check now requires an active, error-free controller,
+current audible state and a recent independent audible heartbeat. A failed
+controller cannot enter the fault measurement as a successful silent output.
+
+With the unchanged queue ceilings and a **200-ms** additional controller delay,
+native deep-buffer task-stall acceptance passes **36/36**, and actual audio-clock
+freeze/resume acceptance passes **38/38**. Both request native 1000-ms audio/video
+targets and independently measure **508.33/506.11-ms** mean audio residence before
+the stall. Fresh output is audible immediately before each stall; old output
+stays silent through replacement, and replacement remains audible while page
+callbacks are blocked. The frozen context genuinely resumes rendering for
+**20.004 seconds** without expired buffered audio leaking. Original 150-ms expiry,
+output-separation and independent capture-uncertainty checks pass, all controllers
+close without errors and browser exceptions are zero. These results establish
+the tested 200-ms buffered path, not the unsupported 1000-ms deep-buffer variant,
+mobile behavior, impaired A/V quality or product integration. Logs:
+
+- `/tmp/ktv-controlled-200-buffer-expiry-task-stall-20261003.log`
+- `/tmp/ktv-controlled-200-buffer-expiry-suspend-task-stall-20261003.log`
+
+Review of earlier codec counters gives a concrete reason for the next comparison:
+the H.264 raw-output impaired run retained **25.00/24.66 fps** source/decoder at
+1280×720, although its A/V timing and later hybrid readiness failed. VP9 retained
+21.78-fps source but failed 16.90-fps decoding. Neither is a release result.
+The next experiment combines H.264's observed source cadence with the bounded
+capture controller and corrected encoded-stream reservation. Its private build
+marker disables backup codecs; production remains default VP8 with backup enabled.
+Native frame observers now permit such explicitly marked comparisons and still
+require their declared codec, dimensions, caps, counters and timing gates.
+
+The 200-ms source-page-stall run is terminal exit 1 after its output-safety
+assertions pass: actual native residence is **552.16 ms**, the built source cannot
+renew or stop before the delivered cutoff, old output stays silent through
+replacement, and separation/expiry/capture bounds pass. Final controller checks
+reject a replacement listener's **89-ms audio capture-clock residual**, above the
+unchanged **80-ms** limit. That controller closes safely; the original listener
+closes without error. This is not a complete source-stall pass. Log:
+`/tmp/ktv-controlled-200-buffer-expiry-source-task-stall-20261003.log`.
+
+The H.264 comparison build is isolated at
+`/tmp/ktv-codec-candidate-controlled-h264-20261003`; the builder verifies that
+product sources and every production dist file remain unchanged. Both production
+and frozen `acb583b` index hashes remain
+`19c5921520411deb8728b7975dd8d7a6b362eb33cdb0a0fc46852aee52ecb9ed`.
+Build log: `/tmp/ktv-controlled-h264-private-build-20261003.log`.

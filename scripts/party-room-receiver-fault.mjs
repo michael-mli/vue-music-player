@@ -4,7 +4,8 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 
 export async function runRoomReceiverFault({ mode, phone, audience, host, origin, pathRoom,
-  firstPublisher, api, evaluate, click, poll, check, db, provider, replacementBrowser, receiverBrowser }) {
+  firstPublisher, api, evaluate, click, poll, check, db, provider, replacementBrowser, receiverBrowser,
+  controlledDelayMs = null }) {
   const label = `SFU receiver/${mode}`
   const view = await api(1,pathRoom)
   const clock = await evaluate(audience, `(async()=>{
@@ -28,20 +29,43 @@ export async function runRoomReceiverFault({ mode, phone, audience, host, origin
       if(!('jitterBufferTarget' in receiver))throw new Error('RECEIVER_TARGET_UNSUPPORTED');
       receiver.jitterBufferTarget=1000;
     }
+    // The controlled output already holds an additional decoded-video delay.
+    // For its deep-buffer expiry variant, request the same native video target
+    // so the bounded decoded queue can remain active until the actual stall.
+    // The ordinary production fault test keeps its original audio-only target.
+    const videoReceivers=${controlledDelayMs !== null} ? __peers.filter(peer=>peer.connectionState==='connected')
+      .flatMap(peer=>peer.getReceivers()).filter(item=>item.track.id===video.srcObject.getVideoTracks()[0].id) : [];
+    for(const receiver of videoReceivers){
+      if(!('jitterBufferTarget' in receiver))throw new Error('RECEIVER_VIDEO_TARGET_UNSUPPORTED');
+      receiver.jitterBufferTarget=1000;
+    }
     const receivedContexts=__contexts.filter(item=>item.state==='running'&&item.__mediaSourceTrackIds?.includes(trackId));
     window.__faultReceiveContext=receivedContexts[0];
+    const controlled=window.__controlledReceiver?.snapshot().active;
     return {muted:video.muted,targets:receivers.map(item=>item.jitterBufferTarget),contexts:receivedContexts.length,
+      videoTargets:videoReceivers.map(item=>item.jitterBufferTarget),
+      controlled:controlled?{ready:controlled.ready,error:controlled.error,audioDelayMs:controlled.audioDelayMs,
+        videoWidth:controlled.width,videoHeight:controlled.height}:null,
       backingSources:__bufferSources.length};
   })()`)
   console.log('Integrated received output topology:',JSON.stringify(context))
   check(context.muted&&context.targets.length===1&&context.targets[0]===1000&&context.contexts===1&&context.backingSources===0,
     `${label}: actual SFU audience uses one guarded context and a 1000-ms native receive target`)
+  if(controlledDelayMs !== null) check(context.controlled?.ready && !context.controlled.error &&
+    context.videoTargets.length===1 && context.videoTargets[0]===1000 &&
+    Math.abs(context.controlled.audioDelayMs-controlledDelayMs)<1 &&
+    context.controlled.videoWidth===1280 && context.controlled.videoHeight===720,
+    `${label}: actual capture-controlled output has the requested additional audio delay and native video`)
   await poll(async()=> (await receiverBrowser.audioEvidence()).some(item=>item.captureHeartbeat&&item.rmsAmplitude>.02),
     'actual SFU received audio before page stall')
   // A target getter alone does not establish queued audio. Observe an interval
   // of native jitter-buffer counters after requesting the larger target.
   const buffer = await poll(()=>evaluate(audience, `(async()=>{
-    const trackId=document.querySelector('[data-party-media-screen] video').srcObject.getAudioTracks()[0].id;
+    const stream=document.querySelector('[data-party-media-screen] video')?.srcObject;
+    if(!stream)return false;
+    const track=stream.getAudioTracks()[0];
+    if(!track)return false;
+    const trackId=track.id;
     for(const peer of __peers.filter(item=>item.connectionState==='connected')){
       const receiver=peer.getReceivers().find(item=>item.track.id===trackId);
       if(!receiver)continue;
@@ -61,11 +85,29 @@ export async function runRoomReceiverFault({ mode, phone, audience, host, origin
   console.log('Integrated native received buffer:',JSON.stringify(buffer))
   check(buffer.meanMs>=500&&buffer.emitted>0&&buffer.targetMs===1000,
     `${label}: native counters confirm at least 500 ms mean audio residence after the 1000-ms target`)
+  if(controlledDelayMs !== null) check(await evaluate(audience, `(()=>{
+    const controlled=__controlledReceiver.snapshot().active;
+    return controlled?.ready&&!controlled.closed&&!controlled.error;
+  })()`), `${label}: controlled output remains active after native buffering builds`)
+  if(controlledDelayMs !== null) {
+    const bufferedAt=await evaluate(audience,'performance.timeOrigin+performance.now()');
+    await poll(async()=> (await receiverBrowser.audioEvidence()).some(item=>item.captureHeartbeat&&
+      item.time>=bufferedAt&&item.rmsAmplitude>.02), 'fresh controlled audible output after native buffering builds');
+  }
   const issued = await poll(()=>evaluate(audience, `(()=>{
     const latest=__receivedPermits.at(-1);
     return latest&&latest.permit.publisherIdentity===${JSON.stringify(firstPublisher.identity)}&&
       performance.now()-latest.received<200&&latest.permit.expiresServerMs-performance.now()-${clock.offsetMs}>3000?latest:false;
   })()`),'fresh output permit actually delivered to the built audience')
+  if(controlledDelayMs !== null) {
+    const beforeStall=await evaluate(audience,'performance.timeOrigin+performance.now()');
+    const evidence=await receiverBrowser.audioEvidence();
+    const active=await evaluate(audience,'__controlledReceiver.snapshot().active');
+    check(active?.ready&&!active.closed&&!active.error &&
+      evidence.filter(item=>typeof item.audible==='boolean'&&item.time<=beforeStall).at(-1)?.audible===true &&
+      evidence.some(item=>item.captureHeartbeat&&item.time>=beforeStall-1200&&item.time<=beforeStall&&item.rmsAmplitude>.02),
+      `${label}: controlled output is active and independently audible immediately before the actual stall`)
+  }
   const start = await evaluate(audience, 'performance.timeOrigin+performance.now()')
   const deadline = await evaluate(audience, `performance.timeOrigin+${issued.permit.expiresServerMs}-${clock.offsetMs}`)
   let stalled, sourceStalled

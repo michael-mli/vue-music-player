@@ -1021,6 +1021,44 @@ capture-frame statistics are now collected separately from encoded/decoded and
 presented counts to identify the source deficit. The one-second hold has limited
 latency headroom and is not a selected product policy.
 
+A follow-up with native input counters isolates the deficit: captured video
+remains **25.01 fps at 1280×720**, while encoded/decoded/presented cadence falls
+to **13.78/13.71/13.45 fps**. Its impaired timing also fails, at **208.91-ms p95 /
+309.62-ms maximum** and **2114.40-ms maximum video delay**. The prior four-phase
+timing result does not establish reliability across random loss traces. The
+fixture now reports capture and encoding deltas separately, with explicit
+missing/ambiguous/reset-clock diagnostics and no raw track identifiers.
+
+A private `text` / `L1T2` native sender comparison preserves the 350-kbit/s cap,
+25-fps request and 720p dimensions. It is motivated by the native sender's
+screen-content classification and encoder's layered screen-content handling,
+but observed encoding still falls below target. This setting is not selected
+for production. Native API acceptance alone cannot establish frame-rate quality.
+[Native content classification](https://webrtc.googlesource.com/src/+/refs/heads/main/pc/rtp_sender.cc),
+[Native encoder drop policies](https://chromium.googlesource.com/external/webrtc/+/lkgr/video/video_stream_encoder.cc)
+
+Controlled-buffer expiry acceptance runs independently from A/V marker and
+encoded timing observers. It retains actual backend/SFU permits and independent
+browser output capture, checks the native additional audio delay, and requires
+fresh audible output after native buffering builds. Deep-buffer controlled
+variants request a 1000-ms native target for both tracks; the original product
+fault fixture retains its audio-only target. Audio-only deep buffering can exceed
+the bounded prototype video queue before the stall, closing output; that outcome
+cannot count as expiry acceptance. A later symmetric attempt was interrupted by
+publisher clock recovery before the stall. Neither failed run closes the expiry
+or sustained-clock gate.
+
+At 200-ms additional delay, the prototype passes independent deep-buffer
+task-stall and frozen-render-clock resume fixtures (36/38 checks). Native audio
+residence exceeds 500 ms, output is independently audible immediately before
+each stall, and expired old output remains silent while a replacement plays.
+The frozen context renders again for 20 seconds without leakage. This evidence
+applies to the tested 200-ms path; the one-second deep-buffer variant and general
+clock reliability remain open. A source-page-stall run passes its output-safety
+checks but ultimately fails when a replacement controller rejects an 89-ms
+audio capture-clock residual above the existing 80-ms bound. That bound is
+preserved. No public controller or codec change is selected.
+
 The lyric video is declared as `screen_share`, with `screenShareEncoding` explicitly
 limited to 350 kbit/s and 25 fps on the existing 1280×720 canvas. Audience filters,
 publisher JWT source grants and provider readiness use that same source contract;

@@ -40,7 +40,8 @@ export function installControlledReceiver(Clock, FrameQueue, delayMs = 800) {
     let firstPresentation = null, lastPresentation = null, error = null, ready = false, writing = false, lastOutputTimestamp = -Infinity
     let decodedAudio = 0
     const item = { original, state, snapshot() { return { session, ready, closed, error,
-      delayMs, drawn, presented, missing, decodedAudio, maximumBytes, maximumQueued,
+      delayMs, audioDelayMs: state.delay.delayTime.value * 1000,
+      drawn, presented, missing, decodedAudio, maximumBytes, maximumQueued,
       firstPresentation, lastPresentation, width: player.videoWidth, height: player.videoHeight, ...queue.snapshot(),
       audioClock: audioClock.snapshot(performance.now()), videoClock: videoClock.snapshot(performance.now()) } },
       close() {
