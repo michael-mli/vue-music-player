@@ -1,14 +1,18 @@
 // Private native timing probe. Forward every frame unchanged and retain only
 // allowlisted timing/codec scalars, never payloads, grants, identities or URLs.
-export function encodedTimingWorker(createAudioProbe = null, primaryPayload = null, packetFrames = null) {
+export function encodedTimingWorker(createAudioProbe = null, primaryPayload = null, packetFrames = null,createVideoProbe=null) {
   const Stream = self.TransformStream
   const counts = { audio: 0, video: 0 }, captureSamples = { audio: 0, video: 0 }
-  let audioProbe
+  let audioProbe,videoProbe
   function observe(frame, kind) {
     if (!['audio','video'].includes(kind)) return
     if(kind==='audio'&&self.__encodedTimingDirection==='receive'&&typeof self.__observeOwnedPcm==='function') {
       let metadata={};try{metadata=frame.getMetadata?.() || {}}catch{}
       self.__observeOwnedPcm(frame,metadata)
+    }
+    if(kind==='video'&&self.__encodedTimingDirection==='receive'&&typeof createVideoProbe==='function'){
+      let metadata={};try{metadata=frame.getMetadata?.()||{}}catch{}
+      videoProbe??=createVideoProbe();videoProbe.observe(frame,metadata)
     }
     const count = ++counts[kind]
     if (count > 4000) return
@@ -62,7 +66,7 @@ export function installEncodedTimingProbe(workerSource) {
     self.onrtctransform=({transformer})=>{self.__encodedTimingCodecs=transformer.options.codecs;attach(transformer.readable,transformer.writable,transformer.options.kind)};
     self.onmessage=({data})=>{if(data?.type?.startsWith('pcm-'))return;self.__encodedTimingCodecs=data.codecs;attach(data.readable,data.writable,data.kind)};
   `], { type: 'text/javascript' }))
-  const records = [], states=[], audioDecoders=[], workers = new Set(), urls = new Set([receiverUrl]), observedReceivers=new WeakSet()
+  const records = [], states=[], audioDecoders=[],videoDecoders=[], workers = new Set(), urls = new Set([receiverUrl]), observedReceivers=new WeakSet()
   const receiverWorkers=new WeakMap(),workerIds=new WeakMap(),pcmStates=[]
   let errors = 0, sequence = 0, wrappedSenders = 0
   const failures = { worker:0, pipe:0, occupied:0, unsupported:0 }
@@ -79,6 +83,20 @@ export function installEncodedTimingProbe(workerSource) {
         pcmStates.push(row);if(pcmStates.length>64)pcmStates.shift();return
       }
       if(direction==='receive'&&data?.type==='pcm-port-error'){errors++;failures.pipe++;return}
+      if(direction==='receive'&&data?.type==='encoded-video-decode'&&['complete','error','unsupported','timeout','closed'].includes(data.status)){
+        const row={worker:id,status:data.status,
+          reason:[null,'API','CONFIG','DECODE','OUTPUT','CODEC','CLOCK','BOUND','TIMEOUT'].includes(data.reason)?data.reason:'OUTPUT',records:[]}
+        if(data.captureMode==='rtp-projected')row.captureMode=data.captureMode
+        for(const key of ['inputCount','decodedCount','maximumBytes','captureAnchors'])if(Number.isSafeInteger(data[key])&&data[key]>=0)row[key]=data[key]
+        for(const key of ['maximumCaptureResidualMs','maximumProjectionMs'])if(Number.isFinite(data[key])&&data[key]>=0)row[key]=data[key]
+        for(const record of (Array.isArray(data.records)?data.records:[]).slice(0,8)){
+          const safe={}
+          for(const key of ['timestamp','rtpTimestamp','captureUnixMs','width','height','allocationBytes','encodedArrivalMs','decodeDelayMs'])
+            if(Number.isFinite(record?.[key]))safe[key]=record[key]
+          row.records.push(safe)
+        }
+        videoDecoders.push(row);if(videoDecoders.length>8)videoDecoders.shift();return
+      }
       if (direction === 'receive' && data?.type === 'encoded-audio-decode' &&
         ['complete','error','unsupported','timeout'].includes(data.status)) {
         const row = { worker: id, status: data.status,
@@ -161,12 +179,12 @@ export function installEncodedTimingProbe(workerSource) {
         if(legacyReceiver&&typeof receiver.createEncodedStreams==='function') {
           const {readable,writable}=receiver.createEncodedStreams()
           const codecs=(receiver.getParameters?.().codecs || []).filter(item=>Number.isInteger(item.payloadType)&&
-            item.payloadType>=0&&item.payloadType<=127&&['audio/opus','audio/red'].includes(item.mimeType?.toLowerCase()))
+            item.payloadType>=0&&item.payloadType<=127&&['audio/opus','audio/red','video/vp8'].includes(item.mimeType?.toLowerCase()))
             .slice(0,16).map(item=>({payloadType:item.payloadType,mimeType:item.mimeType.toLowerCase()}))
           worker.postMessage({kind,codecs,readable,writable},[readable,writable])
         } else if(!legacyReceiver&&scriptTransform) {
           const codecs=(receiver.getParameters?.().codecs || []).filter(item=>Number.isInteger(item.payloadType)&&
-            item.payloadType>=0&&item.payloadType<=127&&['audio/opus','audio/red'].includes(item.mimeType?.toLowerCase()))
+            item.payloadType>=0&&item.payloadType<=127&&['audio/opus','audio/red','video/vp8'].includes(item.mimeType?.toLowerCase()))
             .slice(0,16).map(item=>({payloadType:item.payloadType,mimeType:item.mimeType.toLowerCase()}))
           receiver.transform=new RTCRtpScriptTransform(worker,{kind,codecs})
         }
@@ -175,7 +193,7 @@ export function installEncodedTimingProbe(workerSource) {
       })
     }
   }
-  window.__encodedTimingProbe = { records,states,audioDecoders,pcmStates,
+  window.__encodedTimingProbe = { records,states,audioDecoders,videoDecoders,pcmStates,
     receiverWorker(track){return receiverWorkers.get(track)},workerId(worker){return workerIds.get(worker)}, features:{scriptTransform,
     legacySender:typeof RTCRtpSender.prototype.createEncodedStreams==='function',
     legacyReceiver, receiverApi:legacyReceiver?'legacy':scriptTransform?'standard':'unsupported'},

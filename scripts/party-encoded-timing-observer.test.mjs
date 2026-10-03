@@ -3,12 +3,12 @@ import assert from 'node:assert/strict'
 import vm from 'node:vm'
 import { encodedTimingWorker } from './party-encoded-timing-observer.mjs'
 
-function fixture() {
+function fixture(videoProbe=null) {
   const allMessages = [], realm = { Number, performance: { timeOrigin: 1000, now: () => 7 },
     TransformStream: class { constructor(transformer) { this.transformer = transformer } },
-    postMessage: message => allMessages.push(message) }
+    postMessage: message => allMessages.push(message),videoProbe }
   realm.self = realm
-  vm.runInNewContext('('+encodedTimingWorker.toString()+')()', realm)
+  vm.runInNewContext('('+encodedTimingWorker.toString()+')(null,null,null,videoProbe)', realm)
   return { realm, get messages(){return allMessages.filter(message=>message.type==='encoded-timing')}, stream: (original,kind='audio') => {realm.__encodedTimingKind=kind;return new realm.TransformStream(original)} }
 }
 test('timing observation preserves frame identity and delivery without touching encoded payload', () => {
@@ -52,6 +52,16 @@ test('a bound copied PCM receiver keeps observing after the sparse timing ceilin
   const stream=f.stream({transform(received,controller){controller.enqueue(received)}})
   for(let i=0;i<5000;i++)stream.transformer.transform(frame,{enqueue:received=>{assert.equal(received,frame);forwarded++}})
   assert.equal(copied,5000);assert.equal(forwarded,5000);assert.equal(f.messages.length,48)
+})
+test('explicit received video capability observation does not stop at sparse metadata sampling or run on senders',()=>{
+  let created=0,observed=0,forwarded=0
+  const f=fixture(()=>{created++;return {observe(){observed++}}})
+  f.realm.__encodedTimingDirection='receive'
+  const frame={timestamp:1,getMetadata:()=>({captureTime:1})},stream=f.stream({},'video')
+  for(let i=0;i<5000;i++)stream.transformer.transform(frame,{enqueue:()=>forwarded++})
+  assert.equal(created,1);assert.equal(observed,5000);assert.equal(forwarded,5000)
+  f.realm.__encodedTimingDirection='send';stream.transformer.transform(frame,{enqueue:()=>forwarded++})
+  assert.equal(observed,5000);assert.equal(forwarded,5001)
 })
 
 import { installEncodedTimingProbe } from './party-encoded-timing-observer.mjs'
@@ -115,6 +125,17 @@ test('standard-only probe retains native configuration and existing transforms c
   assert.equal(occupied.transform, transform)
   assert.equal(f.realm.window.__encodedTimingProbe.failures.occupied, 1)
   assert.equal(f.workers.length, 1)
+})
+test('received video decoder diagnostics allowlist scalars and cap frames and generations',()=>{
+  const f=browserFixture(true),peer=new f.realm.window.RTCPeerConnection(),receiver=f.receiver()
+  f.track(peer,receiver)
+  const records=Array.from({length:10},(_,timestamp)=>({timestamp,width:1280,height:720,privatePayload:'excluded'}))
+  for(let i=0;i<10;i++)f.workers[0].dispatchEvent(new MessageEvent('message',{data:{type:'encoded-video-decode',
+    status:'complete',reason:null,inputCount:8,decodedCount:8,maximumBytes:99,records,privateCredential:'excluded'}}))
+  const rows=f.realm.window.__encodedTimingProbe.videoDecoders
+  assert.equal(rows.length,8);assert.ok(rows.every(row=>row.records.length===8))
+  assert.equal(rows[0].records[0].width,1280);assert.ok(!JSON.stringify(rows).includes('excluded'))
+  f.realm.window.__encodedTimingProbe.close()
 })
 
 

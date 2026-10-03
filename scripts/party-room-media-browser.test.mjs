@@ -31,6 +31,7 @@ import { installOpusPcmWorker } from './party-opus-pcm-worker.mjs'
 import { CapturePcmQueue, pcmSourceWorklet } from './party-capture-pcm-queue.mjs'
 import { probeReceivedPcm } from './party-received-pcm-probe.mjs'
 import { createOwnedPcmReceiver } from './party-owned-pcm-receiver.mjs'
+import { createVp8DecodeProbe } from './party-vp8-decode-probe.mjs'
 import { RtpCaptureClock, analyseCaptureClocks } from './party-rtp-capture-clock.mjs'
 import { CaptureFrameQueue } from './party-capture-frame-queue.mjs'
 import { installControlledReceiver, analyseControlledReceiverQuality, hasSingleAudienceOutput } from './party-controlled-receiver.mjs'
@@ -78,6 +79,9 @@ const absoluteCapture = process.env.KTV_ROOM_TEST_ABSOLUTE_CAPTURE === '1'
 const opusDecodeProbe = process.env.KTV_ROOM_TEST_OPUS_DECODE === '1'
 const pcmPortProbe = process.env.KTV_ROOM_TEST_PCM_PORT === '1'
 const ownedPcm = process.env.KTV_ROOM_TEST_OWNED_PCM === '1'
+const vp8DecodeProbe=process.env.KTV_ROOM_TEST_VP8_DECODE==='1'
+assert.ok(!vp8DecodeProbe||encodedTiming&&absoluteCapture&&!avTiming&&!codecExperiment&&!ownedPcm&&!opusDecodeProbe&&!pcmPortProbe,
+  'VP8 capability requires independent received capture evidence without another decoder or output experiment')
 assert.ok(!pcmPortProbe || encodedTiming && absoluteCapture && !avTiming && !codecExperiment && !opusDecodeProbe,
   'Received PCM port capability requires native capture separately from output timing and the eight-packet probe')
 assert.ok(!opusDecodeProbe || encodedTiming && absoluteCapture && !avTiming && !codecExperiment,
@@ -362,7 +366,7 @@ try {
     await cdp(socket, 'Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', 'en');
       ${avTiming ? `(${installAvSourceMarkers.toString()})();` : ''}
       ${encodedApi==='legacy' ? 'window.RTCRtpScriptTransform=undefined;' : ''}
-      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify('('+encodedTimingWorker.toString()+')('+ (opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : '') +');'+(pcmPortProbe||ownedPcm ? '('+installOpusPcmWorker.toString()+')('+bindOpusPcmPort.toString()+','+createOpusPcmStream.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString()+');' : ''))});` : ''}
+      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify('('+encodedTimingWorker.toString()+')('+ (opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : vp8DecodeProbe?'null,null,null,'+createVp8DecodeProbe.toString():'') +');'+(pcmPortProbe||ownedPcm ? '('+installOpusPcmWorker.toString()+')('+bindOpusPcmPort.toString()+','+createOpusPcmStream.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString()+');' : ''))});` : ''}
       (${installEncodedLeaseObserver.toString()})();
       ${absoluteCapture ? `(${installAbsoluteCaptureExperiment.toString()})();` : ''}
       ${senderCadence ? `(${installSenderCadenceExperiment.toString()})();` : ''}
@@ -544,6 +548,18 @@ try {
     console.log('Native encoded/delivery capture epochs:',JSON.stringify(epochs))
     check(epochs.length===2&&epochs.every(row=>row.status==='verified')&&epochs[0].epoch===epochs[1].epoch,
       'actual audio/video encoded capture clocks independently match the same native delivery epoch')
+  }
+  if(vp8DecodeProbe){
+    const evidence=await poll(()=>evaluate(audience,'__encodedTimingProbe.videoDecoders[0]'),
+      'actual received VP8 decoder capability',40000)
+    console.log('Native received VP8 decoding:',JSON.stringify(evidence))
+    check(evidence.status==='complete'&&evidence.inputCount===8&&evidence.decodedCount===8&&evidence.records.length===8,
+      'actual received VP8 frames decode with their independent capture/RTP association')
+    check(evidence.maximumBytes<=512*1024&&evidence.captureMode==='rtp-projected'&&evidence.captureAnchors>=2&&
+      evidence.maximumCaptureResidualMs<=80&&evidence.maximumProjectionMs<=5000&&
+      evidence.records.every(row=>row.width===1280&&row.height===720&&Number.isFinite(row.captureUnixMs)&&
+      row.allocationBytes>0&&row.allocationBytes<=1280*720*4&&row.decodeDelayMs>=0),
+      'native VP8 decoding preserves nominal dimensions and closes bounded frames without another visible output')
   }
   if(pcmPortProbe) {
     const setup=await evaluate(audience,`(${probeReceivedPcm.toString()})(${CapturePcmQueue.toString()},${pcmSourceWorklet.toString()})`)

@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **103/103** pass.
+checks pass; party units **125/125** and timing/capability fixtures **110/110** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -3983,3 +3983,39 @@ replacement still meet their original bounds.
 Timing fixtures pass **103/103**:
 `/tmp/ktv-owned-pcm-buffer-fault-fixtures-20261003.log`. Product integration and
 public enablement remain unchanged and incomplete.
+
+### Received VP8 decode capability — 2026-10-03
+
+The next private comparison can decode received video before native decoded-track
+playout. The encoded receiver still forwards each original RTC frame unchanged.
+An opt-in eight-frame capability probe retains at most 512 KiB of encoded input,
+validates 1280×720 output and allocation bounds, closes every decoded frame and
+creates no visible output. Default timing observation never reads payloads.
+Codec/clock/output/configuration/timeout failures clear buffers and cannot revive.
+Worker diagnostics retain allowlisted scalars and bounded frame/generation counts.
+
+The initial run times out with zero inputs:
+`/tmp/ktv-vp8-received-decode-native-20261003.log`. Its first received keyframe has
+no capture header; later capture-bearing frames are delta frames. Startup now
+decodes from that keyframe using its 90-kHz RTP sample clock, retains eight small
+output records, then associates capture time using two advancing actual header
+anchors. These capture values are explicitly **RTP projections**, not direct
+headers on the first eight frames. Residuals retain the 80-ms limit and projection
+is bounded to five seconds. No additional keyframe requests or encoder changes
+are introduced.
+
+The corrected native journey passes **39/39**:
+`/tmp/ktv-vp8-received-startup-decode-native-20261003.log`. Eight actual received
+VP8 frames decode with maximum encoded reservation **1590 bytes**, zero anchor
+residual, maximum projection **1066 ms**, and maximum observed decode callback
+delay **8.70 ms**. Outputs retain the nominal dimensions and are all closed. This
+is native capability evidence only: sustained owned-video scheduling, impaired
+timing/FPS and aggregate buffer acceptance remain pending.
+
+Timing fixtures pass **110/110**:
+`/tmp/ktv-vp8-capture-startup-fixtures-20261003.log`, including timestamp association,
+startup without capture headers, bounded pending configuration, invalid output,
+clock discontinuity, diagnostic privacy and unchanged sender/receiver frame flow.
+The bytes/codec interpretation follows the [W3C VP8 WebCodecs registration](https://www.w3.org/TR/webcodecs-vp8-codec-registration/)
+and the [encoded receiver transform boundary](https://www.w3.org/TR/webrtc-encoded-transform/).
+Product sources and the public deployment remain unchanged.
