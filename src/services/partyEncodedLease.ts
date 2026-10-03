@@ -8,17 +8,22 @@ type EncodedSender = RTCRtpSender & { transform?: unknown; createEncodedStreams?
 } }
 type ScriptTransform = new (worker: Worker, options: { kind: 'audio' | 'video' }) => unknown
 const scriptTransform = () => (globalThis as typeof globalThis & { RTCRtpScriptTransform?: ScriptTransform }).RTCRtpScriptTransform
+const legacyTransform = () => typeof RTCRtpSender !== 'undefined' &&
+  typeof (RTCRtpSender.prototype as EncodedSender).createEncodedStreams === 'function'
 
 export function partyEncodedRTCConfiguration(): RTCConfiguration & { encodedInsertableStreams?: boolean } {
+  // Chromium can permanently bypass a transform attached after publication.
+  // Opt into its legacy gate before creating the peer so initial frames wait
+  // for our worker, even when the standard API is also exposed.
+  if (legacyTransform()) return { encodedInsertableStreams: true }
   if (scriptTransform()) return {}
-  if (typeof RTCRtpSender !== 'undefined' && typeof (RTCRtpSender.prototype as EncodedSender).createEncodedStreams === 'function')
-    return { encodedInsertableStreams: true }
   throw new Error('MEDIA_CAPTURE_UNAVAILABLE')
 }
 
 export class PartyEncodedLease {
   private readonly worker: Worker
   private readonly identity: Identity
+  private readonly legacy = legacyTransform()
   private readonly senders = new Set<RTCRtpSender>()
   private closed = false
   private failed = false
@@ -44,12 +49,12 @@ export class PartyEncodedLease {
     if (this.closed || this.failed || !sender || this.senders.has(sender)) throw new Error('MEDIA_CAPTURE_UNAVAILABLE')
     this.senders.add(sender)
     const transform = scriptTransform(), encoded = sender as EncodedSender
-    if (transform) encoded.transform = new transform(this.worker, { kind })
-    else {
+    if (this.legacy) {
       if (!encoded.createEncodedStreams) throw new Error('MEDIA_CAPTURE_UNAVAILABLE')
       const { readable, writable } = encoded.createEncodedStreams()
       this.worker.postMessage({ type: 'attach', kind, readable, writable }, [readable, writable])
-    }
+    } else if (transform) encoded.transform = new transform(this.worker, { kind })
+    else throw new Error('MEDIA_CAPTURE_UNAVAILABLE')
   }
   renew(permit: PartyPublishPermit, clock: PartyClockEstimate): boolean {
     // PCM becomes silent 100 ms early. Keep this gate open until 10 ms early so

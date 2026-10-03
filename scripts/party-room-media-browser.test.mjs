@@ -21,6 +21,7 @@ import { createMediaTcpProxy } from './party-media-tcp-proxy.mjs'
 import { createMediaUdpProxy } from './party-media-udp-proxy.mjs'
 import { createOwnedRemoteBrowser } from './party-remote-browser.mjs'
 import { runRoomReceiverFault } from './party-room-receiver-fault.mjs'
+import { encodedTimingWorker, installEncodedTimingProbe } from './party-encoded-timing-observer.mjs'
 import { installAvSourceMarkers, installAvObserver, analyseAvObservations } from './party-av-observer.mjs'
 import { collectAvMediaStats } from './party-av-stats.mjs'
 import { analyseCodecQuality } from './party-av-codec-quality.mjs'
@@ -57,10 +58,16 @@ if (codecExperiment) {
   console.log('Private codec comparison:',JSON.stringify(codecExperiment))
 }
 const avTiming = process.env.KTV_ROOM_TEST_AV_TIMING === '1'
+const encodedTiming = process.env.KTV_ROOM_TEST_ENCODED_TIMING === '1'
+const encodedApi = process.env.KTV_ROOM_TEST_ENCODED_API || 'native'
+assert.ok(['native','legacy'].includes(encodedApi)&&(encodedApi==='native'||encodedTiming),
+  'A private encoded API comparison requires timing observation')
 const receiverFault = process.env.KTV_ROOM_TEST_RECEIVER_FAULT || 'off'
 assert.ok(['off','task-stall','suspend-task-stall','source-task-stall'].includes(receiverFault), 'Unknown integrated receiver fault')
 assert.ok(receiverFault==='off'||remoteMode&&!avTiming&&!codecExperiment,
   'Integrated output faults require the production build and independent native outputs, without A/V marker experiments')
+assert.ok(!encodedTiming||remoteMode&&receiverFault==='off'&&!codecExperiment,
+  'Encoded timing observation requires an owned remote production build without output faults or codec comparisons')
 const publisherFeedback = process.env.KTV_ROOM_TEST_PUBLISHER_FEEDBACK || 'default'
 assert.ok(['default', 'remb'].includes(publisherFeedback) && (publisherFeedback === 'default' || avTiming && codecExperiment),
   'Publisher feedback comparison requires a marked private build and native A/V evidence')
@@ -311,6 +318,8 @@ try {
     await cdp(socket, 'Network.enable', {}, sessionId)
     await cdp(socket, 'Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', 'en');
       ${avTiming ? `(${installAvSourceMarkers.toString()})();` : ''}
+      ${encodedApi==='legacy' ? 'window.RTCRtpScriptTransform=undefined;' : ''}
+      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify('('+encodedTimingWorker.toString()+')();')});` : ''}
       (${installEncodedLeaseObserver.toString()})();
       window.__partyClocks=[]; window.__partyPlaybacks=[]; window.__phaseEvidence=[];
       window.__receivedPermits=[];
@@ -902,6 +911,19 @@ try {
   for(const result of avMeasurements) check(result.absoluteSkewMs.p95<=150&&result.absoluteSkewMs.max<=250, `${result.phase} received audio/video marker presentation skew passes the 150 ms p95 / 250 ms maximum software target`)
   }
   check(errors.length === 0, `no browser runtime exceptions (${errors.length})`)
+  if(encodedTiming) {
+    console.log('Private encoded API selection:',encodedApi)
+    const observed=[]
+    for(const session of sessionSockets.keys()) {
+      const evidence=await evaluate(session,'({records:__encodedTimingProbe.records,states:__encodedTimingProbe.states,errors:__encodedTimingProbe.errors,features:__encodedTimingProbe.features,failures:__encodedTimingProbe.failures,wrappedSenders:__encodedTimingProbe.wrappedSenders,workerCount:__encodedTimingProbe.workerCount})')
+      console.log('Native encoded timing evidence:',JSON.stringify(evidence))
+      check(evidence.errors===0,'encoded timing observers forward native frames without errors')
+      observed.push(...evidence.records)
+    }
+    for(const direction of ['send','receive'])for(const kind of ['audio','video'])
+      check(observed.filter(row=>row.direction===direction&&row.kind===kind&&Number.isFinite(row.rtpTimestamp)).length>=8,
+        `native ${direction} ${kind} observation contains actual frame timestamps`)
+  }
   console.log(`${passed} built-app streaming checks passed. Client: ${clientLocation}; synthetic microphone, foreground Chrome, isolated policy/SFU. Remote HTTP/CDP use loopback SSH forwards; physical and distinct access-network acceptance remains open.`)
 } catch (error) {
   console.error('Journey failure:', error.message)
@@ -912,6 +934,8 @@ try {
   if(mediaProxy) console.error('Owned media proxy:',JSON.stringify(mediaProxy.snapshot()))
   console.error('Playback recovery:',JSON.stringify(db.prepare('SELECT state,recovery_reason FROM ktv_playback').all()))
   console.error('Runtime exception count:', errors.length)
+  if(encodedTiming) for(const session of sessionSockets.keys()) console.error('Native encoded timing on failure:',JSON.stringify(
+    await evaluate(session,'({records:__encodedTimingProbe.records,states:__encodedTimingProbe.states,errors:__encodedTimingProbe.errors,features:__encodedTimingProbe.features,failures:__encodedTimingProbe.failures,wrappedSenders:__encodedTimingProbe.wrappedSenders,workerCount:__encodedTimingProbe.workerCount})').catch(()=>({unavailable:true}))))
   const known=['AV_VIDEO_EVIDENCE_LIMIT','AV_MARKER_ID_LIMIT','AV_STATS_SENDER_LIMIT','AV_STATS_PEER_LIMIT',
     'TypeError','RangeError','ReferenceError','NetworkError','AbortError','InvalidStateError','OperationError']
   console.error('Runtime error categories:',JSON.stringify(errors.slice(0,8).map(message=>known.find(code=>message.includes(code))||'RuntimeError')))
@@ -924,6 +948,7 @@ try {
   }))()` ).catch(() => ({}))))
   throw error
 } finally {
+  if(encodedTiming) for(const session of sessionSockets.keys()) await evaluate(session,'__encodedTimingProbe?.close()').catch(()=>{})
   if (senderKeyframePage) await evaluate(senderKeyframePage, 'window.__avSenderKeyframes?.close()').catch(() => {})
   if (nativeSyncAudience) await evaluate(nativeSyncAudience, 'window.__avNativeSync?.close()').catch(() => {})
   for (const { socket, browserContextId } of contexts) if (socket.readyState === WebSocket.OPEN) await cdp(socket, 'Target.disposeBrowserContext', { browserContextId }).catch(() => {})

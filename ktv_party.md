@@ -1105,6 +1105,31 @@ in the sender's NTP clock domain; it is not a Unix timestamp or proof that the
 current caption has appeared. Missing frame metadata remains absent. These
 diagnostics help investigate failed timing without replacing the measured gate.
 
+Encoded timing diagnostics must prove actual frame callbacks, rather than only
+worker startup or exposed browser APIs. In the Chrome 154 room fixture, attaching
+the standard transform after publication starts workers but yields no encoded
+frames while RTP continues. Chromium has a
+[short-circuit path](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/third_party/blink/renderer/modules/peerconnection/rtc_rtp_sender.cc)
+when no transform exists shortly after sender creation. The app now prefers
+`createEncodedStreams` when available and opts into `encodedInsertableStreams`
+before creating the publisher peer, holding initial media for the lease worker.
+Standard-only browsers retain their existing path and require device acceptance.
+The [pinned SDK](https://github.com/livekit/client-sdk-js/blob/v2.22.3/src/room/utils.ts)
+also avoids standard transforms on Chromium for its worker path.
+
+The private `KTV_ROOM_TEST_ENCODED_TIMING=1` probe forwards original frames through
+the unchanged lease worker and observes receiver frames before decoding. It never
+reads encoded payloads, retains only bounded timing/codec scalars, and requires
+actual timestamps for both audio and video in both directions. Its receiver peer
+must preserve the encoded-stream opt-in during SDK configuration updates. In the
+initial legacy API experiment, received frames expose RTP/arrival timing but no
+shared audio/video capture clock. The
+[encoded transform contract](https://www.w3.org/TR/webrtc-encoded-transform/)
+requires the absolute-capture-time RTP extension or interpolation for received
+capture time. Missing fields stay absent; metadata alone cannot establish audible
+or presented-video synchronization. The physical output and existing A/V gates
+remain authoritative.
+
 Receiver buffering requests are not measured playback delay. The
 [WebRTC jitter-buffer contract](https://www.w3.org/TR/webrtc/#dom-rtcrtpreceiver-jitterbuffertarget)
 allows gradual adjustment, different audio/video adjustment speeds and targets

@@ -88,7 +88,7 @@ const adapterSource = ts.transpileModule(await fs.readFile('src/services/partyEn
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
 }).outputText.replace("import workerUrl from './partyEncodedLease.worker.js?url';", "const workerUrl = '/owned-worker.js';")
 const adapter = await import(`data:text/javascript;base64,${Buffer.from(adapterSource).toString('base64')}`)
-function adapterFixture(t, modern) {
+function adapterFixture(t, modern, legacy = !modern) {
   const old = { Worker: globalThis.Worker, RTCRtpSender: globalThis.RTCRtpSender, RTCRtpScriptTransform: globalThis.RTCRtpScriptTransform }
   const workers = [], replaced = []
   globalThis.Worker = class {
@@ -103,6 +103,7 @@ function adapterFixture(t, modern) {
   globalThis.RTCRtpScriptTransform = modern ? class {
     constructor(worker, options) { this.worker = worker; this.options = options }
   } : undefined
+  if (!legacy) delete RTCRtpSender.prototype.createEncodedStreams
   t.after(() => { for (const [key, value] of Object.entries(old)) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value } })
   return { workers, replaced, sender: () => new RTCRtpSender() }
 }
@@ -128,6 +129,20 @@ for (const modern of [true, false]) test(`${modern ? 'standard' : 'legacy'} adap
   worker.onmessage({ data: { type: 'silent', reason: 'expired' } }); worker.onerror()
   assert.equal(failed, 1); assert.deepEqual(f.replaced, [null, null])
   assert.equal(lease.renew(permit, clock), false); assert.equal(worker.terminated, true)
+})
+test('a browser exposing both APIs reserves the encoded gate before publication', t => {
+  const f = adapterFixture(t, true, true)
+  assert.deepEqual(adapter.partyEncodedRTCConfiguration(), { encodedInsertableStreams: true })
+  const lease = new adapter.PartyEncodedLease(identity, () => {}), sender = f.sender()
+  lease.attach(sender, 'audio')
+  assert.equal(sender.transform, undefined)
+  assert.deepEqual(f.workers[0].messages[1].transfers, [sender.streams.readable, sender.streams.writable])
+  // Losing the selected API cannot silently switch to a late standard gate.
+  const second = f.sender()
+  delete RTCRtpSender.prototype.createEncodedStreams
+  assert.throws(() => lease.attach(second, 'video'), /MEDIA_CAPTURE_UNAVAILABLE/)
+  assert.equal(second.transform, undefined)
+  assert.equal(f.workers[0].messages.length, 2)
 })
 test('unsupported publishing and mismatched clock permits cannot bypass the encoded gate', t => {
   const f = adapterFixture(t, false)

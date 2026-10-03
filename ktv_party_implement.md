@@ -3094,3 +3094,35 @@ Next: diagnose the varying received audio/video playout and sustained source
 clock behavior under this load. Complete remaining physical/mobile, capacity,
 real-network and release gates. Public frontend/backend and media-disabled
 configuration remain unchanged; all owned native fixture ports are released.
+
+
+### 2026-10-03 — Prove encoded frame processing before synchronization changes
+
+Added a private, bounded encoded timing probe and frame-preservation checks.
+It forwards each original frame without reading its payload, collects only
+allowlisted timing/codec scalars, preserves the lease worker, and checks actual
+send/receive audio and video callbacks. Worker boot/stream events are separate
+from frame evidence. Repeated track events cannot install a second receiver
+transform. SDK configuration updates preserve the immutable private receiver
+encoded-stream opt-in.
+
+The current Chrome 154 standard API path attaches workers but yields **zero frame
+callbacks**, despite RTP continuing. Those diagnostic runs fail; exposed APIs and
+worker startup are insufficient evidence of an active encoded gate. A controlled
+legacy API experiment passes **30/30** built-app checks, with actual timestamp
+samples: send audio/video **19/17**, receive audio/video **19/17**. Source audio
+exposes capture timing; received audio/video expose RTP/arrival timing, with no
+shared received capture clock. This is diagnostic evidence, not impaired A/V
+acceptance. Log: `/tmp/ktv-protocol2-encoded-timing-legacy-config-20261003.log`.
+
+The product adapter now prefers legacy streams when both APIs are exposed and
+sets `encodedInsertableStreams` before publisher peer creation. A late standard
+transform cannot silently replace a lost selected legacy API. Standard-only
+browsers retain their path. The changed production build must verify actual frame
+processing, clean A/V and independent expiry/recovery behavior before release.
+Previous receiver output/fault passes still describe actual observed output;
+they do not independently prove the modern encoded worker processed frames.
+
+No public deployment or media enablement occurred. Impaired synchronization,
+sustained clocks, physical/mobile, capacity, distinct networks and release gates
+remain open.
