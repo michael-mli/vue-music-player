@@ -363,6 +363,7 @@
     "disablePrivateOriginal": "Turn off private original vocals",
     "privateOriginalHint": "Original vocals replace your personal backing monitor. They are excluded from the digital audience mix. Use headphones to prevent microphone pickup.",
     "mediaErrorUnavailable": "Online audio is unavailable. Reconnect and retry.",
+    "mediaErrorUpdate": "Update the app and reopen this room before publishing or listening to online audio.",
     "mediaErrorPermission": "Performance permission ended. Prepare capture again when your turn is selected.",
     "mediaErrorOutput": "Headphone audio could not start with stable timing. Allow playback and prepare capture again.",
     "mediaErrorMicDisconnected": "Microphone disconnected. Reconnect it and prepare capture again.",

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { AccessToken, TrackSource } from 'livekit-server-sdk'
 import { fail } from './ktv-errors.js'
 import { KTV_MEDIA_OUTPUT_PERMIT_MS } from './ktv-timing.js'
+import { PARTY_MEDIA_PROTOCOL_VERSION } from './ktv-media-protocol.js'
 
 const stamp = () => new Date().toISOString()
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
@@ -75,7 +76,7 @@ export function createKtvMediaGrants({ db, clock, getPlayback, getDevices, reser
     db.exec('BEGIN IMMEDIATE')
     try { const result = work(); db.exec('COMMIT'); return result } catch (error) { db.exec('ROLLBACK'); throw error }
   }
-  function access(row) {
+  function access(row, allowLegacy = false) {
     const room = db.prepare('SELECT * FROM ktv_rooms WHERE id = ?').get(row.room_id)
     const member = db.prepare('SELECT * FROM ktv_members WHERE id = ? AND room_id = ?').get(row.member_id, row.room_id)
     if (!room || room.status !== 'open' || Date.parse(room.expires_at) <= Date.now() || !member || member.admission !== 'admitted' || member.blocked_at) return null
@@ -87,9 +88,10 @@ export function createKtvMediaGrants({ db, clock, getPlayback, getDevices, reser
     }
     const device = getDevices(row.room_id).find(device => device.id === row.device_id && device.memberId === row.member_id && device.connected)
     if (!device || (row.device_grant_id && device.deviceGrantId !== row.device_grant_id)) return null
+    if (!allowLegacy && device.mediaProtocol !== PARTY_MEDIA_PROTOCOL_VERSION) return null
     const playback = getPlayback(row.room_id)
     if (row.scope === 'publisher') {
-      if (device.scope === 'display' || device.mediaProtocol !== 1 || !device.clockHealthy || !device.audioEnabled || device.purpose !== 'stage' ||
+      if (device.scope === 'display' || !device.clockHealthy || !device.audioEnabled || device.purpose !== 'stage' ||
         !playback || !['scheduled', 'playing'].includes(playback.state) || playback.stageDeviceId !== row.device_id ||
         playback.stageMemberId !== row.member_id || playback.clockId !== clock.id || !playback.lease ||
         playback.lease.deviceId !== row.device_id || playback.lease.expiresServerMs <= clock.nowMs()) return null
@@ -137,8 +139,10 @@ export function createKtvMediaGrants({ db, clock, getPlayback, getDevices, reser
     const payloadHash = createHash('sha256').update(JSON.stringify([deviceId, deviceGrantId, scope])).digest('hex')
     const row = transaction(() => {
       const candidate = { room_id: roomId, member_id: memberId, device_id: deviceId, device_grant_id: deviceGrantId, scope }
-      const current = access(candidate)
+      const current = access(candidate, true)
       if (!current) fail(403, 'MEDIA_FORBIDDEN', 'This device cannot use the requested media role')
+      if (current.device.mediaProtocol !== PARTY_MEDIA_PROTOCOL_VERSION)
+        fail(409, 'MEDIA_CLIENT_UPDATE', 'Update the app and reopen this room before using online audio')
       const receipt = db.prepare('SELECT * FROM ktv_media_receipts WHERE room_id = ? AND member_id = ? AND command_id = ?').get(roomId, memberId, commandId.toLowerCase())
       if (receipt) {
         if (receipt.payload_hash !== payloadHash) fail(409, 'COMMAND_CONFLICT', 'Command ID already belongs to another request')

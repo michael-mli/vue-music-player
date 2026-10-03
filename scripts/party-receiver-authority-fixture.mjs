@@ -42,7 +42,7 @@ export async function createReceiverAuthorityFixture() {
     const stage = { roomId, clientDeviceId: randomUUID(), principal: {}, readyState: 1, send() {} }
     const listener = { ...stage, clientDeviceId: randomUUID() }
     const message = body => service.deviceMessage(stage, { protocolVersion: 1, ...body }, { self: { id: memberId, admission: 'admitted' } })
-    const status = () => message({ type: 'device.status', purpose: 'stage', label: 'Native publisher', audioEnabled: true, clockHealthy: true, mediaProtocol: 1 })
+    const status = () => message({ type: 'device.status', purpose: 'stage', label: 'Native publisher', audioEnabled: true, clockHealthy: true, mediaProtocol: 2 })
     const snapshot = () => service.snapshot(roomId)
     const ready = () => message({ type: 'device.ready', clockId: clock.id, performanceId, generation: snapshot().generation,
       assetVersion: 'owned-native-tone', durationMs: 60000 })
@@ -51,7 +51,7 @@ export async function createReceiverAuthorityFixture() {
       { version: 'owned-native-tone', durationMs: 60000, instrumental: { durationMs: 60000 }, original: null })
     ready()
     service.deviceMessage(listener, { protocolVersion: 1, type: 'device.status', purpose: 'viewer', label: 'Blocked native receiver',
-      audioEnabled: true, clockHealthy: true }, { self: { id: listenerId, admission: 'admitted' } })
+      audioEnabled: true, clockHealthy: true, mediaProtocol: 2 }, { self: { id: listenerId, admission: 'admitted' } })
     const issue = scope => grants.issue({ roomId, memberId: scope === 'publisher' ? memberId : listenerId,
       deviceId: scope === 'publisher' ? stage.clientDeviceId : listener.clientDeviceId, scope, commandId: randomUUID() })
     return {

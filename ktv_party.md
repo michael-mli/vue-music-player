@@ -1135,6 +1135,16 @@ and defers transitions until that cutoff. The native direct-WebRTC early-stop
 fixture passes 31 checks across blocked and suspended/resumed receiver clocks;
 full SFU fault and physical acceptance remain open. Public online media is still disabled.
 
+The receiver-safe media contract is version 2, distinct from version-1 room
+WebSocket envelopes. Publishers and listeners must advertise version 2 to obtain
+streaming credentials. Legacy versions 0/1 retain local controls and playback;
+streaming requests require updating and reopening the room. Downgrades invalidate
+existing streaming authority, including after asynchronous token signing. A real
+unchanged version-1 app is tested without granting an unguarded receiver. The
+production-config candidate passes 69 native room/compatibility checks and all
+three clean 40-pair A/V phases with nominal quality checks. Impaired and physical
+acceptance remain open; public media is still disabled.
+
 Optional `KTV_ROOM_TEST_HANDOVER_AV=1` extends the native fixture with 40-pair
 post-handover phases for a replacement remote singer and the venue-to-remote
 route. The host uses a third isolated output so two player instances cannot mix

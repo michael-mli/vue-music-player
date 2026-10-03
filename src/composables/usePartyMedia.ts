@@ -11,6 +11,7 @@ import type { PartyReceivePermit } from '@/services/partyReceiveGraph'
 
 type Transport = Awaited<ReturnType<typeof createPartyMediaTransport>>
 const mediaErrors: Record<string, string> = {
+  MEDIA_CLIENT_UPDATE: 'mediaErrorUpdate',
   MEDIA_UNAVAILABLE: 'mediaErrorUnavailable', MEDIA_REVOKED: 'mediaErrorPermission', MEDIA_PERMISSION: 'mediaErrorPermission', MEDIA_FORBIDDEN: 'mediaErrorPermission',
   AUDIO_GESTURE_REQUIRED: 'mediaErrorOutput', AUDIO_OUTPUT_NOT_READY: 'mediaErrorOutput', MEDIA_OUTPUT: 'mediaErrorOutput',
   MEDIA_MIC_DISCONNECTED: 'mediaErrorMicDisconnected', MEDIA_PERFORMER_ENDED: 'mediaErrorPerformerEnded',

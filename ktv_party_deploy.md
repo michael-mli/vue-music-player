@@ -617,6 +617,19 @@ backend together for this contract, validate old-client behavior before enabling
 media, and keep the feature disabled until full gates pass. Source guards, expiry
 margins and all measured quality/timing gates remain unchanged.
 
+The receiver-safe candidate uses **media protocol 2**. Deploy its frontend and
+backend together, including `server/ktv-media-protocol.js` in the server snapshot.
+Room WebSocket protocol remains version 1. Older clients retain local controls,
+but receive `409 MEDIA_CLIENT_UPDATE` for streaming tokens; existing downgraded
+media grants cannot renew, rejoin or obtain output authority. The unchanged
+version-1 browser is verified against the candidate backend with no nonce/peer/
+output, while room access remains connected. The production candidate passes
+143 backend, 124 party, 69 native room/legacy, 45 UI and 10 PWA checks; these do not
+satisfy impaired, full SFU fault, physical/mobile or capacity release gates. Keep
+media disabled during the coupled preview rollout. Candidate index SHA256 is
+`7f5428020ca55c0c2636ee568fb1efd6665a1b80fea99e77c720707d8569a03b`,
+entry `main-DSLM9Z0k.js`. It is not currently deployed.
+
 The current frontend preview is `d33b209`, deployed 2026-10-02; backend remains
 `f58a8f3`. Assets are `main-DU8DSm-f.js`, `main-DnE6rWx5.css`,
 `partyLeaseGuard.worklet-BWdT3O5D.js` and `partyEncodedLease.worker-BxVsrNxp.js`.

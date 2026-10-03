@@ -363,6 +363,7 @@
     "disablePrivateOriginal": "关闭私人原唱",
     "privateOriginalHint": "原唱替代你耳机中的伴奏，不会进入发送给观众的数字混音。请使用耳机，避免麦克风收录原唱。",
     "mediaErrorUnavailable": "在线音频暂时不可用。请重新连接并重试。",
+    "mediaErrorUpdate": "请更新应用并重新打开此房间，然后再进行在线演唱或收听。",
     "mediaErrorPermission": "演唱权限已结束。选中你的演唱轮次后，请重新准备收音。",
     "mediaErrorOutput": "耳机音频未能以稳定时序启动。请允许播放，然后重新准备收音。",
     "mediaErrorMicDisconnected": "麦克风已断开。请重新连接并准备收音。",

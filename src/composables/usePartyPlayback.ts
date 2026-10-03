@@ -5,6 +5,7 @@ import type { PartySnapshot, PartyLease } from '@/services/partyApi'
 import type { PartyClockEstimate } from '@/utils/partyClock'
 import { partyPosition, partySegment } from '@/utils/partyTimeline'
 import { parseLrc, singingGuideState } from '@/utils/lyricsTiming'
+import { PARTY_MEDIA_PROTOCOL_VERSION } from '../../server/ktv-media-protocol.js'
 
 export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Ref<boolean>, clock: Ref<PartyClockEstimate | null>,
   send: (message: Record<string, unknown>) => boolean) {
@@ -47,7 +48,7 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
     if (!healthy.value || document.hidden || blocked.value) readyKeys.clear()
     send({ type: 'device.status', label: purpose.value === 'stage' ? 'Stage' : purpose.value === 'guide' ? 'Singer phone' : 'Controller',
       purpose: purpose.value, audioEnabled: !document.hidden && !blocked.value && enabled.value && engine.enabled,
-      mediaProtocol: typeof RTCPeerConnection === 'function' ? 1 : 0,
+      mediaProtocol: typeof RTCPeerConnection === 'function' ? PARTY_MEDIA_PROTOCOL_VERSION : 0,
       clockHealthy: !document.hidden && healthy.value, audioIssue: audioIssue.value })
     lastStatusMs = performance.now()
   }

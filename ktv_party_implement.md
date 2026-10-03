@@ -2,7 +2,7 @@
 
 Created: 2026-09-29
 
-Last updated: 2026-10-03 (UTC; 2026-10-02 Toronto)
+Last updated: 2026-10-03
 
 Design reference: [ktv_party.md](ktv_party.md)
 
@@ -20,8 +20,10 @@ is a preview; public online media is still disabled.
    checks and a 64-check clean room/recovery/handover journey. Early stage-stop
    acknowledgments now preserve already issued receiver deadlines before replacement
    output starts; backend regressions and 31 native direct-WebRTC checks pass.
-   Full SFU fault acceptance, old-client compatibility,
-   sustained/physical output and the earlier render-clock stall also remain open.
+   Full SFU fault acceptance, sustained/physical output and the earlier render-clock
+   stall remain open. Legacy media clients are now refused streaming credentials;
+   an unchanged deployed version-1 browser retains room access without receiving
+   an unguarded media connection.
 2. **Streaming timing:** resolve impaired-network A/V timing, measure handover
    timing and longer outages, and verify source-clock stability. Functional
    reconnect/handover passes do not establish acceptable audible/video alignment.
@@ -828,37 +830,22 @@ prototype result is not automatically a release result.
 
 ### Current next action
 
-Current preview is frontend `ca6c757`, backend `f58a8f3`; rooms and private guide
-are enabled, public media remains disabled. Native lease guards pass blocked-task
-and suspended-render-clock output checks 15/15. Integrated replacement passes
-41/41 with two owned native browser outputs and the actual built app/backend.
-Physical replacement remains open. Exact UI 45/45, PWA 10/10,
-full clean streaming/recovery/handover 53/53 and public release 21/21 pass.
-Clean native A/V passes all 40 transitions (p95 59.73 ms, maximum 99.50 ms).
+Public preview remains frontend `d33b209`, backend `f58a8f3`, with rooms/private
+guide enabled and online media disabled. The unpublished receiver-safe version-2
+production candidate passes 143 backend, 124 party, 69 native room/legacy, 45 UI
+and 10 PWA checks. All three clean 40-pair A/V phases retain nominal quality.
 
-Unpublished bounded-rate candidate adds measured small-phase feedback without
-changing the room clock or large-error/lease guards. Party checks 93/93, native
-rate-integral 13/13 and full built streaming/output-pause/recovery/handover 56/56
-pass; all 40 clean transitions match (p95 63.12 ms, maximum 87.82 ms).
-Exact UI 45/45, PWA 10/10 and stage replacement 41/41 pass, but the exact streaming
-run hits a larger native output error and fails before 40 transitions. Publication
-is deferred. Further native-stop deduplication passes 94/94 units and is being
-verified with native control-call and main-thread task observations.
-
-Investigate UDP repair stalls, conflicting sender/receiver delay hints and source
-cadence/drift. Network-minimum hints fail UDP (p95 349.68 ms, maximum 699.93 ms);
-repair-budget hints also fail (p95 445.47 ms, maximum 470.41 ms). Removing only
-the isolated SFU hint resolves the video clamp but source drift stops the run
-before 40 transitions. Keep unchanged 150/250 ms limits and prepared SFU policy.
-Do not ship these fixture-only controllers from partial evidence.
-Measure A/V timing through handover, longer outages and sustained representative
-load, including the full device ceiling and nominal frame rate.
+Complete full SFU stalled/early-stop fault checks, sustained native output and
+impaired-network A/V timing. Preserve the 150-ms p95 / 250-ms maximum targets,
+nominal 1280x720/25-fps policy and all capture/matching bounds. Failed private codec,
+transport and buffer experiments do not justify changing production policy.
 
 Complete acoustic stage/guide and microphone/backing alignment, physical stale-stage
-silence at the replacement boundary, Android/iOS/Safari, background/lock,
-output-switch/Bluetooth, field-installed PWA and real Wi-Fi/LTE acceptance.
-Synthetic EC2 runs do not close physical or access-network gates. Enable
-persistent online/hybrid media only after the P07/P08 release gates pass.
+silence, Android/iOS/Safari, background/lock, output-switch/Bluetooth, installed-PWA
+and real Wi-Fi/LTE acceptance. Validate the full nominal-quality device ceiling
+and representative multi-room load. Synthetic EC2 runs do not close physical or
+access-network gates. A coupled frontend/backend preview may keep media disabled;
+persistent online/hybrid media requires the P07/P08 release gates.
 
 ### Decision log
 
@@ -2927,3 +2914,56 @@ A/V, physical/mobile, capacity and release acceptance remain open. Public fronte
 | Encoded publisher expiry preview | Frontend `d33b209` (`main-DU8DSm-f.js`), backend `f58a8f3` | `https://music.micstec.com/party` | 2026-10-02 | Party 105/105; exact UI 45/45, PWA 10/10, full native SFU/recovery/handover 56/56, public release 23/23; 40 clean A/V pairs p95 70.36 ms/max 97.70 ms; same guard source in `28bde60` passes independent Chrome 137/154 lease 15/15 each and native stage replacement 41/41 | Media disabled, no persistent SFU; UDP timing and sustained/physical audio, mobile/field PWA, handover timing, nominal/multi-room capacity and distinct networks remain open |
 | Local beta | — | — | — | Pending M2/local P08 gate | Online/hybrid |
 | Online/hybrid beta | — | — | — | Pending M3/online P08 gate | Optional P09 enhancements |
+
+### 2026-10-03 — Require receiver-safe media clients
+
+Media contract **2** is shared by the backend and frontend. Both audience and
+publisher credentials require this version. Legacy status versions 0/1 remain
+accepted for local room controls and local playback, but streaming requests return
+`409 MEDIA_CLIENT_UPDATE` before creating a nonce or command receipt. A downgrade
+invalidates renewal, gateway admission and output authority; an active online
+stage recovers while retaining its previously issued receiver deadline. Signing
+rechecks the version after asynchronous token creation. The local-only schema
+continues to work without a media-mode column. New clients show a translated
+update/reopen message; the unchanged older app displays its existing stopped state.
+
+Verification against the production-config candidate:
+
+- Backend **143/143**, party tests **124/124**, targeted media lifecycle **37/37**,
+  type check and build pass. Logs are `/tmp/ktv-media-protocol2-backend-final-20261003.log`,
+  `/tmp/ktv-media-protocol2-party-final-20261003.log`,
+  `/tmp/ktv-media-protocol2-lifecycle-final-20261003.log` and
+  `/tmp/ktv-media-protocol2-typecheck-final-20261003.log`.
+- Actual native SFU room plus unchanged deployed version-1 browser: **69/69**
+  (`/tmp/ktv-media-protocol2-production-room-legacy-final-20261003.log`). The old
+  entry bundle reports version 1, receives no token/nonce, opens no peer/output and
+  retains its room connection. This is browser compatibility evidence, not a
+  physical installed-PWA upgrade test.
+- Every A/V run now checks nominal quality, including production artifacts with
+  no private codec marker. Default SDK VP8, transport and buffer policies remain
+  unchanged. Baseline, next-singer and venue-to-remote phases each pass **40 pairs,
+  zero unmatched audio/video edges**, with p95/max skew **89.09/105.67 ms**,
+  **104.84/116.00 ms** and **79.28/107.16 ms** respectively. Source and receiver
+  cadence remain approximately **25 fps**; resolution/encoding/capture/timing gates
+  pass and runtime exceptions are zero. No impaired-network acceptance is claimed.
+- Version-2 native early-stop authority rerun **31/31** passes with actual
+  1000-ms received buffering, blocked and suspended/resumed listener clocks,
+  reserved deadlines and independently captured replacement output
+  (`/tmp/ktv-protocol2-receiver-early-stop-final-20261003.log`). The first rerun
+  expired its five-second credential while launching the receiver. Setup now
+  renews real authority every second, before either output graph is armed;
+  credential deadlines and measurement gates remain unchanged. This still uses
+  direct WebRTC, not a full SFU fault.
+- Exact candidate UI **45/45**, PWA **10/10** pass
+  (`/tmp/ktv-media-protocol2-ui-candidate-20261003.log`,
+  `/tmp/ktv-media-protocol2-pwa-candidate-20261003.log`). Fixtures can serve a
+  distinct immutable candidate without replacing the deployed `dist` directory.
+- Frozen production build: `/tmp/ktv-party-candidate-protocol2-20261003`, entry
+  `main-DSLM9Z0k.js`, CSS `main-DnE6rWx5.css`, index SHA256
+  `7f5428020ca55c0c2636ee568fb1efd6665a1b80fea99e77c720707d8569a03b`.
+
+This candidate is not deployed. Public frontend `d33b209`, backend `f58a8f3`,
+media-disabled configuration and absence of a persistent SFU remain unchanged.
+Deploy the frontend and backend together, including `server/ktv-media-protocol.js`.
+Full SFU stalled/early-stop faults, impaired timing, sustained and physical/device
+acceptance, capacity and public streaming release remain open.

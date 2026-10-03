@@ -35,6 +35,13 @@ assert.ok(['same-host', 'remote-ec2'].includes(clientLocation), 'Unknown room-te
 const remoteMode = clientLocation === 'remote-ec2'
 const frontendBuild = path.resolve(process.env.KTV_ROOM_TEST_DIST_ROOT || 'dist')
 await fs.access(path.join(frontendBuild, 'index.html'))
+const legacyBuild = process.env.KTV_ROOM_TEST_LEGACY_DIST_ROOT ? path.resolve(process.env.KTV_ROOM_TEST_LEGACY_DIST_ROOT) : null
+let legacyHtml
+if (legacyBuild) {
+  assert.notEqual(legacyBuild, frontendBuild, 'Legacy compatibility needs a distinct immutable older app build')
+  legacyHtml = await fs.readFile(path.join(legacyBuild, 'index.html'), 'utf8')
+  assert.ok(legacyHtml.includes('<head>') && /<script[^>]*type="module"[^>]*src="\/assets\//.test(legacyHtml), 'Invalid legacy app entry')
+}
 let codecExperiment
 try { codecExperiment = JSON.parse(await fs.readFile(path.join(frontendBuild, 'ktv-codec-experiment.json'), 'utf8')) }
 catch (error) { if (error.code !== 'ENOENT') throw error }
@@ -105,7 +112,7 @@ const container = `ktv-room-stream-${randomUUID().slice(0, 8)}`
 const apiKey = 'room-browser', apiSecret = randomBytes(32).toString('hex'), controlSecret = randomBytes(32).toString('hex')
 const upstreamUrl = 'http://127.0.0.1:17900', image = 'livekit/livekit-server:v1.13.7@sha256:6fd3b7088874c4d119160dd688798dfec852bc014786d392caad15f6f63912a3'
 const provider = new RoomServiceClient(upstreamUrl, apiKey, apiSecret, { requestTimeout: 2, failover: false })
-const db = initDb(root), contexts = [], debuggerSockets = [], pending = new Map(), sessionSockets = new Map(), errors = [], mediaHttp = []
+const db = initDb(root), contexts = [], debuggerSockets = [], pending = new Map(), sessionSockets = new Map(), sessionTargets = new Map(), errors = [], mediaHttp = []
 const ownedTcp = new Set()
 const trackTcp = server => server.on('connection', socket => { ownedTcp.add(socket); socket.once('close', () => ownedTcp.delete(socket)) })
 let mediaProxy, audienceCircuits, frontend, backend, worker, realtime, chrome, remoteBrowser, avBrowser, hostBrowser, pulseModule, pathRoom, nativeSyncAudience, senderKeyframePage, running = false, nextId = 0, passed = 0
@@ -237,7 +244,15 @@ try {
   app.get('/data/metadata.json', (req, res) => res.json({ '1': { title: 'Live stream test', duration: 60 } }))
   app.get('/karaoke/karaoke_manifest.json', (req, res) => res.json({ version: 1, ids: [1] }))
   app.use('/data', express.static(path.join(root, 'data'))); app.use('/karaoke', express.static(path.join(root, 'karaoke')))
-  app.use(express.static(frontendBuild)); app.get('*', (req, res) => res.sendFile(path.join(frontendBuild,'index.html')))
+  if (legacyBuild) app.get('/__ktv_legacy_app', (req, res) => {
+    const id = req.query.room
+    if (typeof id !== 'string' || !/^[0-9a-f-]{36}$/.test(id)) return res.sendStatus(400)
+    res.setHeader('Cache-Control','no-store')
+    res.type('html').send(legacyHtml.replace('<head>', `<head><script>history.replaceState(null,'',${JSON.stringify('/party/'+id+'/stage')});</script>`))
+  })
+  app.use(express.static(frontendBuild))
+  if (legacyBuild) app.use(express.static(legacyBuild))
+  app.get('*', (req, res) => res.sendFile(path.join(frontendBuild,'index.html')))
   await worker.reconcile(); check(worker.ready, 'actual room-policy worker is ready')
   async function api(actor, route, body) {
     const response = await fetch(origin + '/api/ktv' + route, { method: body === undefined ? 'GET' : 'POST',
@@ -276,12 +291,12 @@ try {
   const audienceSocket = avBrowser ? await debuggerConnection(avBrowser.debuggerUrl) : remoteMode ? singerSocket : await debuggerConnection(process.env.CHROME_DEBUG_URL || 'http://127.0.0.1:9231')
   const hostSocket = hostBrowser ? await debuggerConnection(hostBrowser.debuggerUrl) : audienceSocket
   console.log('Client topology:', clientLocation, '; native audio clocks; isolated synthetic room/microphone')
-  async function page(actor, stage = false) {
+  async function page(actor, stage = false, legacy = false) {
     const socket = actor === 2 || actor === 3 ? singerSocket : actor === 1 && !stage ? hostSocket : audienceSocket
     const { browserContextId } = await cdp(socket, 'Target.createBrowserContext'); contexts.push({ socket, browserContextId })
     await cdp(socket, 'Browser.grantPermissions', { browserContextId, origin, permissions: ['audioCapture'] })
     const { targetId } = await cdp(socket, 'Target.createTarget', { browserContextId, url: 'about:blank' })
-    const { sessionId } = await cdp(socket, 'Target.attachToTarget', { targetId, flatten: true }); sessionSockets.set(sessionId, socket)
+    const { sessionId } = await cdp(socket, 'Target.attachToTarget', { targetId, flatten: true }); sessionSockets.set(sessionId, socket);sessionTargets.set(sessionId,targetId)
     await cdp(socket, 'Page.enable', {}, sessionId); await cdp(socket, 'Runtime.enable', {}, sessionId)
     await cdp(socket, 'Network.enable', {}, sessionId)
     await cdp(socket, 'Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', 'en');
@@ -361,7 +376,7 @@ try {
           frequency: length ? Math.round(crossings * item.buffer.sampleRate / length) : null}); return start(...args);
       }; window.__bufferSources.push(item); return item; };
       window.confirm = () => true;` }, sessionId)
-    await cdp(socket, 'Page.navigate', { url: origin + `/party/${room.room.id}${stage ? '/stage' : ''}` }, sessionId)
+    await cdp(socket, 'Page.navigate', { url: origin + (legacy ? `/__ktv_legacy_app?room=${room.room.id}` : `/party/${room.room.id}${stage ? '/stage' : ''}`) }, sessionId)
     await poll(() => evaluate(sessionId, "document.body?.innerText.includes('Live room updates connected')"), 'room page connected')
     if (!stage) await evaluate(sessionId, "document.getElementById('party-tab-sing').click()")
     return sessionId
@@ -373,6 +388,26 @@ try {
   await poll(() => evaluate(audience, "![...document.querySelectorAll('button')].some(item => item.textContent.trim() === 'Enable stage audio')"), 'common screen applies online snapshot')
   check(await evaluate(audience, "![...document.querySelectorAll('button')].some(item => item.textContent.trim() === 'Enable stage audio')"), 'online common screen cannot independently enable backing')
   check(await evaluate(phone, "![...document.querySelectorAll('select')].some(item => [...item.options].some(option => option.value === 'online'))"), 'ordinary singer has no room-mode admin selector')
+  if (legacyBuild) {
+    const beforeIds = new Set((await api(1,pathRoom)).presence.devices.map(item=>item.id))
+    const legacy = await page(1,true,true)
+    const legacyDevice = await poll(async()=> (await api(1,pathRoom)).presence.devices.find(item=>!beforeIds.has(item.id)),
+      'actual old app device status')
+    check(legacyDevice.mediaProtocol===1,'immutable older app reports its actual legacy media contract')
+    const loaded = await evaluate(legacy,"[...document.querySelectorAll('script[type=module][src]')].map(item=>new URL(item.src).pathname)")
+    check(loaded.length===1 && legacyHtml.includes(loaded[0]),'legacy journey executes the older entry bundle unchanged')
+    await click(legacy,'Watch and listen')
+    await poll(()=>evaluate(legacy,"document.querySelector('[data-party-media-status]')?.textContent.includes('Streaming stopped.')"),
+      'older audience receives a terminal streaming refusal')
+    check(!db.prepare('SELECT 1 FROM ktv_media_grants WHERE device_id = ?').get(legacyDevice.id),
+      'older real app receives no media token or provider nonce')
+    check(await evaluate(legacy,"__peers.length===0&&!document.querySelector('[data-party-media-screen] video')"),
+      'older real app opens no peer or unguarded audience output')
+    check((await api(1,pathRoom)).presence.devices.some(item=>item.id===legacyDevice.id&&item.connected),
+      'older real app retains its room connection after media refusal')
+    await cdp(sessionSockets.get(legacy),'Target.closeTarget',{targetId:sessionTargets.get(legacy)})
+    await poll(async()=> !(await api(1,pathRoom)).presence.devices.some(item=>item.id===legacyDevice.id),'legacy test device released')
+  }
   const request = await api(2, `${pathRoom}/queue`, { commandId: randomUUID(), songId: 1, title: 'Live stream test', requestNext: false, singerMemberId: singer.self.id })
   let view = await api(1, pathRoom)
   view = await api(1, `${pathRoom}/readiness/offer`, { commandId: randomUUID(), entryId: request.queue[0].id, clockId: view.clock.clockId, baseRevision: view.room.revision })
@@ -819,11 +854,14 @@ try {
       check(recoveryEncoded > 0, 'demand recovery observes actual newly encoded keyframes after requests')
     }
   }
-  const codecQualities=codecExperiment?avMeasurements.map(measurement=>
-    analyseCodecQuality(avTimingSamples,measurement.phase,codecExperiment.codec,(senderKeyframeMs??codecExperiment.keyframeMs??null))):[]
+  // Production also has to retain nominal quality. The pinned SDK defaults to
+  // VP8; comparison artifacts declare their own expected codec explicitly.
+  const expectedCodec=codecExperiment?.codec || 'vp8'
+  const codecQualities=avMeasurements.map(measurement=>
+    analyseCodecQuality(avTimingSamples,measurement.phase,expectedCodec,(senderKeyframeMs??codecExperiment?.keyframeMs??null)))
   for (const quality of codecQualities) console.log('Native codec quality:',JSON.stringify(quality))
   for (const quality of codecQualities) {
-    check(quality.errors.length===0,`${quality.phase} codec comparison preserves actual 1280x720 and nominal measured source/receiver cadence`)
+    check(quality.errors.length===0,`${quality.phase} preserves actual 1280x720 and nominal measured source/receiver cadence`)
   }
   for(const result of avMeasurements) check(result.absoluteSkewMs.p95<=150&&result.absoluteSkewMs.max<=250, `${result.phase} received audio/video marker presentation skew passes the 150 ms p95 / 250 ms maximum software target`)
   check(errors.length === 0, `no browser runtime exceptions (${errors.length})`)
@@ -831,8 +869,8 @@ try {
 } catch (error) {
   console.error('Journey failure:', error.message)
   if(avTimingSamples.length) console.error('A/V timing timeline on failure:',JSON.stringify(avTimingSamples))
-  if(codecExperiment) for(const phase of new Set(avTimingSamples.map(item=>item.phase)))
-    console.error('Native codec quality on failure:',JSON.stringify(analyseCodecQuality(avTimingSamples,phase,codecExperiment.codec,(senderKeyframeMs??codecExperiment.keyframeMs??null))))
+  for(const phase of new Set(avTimingSamples.map(item=>item.phase)))
+    console.error('Native codec quality on failure:',JSON.stringify(analyseCodecQuality(avTimingSamples,phase,codecExperiment?.codec || 'vp8',(senderKeyframeMs??codecExperiment?.keyframeMs??null))))
   if(avBrowser) console.error('Private receiver output:',JSON.stringify(await avBrowser.audioEvidence().catch(()=>({error:'capture unavailable'}))))
   if(mediaProxy) console.error('Owned media proxy:',JSON.stringify(mediaProxy.snapshot()))
   console.error('Playback recovery:',JSON.stringify(db.prepare('SELECT state,recovery_reason FROM ktv_playback').all()))

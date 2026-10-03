@@ -23,6 +23,7 @@ for (const [name, module] of Object.entries(stubs)) compiled = compiled.replace(
 const { usePartyMedia, partyMediaFailureCode } = await import(dataModule(compiled))
 
 test('media failures provide actionable message keys without exposing provider URLs or tokens', () => {
+  assert.equal(partyMediaFailureCode({ code: 'MEDIA_CLIENT_UPDATE' }), 'mediaErrorUpdate')
   assert.equal(partyMediaFailureCode(new Error('wss://provider/rtc?access_token=private')), 'mediaErrorUnavailable')
   assert.equal(partyMediaFailureCode(Object.assign(new Error('private-body'), { code: 'MEDIA_REVOKED' })), 'mediaErrorPermission')
   assert.equal(partyMediaFailureCode({ code: 'MEDIA_FORBIDDEN' }), 'mediaErrorPermission')
@@ -301,6 +302,16 @@ test('an undocumented HTTP authorization denial stops audience recovery without 
   f.state.api.mediaGrant = async () => {requests++; throw Object.assign(new Error('private provider body'), {status:403,code:'OTHER_DENIAL'})}
   connections[0].callbacks.ended(true); await flush()
   assert.equal(requests, 1); assert.equal(f.retryTimers.size, 0); assert.equal(f.media.status.value, 'error')
+})
+
+test('media version refusal stops audience recovery with an update message and no retry loop', async t => {
+  const f = fixture(t), connections = audienceFixture(f)
+  await f.media.listen(); let requests = 0
+  f.state.api.mediaGrant = async () => { requests++; throw { status: 409, code: 'MEDIA_CLIENT_UPDATE' } }
+  connections[0].callbacks.ended(true); await flush()
+  assert.equal(requests, 1); assert.equal(f.retryTimers.size, 0)
+  assert.equal(f.media.status.value, 'error'); assert.equal(f.media.failure.value, 'mediaErrorUpdate')
+  assert.equal(f.media.isAudience.value, false)
 })
 
 async function publisherFixture(f, ready = async () => ({}), expectedStatus = 'publishing') {

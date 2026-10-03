@@ -37,7 +37,8 @@ app.get('/api/ktv/rooms', (_req, res, next) => {
   next()
 })
 const realtime = registerKtvRoutes(app, { db, authMiddleware: auth, secret: 'isolated-ui-only-secret', isKaraokeSong: id => id === 1 })
-app.use(express.static(path.resolve('dist'))); app.get('*', (_req, res) => res.sendFile(path.resolve('dist/index.html')))
+const appRoot = path.resolve(process.env.KTV_UI_TEST_DIST_ROOT || 'dist')
+app.use(express.static(appRoot)); app.get('*', (_req, res) => res.sendFile(path.join(appRoot,'index.html')))
 const server = app.listen(0, '127.0.0.1'); await once(server, 'listening'); realtime.attach(server)
 const origin = `http://127.0.0.1:${server.address().port}`
 const check = (condition, label) => { assert.ok(condition, label); passed++; console.log(`PASS ${label}`) }
@@ -82,7 +83,7 @@ async function featureFixture(features) {
   const realtime = registerKtvRoutes(app, { db: database, authMiddleware: auth, features,
     secret: 'feature-ui-only-secret', isKaraokeSong: () => true })
   app.get('/api/*', (_req, res) => res.json({ success: true, data: [] }))
-  app.use(express.static(path.resolve('dist'))); app.get('*', (_req, res) => res.sendFile(path.resolve('dist/index.html')))
+  app.use(express.static(appRoot)); app.get('*', (_req, res) => res.sendFile(path.join(appRoot,'index.html')))
   const server = app.listen(0, '127.0.0.1'); await once(server, 'listening'); realtime.attach(server)
   extraFixtures.push({ database, realtime, server })
   return { database, realtime, origin: `http://127.0.0.1:${server.address().port}` }

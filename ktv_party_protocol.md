@@ -1,6 +1,6 @@
 # KTV Party implementation contracts
 
-Updated: 2026-10-02. This document describes the implemented protocol. Physical
+Updated: 2026-10-03. This document describes the implemented protocol. Physical
 audio/device and public streaming acceptance remain open in
 [ktv_party_implement.md](ktv_party_implement.md).
 
@@ -313,8 +313,19 @@ already issued receiver authority expires; later permits cannot cross that
 boundary, including before the next sweep. Provider removal does not discard
 the reservation. Private native early-stop tests cover blocked and suspended/
 resumed listeners with actual playback/grant services and direct WebRTC. Full
-SFU fault acceptance, old-client compatibility, impaired timing and physical/
-device/release acceptance remain required before shipping.
+SFU fault acceptance, impaired timing and physical/device/release acceptance
+remain required before shipping.
+
+The separate media capability contract is **version 2** (room WebSocket envelopes
+remain version 1). Both publishing and listening devices must advertise version 2
+before receiving streaming credentials. Versions 0/1 retain local room access and
+local playback, but token requests fail with `409 MEDIA_CLIENT_UPDATE`, without a
+nonce or receipt. Unknown status versions are rejected. Downgrades revoke existing
+media authority and recover an active online/hybrid stage while retaining output
+reservations. Token signing rechecks compatibility before returning credentials.
+The unchanged deployed version-1 entry bundle is tested against the new backend:
+room access continues, while no media token, peer or output is created. Physical
+installed-PWA acceptance remains open.
 
 Room media grants bind current admission, paired scope, device, selected singer,
 performance, generation and output lease. Provider-confirmed audio/video readiness

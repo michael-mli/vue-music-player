@@ -67,7 +67,7 @@ async function fixture(t) {
     const access = { self: views[index].self, deviceScope: scope }
     realtime.playback.connected(ws, access)
     const message = body => realtime.playback.deviceMessage(ws, { protocolVersion: 1, ...body }, access)
-    message({ type: 'device.status', purpose: 'viewer', label: 'Media device', audioEnabled: false, clockHealthy: true })
+    message({ type: 'device.status', purpose: 'viewer', label: 'Media device', audioEnabled: false, clockHealthy: true, mediaProtocol: 2 })
     return { id, ws, message }
   }
   const devices = views.map((_, index) => device(index))
@@ -83,7 +83,7 @@ async function fixture(t) {
       VALUES (?, ?, ?, 1, ?, 'ready', ?) ON CONFLICT(room_id) DO UPDATE SET entry_id = excluded.entry_id,
       performance_id = excluded.performance_id, clock_id = excluded.clock_id, state = 'ready'`)
       .run(view.room.id, entry.id, performanceId, clock.id, now)
-    devices[1].message({ type: 'device.status', purpose: 'stage', label: 'Singer', audioEnabled: true, clockHealthy: true, mediaProtocol: 1 })
+    devices[1].message({ type: 'device.status', purpose: 'stage', label: 'Singer', audioEnabled: true, clockHealthy: true, mediaProtocol: 2 })
     realtime.playback.assign(view.room.id, devices[1].id)
     const assets = { version: 'fixture', durationMs: 60000, instrumental: { durationMs: 60000 }, original: null }
     realtime.playback.prepare(view.room.id, { state: 'ready', entryId: entry.id, performanceId }, assets)
@@ -118,6 +118,31 @@ test('room media HTTP uses admitted actor/device scope and recovers an issuance 
   assert.equal((await f.request('POST', `${f.route}/media/${first.data.identity}/revoke`, 3, {})).status, 200)
   assert.equal(f.db.prepare('SELECT state FROM ktv_media_grants WHERE identity = ?').get(first.data.identity).state, 'revoked')
   assert.equal((await f.request('POST', `${f.route}/media/${first.data.identity}/renew`, 3, { deviceId: f.devices[2].id })).status, 403)
+})
+
+test('legacy listeners keep room access and rejected token requests can retry after updating', async t => {
+  const f = await fixture(t); await f.mode('online')
+  const body = { commandId: randomUUID(), deviceId: f.devices[2].id, scope: 'audience' }
+  const status = mediaProtocol => f.devices[2].message({ type: 'device.status', purpose: 'viewer', label: 'Listener version',
+    audioEnabled: true, clockHealthy: true, mediaProtocol })
+  for (const version of [0, 1]) {
+    status(version)
+    const reply = await f.request('POST', `${f.route}/media-token`, 3, body)
+    assert.equal(reply.status, 409); assert.equal(reply.code, 'MEDIA_CLIENT_UPDATE')
+    assert.equal(f.db.prepare('SELECT COUNT(*) total FROM ktv_media_grants').get().total, 0)
+    assert.equal((await f.request('GET', f.route, 3)).status, 200)
+  }
+  status(2)
+  const updated = await f.request('POST', `${f.route}/media-token`, 3, body)
+  assert.equal(updated.status, 200)
+  status(1)
+  const renewal = await f.request('POST', `${f.route}/media/${updated.data.identity}/renew`, 3, { deviceId: f.devices[2].id })
+  assert.equal(renewal.status, 403); assert.equal(renewal.code, 'MEDIA_REVOKED')
+  assert.equal((await f.request('POST', `${f.route}/media/${updated.data.identity}/output`, 3, { deviceId: f.devices[2].id })).status, 403)
+  await wait(() => f.db.prepare('SELECT state FROM ktv_media_grants WHERE identity = ?').get(updated.data.identity)?.state === 'revoked')
+  status(2)
+  const fresh = await f.request('POST', `${f.route}/media-token`, 3, { ...body, commandId: randomUUID() })
+  assert.equal(fresh.status, 200); assert.notEqual(fresh.data.identity, updated.data.identity)
 })
 
 test('audience output route returns only current authority and denies foreign actor/device/room access', async t => {

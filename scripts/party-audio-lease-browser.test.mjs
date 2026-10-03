@@ -231,14 +231,26 @@ async function authorityClock(evaluatePage) {
 async function receiverHandoverFault(mode) {
   authority = await createReceiverAuthorityFixture()
   const label = `receiver-early-stop/${mode}`
-  let renewTimer, renewTask=Promise.resolve(), renewing=false
+  let renewTimer, setupTimer, setupTask=Promise.resolve(), renewTask=Promise.resolve(), renewing=false
   const renewalErrors=[]
   try {
     const binding = await authority.start()
     await evaluate(`start('publisher',${JSON.stringify(binding)})`)
     const preliminary = await authority.authorize()
+    // Receiver/browser creation and ICE gathering can exceed a five-second
+    // credential. Keep authority alive during setup as the app does; neither
+    // output graph is armed until the measured clock and final permit exist.
+    let setupRenewing=false
+    setupTimer=setInterval(()=>{
+      if(setupRenewing)return
+      setupRenewing=true
+      setupTask=authority.authorize().catch(error=>renewalErrors.push(error.message))
+        .finally(()=>{setupRenewing=false})
+    },1000)
     await connectPublisherReceiver(binding,preliminary.publisher.identity)
     const sourceClock = await authorityClock(evaluate), receiverClock = await authorityClock(receiverEvaluate)
+    clearInterval(setupTimer);await setupTask
+    assert.deepEqual(renewalErrors,[], 'Native setup keeps actual short-lived authority current')
     const granted = await authority.authorize()
     assert.equal(granted.publisher.identity,preliminary.publisher.identity)
     check(await evaluate(`graph.renew(${JSON.stringify(granted.publisher.permit)},${JSON.stringify(sourceClock)})&&
@@ -297,6 +309,7 @@ async function receiverHandoverFault(mode) {
       })().catch(error=>renewalErrors.push(error.message)).finally(()=>{renewing=false})
     },1000)
     const observed = await stalled
+    clearInterval(setupTimer);await setupTask
     clearInterval(renewTimer);await renewTask
     check(renewalErrors.length===0,`${label}: replacement source renews real server authority during listener recovery`)
     check(newAudible.time<observed.finish,`${label}: replacement is audible before listener page callbacks resume`)
@@ -324,6 +337,7 @@ async function receiverHandoverFault(mode) {
     check(!await receiverEvaluate(`receiverGraph.renew(${JSON.stringify({...granted.permit,expiresServerMs:granted.permit.expiresServerMs+10000})},
       ${JSON.stringify(receiverClock)})`),`${label}: stale listener authority cannot resurrect the old graph`)
   } finally {
+    clearInterval(setupTimer);await setupTask
     clearInterval(renewTimer);await renewTask
     await evaluate(`(async()=>{window.replacementAudio?.remove();window.graph?.close();window.publisherTone?.stop();await engine.close();})()`).catch(()=>{})
     await authority.close();authority=null

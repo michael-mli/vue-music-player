@@ -5,6 +5,7 @@ import { recordTurn, requestNextTurn, offerNextTurn } from './ktv-turns.js'
 import { timelinePosition } from './ktv-timeline.js'
 import { ktvTiming, ktvRestartSilenceMs, KTV_MEDIA_OUTPUT_PERMIT_MS } from './ktv-timing.js'
 import { ktvFeatures, ktvGuideAssets } from './ktv-features.js'
+import { PARTY_MEDIA_PROTOCOL_VERSION, PARTY_LEGACY_MEDIA_PROTOCOL_VERSIONS } from './ktv-media-protocol.js'
 
 const stamp = () => new Date().toISOString()
 
@@ -241,7 +242,7 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
     const mode = db.prepare('SELECT * FROM ktv_rooms WHERE id = ?').get(roomId).performance_mode || 'local'
     if (mode !== 'local') {
       if (!api.media) fail(503, 'MEDIA_UNAVAILABLE', 'Online audio is not configured')
-      if (device.mediaProtocol !== 1) fail(409, 'MEDIA_CLIENT_UPDATE', 'Update the performing device before using online audio')
+      if (device.mediaProtocol !== PARTY_MEDIA_PROTOCOL_VERSION) fail(409, 'MEDIA_CLIENT_UPDATE', 'Update the app and reopen this room before using online audio')
       const singer = db.prepare('SELECT singer_member_id FROM ktv_queue_entries WHERE id = ?').get(row.entry_id)?.singer_member_id
       const member = db.prepare('SELECT * FROM ktv_members WHERE id = ?').get(device.memberId)
       if (device.scope === 'display' || (device.memberId !== singer && !(mode === 'hybrid' && (member.role === 'host' || member.cohost_at)))) {
@@ -368,7 +369,7 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
       if (!['viewer', 'stage', 'guide'].includes(message.purpose) || typeof message.audioEnabled !== 'boolean' ||
         typeof message.clockHealthy !== 'boolean' || typeof message.label !== 'string' || message.label.length > 40 ||
         /[\u0000-\u001f]/.test(message.label) ||
-        (message.mediaProtocol !== undefined && ![0, 1].includes(message.mediaProtocol)) ||
+        (message.mediaProtocol !== undefined && ![...PARTY_LEGACY_MEDIA_PROTOCOL_VERSIONS, PARTY_MEDIA_PROTOCOL_VERSION].includes(message.mediaProtocol)) ||
         (message.audioIssue != null && !['drift', 'output', 'decode', 'suspended'].includes(message.audioIssue))) fail(400, 'INVALID_DEVICE_STATUS', 'Invalid device status')
       if (device.scope === 'display' && message.purpose === 'guide') fail(403, 'FORBIDDEN', 'Display access cannot use a singer guide')
       if (!features.guide && message.purpose === 'guide') fail(503, 'GUIDE_DISABLED', 'Private vocal guides are temporarily unavailable')
@@ -379,9 +380,11 @@ export function createKtvPlayback({ db, clock, transaction, bump, event, broadca
       device.mediaProtocol = message.mediaProtocol || 0
       device.audioIssue = message.audioIssue || null
       const row = read(ws.roomId)
+      const incompatibleStage = row?.stage_device_id === device.id && device.mediaProtocol !== PARTY_MEDIA_PROTOCOL_VERSION &&
+        (db.prepare('SELECT * FROM ktv_rooms WHERE id = ?').get(ws.roomId)?.performance_mode || 'local') !== 'local'
       const shouldRecover = ['scheduled', 'playing'].includes(row?.state) || Boolean(device.audioIssue)
       if (!device.audioEnabled || !device.clockHealthy || (row?.stage_device_id === device.id && device.purpose !== 'stage') ||
-        (row?.guide_device_id === device.id && device.purpose !== 'guide')) {
+        (row?.guide_device_id === device.id && device.purpose !== 'guide') || incompatibleStage) {
         device.ready = null; device.nextReady = null
         if (shouldRecover && row?.stage_device_id === device.id) transaction(db, () => recover(ws.roomId, `stage.${device.audioIssue || 'unavailable'}`))
         else if (shouldRecover && row?.guide_required && row.guide_device_id === device.id) transaction(db, () => recover(ws.roomId, `guide.${device.audioIssue || 'unavailable'}`))

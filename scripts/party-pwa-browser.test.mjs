@@ -8,7 +8,7 @@ import WebSocket from '../server/node_modules/ws/wrapper.mjs'
 
 const port = Number(process.env.CHROME_DEBUG_URL ? new URL(process.env.CHROME_DEBUG_URL).port : 9231)
 assert.ok(Number.isInteger(port) && port > 0 && port <= 65535, 'Invalid owned Chrome debugging port')
-const appRoot = path.resolve('dist'), pending = new Map()
+const appRoot = path.resolve(process.env.KTV_PWA_TEST_DIST_ROOT || 'dist'), pending = new Map()
 const failures = [], requests = new Map()
 let probeStep = 'initial entry'
 const noteFailure = item => { failures.push({ step: probeStep, ...item }); if (failures.length > 16) failures.shift() }

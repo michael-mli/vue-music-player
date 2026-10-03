@@ -19,7 +19,7 @@ function fixture(t) {
     db.prepare('INSERT INTO ktv_members (id, room_id, user_id, display_name, role, admission, joined_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .run(memberIds[index], roomId, id, `Member ${index}`, index === 0 ? 'host' : 'member', 'admitted', now, now)
   }
-  const devices = memberIds.map(memberId => ({ id: randomUUID(), memberId, connected: true, scope: 'controller', purpose: 'stage', clockHealthy: true, audioEnabled: true, mediaProtocol: 1 }))
+  const devices = memberIds.map(memberId => ({ id: randomUUID(), memberId, connected: true, scope: 'controller', purpose: 'stage', clockHealthy: true, audioEnabled: true, mediaProtocol: 2 }))
   const clock = { id: randomUUID(), nowMs: () => 1000 }
   const playback = { state: 'scheduled', clockId: clock.id, performanceId: randomUUID(), generation: 1,
     singerMemberId: memberIds[1], stageMemberId: memberIds[1], stageDeviceId: devices[1].id,
@@ -66,6 +66,32 @@ test('only the selected singer’s connected controller and live output lease ca
   await assert.rejects(f.issue(1, 'publisher'), code('MEDIA_FORBIDDEN'))
   f.playback.state = 'playing'
   assert.equal((await f.issue(1, 'publisher')).scope, 'publisher')
+})
+
+test('older media clients must update before obtaining publisher or audience authority', async t => {
+  const f = fixture(t)
+  for (const version of [0, 1]) {
+    f.devices[2].mediaProtocol = version
+    await assert.rejects(f.issue(2, 'audience'), code('MEDIA_CLIENT_UPDATE'))
+    f.devices[1].mediaProtocol = version
+    await assert.rejects(f.issue(1, 'publisher'), code('MEDIA_CLIENT_UPDATE'))
+  }
+  f.devices[2].mediaProtocol = 2; f.devices[1].mediaProtocol = 2
+  const audience = await f.issue(2, 'audience'), publisher = await f.issue(1, 'publisher')
+  f.service.acknowledgeReady(publisher.identity)
+  assert.ok(f.service.receivePermit(audience.identity, f.memberIds[2], f.devices[2].id))
+  f.devices[2].mediaProtocol = 1
+  assert.throws(() => f.service.receivePermit(audience.identity, f.memberIds[2], f.devices[2].id), code('MEDIA_REVOKED'))
+  await assert.rejects(f.service.renew(audience.identity, f.memberIds[2], f.devices[2].id), code('MEDIA_REVOKED'))
+  f.devices[1].mediaProtocol = 1
+  await assert.rejects(f.service.renew(publisher.identity, f.memberIds[1], f.devices[1].id), code('MEDIA_REVOKED'))
+})
+
+test('protocol downgrade during asynchronous signing cannot return a fresh media credential', async t => {
+  const f = fixture(t), issuance = f.issue(2, 'audience')
+  f.devices[2].mediaProtocol = 1
+  await assert.rejects(issuance, code('MEDIA_REVOKED'))
+  assert.equal(f.db.prepare("SELECT state FROM ktv_media_grants WHERE device_id = ?").get(f.devices[2].id).state, 'revoking')
 })
 
 test('receiver permits bind a ready source nonce and never borrow the longer audience lifetime', async t => {

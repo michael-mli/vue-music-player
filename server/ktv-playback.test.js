@@ -89,7 +89,7 @@ async function streamingOutputFixture(t) {
   const f = fixture(t)
   f.prepare(); f.time(9000)
   const status = () => f.message({ type: 'device.status', purpose: 'stage', label: 'Publisher', audioEnabled: true,
-    clockHealthy: true, mediaProtocol: 1 })
+    clockHealthy: true, mediaProtocol: 2 })
   status()
   const grants = createKtvMediaGrants({ db: f.db, clock: f.clock,
     getPlayback: id => f.service.snapshot(id), getDevices: id => f.service.presence(id).devices,
@@ -99,6 +99,7 @@ async function streamingOutputFixture(t) {
   f.db.prepare("UPDATE ktv_rooms SET performance_mode = 'online' WHERE id = ?").run(f.roomId)
   f.service.start(f.roomId); f.service.sweep()
   const receiverMember = f.member('Receiver'), receiver = f.device(receiverMember, 'viewer')
+  receiver.send({ type: 'device.status', purpose: 'viewer', label: 'Updated listener', audioEnabled: true, clockHealthy: true, mediaProtocol: 2 })
   const publisher = await grants.issue({ roomId: f.roomId, memberId: f.memberId, deviceId: f.ws.clientDeviceId,
     scope: 'publisher', commandId: randomUUID() })
   const audience = await grants.issue({ roomId: f.roomId, memberId: receiverMember, deviceId: receiver.ws.clientDeviceId,
@@ -196,6 +197,33 @@ test('durable restart silence covers previously issued receiver output with a ne
   assert.throws(() => f.output(), error => error.code === 'MEDIA_REVOKED')
 })
 
+test('streaming protocol downgrade recovers the source without forgetting issued listener authority', async t => {
+  const f = await streamingOutputFixture(t), permit = f.output(), before = f.service.snapshot(f.roomId)
+  f.time(9500)
+  f.message({ type: 'device.status', purpose: 'stage', label: 'Older app', audioEnabled: true, clockHealthy: true, mediaProtocol: 1 })
+  const recovered = f.service.snapshot(f.roomId)
+  assert.equal(recovered.state, 'recovering')
+  assert.ok(recovered.generation > before.generation)
+  assert.ok(recovered.lease.safeAfterServerMs >= permit.expiresServerMs + f.service.timing.outputMarginMs)
+  assert.equal(f.output(), null)
+  f.ready()
+  assert.throws(() => f.service.start(f.roomId), error => error.code === 'MEDIA_CLIENT_UPDATE')
+})
+
+test('legacy media status still supports local room controls while unknown protocols fail validation', t => {
+  const f = fixture(t)
+  f.prepare(); f.time(9000)
+  const status = { type: 'device.status', purpose: 'stage', label: 'Local stage', audioEnabled: true, clockHealthy: true }
+  for (const mediaProtocol of [0, 1, 2]) {
+    f.message({ ...status, mediaProtocol })
+    assert.equal(f.service.presence(f.roomId).devices.find(device => device.id === f.ws.clientDeviceId).mediaProtocol, mediaProtocol)
+  }
+  for (const mediaProtocol of [3, -1, '2', null])
+    assert.throws(() => f.message({ ...status, mediaProtocol }), error => error.code === 'INVALID_DEVICE_STATUS')
+  f.message({ ...status, mediaProtocol: 0 }); f.service.start(f.roomId); f.service.sweep()
+  assert.equal(f.service.snapshot(f.roomId).state, 'scheduled')
+})
+
 test('guide disablement clears persisted requirements on restart and rejects guide device readiness', t => {
   const f = fixture(t)
   f.prepare()
@@ -287,7 +315,7 @@ test('configured preparation timeout recovers at its deadline and online lead ch
     apiKey: 'timing-test', apiSecret: 'timing-test-only-secret-more-than-thirty-two-bytes' })
   f.db.prepare("UPDATE ktv_rooms SET performance_mode = 'online' WHERE id = ?").run(f.roomId)
   f.service.media = { grants: { publisherReady: () => true } }
-  f.message({ type: 'device.status', purpose: 'stage', label: 'Singer', audioEnabled: true, clockHealthy: true, mediaProtocol: 1 })
+  f.message({ type: 'device.status', purpose: 'stage', label: 'Singer', audioEnabled: true, clockHealthy: true, mediaProtocol: 2 })
   f.service.start(f.roomId); f.service.sweep()
   assert.equal(f.service.snapshot(f.roomId).anchorServerMs, 27000)
 })
