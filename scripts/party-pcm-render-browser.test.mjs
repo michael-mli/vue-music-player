@@ -10,9 +10,20 @@ import { CapturePcmQueue, pcmSourceWorklet } from './party-capture-pcm-queue.mjs
 
 const mode=process.env.KTV_PCM_RENDER_FAULT || 'task-stall'
 assert.ok(['task-stall','suspend-task-stall'].includes(mode),'Unknown native PCM output fault')
+const guardLifetime=process.env.KTV_PCM_GUARD_LIFETIME || 'production'
+assert.ok(['production','persistent-silence'].includes(guardLifetime),'Unknown private guard lifetime experiment')
+const outputGraph=process.env.KTV_PCM_OUTPUT_GRAPH || 'same-context'
+assert.ok(['same-context','separate-context'].includes(outputGraph),'Unknown private PCM output graph')
+let guardSource=await fs.readFile('src/services/partyLeaseGuard.worklet.js','utf8')
+if(guardLifetime==='persistent-silence') {
+  // Hypothesis only: keep clearing every quantum after failure instead of
+  // ending processor lifetime. The production source remains untouched.
+  assert.equal(guardSource.split('    return alive\n').length,2,'Guard experiment must replace exactly the process return')
+  guardSource=guardSource.replace('    return alive\n','    return true\n')
+}
 const modules={
   '/pcm.js':`(${pcmSourceWorklet.toString()})(${CapturePcmQueue.toString()});`,
-  '/guard.js':await fs.readFile('src/services/partyLeaseGuard.worklet.js','utf8'),
+  '/guard.js':guardSource,
   '/stream.js':await fs.readFile('scripts/party-opus-pcm-stream.mjs','utf8'),
   '/payload.js':await fs.readFile('scripts/party-opus-decode-probe.mjs','utf8'),
 }
@@ -47,7 +58,7 @@ try {
   browser=await createOwnedRemoteBrowser({host:process.env.KTV_ROOM_TEST_SSH_HOST,knownHosts:process.env.KTV_ROOM_TEST_KNOWN_HOSTS,
     frontendPort:server.address().port,debugPort:9243,isolatedOutput:true,captureActivity:true})
   const info=await(await fetch(browser.debuggerUrl+'/json/version')).json()
-  console.log('Owned PCM native browser:',info.Browser)
+  console.log('Owned PCM native browser:',info.Browser,'; guard lifetime:',guardLifetime)
   socket=new WebSocket(info.webSocketDebuggerUrl);await once(socket,'open')
   socket.on('message',raw=>{
     const message=JSON.parse(raw)
@@ -64,6 +75,8 @@ try {
   const timing=await evaluate(`(async()=>{
     window.context=new AudioContext({sampleRate:48000});await context.resume();
     await context.audioWorklet.addModule('/pcm.js');await context.audioWorklet.addModule('/guard.js');
+    window.outputContext=${outputGraph==='separate-context'?'new AudioContext()':'context'};
+    if(outputContext!==context){await outputContext.resume();await outputContext.audioWorklet.addModule('/guard.js')}
     const {createOpusPcmStream}=await import('/stream.js');
     const {primaryOpusPayload,opusPacketFrames}=await import('/payload.js');
     const encoded=[];let encodedBytes=0;
@@ -84,10 +97,15 @@ try {
     await new Promise(resolve=>setTimeout(resolve,500));
     window.start=Date.now();window.expiry=start+600;window.credits=[];window.silent=[];
     window.source=new AudioWorkletNode(context,'party-owned-pcm',{numberOfInputs:0,numberOfOutputs:1,outputChannelCount:[2]});
-    window.guard=new AudioWorkletNode(context,'party-lease-guard',{outputChannelCount:[2],processorOptions:{expiry}});
+    window.guard=new AudioWorkletNode(outputContext,'party-lease-guard',{outputChannelCount:[2],processorOptions:{expiry}});
     source.port.onmessage=({data})=>{credits.push(data);if(data.type==='consumed')stream.consumed(data)};
     guard.port.onmessage=({data})=>silent.push(data);
-    source.connect(guard);guard.connect(context.destination);
+    if(outputContext===context)source.connect(guard);
+    else {
+      window.pcmCapture=context.createMediaStreamDestination();source.connect(pcmCapture);
+      window.finalInput=outputContext.createMediaStreamSource(pcmCapture.stream);finalInput.connect(guard);
+    }
+    guard.connect(outputContext.destination);
     const first=Math.ceil(context.currentTime*48000)+4800;
     const capture=performance.now();window.streamReports=[];self.__encodedTimingCodecs=[{payloadType:111,mimeType:'audio/opus'}];
     window.stream=createOpusPcmStream(primaryOpusPayload,opusPacketFrames,packet=>{
@@ -109,15 +127,17 @@ try {
     throw error
   }
   check(Date.now()<timing.expiry,'actual native output contains the tone before expiry')
-  const stalled=await evaluate(`(async()=>{const before=context.currentTime;
+  const stalled=await evaluate(`(async()=>{const before=context.currentTime,outputBefore=outputContext.currentTime;
     ${mode==='suspend-task-stall'?'await context.suspend();':''}
     const suspended=context.currentTime;while(Date.now()<expiry+2500){};
     const frozen=context.currentTime;
     ${mode==='suspend-task-stall'?'await context.resume();const until=Date.now()+1500;while(Date.now()<until){};':''}
-    return {before,suspended,frozen,after:context.currentTime,finish:Date.now()};})()`)
+    return {before,suspended,frozen,after:context.currentTime,outputBefore,outputAfter:outputContext.currentTime,finish:Date.now()};})()`)
   if(mode==='suspend-task-stall')check(stalled.frozen-stalled.suspended<.1&&stalled.after-stalled.frozen>.7,
     'native render clock actually freezes and resumes after lease expiry')
   else check(stalled.after-stalled.before>.7,'audio render thread continues while the page task is blocked')
+  if(outputGraph==='separate-context')check(stalled.outputAfter-stalled.outputBefore>2.5,
+    'separate final output context keeps rendering while only the PCM context freezes')
   await new Promise(resolve=>setTimeout(resolve,250))
   const evidence=await browser.audioEvidence()
   const late=evidence.filter(row=>row.captureHeartbeat&&row.time>timing.expiry+150&&row.time<=stalled.finish)
@@ -134,10 +154,10 @@ try {
   check(await evaluate('credits.filter(row=>row.type==="consumed").length===45'),'native PCM renderer releases every queued chunk')
   check(await evaluate('!stream.snapshot().closed&&stream.snapshot().decoded===45&&stream.snapshot().chunks===0&&stream.snapshot().pcmBytes===0&&stream.snapshot().encodedBytes===0'),
     'native Opus decoder transfers all PCM through renderer credits without retained packets')
-  console.log('Native PCM output summary:',JSON.stringify({mode,rate:timing.rate,queuedFrames:timing.queuedFrames,
+  console.log('Native PCM output summary:',JSON.stringify({mode,guardLifetime,outputGraph,rate:timing.rate,queuedFrames:timing.queuedFrames,
     postExpirySamples:late.length,maximumPostExpiryRms:Math.max(...late.map(row=>row.rmsAmplitude)),
     renderAdvanceMs:(stalled.after-stalled.before)*1000}))
-  await evaluate("stream.close();source.port.postMessage({type:'stop'});source.disconnect();guard.disconnect();context.close()")
+  await evaluate("stream.close();source.port.postMessage({type:'stop'});source.disconnect();guard.disconnect();window.finalInput?.disconnect();window.pcmCapture?.stream.getTracks().forEach(track=>track.stop());if(outputContext!==context)outputContext.close();context.close()")
   check(errors.length===0,'native worklet fixture completes without runtime exceptions')
   console.log(`${passed} native PCM output checks passed; physical and SFU integration remain open`)
 } finally {

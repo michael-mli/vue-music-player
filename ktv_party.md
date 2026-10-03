@@ -1091,6 +1091,13 @@ origin of that burst, actual received-SFU integration, PCM/video alignment and
 physical/device acceptance remain unresolved. These primitives stay private
 until the original gates pass.
 
+An isolated variant feeds a 48-kHz PCM context through a captured MediaStream
+into a separate, continuously rendering output context with the original final
+lease guard. It passes PCM-context freeze/resume expiry, suggesting a layout to
+evaluate for the owned renderer. Freezing the final output context or all audio
+contexts remains unaccepted; the observed same-context burst is still an open
+gate. Keeping the guard processor alive after failure did not remove that burst.
+
 The lyric video is declared as `screen_share`, with `screenShareEncoding` explicitly
 limited to 350 kbit/s and 25 fps on the existing 1280×720 canvas. Audience filters,
 publisher JWT source grants and provider readiness use that same source contract;

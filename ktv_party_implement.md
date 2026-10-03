@@ -3720,3 +3720,27 @@ integrate direct worker/renderer credits and actual received Opus with controlle
 video, then re-run output timing, loss, handover and resource gates. Source FPS
 under loss, minimum practical latency, sustained clocks, physical/mobile/capacity
 and public-media release remain open. No product source or deployment changed.
+
+#### Output-context isolation experiment
+
+Keeping the final guard alive and clearing every quantum after failure does
+**not** remove the burst. That private lifetime hypothesis fails with another
+approximately 20-ms post-resume audible edge:
+`/tmp/ktv-opus-pcm-render-native-persistent-guard-expiry-20261003.log` (exit 1).
+The production worklet is unchanged.
+
+A separate-context layout passes **10/10** native checks: a 48-kHz PCM render
+context feeds a captured MediaStream into an independently running output
+context, with the original production lease guard after that receive boundary.
+Only the PCM context is suspended in this experiment. It actually freezes and
+resumes after expiry; the final output context keeps rendering, emits no late
+audible edges, and four post-expiry heartbeat samples have zero RMS. All decoder
+packets and 45 PCM credits release:
+`/tmp/ktv-opus-pcm-render-native-separated-context-expiry-20261003.log`.
+
+This isolates the tested PCM-context freeze from the final output guard; it does
+not establish safety when the final output context or all browser audio contexts
+freeze. The earlier same-context suspension failure remains a release gate.
+The fixture explicitly labels graph/lifetime variants; neither changes product
+sources or public deployment. Actual SFU integration, continuous worker credits,
+end-to-end latency and aggregate native-buffer bounds still need verification.
