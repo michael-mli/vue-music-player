@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **54/54** pass.
+checks pass; party units **125/125** and timing/capability fixtures **68/68** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -3540,3 +3540,22 @@ product sources and every production dist file remain unchanged. Both production
 and frozen `acb583b` index hashes remain
 `19c5921520411deb8728b7975dd8d7a6b362eb33cdb0a0fc46852aee52ecb9ed`.
 Build log: `/tmp/ktv-controlled-h264-private-build-20261003.log`.
+
+The combined H.264/controller run is terminal **exit 1** during impaired
+acceptance. Baseline capture/encoding/decoding/presentation is
+**25.00/25.00/25.08/24.87 fps**, with six matched pairs, no unmatched edges and
+**16.69-ms p95 / maximum**. Under continuous UDP impairment, native capture stays
+**25.00 fps**, while encoding/decoding/presentation drops to
+**17.22/17.29/16.30 fps**. Forty pairs are matched with one unmatched edge of each
+kind, skew **86.08-ms p95 / 520.67-ms maximum**, and maximum video delay
+**2081.50 ms**. Quality, maximum skew and maximum video-delay gates fail; handover
+timing is not reached. The earlier H.264 source-cadence observation does not
+generalize across these loss traces. No codec is selected by this evidence.
+Log: `/tmp/ktv-controlled-h264-continuous-udp-20261003.log`.
+
+Current remaining P07 work includes publisher congestion/rate behavior, reliable
+capture-clock handling, the one-second/deep-buffer queue interaction, adaptive
+minimum latency and product integration. The private 200-ms task-stall and
+freeze/resume results remain valid for their measured setup. Sustained clocks,
+physical/mobile/capacity/distinct networks and persistent release remain open.
+Public preview is still `acb583b`, with media disabled.
