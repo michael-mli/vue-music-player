@@ -22,6 +22,10 @@ is a preview; public online media is still disabled.
    source stop, listener render freeze/resume and source page stall. Actual buffered
    residence exceeds 500 ms; reservations, expiry silence and replacement separation
    pass. Legacy clients retain local controls without receiving streaming tokens.
+   A later Chrome encoded-gate fix reserves streams before publication instead of
+   relying on a late standard transform. Its `acb583b` production candidate passes
+   actual frame observation/clean A/V **35/35**, SFU source-stall **24/24**, and
+   independent source-clock freeze/expiry **16/16**; it is not deployed.
 2. **Streaming timing:** resolve impaired-network A/V timing, measure handover
    timing and longer outages, and verify source-clock stability. Functional
    reconnect/handover passes do not establish acceptable audible/video alignment.
@@ -3126,3 +3130,70 @@ they do not independently prove the modern encoded worker processed frames.
 No public deployment or media enablement occurred. Impaired synchronization,
 sustained clocks, physical/mobile, capacity, distinct networks and release gates
 remain open.
+
+
+The exact corrected production candidate is **`acb583b`**, built at
+`/tmp/ktv-party-candidate-encoded-activation-20261003` with
+`main-iUMKk7ov.js` / `main-DnE6rWx5.css`, index SHA256
+`19c5921520411deb8728b7975dd8d7a6b362eb33cdb0a0fc46852aee52ecb9ed`.
+Build/type-check passes, party tests **125/125**, timing/codec fixtures **41/41**,
+and focused encoded adapter/observer tests **15/15** pass.
+
+With normal Chrome 154 API availability (no API suppression), the candidate
+passes **35/35** native built-app streaming checks. The observer sees actual send
+and receive audio/video timestamps; no probe or browser runtime errors occur.
+Clean A/V retains **40 matched transitions, zero unmatched**, p95 **93.22 ms** /
+maximum **104.50 ms**. Measured source/receiver cadence is **24.97/24.97 fps** with
+nominal 1280x720 VP8 quality. Log:
+`/tmp/ktv-encoded-activation-clean-av-20261003.log`.
+
+Without any timing probe or API override, the same artifact passes **24/24**
+integrated SFU stalled-source checks. Actual received mean buffer is **508.86 ms**;
+old output is quiet **47.73 ms before expiry**. The received replacement microphone
+starts **4484.86 ms before the backing anchor**; **16 old-quiet / 15 new-audible**
+heartbeats retain the expiry and configured separation bounds. Final runtime
+exceptions are zero. Log:
+`/tmp/ktv-encoded-activation-sfu-source-stall-20261003.log`.
+
+Continuous UDP impairment/recovery/handover verification of this exact artifact
+runs separately, without encoded timing probes or API suppression. It **fails**,
+exit 1, with the same 150-ms delay / 0–40-ms jitter / 5% loss per leg retained
+through recovery and singer replacement:
+
+| Phase | Matched / unmatched audio / video | p95 / max skew | Source / receiver fps |
+| --- | --- | --- | --- |
+| Clean baseline | 6 / 0 / 0 | 103.02 / 103.02 ms | 24.96 / 25.04 |
+| Impaired | 40 / 0 / 0 | 425.17 / 698.12 ms | 21.50 / 21.47 |
+| Next singer | 40 / 3 / 2 | 393.90 / 565.00 ms | 24.97 / 23.84 |
+| Venue-to-remote | Not reached | No accepted result | No accepted result |
+
+The fixture rejects next-singer matching immediately because unmatched counts
+exceed the unchanged allowance. Both impaired phase timing summaries also exceed
+150-ms p95 / 250-ms maximum; nominal quality diagnostics do not make them passes.
+There are **45 functional passes before failure**, with real UDP drops, media-only
+outage and audience recovery, fresh grants, guide exclusion, publisher revocation
+and singer replacement. Runtime exception count is zero; playback remains playing.
+Maximum observed absolute source phase errors are **2.0/4.7/72.2 ms** for baseline,
+impaired and next singer. Sustained clock acceptance remains open. Loss traces
+vary across runs, so comparisons with previous failures do not prove a timing
+improvement. Log: `/tmp/ktv-encoded-activation-continuous-udp-20261003.log`.
+
+Public features were rechecked: rooms/guide enabled, media disabled. The deployed
+`dist/index.html` hash is unchanged. The corrected encoded gate is a source safety
+fix; impaired synchronization still requires implementation and acceptance.
+
+
+The corrected source adapter also passes **16/16** independent native lease checks
+on Chrome 154: stage and publisher task stalls, real source render-clock
+freeze/resume, and actual output observed after the deadline. Publisher output
+is measured at a separate native WebRTC receiver; no receiver guard or SFU is
+used in this run. Every expired/resumed output remains silent and runtime
+exceptions are zero. Log: `/tmp/ktv-encoded-activation-native-freeze-20261003.log`.
+This closes the immediate source-freeze regression check for the API selection
+change; sustained and physical output acceptance remain open. All owned native
+fixture listener ports were verified closed locally and remotely after cleanup.
+
+Next work: investigate received media clock mapping and playout under loss, with
+actual output/video timing as the gate. Release the coupled media-disabled
+preview after its applicable UI/PWA/public checks, then complete the remaining
+physical/mobile, capacity, network and streaming release gates.

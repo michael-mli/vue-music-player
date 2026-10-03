@@ -633,6 +633,19 @@ media disabled during the coupled preview rollout. Candidate index SHA256 is
 `7f5428020ca55c0c2636ee568fb1efd6665a1b80fea99e77c720707d8569a03b`,
 entry `main-DSLM9Z0k.js`. It is not currently deployed.
 
+The later encoded activation candidate **`acb583b`** fixes a Chrome path that
+started workers without processing encoded frames after late publication.
+It prefers legacy streams when available and reserves them before peer creation.
+Standard-only browsers retain their path and require device acceptance. Its
+production artifact is `/tmp/ktv-party-candidate-encoded-activation-20261003`,
+`main-iUMKk7ov.js`, index SHA256
+`19c5921520411deb8728b7975dd8d7a6b362eb33cdb0a0fc46852aee52ecb9ed`.
+Build/type-check, 125 party tests, 41 fixture tests, 35 native clean room/A/V checks
+with actual frame callbacks, 24 independent SFU stalled-source checks and 16
+independent native stage/source freeze/expiry checks pass.
+Continuous UDP timing/matching still fails. This candidate is not deployed;
+keep public media disabled during any coupled preview rollout.
+
 The current frontend preview is `d33b209`, deployed 2026-10-02; backend remains
 `f58a8f3`. Assets are `main-DU8DSm-f.js`, `main-DnE6rWx5.css`,
 `partyLeaseGuard.worklet-BWdT3O5D.js` and `partyEncodedLease.worker-BxVsrNxp.js`.
