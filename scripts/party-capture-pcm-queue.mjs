@@ -56,7 +56,8 @@ export class CapturePcmQueue {
     const packet = this.#queue.shift(); this.#bytes -= packet.bytes
     this.#onConsumed({ id:packet.id,bytes:packet.bytes })
   }
-  snapshot() { return { queued:this.#queue.length,bytes:this.#bytes,maximumBytes:this.#maximumBytes,maximumQueued:this.#maximumQueued,closed:this.#closed } }
+  snapshot() { return { queued:this.#queue.length,bytes:this.#bytes,maximumBytes:this.#maximumBytes,maximumQueued:this.#maximumQueued,closed:this.#closed,
+    bufferedFrames:this.#queue.reduce((sum,packet)=>sum+Math.max(0,packet.endFrame-Math.max(packet.startFrame,this.#lastRenderEnd)),0) } }
   close() { if (this.#closed) return; this.#closed = true; while (this.#queue.length) this.#consume() }
 }
 
@@ -64,6 +65,7 @@ export function pcmSourceWorklet(Queue) {
   class Source extends AudioWorkletProcessor {
     constructor() {
       super(); this.alive = true
+      this.nextReportFrame=0
       this.dataPort = null
       this.queue = new Queue(sampleRate, packet=>(this.dataPort || this.port).postMessage({type:'consumed',...packet}))
       this.receive = ({data}) => {
@@ -86,7 +88,12 @@ export function pcmSourceWorklet(Queue) {
     }
     fail() { if(this.alive)this.port.postMessage({type:'silent'});this.alive=false;this.queue.close();this.dataPort?.postMessage({type:'stop'});this.dataPort?.close() }
     process(inputs,outputs) {
-      try { this.queue.render(currentFrame,outputs[0]); }
+      try { this.queue.render(currentFrame,outputs[0]);
+        if(currentFrame>=this.nextReportFrame){
+          this.nextReportFrame=currentFrame+4800
+          this.port.postMessage({type:'queue-state',...this.queue.snapshot()})
+        }
+      }
       catch { this.fail();for(const output of outputs)for(const plane of output)plane.fill(0) }
       return this.alive
     }

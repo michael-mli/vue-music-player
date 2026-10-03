@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto'
 
 export async function runRoomReceiverFault({ mode, phone, audience, host, origin, pathRoom,
   firstPublisher, api, evaluate, click, poll, check, db, provider, replacementBrowser, receiverBrowser,
-  controlledDelayMs = null }) {
+  controlledDelayMs = null,ownedPcm=false }) {
   const label = `SFU receiver/${mode}`
   const view = await api(1,pathRoom)
   const clock = await evaluate(audience, `(async()=>{
@@ -25,7 +25,7 @@ export async function runRoomReceiverFault({ mode, phone, audience, host, origin
     const trackId=video.srcObject.getAudioTracks()[0].id;
     const receivers=__peers.filter(peer=>peer.connectionState==='connected').flatMap(peer=>peer.getReceivers())
       .filter(item=>item.track.kind==='audio'&&item.track.readyState==='live'&&item.track.id===trackId);
-    for(const receiver of receivers){
+    for(const receiver of ${ownedPcm}?[]:receivers){
       if(!('jitterBufferTarget' in receiver))throw new Error('RECEIVER_TARGET_UNSUPPORTED');
       receiver.jitterBufferTarget=1000;
     }
@@ -33,7 +33,7 @@ export async function runRoomReceiverFault({ mode, phone, audience, host, origin
     // For its deep-buffer expiry variant, request the same native video target
     // so the bounded decoded queue can remain active until the actual stall.
     // The ordinary production fault test keeps its original audio-only target.
-    const videoReceivers=${controlledDelayMs !== null} ? __peers.filter(peer=>peer.connectionState==='connected')
+    const videoReceivers=${controlledDelayMs !== null && !ownedPcm} ? __peers.filter(peer=>peer.connectionState==='connected')
       .flatMap(peer=>peer.getReceivers()).filter(item=>item.track.id===video.srcObject.getVideoTracks()[0].id) : [];
     for(const receiver of videoReceivers){
       if(!('jitterBufferTarget' in receiver))throw new Error('RECEIVER_VIDEO_TARGET_UNSUPPORTED');
@@ -41,18 +41,20 @@ export async function runRoomReceiverFault({ mode, phone, audience, host, origin
     }
     const receivedContexts=__contexts.filter(item=>item.state==='running'&&item.__mediaSourceTrackIds?.includes(trackId));
     window.__faultReceiveContext=receivedContexts[0];
+    const pcmContexts=${ownedPcm}?__contexts.filter(item=>item.state==='running'&&item.sampleRate===48000&&item!==__faultReceiveContext):[];
+    window.__faultPcmContext=pcmContexts[0];
     const controlled=window.__controlledReceiver?.snapshot().active;
     return {muted:video.muted,targets:receivers.map(item=>item.jitterBufferTarget),contexts:receivedContexts.length,
-      videoTargets:videoReceivers.map(item=>item.jitterBufferTarget),
+      videoTargets:videoReceivers.map(item=>item.jitterBufferTarget),pcmContexts:pcmContexts.length,
       controlled:controlled?{ready:controlled.ready,error:controlled.error,audioDelayMs:controlled.audioDelayMs,
         videoWidth:controlled.width,videoHeight:controlled.height}:null,
       backingSources:__bufferSources.length};
   })()`)
   console.log('Integrated received output topology:',JSON.stringify(context))
-  check(context.muted&&context.targets.length===1&&context.targets[0]===1000&&context.contexts===1&&context.backingSources===0,
-    `${label}: actual SFU audience uses one guarded context and a 1000-ms native receive target`)
+  check(context.muted&&context.targets.length===1&&(ownedPcm?context.pcmContexts===1:context.targets[0]===1000)&&context.contexts===1&&context.backingSources===0,
+    `${label}: actual SFU audience uses one guarded output context and ${ownedPcm?'a separate owned PCM renderer':'a 1000-ms native receive target'}`)
   if(controlledDelayMs !== null) check(context.controlled?.ready && !context.controlled.error &&
-    context.videoTargets.length===1 && context.videoTargets[0]===1000 &&
+    (ownedPcm||context.videoTargets.length===1 && context.videoTargets[0]===1000) &&
     Math.abs(context.controlled.audioDelayMs-controlledDelayMs)<1 &&
     context.controlled.videoWidth===1280 && context.controlled.videoHeight===720,
     `${label}: actual capture-controlled output has the requested additional audio delay and native video`)
@@ -60,7 +62,16 @@ export async function runRoomReceiverFault({ mode, phone, audience, host, origin
     'actual SFU received audio before page stall')
   // A target getter alone does not establish queued audio. Observe an interval
   // of native jitter-buffer counters after requesting the larger target.
-  const buffer = await poll(()=>evaluate(audience, `(async()=>{
+  const buffer = ownedPcm?await poll(()=>evaluate(audience, `(()=>{
+    const pcm=__controlledReceiver.snapshot().active?.pcm,queue=pcm?.queue;
+    if(!pcm?.ready||pcm.closed||!queue)return false;
+    const age=performance.now()-queue.observedAt;
+    if(age<0||age>200)return false;
+    // Subtract report age: only samples still ahead of the current renderer
+    // count as evidence. Silent gaps and native queues are excluded.
+    const meanMs=queue.bufferedFrames/48-age;
+    return meanMs>=500?{meanMs,queued:queue.queued,bytes:queue.bytes,ageMs:age,rate:pcm.pcmRate}:false;
+  })()`),'owned PCM renderer retains at least 500 ms of future decoded samples',20000):await poll(()=>evaluate(audience, `(async()=>{
     const stream=document.querySelector('[data-party-media-screen] video')?.srcObject;
     if(!stream)return false;
     const track=stream.getAudioTracks()[0];
@@ -82,9 +93,9 @@ export async function runRoomReceiverFault({ mode, phone, audience, host, origin
     }
     return false;
   })()`),'native received audio has measured buffered residence beyond the expiry margin',20000)
-  console.log('Integrated native received buffer:',JSON.stringify(buffer))
-  check(buffer.meanMs>=500&&buffer.emitted>0&&buffer.targetMs===1000,
-    `${label}: native counters confirm at least 500 ms mean audio residence after the 1000-ms target`)
+  console.log(ownedPcm?'Integrated owned PCM buffer:':'Integrated native received buffer:',JSON.stringify(buffer))
+  check(buffer.meanMs>=500&&(ownedPcm?buffer.queued>0&&buffer.bytes>0&&buffer.rate===48000:buffer.emitted>0&&buffer.targetMs===1000),
+    `${label}: ${ownedPcm?'renderer counters confirm at least 500 ms of future owned PCM':'native counters confirm at least 500 ms mean audio residence after the 1000-ms target'}`)
   if(controlledDelayMs !== null) check(await evaluate(audience, `(()=>{
     const controlled=__controlledReceiver.snapshot().active;
     return controlled?.ready&&!controlled.closed&&!controlled.error;
@@ -114,13 +125,15 @@ export async function runRoomReceiverFault({ mode, phone, audience, host, origin
   try {
     stalled=evaluate(audience, `(()=>{
       const context=__faultReceiveContext,before=context.currentTime,begin=performance.timeOrigin+performance.now();
+      const pcmBefore=${ownedPcm?'__faultPcmContext.currentTime':'null'};
       window.__faultContextRequests=[];
-      ${mode==='suspend-task-stall'?"context.suspend().catch(error=>__faultContextRequests.push({operation:'suspend',name:error.name}));":''}
+      ${mode==='suspend-task-stall'?"context.suspend().catch(error=>__faultContextRequests.push({operation:'suspend',name:error.name}));"+(ownedPcm?"__faultPcmContext.suspend().catch(error=>__faultContextRequests.push({operation:'suspend',name:error.name}));":""):''}
       while(performance.timeOrigin+performance.now()<${deadline}+750){}
       const frozen=context.currentTime,resume=performance.timeOrigin+performance.now();
-      ${mode==='suspend-task-stall'?"context.resume().catch(error=>__faultContextRequests.push({operation:'resume',name:error.name}));":''}
+      const pcmFrozen=${ownedPcm?'__faultPcmContext.currentTime':'null'};
+      ${mode==='suspend-task-stall'?"context.resume().catch(error=>__faultContextRequests.push({operation:'resume',name:error.name}));"+(ownedPcm?"__faultPcmContext.resume().catch(error=>__faultContextRequests.push({operation:'resume',name:error.name}));":""):''}
       const until=performance.now()+20000;while(performance.now()<until){}
-      return {before,frozen,after:context.currentTime,begin,resume,finish:performance.timeOrigin+performance.now()};
+      return {before,frozen,after:context.currentTime,pcmBefore,pcmFrozen,pcmAfter:${ownedPcm?'__faultPcmContext.currentTime':'null'},begin,resume,finish:performance.timeOrigin+performance.now()};
     })()`,35000)
     stalled.catch(()=>{})
     if(mode==='source-task-stall') {
@@ -205,6 +218,9 @@ export async function runRoomReceiverFault({ mode, phone, audience, host, origin
       `${label}: the received audio render clock actually freezes`)
     if(mode==='suspend-task-stall') check(observation.after-observation.frozen>10,
       `${label}: the expired received context actually renders again while page callbacks remain blocked`)
+    if(mode==='suspend-task-stall'&&ownedPcm)check(observation.pcmFrozen-observation.pcmBefore<.2&&
+      observation.pcmAfter-observation.pcmFrozen>10,
+      `${label}: the owned PCM context also freezes and resumes while page callbacks remain blocked`)
     check(newAudible.time<observation.finish,
       `${label}: replacement output starts while the listener page is still blocked`)
     const receiverEvidence=(await receiverBrowser.audioEvidence()).filter(item=>item.time>=start&&item.time<observation.finish)

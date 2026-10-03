@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **95/95** pass.
+checks pass; party units **125/125** and timing/capability fixtures **103/103** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -3930,3 +3930,56 @@ allocated. The full timing fixtures pass **102/102**:
 `/tmp/ktv-owned-pcm-reorder-fixtures-20261003.log`. Native reordering acceptance
 and the new causal video measurements are pending. No product or public
 deployment changes are included.
+
+### Owned PCM buffered expiry and native reorder evidence — 2026-10-03
+
+The full reorder run reaches all four timing phases without a decoder clock
+shutdown: `/tmp/ktv-owned-pcm-reorder-full-udp-native-20261003.log`. It still
+**fails acceptance**:
+
+| Phase | Matched pairs | Skew p95 / maximum |
+| --- | --- | --- |
+| Baseline | 6 | 22.63 / 22.63 ms |
+| Impaired | 40 | 447.76 / 552.48 ms |
+| Next singer | 40 | 275.49 / 707.65 ms |
+| Venue to remote | 40 | 197.44 / 597.56 ms |
+
+Next singer has one unmatched audio edge; other phases have zero unmatched
+edges. Venue capture-monitor queue age reaches 116.098 ms and fails its unchanged
+100-ms bound. Impaired capture stays near 25 fps but encoding is **18.62 fps**
+and presentation **16.99 fps**, also below the original nominal-quality gate.
+Neither the monitor nor quality limits are relaxed.
+
+The final two receivers reorder 188 and 203 late primary packets, recover 938
+and 972 RED packets, and retain bounded queues (maximum held 7 and 6). Missing
+samples total 0.90 / 0.92 seconds during these receiver generations; this is a
+different run from the prior failures, not a controlled improvement ratio.
+Advancing residuals remain at most 45 ms and cumulative phase at most 76.10 ms.
+Native decoded-video arrival averages 634–646 ms and peaks at 2000–2040 ms;
+hundreds of frames arrive after the configured hold. Maximum late release exceeds
+1100 ms. This establishes late processor delivery as one remaining cause; it
+does not prove which upstream transport/repair/native-buffer stage owns it.
+
+The owned worklet now reports bounded future PCM sample counts, excluding gaps
+and already rendered samples. Buffer proof subtracts report age. Output-fault
+fixtures can use this layout without requesting a larger unused native audio
+target, and the suspend fixture freezes/resumes both owned PCM and final output
+contexts while page tasks remain blocked. Track instrumentation retains both raw
+receiver and captured-boundary track IDs so it identifies the actual final graph.
+
+The integrated both-context expiry run passes **50/50**:
+`/tmp/ktv-owned-pcm-integrated-both-context-expiry-native-20261003.log`. Measured
+future PCM exceeds **737 ms** before the stall. Native monitors confirm expired
+old output stays silent through render resume and replacement, the unchanged
+150-ms expiry margin and configured output separation hold, and replacement
+microphone output is independently audible. This is real SFU synthetic/native
+output acceptance, not physical or mobile acceptance. Source-stall acceptance
+with this owned layout also passes **45/45**:
+`/tmp/ktv-owned-pcm-integrated-source-task-expiry-native-20261003.log`. The actual
+source page cannot renew or stop until after listener authority expires; native
+output silence, retained reservations, provider removal and independently audible
+replacement still meet their original bounds.
+
+Timing fixtures pass **103/103**:
+`/tmp/ktv-owned-pcm-buffer-fault-fixtures-20261003.log`. Product integration and
+public enablement remain unchanged and incomplete.

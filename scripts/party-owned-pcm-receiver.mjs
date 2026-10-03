@@ -8,10 +8,11 @@ export function createOwnedPcmReceiver(Queue,worklet,context,track,nativeSource,
   let pcmContext,pcmNode,capture,input,url,timer,closed=false,ready=false,error=null,anchor
   let lastCursor=-Infinity
   let clock=null
+  let queue=null
   function row(){return window.__encodedTimingProbe.pcmStates.findLast(item=>item.worker===workerId)}
   function close(){
     if(closed)return
-    closed=true;ready=false;clearInterval(timer);node.gain.value=0;node.disconnect()
+    closed=true;ready=false;queue=null;clearInterval(timer);node.gain.value=0;node.disconnect()
     worker.postMessage({type:'pcm-stop'});pcmNode?.port.postMessage({type:'stop'});pcmNode?.disconnect();input?.disconnect()
     capture?.stream.getTracks().forEach(value=>value.stop());if(url)URL.revokeObjectURL(url);void pcmContext?.close()
   }
@@ -24,7 +25,16 @@ export function createOwnedPcmReceiver(Queue,worklet,context,track,nativeSource,
       await pcmContext.audioWorklet.addModule(url)
       if(closed)return
       pcmNode=new AudioWorkletNode(pcmContext,'party-owned-pcm',{numberOfInputs:0,numberOfOutputs:1,outputChannelCount:[2]})
-      pcmNode.port.onmessage=({data})=>{if(data?.type==='silent')fail('PLAYOUT_PCM_RENDER')}
+      pcmNode.port.onmessage=({data})=>{
+        if(closed)return
+        if(data?.type==='silent')fail('PLAYOUT_PCM_RENDER')
+        else if(data?.type==='queue-state'){
+          if(!Number.isSafeInteger(data.queued)||data.queued<0||data.queued>48||
+            !Number.isSafeInteger(data.bytes)||data.bytes<0||data.bytes>1024*1024||
+            !Number.isSafeInteger(data.bufferedFrames)||data.bufferedFrames<0||data.bufferedFrames>48*5760){fail('PLAYOUT_PCM_RENDER');return}
+          queue={queued:data.queued,bytes:data.bytes,bufferedFrames:data.bufferedFrames,observedAt:performance.now()}
+        }
+      }
       pcmNode.onprocessorerror=()=>fail('PLAYOUT_PCM_RENDER')
       capture=pcmContext.createMediaStreamDestination();pcmNode.connect(capture)
       input=nativeSource.call(context,capture.stream);input.connect(node)
@@ -45,7 +55,7 @@ export function createOwnedPcmReceiver(Queue,worklet,context,track,nativeSource,
     }catch{fail('PLAYOUT_PCM_CREATE')}
   })()
   return {node,close,snapshot(){const state=row();return {ready,closed,error,delayMs,
-    pcmRate:pcmContext?.sampleRate||null,outputRate:context.sampleRate,decoder:state||null,clock}},
+    pcmRate:pcmContext?.sampleRate||null,outputRate:context.sampleRate,decoder:state||null,clock,queue}},
     captureCursor(){
       const state=row(),now=performance.now()
       if(closed||!ready||!state?.configured||state.closed||state.decoded<2)return null

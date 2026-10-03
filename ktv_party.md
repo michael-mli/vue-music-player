@@ -1366,6 +1366,29 @@ caption IDs resolve to the latest preceding source capture. Clean post-handover
 timing passes on frontend `7c1f583`; this does not establish transition-gap timing,
 physical venue-mixer alignment or continuously impaired post-handover timing.
 
+The private owned receiver prototype decodes received Opus into a bounded
+48-kHz PCM worklet, captures that output into the caller's default-rate context,
+and retains the existing final receive lease guard. It releases native decoded
+video against the audible PCM capture position. Clean 40-pair timing passes at
+both 200-ms and 800-ms holds; these are tested settings, not an implemented
+adaptive minimum-latency policy. Independent native output checks pass buffered
+expiry with both contexts suspended/resumed and page callbacks blocked.
+
+Opus RED repair uses RFC 2198 timestamp offsets. An 80-ms reorder window retains
+at most eight encoded packets within the shared 512-KiB encoded budget. PCM stays
+within 48 chunks / 1 MiB. Advancing capture anchors retain the 80-ms discontinuity
+limit; continuous sample scheduling and observed capture phase remain separate,
+with a 200-ms cumulative phase cap until rate correction is implemented. Video
+uses phase history at the audible position. Renderer telemetry counts future
+queued samples and excludes silence gaps, so expiry tests measure the owned
+buffer directly. Clock failures and deadlines permanently close owned resources.
+
+Continuously impaired timing and nominal frame rate still fail. Received video
+can already be late at the native decoded-frame processor; downstream queues
+cannot reconstruct an unavailable frame. Product integration, adaptive recovery,
+PLC/rate correction, sustained/physical/mobile/capacity and release acceptance
+remain open. These private scripts do not change the deployed playback path.
+
 ## 11. Operational behavior and limits
 
 Implemented defaults: 20 members per room, the original browser plus two paired

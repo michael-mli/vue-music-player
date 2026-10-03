@@ -5,7 +5,7 @@ import {setImmediate as tick} from 'node:timers/promises'
 import {createOwnedPcmReceiver} from './party-owned-pcm-receiver.mjs'
 
 async function fixture({pendingModule=false}={}){
-  let now=1000,interval,finishModule
+  let now=1000,interval,finishModule,renderer
   const nodes=[],contexts=[],messages=[],captured={stops:0,stop(){this.stops++}},original={stops:0,stop(){this.stops++}}
   class Node{constructor(){this.connections=[];this.gain={value:0};this.port={postMessage:data=>messages.push(data)}}
     connect(node){this.connections.push(node);return node}disconnect(){this.connections=[]}}
@@ -18,14 +18,14 @@ async function fixture({pendingModule=false}={}){
   const worker={postMessage:data=>messages.push(data)}
   const states=[{worker:7,configured:true,closed:false,decoded:10,observedAt:now,lastCaptureUnixMs:now,maximumResidualMs:3}]
   const realm={Date:{now:()=>now},performance:{now:()=>now},AudioContext:Context,
-    AudioWorkletNode:class extends Node{},MessageChannel:class{constructor(){this.port1={};this.port2={}}},Blob,
+    AudioWorkletNode:class extends Node{constructor(){super();renderer=this}},MessageChannel:class{constructor(){this.port1={};this.port2={}}},Blob,
     URL:{createObjectURL:()=> 'blob:owned',revokeObjectURL(){}},setInterval:callback=>{interval=callback;return 1},clearInterval:()=>{interval=null},
     window:{__encodedTimingProbe:{receiverWorker:track=>track===original?worker:null,workerId:()=>7,pcmStates:states}}}
   const factory=vm.runInNewContext(`(${createOwnedPcmReceiver.toString()})`,realm)
   const receiver=factory(class{},()=>{},output,original,function(){const node=new Node();nodes.push(node);return node},200)
   await tick()
   return {receiver,contexts,output,original,captured,nodes,messages,states,advance(value){now=value;states[0].observedAt=value;states[0].lastCaptureUnixMs=value},
-    renew(){interval?.()},moduleReady(){finishModule?.()}}
+    renew(){interval?.()},moduleReady(){finishModule?.()},queueState(data){renderer.port.onmessage({data:{type:'queue-state',...data}})}}
 }
 test('owned PCM connects through a captured stream into the caller graph and closes only its resources',async()=>{
   const f=await fixture();assert.equal(f.receiver.snapshot().ready,true)
@@ -56,6 +56,17 @@ test('video cursor follows the capture phase of audible PCM rather than a newer 
   f.states.at(-1).captureOffsetMs=201
   assert.equal(f.receiver.captureCursor(),null)
   assert.equal(f.receiver.snapshot().error,'PLAYOUT_PCM_CLOCK')
+})
+test('renderer reports retain only bounded sample counts and cannot repopulate diagnostics after closure',async()=>{
+  const f=await fixture()
+  f.queueState({queued:30,bytes:230400,bufferedFrames:28500})
+  assert.equal(f.receiver.snapshot().queue.bufferedFrames,28500)
+  assert.equal(f.receiver.snapshot().queue.observedAt,1000)
+  f.queueState({queued:49,bytes:230400,bufferedFrames:28500})
+  assert.equal(f.receiver.snapshot().error,'PLAYOUT_PCM_RENDER')
+  assert.equal(f.receiver.snapshot().queue,null)
+  f.queueState({queued:30,bytes:230400,bufferedFrames:28500})
+  assert.equal(f.receiver.snapshot().queue,null)
 })
 test('closing during module startup cannot later bind a decoder or revive output',async()=>{
   const f=await fixture({pendingModule:true});f.receiver.close();f.moduleReady();await tick()

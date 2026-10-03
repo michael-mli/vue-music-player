@@ -94,13 +94,13 @@ const encodedApi = process.env.KTV_ROOM_TEST_ENCODED_API || 'native'
 assert.ok(['native','legacy'].includes(encodedApi)&&(encodedApi==='native'||encodedTiming),
   'A private encoded API comparison requires timing observation')
 const receiverFault = process.env.KTV_ROOM_TEST_RECEIVER_FAULT || 'off'
-assert.ok(!ownedPcm || encodedTiming && absoluteCapture && !opusDecodeProbe && !pcmPortProbe && receiverFault==='off',
-  'Owned PCM requires received capture/worker evidence without another audio probe or output fault')
+assert.ok(!ownedPcm || encodedTiming && absoluteCapture && !opusDecodeProbe && !pcmPortProbe,
+  'Owned PCM requires received capture/worker evidence without another audio probe')
 assert.ok(['off','task-stall','suspend-task-stall','source-task-stall'].includes(receiverFault), 'Unknown integrated receiver fault')
 assert.ok(receiverFault==='off'||remoteMode&&!avTiming&&!codecExperiment,
   'Integrated output faults require the production build and independent native outputs, without A/V marker experiments')
-assert.ok(!encodedTiming||remoteMode&&receiverFault==='off',
-  'Encoded timing observation requires an owned remote build without output faults; marked codecs retain their own quality gates')
+assert.ok(!encodedTiming||remoteMode&&(receiverFault==='off'||ownedPcm),
+  'Encoded timing requires an owned remote build; output faults require the owned PCM layout')
 const publisherFeedback = process.env.KTV_ROOM_TEST_PUBLISHER_FEEDBACK || 'default'
 assert.ok(['default', 'remb'].includes(publisherFeedback) && (publisherFeedback === 'default' || avTiming && codecExperiment),
   'Publisher feedback comparison requires a marked private build and native A/V evidence')
@@ -411,7 +411,7 @@ try {
       if(${receiverFault!=='off'}) {
         const mediaSource=Context.prototype.createMediaStreamSource;
         Context.prototype.createMediaStreamSource=function(stream){
-          this.__mediaSourceTrackIds=stream.getAudioTracks().map(track=>track.id);
+          this.__mediaSourceTrackIds=[...new Set([...(this.__mediaSourceTrackIds||[]),...stream.getAudioTracks().map(track=>track.id)])];
           return mediaSource.call(this,stream);
         };
       }
@@ -623,7 +623,7 @@ try {
   if(receiverFault!=='off') {
     await runRoomReceiverFault({mode:receiverFault,phone,audience,host,origin,pathRoom,firstPublisher,
       api,evaluate,click,poll,check,db,provider,replacementBrowser:hostBrowser,receiverBrowser:avBrowser,
-      controlledDelayMs: controlledPlayoutMs})
+      controlledDelayMs: controlledPlayoutMs,ownedPcm})
   } else {
   const installSpectrum = () => evaluate(audience, `(() => { const element = document.querySelector('[data-party-media-screen] video'); window.__receiveContext = new AudioContext(); __receiveContext.resume();
     const source = __receiveContext.createMediaStreamSource(element.srcObject); window.__analyser = __receiveContext.createAnalyser(); __analyser.fftSize = 8192; __analyser.smoothingTimeConstant = 0;
