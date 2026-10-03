@@ -313,8 +313,11 @@ already issued receiver authority expires; later permits cannot cross that
 boundary, including before the next sweep. Provider removal does not discard
 the reservation. Private native early-stop tests cover blocked and suspended/
 resumed listeners with actual playback/grant services and direct WebRTC. Full
-SFU fault acceptance, impaired timing and physical/device/release acceptance
-remain required before shipping.
+Integrated built-app/HTTP/gateway/SFU faults now pass 70 checks with measured
+received buffering above 500 ms, early source acknowledgment, blocked/frozen/
+resumed listener clocks and source task stall across expiry. Independent native
+outputs verify deadline silence and old/new separation. Sustained output, impaired
+timing and physical/device/release acceptance remain required before shipping.
 
 The separate media capability contract is **version 2** (room WebSocket envelopes
 remain version 1). Both publishing and listening devices must advertise version 2

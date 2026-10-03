@@ -20,6 +20,7 @@ import { createKtvMediaWorker } from '../server/ktv-media-worker.js'
 import { createMediaTcpProxy } from './party-media-tcp-proxy.mjs'
 import { createMediaUdpProxy } from './party-media-udp-proxy.mjs'
 import { createOwnedRemoteBrowser } from './party-remote-browser.mjs'
+import { runRoomReceiverFault } from './party-room-receiver-fault.mjs'
 import { installAvSourceMarkers, installAvObserver, analyseAvObservations } from './party-av-observer.mjs'
 import { collectAvMediaStats } from './party-av-stats.mjs'
 import { analyseCodecQuality } from './party-av-codec-quality.mjs'
@@ -56,6 +57,10 @@ if (codecExperiment) {
   console.log('Private codec comparison:',JSON.stringify(codecExperiment))
 }
 const avTiming = process.env.KTV_ROOM_TEST_AV_TIMING === '1'
+const receiverFault = process.env.KTV_ROOM_TEST_RECEIVER_FAULT || 'off'
+assert.ok(['off','task-stall','suspend-task-stall','source-task-stall'].includes(receiverFault), 'Unknown integrated receiver fault')
+assert.ok(receiverFault==='off'||remoteMode&&!avTiming&&!codecExperiment,
+  'Integrated output faults require the production build and independent native outputs, without A/V marker experiments')
 const publisherFeedback = process.env.KTV_ROOM_TEST_PUBLISHER_FEEDBACK || 'default'
 assert.ok(['default', 'remb'].includes(publisherFeedback) && (publisherFeedback === 'default' || avTiming && codecExperiment),
   'Publisher feedback comparison requires a marked private build and native A/V evidence')
@@ -95,6 +100,8 @@ assert.ok(!mediaImpairment || remoteMode, 'Media impairment requires the owned r
 const networkRecovery = process.env.KTV_ROOM_TEST_NETWORK_RECOVERY === '1'
 const routeHandover = process.env.KTV_ROOM_TEST_ROUTE_HANDOVER === '1'
 const handoverAv = process.env.KTV_ROOM_TEST_HANDOVER_AV === '1'
+assert.ok(receiverFault==='off'||!networkRecovery&&!routeHandover&&!mediaImpairment&&!legacyBuild,
+  'Integrated receiver faults run independently of impairment, hybrid handover and legacy journeys')
 assert.ok(!demandKeyframes || !handoverAv, 'Private demand-recovery measurement currently scopes one initial publisher')
 assert.ok(!handoverAv || avTiming && routeHandover && receiverSync === 'off' && receiverTargetMs === null,
   'Post-handover A/V requires native timing, full hybrid handover and unmodified receiver policy')
@@ -127,9 +134,9 @@ const poll = async (work, label, timeout = 20000) => {
   }
   throw new Error(`Timed out: ${label}`)
 }
-function cdp(socket, method, params = {}, sessionId) {
+function cdp(socket, method, params = {}, sessionId, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
-    const id = ++nextId, timer = setTimeout(() => { pending.delete(id); reject(new Error(`CDP timeout: ${method}`)) }, 15000)
+    const id = ++nextId, timer = setTimeout(() => { pending.delete(id); reject(new Error(`CDP timeout: ${method}`)) }, timeoutMs)
     pending.set(id, { resolve(value) { clearTimeout(timer); resolve(value) }, reject(error) { clearTimeout(timer); reject(error) } })
     socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
   })
@@ -151,8 +158,8 @@ async function debuggerConnection(url) {
   })
   console.log(`Browser: ${info.Browser}`); return socket
 }
-async function evaluate(session, expression) {
-  const result = await cdp(sessionSockets.get(session), 'Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, userGesture: true }, session)
+async function evaluate(session, expression, timeoutMs = 15000) {
+  const result = await cdp(sessionSockets.get(session), 'Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, userGesture: true }, session, timeoutMs)
   if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text)
   return result.result.value
 }
@@ -276,7 +283,8 @@ try {
   }
   if (remoteMode) remoteBrowser = await createOwnedRemoteBrowser({ host: process.env.KTV_ROOM_TEST_SSH_HOST,
     knownHosts: process.env.KTV_ROOM_TEST_KNOWN_HOSTS, micFile, frontendPort: frontend.address().port,
-    debugPort: Number(process.env.KTV_ROOM_TEST_CHROME_PORT || 9243), isolatedOutput: avTiming, captureOutput: false })
+    debugPort: Number(process.env.KTV_ROOM_TEST_CHROME_PORT || 9243), isolatedOutput: avTiming||receiverFault!=='off',
+    captureOutput: receiverFault!=='off', captureActivity: receiverFault!=='off' })
   else chrome = spawn(process.env.CHROME_BIN || '/usr/bin/google-chrome', ['--headless', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu',
     '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--no-first-run', '--no-default-browser-check', '--no-proxy-server',
     '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', `--use-file-for-fake-audio-capture=${micFile}`,
@@ -284,9 +292,10 @@ try {
   const singerDebugUrl = remoteBrowser?.debuggerUrl || `http://127.0.0.1:${singerDebugPort}`
   await poll(async () => { try { return (await fetch(singerDebugUrl + '/json/version')).ok } catch { return false } }, 'owned fake-mic Chrome')
   const singerSocket = await debuggerConnection(singerDebugUrl)
-  if(avTiming) avBrowser=await createOwnedRemoteBrowser({host:process.env.KTV_ROOM_TEST_SSH_HOST,
-    knownHosts:process.env.KTV_ROOM_TEST_KNOWN_HOSTS,micFile,debugPort:Number(process.env.KTV_ROOM_TEST_AV_CHROME_PORT||9244),isolatedOutput:true})
-  if(handoverAv) hostBrowser=await createOwnedRemoteBrowser({host:process.env.KTV_ROOM_TEST_SSH_HOST,
+  if(avTiming||receiverFault!=='off') avBrowser=await createOwnedRemoteBrowser({host:process.env.KTV_ROOM_TEST_SSH_HOST,
+    knownHosts:process.env.KTV_ROOM_TEST_KNOWN_HOSTS,micFile,debugPort:Number(process.env.KTV_ROOM_TEST_AV_CHROME_PORT||9244),isolatedOutput:true,
+    captureActivity:receiverFault!=='off'})
+  if(handoverAv||receiverFault!=='off') hostBrowser=await createOwnedRemoteBrowser({host:process.env.KTV_ROOM_TEST_SSH_HOST,
     knownHosts:process.env.KTV_ROOM_TEST_KNOWN_HOSTS,micFile,debugPort:9245,isolatedOutput:true,captureOutput:false})
   const audienceSocket = avBrowser ? await debuggerConnection(avBrowser.debuggerUrl) : remoteMode ? singerSocket : await debuggerConnection(process.env.CHROME_DEBUG_URL || 'http://127.0.0.1:9231')
   const hostSocket = hostBrowser ? await debuggerConnection(hostBrowser.debuggerUrl) : audienceSocket
@@ -303,6 +312,21 @@ try {
       ${avTiming ? `(${installAvSourceMarkers.toString()})();` : ''}
       (${installEncodedLeaseObserver.toString()})();
       window.__partyClocks=[]; window.__partyPlaybacks=[]; window.__phaseEvidence=[];
+      window.__receivedPermits=[];
+      if(${receiverFault!=='off'}) {
+        const open=XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open=function(method,url,...args){
+          const pathname=new URL(url,location.href).pathname;
+          if(pathname.endsWith('/output'))this.addEventListener('load',()=>{
+            try {
+              const reply=this.responseType==='json'?this.response:JSON.parse(this.responseText);
+              if(reply?.data?.permit)__receivedPermits.push({permit:reply.data.permit,received:performance.now()});
+              if(__receivedPermits.length>16)__receivedPermits.shift();
+            } catch {}
+          });
+          return open.call(this,method,url,...args);
+        };
+      }
       window.__longTasks=[];
       if (${avTiming} && PerformanceObserver.supportedEntryTypes.includes('longtask')) {
         new PerformanceObserver(list => {
@@ -329,6 +353,13 @@ try {
       } };
       window.__micStreams = []; window.__bufferSources = []; window.__sourceEvidence = []; window.__outputEvidence = []; window.__peers = []; window.__contexts = [];window.__gainNodes=[];
       const Context = window.AudioContext; window.AudioContext = class extends Context { constructor(...args) { super(...args); window.__contexts.push(this); } };
+      if(${receiverFault!=='off'}) {
+        const mediaSource=Context.prototype.createMediaStreamSource;
+        Context.prototype.createMediaStreamSource=function(stream){
+          this.__mediaSourceTrackIds=stream.getAudioTracks().map(track=>track.id);
+          return mediaSource.call(this,stream);
+        };
+      }
       if(${avTiming}) { const gain=Context.prototype.createGain;Context.prototype.createGain=function(...args){const node=gain.apply(this,args);node.__automation=[]; for(const name of ["setValueAtTime","cancelScheduledValues"]){const original=node.gain[name];node.gain[name]=function(...values){node.__automation.push({name,values,time:node.context.currentTime,at:performance.now()});if(node.__automation.length>12)node.__automation.shift();return original.apply(this,values)}} __gainNodes.push(node);return node} }
       window.__iceEvidence = [];
       const Peer = window.RTCPeerConnection; window.RTCPeerConnection = class extends Peer { constructor(...args) { super(...args); window.__peers.push(this);
@@ -473,6 +504,10 @@ try {
   const syncAudio=receiverGroups.find(item=>item.kind==='audio'&&item.cnames.length),syncVideo=receiverGroups.find(item=>item.kind==='video'&&item.cnames.length)
   check(Boolean(syncAudio&&syncVideo&&syncAudio.cnames.some(value=>syncVideo.cnames.includes(value))&&syncAudio.streams.some(value=>syncVideo.streams.includes(value))), 'negotiated receiver audio/video share an RTCP synchronization identity')
 
+  if(receiverFault!=='off') {
+    await runRoomReceiverFault({mode:receiverFault,phone,audience,host,origin,pathRoom,firstPublisher,
+      api,evaluate,click,poll,check,db,provider,sourceBrowser:remoteBrowser,receiverBrowser:avBrowser})
+  } else {
   const installSpectrum = () => evaluate(audience, `(() => { const element = document.querySelector('[data-party-media-screen] video'); window.__receiveContext = new AudioContext(); __receiveContext.resume();
     const source = __receiveContext.createMediaStreamSource(element.srcObject); window.__analyser = __receiveContext.createAnalyser(); __analyser.fftSize = 8192; __analyser.smoothingTimeConstant = 0;
     const silent = __receiveContext.createGain(); silent.gain.value = 0; source.connect(__analyser); __analyser.connect(silent); silent.connect(__receiveContext.destination); })()`)
@@ -864,6 +899,7 @@ try {
     check(quality.errors.length===0,`${quality.phase} preserves actual 1280x720 and nominal measured source/receiver cadence`)
   }
   for(const result of avMeasurements) check(result.absoluteSkewMs.p95<=150&&result.absoluteSkewMs.max<=250, `${result.phase} received audio/video marker presentation skew passes the 150 ms p95 / 250 ms maximum software target`)
+  }
   check(errors.length === 0, `no browser runtime exceptions (${errors.length})`)
   console.log(`${passed} built-app streaming checks passed. Client: ${clientLocation}; synthetic microphone, foreground Chrome, isolated policy/SFU. Remote HTTP/CDP use loopback SSH forwards; physical and distinct access-network acceptance remains open.`)
 } catch (error) {

@@ -14,16 +14,14 @@ The core room, invitation/guest, moderation, queue, shared-screen, phone-control
 scheduled playback and private-guide software is implemented. The deployed app
 is a preview; public online media is still disabled.
 
-1. **Audio reliability:** finish stalled/early-stop handover safety and release the
-   receiver output guard. The deployed raw receiver can remain audible until expiry
-   +273.08 ms with a 1000-ms target. The private guard passes 20 isolated native
-   checks and a 64-check clean room/recovery/handover journey. Early stage-stop
-   acknowledgments now preserve already issued receiver deadlines before replacement
-   output starts; backend regressions and 31 native direct-WebRTC checks pass.
-   Full SFU fault acceptance, sustained/physical output and the earlier render-clock
-   stall remain open. Legacy media clients are now refused streaming credentials;
-   an unchanged deployed version-1 browser retains room access without receiving
-   an unguarded media connection.
+1. **Audio reliability:** release the receiver output guard and complete sustained/
+   physical output acceptance and investigation of the earlier render-clock stall.
+   The deployed raw receiver can remain audible until expiry +273.08 ms with a
+   1000-ms target. The version-2 candidate passes 31 native direct-WebRTC checks,
+   69 clean room/legacy checks and **70 integrated SFU fault checks** across early
+   source stop, listener render freeze/resume and source page stall. Actual buffered
+   residence exceeds 500 ms; reservations, expiry silence and replacement separation
+   pass. Legacy clients retain local controls without receiving streaming tokens.
 2. **Streaming timing:** resolve impaired-network A/V timing, measure handover
    timing and longer outages, and verify source-clock stability. Functional
    reconnect/handover passes do not establish acceptable audible/video alignment.
@@ -835,8 +833,8 @@ guide enabled and online media disabled. The unpublished receiver-safe version-2
 production candidate passes 143 backend, 124 party, 69 native room/legacy, 45 UI
 and 10 PWA checks. All three clean 40-pair A/V phases retain nominal quality.
 
-Complete full SFU stalled/early-stop fault checks, sustained native output and
-impaired-network A/V timing. Preserve the 150-ms p95 / 250-ms maximum targets,
+Integrated SFU stalled/early-stop fault checks now pass 70 checks. Complete
+sustained native output and impaired-network A/V timing. Preserve the 150-ms p95 / 250-ms maximum targets,
 nominal 1280x720/25-fps policy and all capture/matching bounds. Failed private codec,
 transport and buffer experiments do not justify changing production policy.
 
@@ -2967,3 +2965,72 @@ media-disabled configuration and absence of a persistent SFU remain unchanged.
 Deploy the frontend and backend together, including `server/ktv-media-protocol.js`.
 Full SFU stalled/early-stop faults, impaired timing, sustained and physical/device
 acceptance, capacity and public streaming release remain open.
+
+### 2026-10-03 — Integrated SFU buffered-output fault acceptance
+
+The production-config receiver-safe candidate now passes the actual built app,
+HTTP room API, media gateway, worker and SFU fault journeys. Three owned Chrome
+154.0.8037.92 processes isolate performer, receiver and host outputs. Private
+PulseAudio monitors observe actual output while page callbacks are blocked.
+Clock samples, source grants, worker removal, room recovery and replacement are
+real; no synthesized timestamps or direct domain-service substitutes are used.
+
+| Fault | Checks | Measured native buffered residence | Quiet / replacement samples |
+| --- | --- | --- | --- |
+| Early source stop, blocked listener page | 23/23 | 503.82 ms | 14 / 14 |
+| Early stop, frozen/resumed listener render clock and blocked page | 25/25 | 519.71 ms | 14 / 14 |
+| Source page stall across issued authority expiry, blocked listener | 22/22 | 515.14 ms | 10 / 11 |
+
+All **70 checks** pass. The receiving audio track has a native 1000-ms target,
+and interval jitter-buffer counters must demonstrate at least **500 ms** actual
+mean residence before the fault starts. The media element remains muted, with
+one graph context bound to its actual received track and no local backing source.
+Previously closed peers and the idle playback context are excluded by native
+connection state and track ID; they are not mistaken for the received output.
+
+Early-stop source acknowledgments precede the listener cutoff. HTTP playback
+retains that cutoff plus the default 500-ms output margin; a freshly prepared
+replacement receives `409 OUTPUT_STOPPING` before the boundary. The SFU removes
+the old publisher, and explicit **Resume with countdown** creates a fresh nonce,
+generation and output lease. Independent monitors show the old output stays
+quiet while replacement output remains audible throughout listener blockage.
+Measured capture queue/call/window and old/new separation bounds remain enforced.
+The source-stall run explicitly verifies silence within the unchanged **150-ms**
+expiry margin: its quiet edge is **47.84 ms before** the deadline, with **45.32 ms**
+combined clock/capture uncertainty. The earlier two trace edges also satisfy that
+bound by more than three seconds.
+
+The frozen context advances **0 seconds** while suspended, then renders for
+approximately **20 seconds** after native resume while page callbacks remain
+blocked. The fixture observes both context-operation promises. On page recovery,
+the app terminally closes the expired context, which can cancel the pending
+fixture resume promise with `InvalidStateError`; that cancellation is recorded
+and accepted only for a resume request whose old context is closed. Native clock
+advance and output silence remain mandatory. Runtime exception count is **zero**
+in every final journey. The source-stall app automatically releases capture;
+explicit re-enabling is required for replacement.
+
+Evidence:
+
+- `/tmp/ktv-protocol2-sfu-fault-task-stall-final-20261003.log`
+- `/tmp/ktv-protocol2-sfu-fault-suspend-task-stall-final-20261003.log`
+- `/tmp/ktv-protocol2-sfu-fault-source-expiry-final-20261003.log`
+- The earlier three-case runner log is
+  `/tmp/ktv-protocol2-sfu-fault-suite-20261003.log`; its 21-check source case is
+  superseded by the 22-check explicit-expiry run above.
+
+The fixture option `KTV_ROOM_TEST_RECEIVER_FAULT` accepts `task-stall`,
+`suspend-task-stall` or `source-task-stall`, requires the production build and
+owned remote topology, and runs separately from codec, A/V marker, impairment,
+hybrid and legacy journeys. It uses the frozen artifact
+`/tmp/ktv-party-candidate-protocol2-20261003`; all tested product code is unchanged
+from the version-2 checkpoint. Initial fixture attempts counted idle contexts/
+closed receivers, used new-turn buttons during recovery, or did not observe a
+fixture resume promise. Those attempts are failed runs, not release evidence.
+
+These are software/native SFU fault passes. Sustained and physical output,
+impaired A/V, mobile/installed-PWA, capacity and real networks remain required.
+Public features were rechecked: rooms/guide enabled, media disabled. Deployed
+`dist` index SHA256 remains
+`22029bb64d1efd421e73be97a3b681b238b8267424e5af9c7a42855202abf1d5`.
+No public deployment or persistent media service was started.
