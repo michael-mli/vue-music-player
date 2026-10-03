@@ -23,7 +23,9 @@ import { createOwnedRemoteBrowser } from './party-remote-browser.mjs'
 import { runRoomReceiverFault } from './party-room-receiver-fault.mjs'
 import { installAbsoluteCaptureExperiment } from './party-absolute-capture-experiment.mjs'
 import { probeDecodedTracks } from './party-decoded-track-probe.mjs'
-import { analyseCaptureClocks } from './party-rtp-capture-clock.mjs'
+import { RtpCaptureClock, analyseCaptureClocks } from './party-rtp-capture-clock.mjs'
+import { CaptureFrameQueue } from './party-capture-frame-queue.mjs'
+import { installControlledReceiver, analyseControlledReceiverQuality, hasSingleAudienceOutput } from './party-controlled-receiver.mjs'
 import { encodedTimingWorker, installEncodedTimingProbe } from './party-encoded-timing-observer.mjs'
 import { installAvSourceMarkers, installAvObserver, analyseAvObservations } from './party-av-observer.mjs'
 import { collectAvMediaStats } from './party-av-stats.mjs'
@@ -93,6 +95,10 @@ assert.ok(sourceStallMs === 0 || avTiming && remoteMode && Number.isInteger(sour
   'Owned native output stall requires remote A/V timing and a bounded 20–100 ms pause')
 const receiverTargetMs = process.env.KTV_ROOM_TEST_RECEIVER_TARGET_MS === undefined ? null : Number(process.env.KTV_ROOM_TEST_RECEIVER_TARGET_MS)
 const receiverSync = process.env.KTV_ROOM_TEST_RECEIVER_SYNC || 'off'
+const controlledPlayoutMs = process.env.KTV_ROOM_TEST_CONTROLLED_PLAYOUT_MS === undefined ? null : Number(process.env.KTV_ROOM_TEST_CONTROLLED_PLAYOUT_MS)
+assert.ok(controlledPlayoutMs === null || avTiming && absoluteCapture && receiverSync === 'off' && receiverTargetMs === null &&
+  Number.isInteger(controlledPlayoutMs) && controlledPlayoutMs >= 200 && controlledPlayoutMs <= 1000,
+  'Controlled receiver playout requires actual capture/A/V evidence without another receiver policy')
 assert.ok(['off', 'ntp', 'network', 'repair'].includes(receiverSync) && (receiverSync === 'off' || avTiming && receiverTargetMs === null),
   'Native sync experiment requires A/V timing and no fixed receiver target')
 assert.ok(receiverTargetMs === null || avTiming && Number.isInteger(receiverTargetMs) && receiverTargetMs >= 0 && receiverTargetMs <= 1000,
@@ -425,7 +431,8 @@ try {
         item.__state.started = true; window.__sourceEvidence.push({when:args[0],offset:args[1],now:performance.now(),render:this.currentTime,output:this.getOutputTimestamp(),
           frequency: length ? Math.round(crossings * item.buffer.sampleRate / length) : null}); return start(...args);
       }; window.__bufferSources.push(item); return item; };
-      window.confirm = () => true;` }, sessionId)
+      window.confirm = () => true;
+      ${controlledPlayoutMs === null ? '' : `(${installControlledReceiver.toString()})(${RtpCaptureClock.toString()},${CaptureFrameQueue.toString()},${controlledPlayoutMs});`}` }, sessionId)
     await cdp(socket, 'Page.navigate', { url: origin + (legacy ? `/__ktv_legacy_app?room=${room.room.id}` : `/party/${room.room.id}${stage ? '/stage' : ''}`) }, sessionId)
     await poll(() => evaluate(sessionId, "document.body?.innerText.includes('Live room updates connected')"), 'room page connected')
     if (!stage) await evaluate(sessionId, "document.getElementById('party-tab-sing').click()")
@@ -483,6 +490,8 @@ try {
   if(absoluteCapture) await poll(()=>evaluate(audience,
     "['audio','video'].every(kind=>__encodedTimingProbe.records.filter(row=>row.direction==='receive'&&row.kind===kind&&Number.isFinite(row.values.captureTime)).length>=8)"),
     'actual SFU audio/video capture timestamps',60000)
+  if(controlledPlayoutMs !== null) await poll(()=>evaluate(audience,'__controlledReceiver.snapshot().active?.ready'),
+    'actual capture-clock-controlled receiver presentation',15000)
   if(decodedTrackProbe) {
     const evidence=await evaluate(audience,`(${probeDecodedTracks.toString()})(document.querySelector('[data-party-media-screen] video').srcObject,__peers)`)
     console.log('Native decoded track capability:',JSON.stringify(evidence))
@@ -565,6 +574,11 @@ try {
     return reports.flatMap(report=>[...report.values()].filter(item=>item.type==='inbound-rtp')
       .map(item=>Object.fromEntries(fields.filter(field=>item[field]!==undefined).map(field=>[field,item[field]]))));
   })()`)
+  async function installVideoObserver(session) {
+    if(controlledPlayoutMs !== null) await poll(()=>evaluate(session,'__controlledReceiver.snapshot().active?.ready'),
+      'current capture-clock-controlled receiver presentation',15000)
+    await evaluate(session,`(${installAvObserver.toString()})();`)
+  }
   const routes = session => evaluate(session, `(async()=>{
     return (await Promise.all(__peers.map(peer=>peer.getStats()))).flatMap(report=>{
       const rows=[...report.values()];return rows.filter(item=>item.type==='transport'&&item.selectedCandidatePairId).map(item=>{
@@ -672,7 +686,7 @@ try {
       check(targets.length===2&&targets.every(item=>item.targetMs===receiverTargetMs),'experimental receiver audio/video targets apply to the two current tracks')
       console.log('Experimental native receiver targets:',JSON.stringify(targets))
     }
-    await evaluate(audience,`(${installAvObserver.toString()})()`)
+    await installVideoObserver(audience)
     await poll(async()=>await evaluate(audience,'__avObserver.evidence.ready')&&(await avBrowser.audioEvidence()).some(item=>typeof item.on==='boolean'),'actual private receiver output and decoded video marker available')
     let nativeStall
     if (sourceStallMs) {
@@ -758,7 +772,8 @@ try {
     const oldAudienceClaims=JSON.parse(Buffer.from(oldAudienceGrant.token.split('.')[1], 'base64url').toString())
     const audienceDenied=await fetch(origin + '/api/ktv/media/rtc/validate?access_token=' + encodeURIComponent(oldAudienceGrant.token))
     check(oldAudienceClaims.exp*1000>Date.now() && audienceDenied.status===403, 'the old unexpired audience token stays denied after automatic recovery')
-    check(await evaluate(audience, "(() => {const video=document.querySelector('[data-party-media-screen] video');return document.querySelectorAll('[data-party-media-screen] video').length===1&&!video.paused&&video.srcObject.getAudioTracks().length===1&&video.srcObject.getVideoTracks().length===1})()"), 'audience resumes one actual audio/video player without a user click')
+    if(controlledPlayoutMs !== null)await poll(()=>evaluate(audience,`(${hasSingleAudienceOutput.toString()})()`),'fresh controlled audience recovery output',15000)
+    check(await evaluate(audience,`(${hasSingleAudienceOutput.toString()})()`), 'audience resumes one visible performance with one current native stream without a user click')
     await evaluate(audience, `(async () => { await __receiveContext.close(); const video=document.querySelector('[data-party-media-screen] video');
       window.__receiveContext=new AudioContext(); await __receiveContext.resume(); const source=__receiveContext.createMediaStreamSource(video.srcObject);
       window.__analyser=__receiveContext.createAnalyser(); __analyser.fftSize=8192; __analyser.smoothingTimeConstant=0;
@@ -808,9 +823,10 @@ try {
   check(db.prepare("SELECT COUNT(*) total FROM ktv_media_grants WHERE scope = 'publisher' AND state != 'revoked'").get().total === 1, 'handover keeps one non-revoked publisher')
   await poll(() => evaluate(audience, "(() => { const video = document.querySelector('[data-party-media-screen] video'); return video?.srcObject?.getAudioTracks().length === 1 && video.srcObject.getVideoTracks().length === 1; })()"), 'audience receives replacement tracks')
   await poll(() => evaluate(audience, "document.querySelector('[data-party-media-screen] video')?.getVideoPlaybackQuality().totalVideoFrames >= 10"), 'replacement lyric video decodes ten frames')
-  check(await evaluate(audience, "document.querySelectorAll('[data-party-media-screen] video').length === 1"), 'handover presents exactly one current audience player with decoded replacement video')
+  if(controlledPlayoutMs !== null)await poll(()=>evaluate(audience,`(${hasSingleAudienceOutput.toString()})()`),'fresh controlled handover output',15000)
+  check(await evaluate(audience,`(${hasSingleAudienceOutput.toString()})()`), 'handover presents exactly one visible performance with one current native stream and decoded replacement video')
   if (handoverAv) {
-    await evaluate(audience, `(${installAvObserver.toString()})()`)
+    await installVideoObserver(audience)
     await measureAv('next-singer', nextPhone)
     await evaluate(audience, '__avObserver.stopRecording()')
   }
@@ -846,7 +862,8 @@ try {
     async function received(session, venue) {
       await poll(() => evaluate(session, "(() => { const video = document.querySelector('[data-party-media-screen] video'); return video?.srcObject?.getAudioTracks().length === 1 && video.srcObject.getVideoTracks().length === 1 && video.getVideoPlaybackQuality().totalVideoFrames >= 10; })()"), 'hybrid received audio and decoded lyric video')
       await verifyImpairedRoute(session)
-      check(await evaluate(session, "document.querySelectorAll('[data-party-media-screen] video').length === 1"), 'hybrid route has exactly one decoded audience player')
+      if(controlledPlayoutMs !== null)await poll(()=>evaluate(session,`(${hasSingleAudienceOutput.toString()})()`),'fresh controlled hybrid audience output',15000)
+      check(await evaluate(session,`(${hasSingleAudienceOutput.toString()})()`), 'hybrid route has exactly one visible performance and current native stream')
       await evaluate(session, `(async () => {
         if (window.__routeContext) await __routeContext.close();
         const video = document.querySelector('[data-party-media-screen] video'); window.__routeContext = new AudioContext(); await __routeContext.resume();
@@ -897,7 +914,7 @@ try {
     check(await evaluate(audience, 'window.__bufferSources.every(item => !item.__state.started || item.__state.ended || (item.__state.stopAt !== null && item.__state.stopAt <= item.__state.context.currentTime))'), 'all previous venue backing sources have stopped before remote media plays')
     check(await evaluate(audience, 'window.__sourceEvidence.length') === previousStageSources, 'venue common screen switches to received remote media without restarting local backing')
     if (handoverAv) {
-      await evaluate(audience, `(${installAvObserver.toString()})()`)
+      await installVideoObserver(audience)
       await measureAv('venue-to-remote', nextPhone)
       await evaluate(audience, '__avObserver.stopRecording()')
     }
@@ -929,6 +946,11 @@ try {
   const codecQualities=avMeasurements.map(measurement=>
     analyseCodecQuality(avTimingSamples,measurement.phase,expectedCodec,(senderKeyframeMs??codecExperiment?.keyframeMs??null)))
   for (const quality of codecQualities) console.log('Native codec quality:',JSON.stringify(quality))
+  if(controlledPlayoutMs !== null)for(const phase of new Set(avTimingSamples.map(item=>item.phase))) {
+    const quality=analyseControlledReceiverQuality(avTimingSamples,phase)
+    console.log('Controlled native presentation quality:',JSON.stringify(quality))
+    check(quality.errors.length===0,`${phase} controlled native presentation retains nominal 1280x720 and 20–30 fps within buffer bounds`)
+  }
   for (const quality of codecQualities) {
     check(quality.errors.length===0,`${quality.phase} preserves actual 1280x720 and nominal measured source/receiver cadence`)
   }
@@ -939,6 +961,13 @@ try {
     const evidence=await evaluate(session,'({supported:__absoluteCaptureExperiment.supported,configured:__absoluteCaptureExperiment.configured,missing:__absoluteCaptureExperiment.missing,failures:__absoluteCaptureExperiment.failures,evidence:__absoluteCaptureExperiment.evidence})')
     console.log('Private absolute capture negotiation:',JSON.stringify(evidence))
     check(evidence.failures===0,'native absolute capture negotiation has no failed API requests')
+  }
+  if(controlledPlayoutMs !== null)for(const session of sessionSockets.keys()) {
+    const evidence=await evaluate(session,'__controlledReceiver.snapshot()')
+    console.log('Private controlled receiver evidence:',JSON.stringify(evidence))
+    check([evidence.active,...evidence.history].filter(Boolean).every(item=>!item.error&&
+      item.maximumBytes<=64*1024*1024&&item.maximumQueued<=40),
+      'controlled receiver keeps native frame/byte bounds without clock or renderer failure')
   }
   if(encodedTiming) {
     console.log('Private encoded API selection:',encodedApi)
@@ -963,10 +992,14 @@ try {
   if(avTimingSamples.length) console.error('A/V timing timeline on failure:',JSON.stringify(avTimingSamples))
   for(const phase of new Set(avTimingSamples.map(item=>item.phase)))
     console.error('Native codec quality on failure:',JSON.stringify(analyseCodecQuality(avTimingSamples,phase,codecExperiment?.codec || 'vp8',(senderKeyframeMs??codecExperiment?.keyframeMs??null))))
+  if(controlledPlayoutMs !== null)for(const phase of new Set(avTimingSamples.map(item=>item.phase)))
+    console.error('Controlled native presentation quality on failure:',JSON.stringify(analyseControlledReceiverQuality(avTimingSamples,phase)))
   if(avBrowser) console.error('Private receiver output:',JSON.stringify(await avBrowser.audioEvidence().catch(()=>({error:'capture unavailable'}))))
   if(mediaProxy) console.error('Owned media proxy:',JSON.stringify(mediaProxy.snapshot()))
   console.error('Playback recovery:',JSON.stringify(db.prepare('SELECT state,recovery_reason FROM ktv_playback').all()))
   console.error('Runtime exception count:', errors.length)
+  if(controlledPlayoutMs !== null)for(const session of sessionSockets.keys()) console.error('Private controlled receiver on failure:',
+    JSON.stringify(await evaluate(session,'__controlledReceiver.snapshot()').catch(()=>({unavailable:true}))))
   if(encodedTiming) for(const session of sessionSockets.keys()) {
     const evidence=await evaluate(session,'({records:__encodedTimingProbe.records,states:__encodedTimingProbe.states,errors:__encodedTimingProbe.errors,features:__encodedTimingProbe.features,failures:__encodedTimingProbe.failures,wrappedSenders:__encodedTimingProbe.wrappedSenders,workerCount:__encodedTimingProbe.workerCount})').catch(()=>({unavailable:true}))
     console.error('Native encoded timing on failure:',JSON.stringify(evidence))
@@ -984,6 +1017,7 @@ try {
   }))()` ).catch(() => ({}))))
   throw error
 } finally {
+  if(controlledPlayoutMs !== null)for(const session of sessionSockets.keys()) await evaluate(session,'__controlledReceiver?.close()').catch(()=>{})
   if(encodedTiming) for(const session of sessionSockets.keys()) await evaluate(session,'__encodedTimingProbe?.close()').catch(()=>{})
   if (senderKeyframePage) await evaluate(senderKeyframePage, 'window.__avSenderKeyframes?.close()').catch(() => {})
   if (nativeSyncAudience) await evaluate(nativeSyncAudience, 'window.__avNativeSync?.close()').catch(() => {})

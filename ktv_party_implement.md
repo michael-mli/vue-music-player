@@ -31,7 +31,9 @@ is a preview; public online media is still disabled.
    reconnect/handover passes do not establish acceptable audible/video alignment.
    Native capture extension/clock observation and decoded-frame access are now
    verified in private fixtures; timestamp negotiation alone still fails impaired
-   timing. A controlled receiver playout implementation remains open.
+   timing. A bounded private receiver controller now passes clean timing/quality
+   and functional handover; impaired acceptance, product integration and minimum
+   practical latency remain open.
 3. **Physical stage/phone measurements:** demonstrate five-minute guide/stage
    acoustic alignment at p95 <= 50 ms; test pause/seek, calibration, output changes,
    lease-expiry silence, wired/Bluetooth outputs, microphone delay and leakage.
@@ -3300,3 +3302,137 @@ the CDP origin instead of `/json/version`; corrected launcher UI/PWA runs exited
 0. This was fixture startup configuration, not a passing application result.
 The public update does not enable the private capture negotiation/probes. It
 ships output safety and protocol compatibility work; full P07/P08 release is open.
+
+### 2026-10-03 — Implement bounded native receiver playout prototype
+
+Added a private capture-time frame queue and controlled receiver in the owned
+built-app browser fixture. Audio delay is before the existing app output guard;
+the original receiver permit/nonce/deadline contract is retained. Native RTP/
+capture source observations drive the audio cursor and decoded frame scheduling.
+The queue rejects missing/backwards clocks, unexpected resolution and frame/byte
+overflow at the unchanged 40-frame / 64-MiB bounds. All discarded/consumed frames
+are closed. Diagnostic spectrum sources cannot claim the guarded audible path.
+Controller identity and bounded histories are kept separately for every new
+received stream; stale players or a second audible source fail the fixture.
+
+Initial canvas-output prototype: clean 40-pair timing p95 **54.35 ms**, maximum
+**75.22 ms**, no unmatched edges, actual displayed **24.30 fps**, video delay
+maximum **1031.60 ms**. That journey **fails** its raw-player handover assertion;
+it is not a completed clean run. The assertion was updated to require one visible
+performance, one hidden original stream only in the private controller mode,
+one current guarded source, no unmuted raw stream and no stale players. Default
+builds still require exactly one native player.
+Log: `/tmp/ktv-controlled-receiver-clean-av-20261003.log`.
+
+The canvas variant's continuous UDP run **fails**, exit 1, after **32 functional
+checks**, at fresh audience recovery. Impaired 40-pair matching has no unmatched
+edges, p95 **204.10 ms**, maximum **273.45 ms**, video delay maximum **1848.60 ms**.
+Actual controlled presentation averages **16.62 fps**, below the required 20–30;
+the original decoder's 20.18 fps does not substitute for that failed output gate.
+A new stream waits for its audio clock and reaches the 40-frame queue bound.
+There are no browser runtime exceptions. Both timing and output quality remain
+failures. Log: `/tmp/ktv-controlled-receiver-continuous-udp-20261003.log`.
+
+Revised the controller to produce a native generated video track from the queued
+decoded frames, retaining original pixels without canvas recapture. Startup drops
+unpresentable queued frames until an audio clock exists, within the same bounds.
+A cloned audio processor is drained without reading PCM or adding audio output.
+Delay ownership is deferred until the app source connects to its receive gain;
+analysers keep their original path. Failure remains latched during cleanup so a
+subsequent aborted playback promise cannot replace the original cause.
+
+Revised native clean run passes **47/47**, exit 0: **40 matched transitions, zero
+unmatched**, p95 **43.55 ms**, maximum **50.06 ms**, maximum video observation
+delay **965.30 ms**, actual generated-player presentation **24.95 fps**. Native
+RTP codec/dimension/cadence, guide exclusion, publication/revocation, fresh singer
+handover, deadline binding, queue bounds and runtime checks pass. Maximum held
+native queue is **24 frames / 33,177,600 bytes**; all controllers close without
+error and the original performance source is released. A fresh singer waits for
+its own capture clock and presents the replacement player without stale output.
+Log: `/tmp/ktv-controlled-generator-clean-av-20261003.log`.
+
+This is a private prototype applied to the unchanged `acb583b` artifact. It is
+not deployed or selected by the product transport. The experimental 800-ms delay
+is not the final minimum-latency policy. Full continuous UDP timing/cadence,
+recovery and hybrid-handover evidence is being gathered; guarded expiry, sustained
+clock checks, adaptive delay, product integration and physical/mobile/capacity/
+network/release gates remain open. Do not treat the failed canvas results or clean
+generated-track success as completion of P07.
+
+The generated-track 800-ms continuous UDP run is terminal **exit 1**, after
+**78 functional checks**. It completes actual outage, automatic audience
+recovery, singer replacement and both hybrid routes with fresh nonces, one visible
+performance and no stale source. All four timing phases finish their matching
+requirements under the continuously held loss profile:
+
+| Phase | Matched / unmatched audio / video | p95 / maximum skew | Controlled presentation fps |
+| --- | --- | --- | --- |
+| Clean baseline | 6 / 0 / 0 | 20.67 / 20.67 ms | 24.88 |
+| Impaired | 40 / 0 / 0 | 131.46 / 412.52 ms | 17.40 |
+| Next singer | 40 / 1 / 0 | 34.19 / 251.07 ms | 21.50 |
+| Venue-to-remote | 40 / 1 / 0 | 50.21 / 187.74 ms | 20.68 |
+
+The unchanged maximum-skew gate fails for impaired and next-singer phases;
+impaired controlled cadence also fails. Native source/decoder cadence is
+**19.43/19.10 fps**, below the original nominal target. Source target bitrate
+ranges **30,000–172,775 bit/s** after the sudden profile transition, while the
+later singers maintain nominal source cadence. This is observed estimator/rate
+behavior, not proof of its cause. Receiver native decoder versus processor deltas
+also show dropped frames before the private queue: impaired **1485 decoded vs
+1369 received by the processor**, plus only **16** deliberate queue discards.
+The downstream queue alone does not explain the output cadence deficit. All
+controllers close without clock/renderer errors, source clocks remain bounded,
+runtime exceptions are zero and buffering bounds remain intact.
+Log: `/tmp/ktv-controlled-generator-continuous-udp-20261003.log`.
+
+The next private revision raises the native video processor depth from one to
+four frames. It reduces the downstream queue to **34 frames / 42 MiB** and
+reserves the rest of the original **40 frames / 64 MiB** for the native processor,
+current read and pending generated-frame write. Unsupported oversized native
+frame allocations are rejected. This preserves the resource ceilings while
+addressing burst delivery drops. Full timing/capability fixture units pass
+**64/64**: `/tmp/ktv-controlled-generator-fixtures-20261003.log`.
+The one-second hold is tested with the original timing, matching, quality,
+source-clock, maximum-video-delay and recovery requirements. Random loss traces
+vary between runs; earlier failures remain recorded and the parameter experiment
+does not establish a final adaptive/minimum-latency policy.
+
+The four-frame processor / 1000-ms hold run is terminal **exit 1**, after
+**78 functional checks**. Its actual timing summaries meet the unchanged
+150-ms p95 / 250-ms maximum across all phases, each impaired/handover phase has
+40 matched transitions and no unmatched edges, and maximum video observation
+delay stays below two seconds. Cadence remains a failed required gate:
+
+| Phase | Matched / unmatched audio / video | p95 / maximum skew | Source / decoder / presented fps |
+| --- | --- | --- | --- |
+| Clean baseline | 6 / 0 / 0 | 17.00 / 17.00 ms | 25.09 / 24.99 / 24.91 |
+| Impaired | 40 / 0 / 0 | 75.84 / 129.35 ms | 18.88 / 18.70 / 18.36 |
+| Next singer | 40 / 0 / 0 | 27.03 / 51.77 ms | 25.00 / 24.95 / 23.84 |
+| Venue-to-remote | 40 / 0 / 0 | 71.55 / 98.73 ms | 24.98 / 24.87 / 23.86 |
+
+Maximum impaired video observation delay is **1931.70 ms**; this leaves limited
+headroom under the original 2000-ms limit. Peak held downstream queue is
+**30 frames / 41,472,000 bytes**, within its reduced bounds. All seven controller
+sessions across host/audience routes close without errors, source clocks remain
+bounded and browser runtime exceptions are zero. Actual impaired receiver
+decoded/processor/presented deltas are **1464/1458/1438**, with **14** deliberate
+queue discards. Source cadence is below 20 fps, so matching and timing success
+cannot establish nominal performance or release acceptance. The new native
+video-source capture counters will distinguish capture from encoding in the next
+investigation; no publishing policy or codec has changed.
+Log: `/tmp/ktv-controlled-generator-buffer4-1000-continuous-udp-20261003.log`.
+
+Maximum observed absolute source phase errors are **3.2/9.7/32.1/50.7 ms** for
+baseline/impaired/next-singer/venue-to-remote; this is bounded synthetic run
+evidence and does not close sustained or physical clock acceptance. The final
+fixture suite, including separate native source-capture counters and privacy
+checks, passes **65/65**:
+`/tmp/ktv-controlled-generator-final-fixtures-20261003.log`.
+
+P07 is still in progress: fix nominal source cadence during abrupt network
+changes, establish minimum practical/adaptive latency, integrate the controller
+into the product transport, and verify delayed receiver expiry, sustained source/
+output clocks and longer recovery. Physical/mobile, capacity, distinct networks
+and persistent online release gates remain part of the original objective.
+Public preview remains `acb583b`, media disabled; these controller experiments
+are private and no further public deployment occurred.

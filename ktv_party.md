@@ -978,6 +978,49 @@ inspected Chromium implementation has no Web Audio source provider; routing its
 element through `MediaElementAudioSourceNode` is not an established safe solution.
 [MediaStream player implementation](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/third_party/blink/public/web/modules/mediastream/web_media_player_ms.h)
 
+The private controlled receiver now has an implemented prototype. It maps native
+`getSynchronizationSources()` RTP/capture observations to decoded video frames,
+using fresh audio delivery metadata as its playout cursor. An 800-ms experimental
+audio delay is inserted before the existing receiver gain/deadline worklet.
+The video queue holds at most 40 native frames / 64 MiB, requires monotonic real
+capture anchors and nominal 1280x720 frames, and discards unpresentable startup
+frames while awaiting an audio clock. Startup remains silent until a matching
+video frame can be presented. No capture mapping grants output permission.
+[Native delivery source semantics](https://www.w3.org/TR/webrtc/#dom-rtcrtpreceiver-getsynchronizationsources)
+
+The visible output is a native generated video track. Decoded frames are retimed
+only when released against the audio cursor, preserving source pixels; queued,
+replaced and consumed frames are closed. A hidden, always-muted native player
+retains the original incoming stream. A cloned decoded audio reader advances
+delivery observations without reading PCM or producing a second audible path.
+The fixture requires exactly one visible performance, one original native stream
+and one guarded audio source after recovery/handover. It observes actual native
+frame presentation and independently captured browser audio, and rejects output
+below 20 fps even if the underlying RTP decoder meets its own quality target.
+The revised processor reserves four native frames for burst delivery and the
+downstream queue reserves 34 frames / 42 MiB, leaving room for a current read and
+generated-frame write within the original 40-frame / 64-MiB aggregate bound.
+Native allocation sizes above the nominal 8-bit frame bound are rejected.
+
+The generated-track clean run passes 47 checks, 40 matched transitions with no
+unmatched edges, p95 43.55 ms / maximum 50.06 ms, measured presentation 24.95 fps
+and maximum observed video delay 965.30 ms. An earlier canvas-output variant
+failed impaired output cadence and clock startup during recovery; it is not a
+release path. The prototype's fixed delay is a controlled experiment. Minimum
+practical latency, adaptive delay, continuous impairment, guarded expiry,
+handover, sustained clocks and device compatibility must be established before
+product integration. Public media remains disabled.
+
+With four processor frames and a 1000-ms experimental hold, a full continuous
+UDP impairment/recovery/hybrid journey obtains timing summaries within 150-ms
+p95 / 250-ms maximum for all four phases, with no unmatched edges. Maximum
+impaired video delay is 1931.70 ms. The complete journey still fails nominal
+cadence: impaired source/decoder/presented rates are 18.88/18.70/18.36 fps.
+Buffering and timing success do not satisfy that required quality gate. Native
+capture-frame statistics are now collected separately from encoded/decoded and
+presented counts to identify the source deficit. The one-second hold has limited
+latency headroom and is not a selected product policy.
+
 The lyric video is declared as `screen_share`, with `screenShareEncoding` explicitly
 limited to 350 kbit/s and 25 fps on the existing 1280×720 canvas. Audience filters,
 publisher JWT source grants and provider readiness use that same source contract;

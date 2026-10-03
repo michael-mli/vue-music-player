@@ -23,7 +23,7 @@ export function installAvSourceMarkers() {
 // Observe the actual HTML player's presented video. Audio is captured from its
 // private browser output server; no audio element/graph is replaced here.
 export function installAvObserver() {
-  const video = document.querySelector('[data-party-media-screen] video')
+  const video = document.querySelector(window.__controlledReceiver ? '[data-party-controlled-video]' : '[data-party-media-screen] video')
   if (!video?.requestVideoFrameCallback) throw new Error('AV_FRAME_CALLBACK_UNAVAILABLE')
   const canvas = document.createElement('canvas'); canvas.width = 416; canvas.height = 32
   const pixels = canvas.getContext('2d', { willReadFrequently: true })

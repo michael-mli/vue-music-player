@@ -4,7 +4,7 @@ export async function collectAvMediaStats() {
   if (window.__peers.length > 16) throw new Error('AV_STATS_PEER_LIMIT')
   const fields = ['timestamp', 'ssrc', 'kind', 'packetsSent', 'bytesSent', 'packetsReceived',
     'bytesReceived', 'packetsLost', 'jitter', 'roundTripTime', 'fractionLost',
-    'framesEncoded', 'framesSent', 'framesPerSecond', 'totalEncodeTime', 'totalPacketSendDelay',
+    'frames', 'width', 'height', 'framesEncoded', 'framesSent', 'framesPerSecond', 'totalEncodeTime', 'totalPacketSendDelay',
     'targetBitrate', 'qualityLimitationReason', 'frameWidth', 'frameHeight',
     'jitterBufferDelay', 'jitterBufferTargetDelay', 'jitterBufferMinimumDelay',
     'jitterBufferEmittedCount', 'estimatedPlayoutTimestamp', 'totalSamplesReceived',
@@ -17,7 +17,8 @@ export async function collectAvMediaStats() {
     'fecPacketsReceived', 'fecPacketsDiscarded', 'fecBytesReceived']
   const reports = await Promise.all(window.__peers.map(async (peer, index) => {
     const report = await peer.getStats(), rows = [...report.values()]
-    const media = rows.filter(item => ['inbound-rtp', 'outbound-rtp', 'remote-inbound-rtp'].includes(item.type))
+    const media = rows.filter(item => ['inbound-rtp', 'outbound-rtp', 'remote-inbound-rtp'].includes(item.type) ||
+      item.type === 'media-source' && item.kind === 'video')
       .map(item => {
         const result = { peer: index, type: item.type }
         for (const field of fields) {
@@ -60,6 +61,7 @@ export async function collectAvMediaStats() {
     }))
   if (senderParameters.length > 32 || senderParameters.some(item => item.encodings.length > 3)) throw new Error('AV_STATS_SENDER_LIMIT')
   return { time: performance.timeOrigin + performance.now(), reports: reports.flat(), senderParameters,
+    ...(window.__controlledReceiver ? { controlledReceiver: window.__controlledReceiver.snapshot() } : {}),
     receiverTargets: window.__peers.flatMap((peer, index) => peer.getReceivers().map(receiver => ({
       peer: index, kind: receiver.track?.kind,
       targetSupported: 'jitterBufferTarget' in receiver,
