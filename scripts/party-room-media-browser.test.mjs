@@ -30,6 +30,7 @@ import { bindOpusPcmPort } from './party-opus-pcm-port.mjs'
 import { installOpusPcmWorker } from './party-opus-pcm-worker.mjs'
 import { CapturePcmQueue, pcmSourceWorklet } from './party-capture-pcm-queue.mjs'
 import { probeReceivedPcm } from './party-received-pcm-probe.mjs'
+import { createOwnedPcmReceiver } from './party-owned-pcm-receiver.mjs'
 import { RtpCaptureClock, analyseCaptureClocks } from './party-rtp-capture-clock.mjs'
 import { CaptureFrameQueue } from './party-capture-frame-queue.mjs'
 import { installControlledReceiver, analyseControlledReceiverQuality, hasSingleAudienceOutput } from './party-controlled-receiver.mjs'
@@ -76,6 +77,7 @@ const encodedTiming = process.env.KTV_ROOM_TEST_ENCODED_TIMING === '1'
 const absoluteCapture = process.env.KTV_ROOM_TEST_ABSOLUTE_CAPTURE === '1'
 const opusDecodeProbe = process.env.KTV_ROOM_TEST_OPUS_DECODE === '1'
 const pcmPortProbe = process.env.KTV_ROOM_TEST_PCM_PORT === '1'
+const ownedPcm = process.env.KTV_ROOM_TEST_OWNED_PCM === '1'
 assert.ok(!pcmPortProbe || encodedTiming && absoluteCapture && !avTiming && !codecExperiment && !opusDecodeProbe,
   'Received PCM port capability requires native capture separately from output timing and the eight-packet probe')
 assert.ok(!opusDecodeProbe || encodedTiming && absoluteCapture && !avTiming && !codecExperiment,
@@ -92,6 +94,8 @@ const encodedApi = process.env.KTV_ROOM_TEST_ENCODED_API || 'native'
 assert.ok(['native','legacy'].includes(encodedApi)&&(encodedApi==='native'||encodedTiming),
   'A private encoded API comparison requires timing observation')
 const receiverFault = process.env.KTV_ROOM_TEST_RECEIVER_FAULT || 'off'
+assert.ok(!ownedPcm || encodedTiming && absoluteCapture && !opusDecodeProbe && !pcmPortProbe && receiverFault==='off',
+  'Owned PCM requires received capture/worker evidence without another audio probe or output fault')
 assert.ok(['off','task-stall','suspend-task-stall','source-task-stall'].includes(receiverFault), 'Unknown integrated receiver fault')
 assert.ok(receiverFault==='off'||remoteMode&&!avTiming&&!codecExperiment,
   'Integrated output faults require the production build and independent native outputs, without A/V marker experiments')
@@ -117,9 +121,11 @@ assert.ok(sourceStallMs === 0 || avTiming && remoteMode && Number.isInteger(sour
 const receiverTargetMs = process.env.KTV_ROOM_TEST_RECEIVER_TARGET_MS === undefined ? null : Number(process.env.KTV_ROOM_TEST_RECEIVER_TARGET_MS)
 const receiverSync = process.env.KTV_ROOM_TEST_RECEIVER_SYNC || 'off'
 const controlledPlayoutMs = process.env.KTV_ROOM_TEST_CONTROLLED_PLAYOUT_MS === undefined ? null : Number(process.env.KTV_ROOM_TEST_CONTROLLED_PLAYOUT_MS)
+assert.ok(!ownedPcm||controlledPlayoutMs!==null&&controlledPlayoutMs<=800&&!codecExperiment,
+  'Owned PCM requires its bounded controlled-video layout on the production codec')
 assert.ok(!absoluteCapture || encodedTiming || controlledPlayoutMs !== null && receiverFault !== 'off',
   'Absolute capture negotiation requires native frame timing or controlled native expiry evidence')
-assert.ok(controlledPlayoutMs === null || (avTiming || receiverFault !== 'off') && absoluteCapture && receiverSync === 'off' && receiverTargetMs === null &&
+assert.ok(controlledPlayoutMs === null || (avTiming || receiverFault !== 'off' || ownedPcm) && absoluteCapture && receiverSync === 'off' && receiverTargetMs === null &&
   Number.isInteger(controlledPlayoutMs) && controlledPlayoutMs >= 200 && controlledPlayoutMs <= 1000,
   'Controlled receiver playout requires native timing or expiry evidence without another receiver policy')
 assert.ok(['off', 'ntp', 'network', 'repair'].includes(receiverSync) && (receiverSync === 'off' || avTiming && receiverTargetMs === null),
@@ -327,7 +333,7 @@ try {
   }
   if (remoteMode) remoteBrowser = await createOwnedRemoteBrowser({ host: process.env.KTV_ROOM_TEST_SSH_HOST,
     knownHosts: process.env.KTV_ROOM_TEST_KNOWN_HOSTS, micFile, frontendPort: frontend.address().port,
-    debugPort: Number(process.env.KTV_ROOM_TEST_CHROME_PORT || 9243), isolatedOutput: avTiming||receiverFault!=='off',
+    debugPort: Number(process.env.KTV_ROOM_TEST_CHROME_PORT || 9243), isolatedOutput: avTiming||receiverFault!=='off'||ownedPcm,
     captureOutput: false })
   else chrome = spawn(process.env.CHROME_BIN || '/usr/bin/google-chrome', ['--headless', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu',
     '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--no-first-run', '--no-default-browser-check', '--no-proxy-server',
@@ -336,9 +342,9 @@ try {
   const singerDebugUrl = remoteBrowser?.debuggerUrl || `http://127.0.0.1:${singerDebugPort}`
   await poll(async () => { try { return (await fetch(singerDebugUrl + '/json/version')).ok } catch { return false } }, 'owned fake-mic Chrome')
   const singerSocket = await debuggerConnection(singerDebugUrl)
-  if(avTiming||receiverFault!=='off') avBrowser=await createOwnedRemoteBrowser({host:process.env.KTV_ROOM_TEST_SSH_HOST,
+  if(avTiming||receiverFault!=='off'||ownedPcm) avBrowser=await createOwnedRemoteBrowser({host:process.env.KTV_ROOM_TEST_SSH_HOST,
     knownHosts:process.env.KTV_ROOM_TEST_KNOWN_HOSTS,micFile,debugPort:Number(process.env.KTV_ROOM_TEST_AV_CHROME_PORT||9244),isolatedOutput:true,
-    captureActivity:receiverFault!=='off'})
+    captureActivity:receiverFault!=='off'||ownedPcm})
   if(handoverAv||receiverFault!=='off') hostBrowser=await createOwnedRemoteBrowser({host:process.env.KTV_ROOM_TEST_SSH_HOST,
     knownHosts:process.env.KTV_ROOM_TEST_KNOWN_HOSTS,micFile,debugPort:9245,isolatedOutput:true,
     captureOutput:receiverFault!=='off',captureActivity:receiverFault!=='off'})
@@ -356,7 +362,7 @@ try {
     await cdp(socket, 'Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', 'en');
       ${avTiming ? `(${installAvSourceMarkers.toString()})();` : ''}
       ${encodedApi==='legacy' ? 'window.RTCRtpScriptTransform=undefined;' : ''}
-      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify('('+encodedTimingWorker.toString()+')('+ (opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : '') +');'+(pcmPortProbe ? '('+installOpusPcmWorker.toString()+')('+bindOpusPcmPort.toString()+','+createOpusPcmStream.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString()+');' : ''))});` : ''}
+      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify('('+encodedTimingWorker.toString()+')('+ (opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : '') +');'+(pcmPortProbe||ownedPcm ? '('+installOpusPcmWorker.toString()+')('+bindOpusPcmPort.toString()+','+createOpusPcmStream.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString()+');' : ''))});` : ''}
       (${installEncodedLeaseObserver.toString()})();
       ${absoluteCapture ? `(${installAbsoluteCaptureExperiment.toString()})();` : ''}
       ${senderCadence ? `(${installSenderCadenceExperiment.toString()})();` : ''}
@@ -456,7 +462,7 @@ try {
           frequency: length ? Math.round(crossings * item.buffer.sampleRate / length) : null}); return start(...args);
       }; window.__bufferSources.push(item); return item; };
       window.confirm = () => true;
-      ${controlledPlayoutMs === null ? '' : `(${installControlledReceiver.toString()})(${RtpCaptureClock.toString()},${CaptureFrameQueue.toString()},${controlledPlayoutMs});`}` }, sessionId)
+      ${controlledPlayoutMs === null ? '' : `(${installControlledReceiver.toString()})(${RtpCaptureClock.toString()},${CaptureFrameQueue.toString()},${controlledPlayoutMs}${ownedPcm?`,(context,track,nativeSource,delay)=>(${createOwnedPcmReceiver.toString()})(${CapturePcmQueue.toString()},${pcmSourceWorklet.toString()},context,track,nativeSource,delay),${probeCaptureEpoch.toString()}`:''});`}` }, sessionId)
     await cdp(socket, 'Page.navigate', { url: origin + (legacy ? `/__ktv_legacy_app?room=${room.room.id}` : `/party/${room.room.id}${stage ? '/stage' : ''}`) }, sessionId)
     await poll(() => evaluate(sessionId, "document.body?.innerText.includes('Live room updates connected')"), 'room page connected')
     if (!stage) await evaluate(sessionId, "document.getElementById('party-tab-sing').click()")
@@ -516,6 +522,14 @@ try {
     'actual SFU audio/video capture timestamps',60000)
   if(controlledPlayoutMs !== null) await poll(()=>evaluate(audience,'__controlledReceiver.snapshot().active?.ready'),
     'actual capture-clock-controlled receiver presentation',15000)
+  if(ownedPcm){
+    const state=await evaluate(audience,'__controlledReceiver.snapshot().active')
+    check(state.pcm?.ready&&state.pcm.pcmRate===48000&&state.pcm.outputRate===await evaluate(audience,'__contexts[0].sampleRate')&&
+      state.epochOffset===2208988800000,'owned audible PCM uses the default guarded output and verified common capture epoch')
+    await poll(async()=>(await avBrowser.audioEvidence()).some(row=>row.captureHeartbeat&&row.onAmplitude>.02),
+      'independent native owned PCM output')
+    check(true,'independent native output contains the owned PCM backing tone')
+  }
   if(opusDecodeProbe) {
     const evidence=await poll(()=>evaluate(audience,'__encodedTimingProbe.audioDecoders[0]'),
       'actual received Opus decoder capability',40000)

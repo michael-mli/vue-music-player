@@ -60,20 +60,22 @@ export function installEncodedTimingProbe(workerSource) {
       readable.pipeThrough(stream).pipeTo(writable).catch(()=>self.postMessage({type:'timing-probe-error'}));
     };
     self.onrtctransform=({transformer})=>{self.__encodedTimingCodecs=transformer.options.codecs;attach(transformer.readable,transformer.writable,transformer.options.kind)};
-    self.onmessage=({data})=>{if(data?.type==='pcm-bind')return;self.__encodedTimingCodecs=data.codecs;attach(data.readable,data.writable,data.kind)};
+    self.onmessage=({data})=>{if(data?.type?.startsWith('pcm-'))return;self.__encodedTimingCodecs=data.codecs;attach(data.readable,data.writable,data.kind)};
   `], { type: 'text/javascript' }))
   const records = [], states=[], audioDecoders=[], workers = new Set(), urls = new Set([receiverUrl]), observedReceivers=new WeakSet()
-  const receiverWorkers=new WeakMap(),pcmStates=[]
+  const receiverWorkers=new WeakMap(),workerIds=new WeakMap(),pcmStates=[]
   let errors = 0, sequence = 0, wrappedSenders = 0
   const failures = { worker:0, pipe:0, occupied:0, unsupported:0 }
   function track(worker, direction) {
     const id = ++sequence
+    workerIds.set(worker,id)
     workers.add(worker)
     worker.addEventListener('message', ({ data }) => {
       if(direction==='receive'&&data?.type==='pcm-port-state') {
-        const row={worker:id,closed:data.closed===true,configured:data.configured===true}
+        const row={worker:id,closed:data.closed===true,configured:data.configured===true,observedAt:performance.now()}
         for(const key of ['decoded','gaps','duplicates','chunks','encodedBytes','pcmBytes','maximumChunks','maximumBytes'])
           if(Number.isSafeInteger(data[key])&&data[key]>=0)row[key]=data[key]
+        for(const key of ['lastCaptureUnixMs','maximumResidualMs'])if(Number.isFinite(data[key]))row[key]=data[key]
         pcmStates.push(row);if(pcmStates.length>64)pcmStates.shift();return
       }
       if(direction==='receive'&&data?.type==='pcm-port-error'){errors++;failures.pipe++;return}
@@ -174,7 +176,7 @@ export function installEncodedTimingProbe(workerSource) {
     }
   }
   window.__encodedTimingProbe = { records,states,audioDecoders,pcmStates,
-    receiverWorker(track){return receiverWorkers.get(track)}, features:{scriptTransform,
+    receiverWorker(track){return receiverWorkers.get(track)},workerId(worker){return workerIds.get(worker)}, features:{scriptTransform,
     legacySender:typeof RTCRtpSender.prototype.createEncodedStreams==='function',
     legacyReceiver, receiverApi:legacyReceiver?'legacy':scriptTransform?'standard':'unsupported'},
     failures,get wrappedSenders(){return wrappedSenders},get workerCount(){return workers.size},

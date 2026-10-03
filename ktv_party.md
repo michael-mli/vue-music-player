@@ -1109,6 +1109,16 @@ final context to 48 kHz still produces a brief stale burst. This supports the
 tested default-output layout; the exact native buffer cause, other output rates,
 physical devices and actual audible PCM/video integration remain unverified.
 
+The owned audible prototype now combines the decoder/captured-media bridge with
+the application's guarded receive graph and common-clock video release. Epoch
+checks select the current receiver workers so singer handover cannot mix old
+capture evidence. Clean 40-pair timing and nominal 720p/25-fps quality pass at
+800-ms and 200-ms holds; the latter observes audio at approximately 272-ms p95
+and A/V skew at 35-ms p95. The original raw source has no audible connection.
+Owned video is limited to 34 frames / 41 MiB, with PCM/encoded credits separately
+bounded. Recovery, adaptive minimum latency, impaired cadence/timing and
+integrated expiry/physical/device acceptance remain required before product use.
+
 The lyric video is declared as `screen_share`, with `screenShareEncoding` explicitly
 limited to 350 kbit/s and 25 fps on the existing 1280×720 canvas. Audience filters,
 publisher JWT source grants and provider readiness use that same source contract;

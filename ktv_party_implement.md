@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **91/91** pass.
+checks pass; party units **125/125** and timing/capability fixtures **95/95** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -842,14 +842,15 @@ prototype result is not automatically a release result.
 Public preview remains frontend/backend `acb583b`, with rooms/private guide
 enabled and online media disabled. The receiver guard and encoded activation
 fix are deployed; private decoder/controller experiments remain unpublished.
-Current timing/capability fixtures pass 91 checks. Direct receiver-worker/PCM
+Current timing/capability fixtures pass 95 checks. Direct receiver-worker/PCM
 render credits pass 41 built-app checks, including actual SFU audio and a blocked
 page task. The native 48-kHz decoder/default-rate final-output layout passes ten
 expiry checks with both contexts frozen and page callbacks blocked. Forced
 48-kHz final-output variants still replay a brief stale burst in this setup.
 
-Integrate the proven separate decoder/default-output layout with the guarded
-audible path and controlled video scheduler. Complete sustained native
+The owned audible PCM/video prototype now passes clean 40-transition timing and
+nominal quality at 800-ms and 200-ms holds, plus singer handover and cleanup.
+Complete redundant-packet recovery, impaired timing, sustained native
 output and impaired-network A/V timing. Preserve the 150-ms p95 / 250-ms maximum targets,
 nominal 1280x720/25-fps policy and all capture/matching bounds. Failed private codec,
 transport and buffer experiments do not justify changing production policy.
@@ -3806,3 +3807,62 @@ OS background/lock, physical outputs, long-song drift and aggregate native-buffe
 bounds still require acceptance. Impaired source FPS, adaptive minimum latency,
 handover timing, capacity and public-media release remain open. Product sources,
 the frozen public artifact and deployment are unchanged.
+
+### Owned audible PCM with common-clock video — 2026-10-03
+
+The private controller now accepts an owned PCM adapter. Its 48-kHz decoder
+worklet feeds a captured MediaStream into the existing default-rate application
+receive graph. The original raw receiver source remains available for inaudible
+instrumentation and is not connected to the audible gain. The application gain,
+source-bound permit and final lease worklet retain all output authority. Adapter
+shutdown closes only owned nodes/context/capture tracks and never stops the
+caller's received track or output context. Worker housekeeping renewals cannot
+authorize audible output.
+
+Video release follows the PCM capture-clock cursor, accounting for the default
+output context's native output timestamp. Native decoded video timestamps are
+converted only after independent encoded/delivery epoch verification. That
+verification is scoped to the current audio/video receiver workers, including
+singer handover. The owned video queue is capped at 34 frames / **41 MiB**,
+reserving space for the existing native frame allowance and bounded PCM/encoded
+reservations within the original 40-frame / 64-MiB ceiling. Aggregate unmanaged
+native audio/codec buffer acceptance still needs measurement.
+
+Initial runs fail safely and remain recorded:
+
+- `/tmp/ktv-owned-pcm-room-native-20261003.log`: output-clock validation closes
+  the adapter. The corrected freshness check accepts the already established
+  20-ms forward timestamp tolerance; it preserves the 80-ms capture bound and
+  fails on larger clock discontinuities.
+- `/tmp/ktv-owned-pcm-room-clock-diagnostic-20261003.log`: audible PCM, guide
+  exclusion and revocation pass, but replacement video never becomes ready because
+  epoch evidence mixes old and current receiver workers. Current-worker scoping
+  fixes this lifecycle error.
+
+The corrected audible/hand-over journey passes **43/43** with independent native
+output detection, one visible performance, fresh publisher authority, bounded
+queues and cleanup:
+`/tmp/ktv-owned-pcm-room-current-epoch-native-20261003.log`.
+Fixtures pass **95/95**:
+`/tmp/ktv-owned-pcm-receiver-fixtures-20261003.log`, including owned-resource
+teardown, module-startup cancellation, native-clock cursor validation and a
+check that the original raw source never claims the guarded audible connection.
+
+Both native clean 40-transition runs pass **49/49**, preserve 1280×720, the
+25-fps/350-kbit/s VP8 source policy and the original matching/expiry limits:
+
+| PCM hold | A/V p95 / maximum | Audio observation p95 | Video observation maximum | Source / decoded / presented fps |
+| --- | --- | --- | --- | --- |
+| 800 ms | 29.35 / 31.15 ms | 901.34 ms | 913.40 ms | 24.99 / 24.99 / 24.92 |
+| 200 ms | 35.26 / 38.28 ms | 272.33 ms | 298.70 ms | 25.00 / 25.00 / 24.93 |
+
+Each run matches all **40 pairs**, with zero unmatched audio/video edges. Logs:
+
+- `/tmp/ktv-owned-pcm-clean-av-native-20261003.log`
+- `/tmp/ktv-owned-pcm-200-clean-av-native-20261003.log`
+
+The 200-ms setting proves a lower tested clean latency, not adaptive minimum
+latency or impaired acceptance. Opus redundancy recovery, loss/reordering,
+native source FPS under impairment, long-term clocks, actual integrated buffered
+expiry, phone-guide/physical/mobile/capacity and release remain open. The adapter
+and controller are private fixture code; no product source or deployment changed.

@@ -28,16 +28,20 @@ export function bindOpusPcmPort(createStream, primaryPayload, packetFrames, conf
   },()=>close('PCM_PORT_DECODER'))
   // A synchronous unsupported/configuration failure can precede assignment.
   if(closed)stream.close()
+  function renew(value){
+    if(!check())return false
+    if(!Number.isFinite(value)||value<expiry||value<=Date.now()||value-Date.now()>10000){close('PCM_PORT_MESSAGE');return false}
+    expiry=value;return true
+  }
   port.onmessage=({data})=>{
     if(!check())return
     if(data?.type==='consumed')stream.consumed(data)
     else if(data?.type==='stop')close()
-    else if(data?.type==='renew'&&Number.isFinite(data.expiryUnixMs)&&data.expiryUnixMs>=expiry&&
-      data.expiryUnixMs>Date.now()&&data.expiryUnixMs-Date.now()<=10000)expiry=data.expiryUnixMs
+    else if(data?.type==='renew')renew(data.expiryUnixMs)
     else close('PCM_PORT_MESSAGE')
   }
   port.start()
   if(!closed)timer=setInterval(check,100)
-  return {observe(frame,metadata){if(check())stream.observe(frame,metadata)},close,
+  return {observe(frame,metadata){if(check())stream.observe(frame,metadata)},close,renew,
     snapshot(){return {closed,...stream.snapshot()}}}
 }

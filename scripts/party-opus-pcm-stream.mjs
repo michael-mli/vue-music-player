@@ -5,9 +5,10 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
   let decoder, configured = false, closed = false, sequence = 0
   let encodedBytes = 0, pcmBytes = 0, anchor = null, lastEnd = null
   let decoded = 0, gaps = 0, duplicates = 0, maximumChunks = 0, maximumBytes = 0
+  let lastCaptureUnixMs=null,maximumResidualMs=0
   const delta = (value, previous) => ((value-previous+0x80000000)>>>0)-0x80000000
   function snapshot() { return { closed, configured, decoded, gaps, duplicates, chunks:credits.size,
-    encodedBytes, pcmBytes, maximumChunks, maximumBytes } }
+    encodedBytes, pcmBytes, maximumChunks, maximumBytes,lastCaptureUnixMs,maximumResidualMs } }
   function close(reason = null) {
     if (closed) return
     closed = true; pending.length = 0; expected.length = 0; credits.clear(); encodedBytes = 0; pcmBytes = 0
@@ -65,9 +66,11 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
         if (credits.size>=48 || pcmBytes+reservedBytes>1024*1024 || encodedBytes+payload.data.byteLength>512*1024) throw new Error('PCM_BOUND')
         anchor ??= {rtp,capture}
         const captureUnixMs = anchor.capture+delta(rtp,anchor.rtp)/48
+        maximumResidualMs=Math.max(maximumResidualMs,Math.abs(capture-captureUnixMs))
         if (Math.abs(capture-captureUnixMs)>80 || lastEnd!==null && delta(rtp,lastEnd)>240000) throw new Error('PCM_CLOCK')
         if (lastEnd!==null) gaps += delta(rtp,lastEnd)
         lastEnd = (rtp+frames)>>>0
+        lastCaptureUnixMs=captureUnixMs
         const packet = {id:++sequence,rtpTimestamp:rtp,frames,reservedBytes,captureUnixMs,
           observedCaptureUnixMs:capture,timestamp:Math.round(metadata.captureTime*1000),data:payload.data.slice()}
         credits.set(packet.id,{bytes:reservedBytes,delivered:false})

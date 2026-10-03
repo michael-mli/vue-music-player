@@ -78,3 +78,20 @@ test('only the guarded receive graph claims delay; spectrum probes preserve thei
   realm.window.__controlledReceiver.close()
   assert.equal(Context.prototype.createMediaStreamSource, original); assert.equal(cleared, true)
 })
+
+test('owned PCM replaces only the guarded audible input and releases its adapter on graph teardown',()=>{
+  class Node{constructor(){this.connections=[];this.gain={value:1}}connect(node){this.connections.push(node);return node}disconnect(){this.connections=[]}}
+  class Context{createMediaStreamSource(){return new Node()}createGain(){return new Node()}}
+  const track={},stream={getAudioTracks:()=>[track]},proxy=new Node()
+  let closes=0
+  const realm={window:{AudioContext:Context,__peers:[{getReceivers:()=>[{track}]}]},GainNode:Node,
+    setInterval:()=>1,clearInterval:()=>{},factory:()=>({node:proxy,close:()=>{closes++}})}
+  vm.runInNewContext(`(${installControlledReceiver.toString()})(null,null,200,factory,()=>[])`,realm)
+  const context=new Context(),source=context.createMediaStreamSource(stream),gate=new Node()
+  source.connect(gate)
+  assert.equal(source.connections.length,0)
+  assert.equal(proxy.connections[0].connections[0].connections[0],gate)
+  assert.equal(realm.window.__controlledReceiver.snapshot().sources,1)
+  source.disconnect();assert.equal(closes,1);assert.equal(realm.window.__controlledReceiver.snapshot().sources,0)
+  realm.window.__controlledReceiver.close()
+})

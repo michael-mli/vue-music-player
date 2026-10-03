@@ -4,6 +4,8 @@ export function installOpusPcmWorker(bindPort,createStream,primaryPayload,packet
   let adapter=null,bound=false
   self.__observeOwnedPcm=(frame,metadata)=>adapter?.observe(frame,metadata)
   self.addEventListener('message',({data})=>{
+    if(data?.type==='pcm-renew'){adapter?.renew(data.expiryUnixMs);return}
+    if(data?.type==='pcm-stop'){adapter?.close();return}
     if(data?.type!=='pcm-bind')return
     if(self.__encodedTimingDirection!=='receive'||bound){self.postMessage({type:'pcm-port-error'});return}
     bound=true
