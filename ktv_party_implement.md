@@ -3866,3 +3866,37 @@ latency or impaired acceptance. Opus redundancy recovery, loss/reordering,
 native source FPS under impairment, long-term clocks, actual integrated buffered
 expiry, phone-guide/physical/mobile/capacity and release remain open. The adapter
 and controller are private fixture code; no product source or deployment changed.
+
+### Owned PCM redundancy and advancing capture clocks — 2026-10-03
+
+RFC 2198 redundancy headers now retain their timestamp offsets and bounded
+payload views. The private decoder recovers missing Opus packets in RTP order,
+ignores history before startup or already decoded samples, and preserves the
+48-chunk / 1-MiB PCM and 512-KiB encoded limits. Frames and credits are released
+on failure. This is packet recovery, not an implemented reorder window or PLC.
+
+The first full UDP run with this recovery remains a **failure**:
+`/tmp/ktv-owned-pcm-red-full-udp-av-native-20261003.log`. Impaired timing is
+113.44-ms p95 / 292.91-ms maximum; next-singer timing is 495.42 / 676.67 ms;
+venue-to-remote matching times out. The decoder recovers hundreds of redundant
+packets but still records missing samples. Impaired encoding averages 21.43 fps
+with source capture near 25 fps. Encoded receiver video delivery can exceed one
+second after capture, and native video jitter buffering also adds delay. Neither
+the timing nor the full quality/recovery acceptance is complete.
+
+The venue decoder incorrectly compared every capture header with its first
+header and closed at 82 ms of cumulative phase change. Independent advancing
+capture-clock evidence remains healthy, with maximum per-anchor residuals below
+24 ms. The decoder now applies the original **80-ms discontinuity bound to
+advancing primary anchors**, retaining its continuous first-anchor PCM sample
+schedule. Accumulated phase is separately measured and capped at **200 ms**;
+larger drift still closes because rate correction is not implemented. Video
+uses the bounded phase history at the audible PCM position, excluding newer
+packets still waiting in the hold queue. Clock jumps, duplicate authority,
+overflow and cumulative drift have explicit fixtures.
+
+All timing fixtures pass **100/100**:
+`/tmp/ktv-owned-pcm-red-clock-fixtures-20261003.log`. Native acceptance of this
+clock correction is pending. Product sources and the public deployment remain
+unchanged; late video, bounded packet reordering/PLC, rate correction and all
+previous physical/mobile/capacity/release gates remain open.

@@ -4,21 +4,29 @@ export function primaryOpusPayload(bytes, payloadType, codecs) {
   if (!(bytes instanceof Uint8Array) || bytes.length < 1 || bytes.length > 65536 ||
     !Number.isInteger(payloadType) || payloadType < 0 || payloadType > 127 || !Array.isArray(codecs)) throw new Error('PAYLOAD_SIZE')
   const codec = codecs.find(item => item.payloadType === payloadType)?.mimeType?.toLowerCase()
-  if (codec === 'audio/opus') return { data: bytes, mode: 'opus', redundantBlocks: 0 }
+  if (codec === 'audio/opus') return { data: bytes, mode: 'opus', redundantBlocks: 0, redundant:[] }
   if (codec !== 'audio/red') throw new Error('PAYLOAD_TYPE')
   let offset = 0, redundantBytes = 0, redundantBlocks = 0
+  const headers=[]
   while (bytes[offset] & 128) {
     if (offset + 4 >= bytes.length || ++redundantBlocks > 3) throw new Error('RED_PACKET')
     const pt = bytes[offset] & 127
     if (codecs.find(item => item.payloadType === pt)?.mimeType?.toLowerCase() !== 'audio/opus') throw new Error('PAYLOAD_TYPE')
-    redundantBytes += ((bytes[offset + 2] & 3) << 8) | bytes[offset + 3]
+    const length=((bytes[offset + 2] & 3) << 8) | bytes[offset + 3]
+    headers.push({timestampOffset:(bytes[offset+1]<<6)|(bytes[offset+2]>>2),length})
+    redundantBytes += length
     offset += 4
   }
   const primaryType = bytes[offset] & 127
   if (codecs.find(item => item.payloadType === primaryType)?.mimeType?.toLowerCase() !== 'audio/opus') throw new Error('PAYLOAD_TYPE')
   const start = offset + 1 + redundantBytes
   if (start >= bytes.length) throw new Error('RED_PACKET')
-  return { data: bytes.subarray(start), mode: 'red', redundantBlocks }
+  let position=offset+1
+  const redundant=headers.map(header=>{
+    const data=bytes.subarray(position,position+header.length);position+=header.length
+    return {timestampOffset:header.timestampOffset,data}
+  })
+  return { data: bytes.subarray(start), mode: 'red', redundantBlocks,redundant }
 }
 
 export function opusPacketFrames(bytes) {

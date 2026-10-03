@@ -45,6 +45,18 @@ test('capture cursor uses output position and accepts the established 20-ms forw
   f.output.getOutputTimestamp=()=>({contextTime:.95,performanceTime:2021})
   assert.equal(f.receiver.captureCursor(),null);assert.equal(f.receiver.snapshot().error,'PLAYOUT_PCM_OUTPUT_AGE')
 })
+test('video cursor follows the capture phase of audible PCM rather than a newer queued packet',async()=>{
+  const f=await fixture()
+  f.states.push({worker:7,scheduledCaptureUnixMs:700,captureOffsetMs:12},
+    {worker:7,scheduledCaptureUnixMs:900,captureOffsetMs:65,
+      configured:true,closed:false,decoded:10,observedAt:1000,lastCaptureUnixMs:965})
+  assert.equal(f.receiver.captureCursor(),762)
+  f.advance(2000);f.contexts[0].currentTime=1.2
+  assert.ok(Math.abs(f.receiver.captureCursor()-1815)<.00001)
+  f.states.at(-1).captureOffsetMs=201
+  assert.equal(f.receiver.captureCursor(),null)
+  assert.equal(f.receiver.snapshot().error,'PLAYOUT_PCM_CLOCK')
+})
 test('closing during module startup cannot later bind a decoder or revive output',async()=>{
   const f=await fixture({pendingModule:true});f.receiver.close();f.moduleReady();await tick()
   assert.equal(f.receiver.snapshot().closed,true);assert.equal(f.receiver.snapshot().ready,false)

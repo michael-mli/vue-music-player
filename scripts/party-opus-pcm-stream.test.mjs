@@ -25,12 +25,39 @@ function fixture({delayed=false,invalid=false}={}) {
   }
   const realm={Number,ArrayBuffer,Float32Array,Uint8Array,Map,Array,performance:{timeOrigin:1000},
     AudioDecoder:Decoder,EncodedAudioChunk:class{constructor(config){Object.assign(this,config)}},
-    __encodedTimingCodecs:[{payloadType:111,mimeType:'audio/opus'}],deliver:packet=>packets.push(packet),report:row=>messages.push(row)}
+    __encodedTimingCodecs:[{payloadType:111,mimeType:'audio/opus'},{payloadType:63,mimeType:'audio/red'}],deliver:packet=>packets.push(packet),report:row=>messages.push(row)}
   realm.self=realm
   const stream=vm.runInNewContext(`(${createOpusPcmStream.toString()})(${primaryOpusPayload.toString()},${opusPacketFrames.toString()},deliver,report)`,realm)
   const send=(rtp,captureTime=rtp/48)=>stream.observe({timestamp:rtp>>>0,data:new Uint8Array([1]).buffer},{captureTime,payloadType:111})
   return {stream,send,packets,messages,outputs,waiting,flush(){while(waiting.length)decoder.callbacks.output(waiting.shift())}}
 }
+
+function red(offsets){return new Uint8Array([...offsets.flatMap(offset=>[239,offset>>6,(offset&63)<<2,1]),111,
+  ...offsets.map(()=>1),1])}
+test('RED recovers two missing primary packets in RTP order and excludes pre-start or duplicate history',async()=>{
+  const f=fixture();await tick();f.send(0)
+  f.stream.observe({timestamp:2880,data:red([960,1920]).buffer},{captureTime:60,payloadType:63})
+  assert.deepEqual(f.packets.map(packet=>packet.rtpTimestamp),[0,960,1920,2880])
+  assert.equal(f.stream.snapshot().recovered,2);assert.equal(f.stream.snapshot().gaps,0)
+  f.stream.observe({timestamp:3840,data:red([1920,960]).buffer},{captureTime:80,payloadType:63})
+  assert.equal(f.packets.length,5);assert.equal(f.stream.snapshot().recovered,2)
+  f.stream.close()
+  const first=fixture();await tick()
+  first.stream.observe({timestamp:1920,data:red([1920,960]).buffer},{captureTime:40,payloadType:63})
+  assert.equal(first.packets.length,1);assert.equal(first.packets[0].rtpTimestamp,1920);first.stream.close()
+})
+test('RED recovery across RTP wrap preserves credits; overlapping repair or bounded overflow closes safely',async()=>{
+  const f=fixture();await tick();const start=0xfffffe00;f.send(start,0)
+  f.stream.observe({timestamp:(start+1920)>>>0,data:red([960]).buffer},{captureTime:40,payloadType:63})
+  assert.equal(f.stream.snapshot().recovered,1);assert.equal(f.stream.snapshot().gaps,0)
+  assert.equal(f.packets[1].rtpTimestamp,(start+960)>>>0);f.stream.close()
+  const bad=fixture();await tick();bad.send(0)
+  bad.stream.observe({timestamp:1920,data:red([480]).buffer},{captureTime:40,payloadType:63})
+  assert.equal(bad.messages[0].reason,'PCM_PACKET');assert.equal(bad.stream.snapshot().pcmBytes,0)
+  const full=fixture();await tick();for(let i=0;i<47;i++)full.send(i*960)
+  full.stream.observe({timestamp:49*960,data:red([1920,960]).buffer},{captureTime:980,payloadType:63})
+  assert.equal(full.messages[0].reason,'PCM_BOUND');assert.equal(full.stream.snapshot().pcmBytes,0)
+})
 test('decoded PCM retains an RTP sample clock despite jittery capture headers and closes every native frame',async()=>{
   const f=fixture();await tick()
   for(let i=0;i<10;i++)f.send(i*960,i*20+(i%2?6:0))
@@ -41,6 +68,30 @@ test('decoded PCM retains an RTP sample clock despite jittery capture headers an
   for(const packet of f.packets)f.stream.consumed({id:packet.id,bytes:packet.planes.reduce((n,p)=>n+p.byteLength,0)})
   assert.equal(f.stream.snapshot().pcmBytes,0);assert.equal(f.stream.snapshot().encodedBytes,0)
   f.stream.close();assert.equal(f.messages.length,1)
+})
+test('capture continuity uses advancing anchors while continuous PCM retains a bounded independent schedule',async()=>{
+  const f=fixture();await tick()
+  for(let i=0;i<40;i++){
+    f.send(i*960,i*20+i*3)
+    const packet=f.packets.at(-1)
+    assert.equal(packet.captureUnixMs,1000+i*20)
+    f.stream.consumed({id:packet.id,bytes:7680})
+  }
+  assert.equal(f.stream.snapshot().closed,false)
+  assert.equal(f.stream.snapshot().maximumResidualMs,3)
+  assert.equal(f.stream.snapshot().captureOffsetMs,117)
+  assert.equal(f.stream.snapshot().lastCaptureUnixMs,1897)
+  f.send(40*960,800+117+81)
+  assert.equal(f.messages[0].reason,'PCM_CLOCK')
+  const drift=fixture();await tick()
+  for(let i=0;i<70;i++){
+    drift.send(i*960,i*23)
+    const packet=drift.packets.at(-1)
+    if(!drift.stream.snapshot().closed)drift.stream.consumed({id:packet.id,bytes:7680})
+  }
+  assert.equal(drift.messages[0].reason,'PCM_CLOCK')
+  assert.equal(drift.stream.snapshot().maximumResidualMs,3)
+  assert.equal(drift.stream.snapshot().maximumOffsetMs,201)
 })
 test('renderer consumes stream credits across RTP wrap and renders missing packets as silence',async()=>{
   const f=fixture();await tick()

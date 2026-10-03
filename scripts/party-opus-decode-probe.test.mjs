@@ -19,6 +19,15 @@ test('negotiated Opus/RED payload parsing keeps primary bytes and rejects malfor
   assert.throws(() => primaryOpusPayload(new Uint8Array([13,1]), 63, codecs), /PAYLOAD_TYPE/)
 })
 
+test('RED blocks expose bounded views with their RFC sample-clock timestamp offsets without changing payload bytes',()=>{
+  const raw=new Uint8Array([239,15,0,2,239,30,0,1,111,1,2,3,4]),before=raw.slice()
+  const parsed=primaryOpusPayload(raw,63,codecs)
+  assert.deepEqual(parsed.redundant.map(block=>block.timestampOffset),[960,1920])
+  assert.deepEqual(parsed.redundant.map(block=>Array.from(block.data)),[[1,2],[3]])
+  assert.deepEqual(Array.from(parsed.data),[4]);assert.deepEqual(raw,before)
+  assert.equal(parsed.redundant[0].data.buffer,raw.buffer)
+})
+
 test('Opus packet sample counts cover TOC durations and reject invalid or excessive frame counts', () => {
   for (let config=0;config<32;config++) {
     const durations=config<12?[10,20,40,60]:config<16?[10,20]:[2.5,5,10,20]

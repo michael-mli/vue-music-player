@@ -73,9 +73,9 @@ export function installEncodedTimingProbe(workerSource) {
     worker.addEventListener('message', ({ data }) => {
       if(direction==='receive'&&data?.type==='pcm-port-state') {
         const row={worker:id,closed:data.closed===true,configured:data.configured===true,observedAt:performance.now()}
-        for(const key of ['decoded','gaps','duplicates','chunks','encodedBytes','pcmBytes','maximumChunks','maximumBytes'])
+        for(const key of ['decoded','gaps','duplicates','chunks','encodedBytes','pcmBytes','maximumChunks','maximumBytes','recovered'])
           if(Number.isSafeInteger(data[key])&&data[key]>=0)row[key]=data[key]
-        for(const key of ['lastCaptureUnixMs','maximumResidualMs'])if(Number.isFinite(data[key]))row[key]=data[key]
+        for(const key of ['lastCaptureUnixMs','maximumResidualMs','scheduledCaptureUnixMs','captureOffsetMs','maximumOffsetMs'])if(Number.isFinite(data[key]))row[key]=data[key]
         pcmStates.push(row);if(pcmStates.length>64)pcmStates.shift();return
       }
       if(direction==='receive'&&data?.type==='pcm-port-error'){errors++;failures.pipe++;return}

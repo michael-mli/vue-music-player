@@ -57,7 +57,15 @@ export function createOwnedPcmReceiver(Queue,worklet,context,track,nativeSource,
       if(!Number.isFinite(output.contextTime)||output.contextTime<=0||!Number.isFinite(age)||age< -20||age>200){fail('PLAYOUT_PCM_OUTPUT_AGE');return null}
       const latency=(context.currentTime-output.contextTime)*1000
       if(!Number.isFinite(latency)||latency<0||latency>200){fail('PLAYOUT_PCM_OUTPUT_LATENCY');return null}
-      const cursor=anchor.wall+(pcmContext.currentTime*48000-anchor.frame)/48-delayMs-latency
+      const scheduledCursor=anchor.wall+(pcmContext.currentTime*48000-anchor.frame)/48-delayMs-latency
+      // Use a phase observation at or before the audible sample position,
+      // rather than a newer packet still waiting in the PCM hold queue.
+      const phase=window.__encodedTimingProbe.pcmStates.findLast(item=>item.worker===workerId&&
+        Number.isFinite(item.scheduledCaptureUnixMs)&&item.scheduledCaptureUnixMs<=scheduledCursor)
+      const offset=phase?.captureOffsetMs??0
+      if(!Number.isFinite(offset)||Math.abs(offset)>200){fail('PLAYOUT_PCM_CLOCK');return null}
+      const cursor=scheduledCursor+offset
+      clock.captureOffsetMs=offset
       clock.cursorStepMs=Number.isFinite(lastCursor)?cursor-lastCursor:null
       if(!Number.isFinite(cursor)||cursor<lastCursor-80){fail('PLAYOUT_PCM_OUTPUT_REVERSE');return null}
       lastCursor=Math.max(lastCursor,cursor)
