@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **122/122** pass.
+checks pass; party units **125/125** and timing/capability fixtures **123/123** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -4135,3 +4135,21 @@ Timing fixtures pass **122/122**:
 `/tmp/ktv-owned-video-long-reorder-fixtures-20261004.log`, including a 180-ms late
 repair decoded in RTP order at the fixed 240-ms deadline. Native acceptance of
 the longer window remains pending; no product or deployment changes are made.
+
+
+### Bounded video burst pressure — 2026-10-04
+
+The first 240-ms run fails during startup, before UDP impairment:
+`/tmp/ktv-owned-av-video-long-reorder-full-udp-native-20261004.log`.
+Eight held encoded packets exhaust the count bound and close with `VIDEO_BOUND`;
+no video arrived after the existing hold. This is not impaired acceptance.
+
+The decoder now drains the oldest RTP packet when a burst fills its eight-packet
+queue before the timer. It retains the fixed arrival deadline for remaining
+packets, four pending decode outputs, 512-KiB shared encoded budget and permanent
+closure when a stalled decoder prevents bounded admission. A separate numeric
+pressure counter records early drains. No count, memory, timing or quality gate
+is increased. Timing fixtures pass **123/123** in
+`/tmp/ktv-owned-video-pressure-fixtures-20261004.log`, including burst admission
+and saturated-decoder closure. A full native UDP/recovery/handover rerun is in
+progress. Product integration and all remaining release gates remain open.

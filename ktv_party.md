@@ -1383,9 +1383,19 @@ uses phase history at the audible position. Renderer telemetry counts future
 queued samples and excludes silence gaps, so expiry tests measure the owned
 buffer directly. Clock failures and deadlines permanently close owned resources.
 
-Continuously impaired timing and nominal frame rate still fail. Received video
-can already be late at the native decoded-frame processor; downstream queues
-cannot reconstruct an unavailable frame. Product integration, adaptive recovery,
+The next private layout copies received VP8 into a continuous owned decoder and
+releases its frames against the same audible PCM capture position. It retains
+at most four pending decode outputs, two transferred frames and a 32-frame /
+33-MiB presentation queue, reserving writer/generator ownership within 40 decoded
+frames and 64 MiB. Eight held encoded packets share a 512-KiB input budget.
+The reorder window is 80 ms at a 200-ms hold and 240 ms at holds of at least
+500 ms; queue pressure drains the oldest retained packet without increasing
+the bound. Clean isolated-host 40-pair timing passes at a 200-ms hold before
+the added reorder policy. Impaired recovery and the new policy remain unaccepted.
+
+Continuously impaired timing and nominal frame rate still fail. Native decoded
+video can arrive too late, while the owned decoder still needs reliable packet
+ordering and codec recovery. Product integration, adaptive recovery,
 PLC/rate correction, sustained/physical/mobile/capacity and release acceptance
 remain open. These private scripts do not change the deployed playback path.
 

@@ -91,7 +91,7 @@ export function installEncodedTimingProbe(workerSource) {
       if(direction==='receive'&&data?.type==='video-port-state'){
         const row={worker:id,closed:data.closed===true,configured:data.configured===true,observedAt:performance.now()}
         for(const key of ['decoded','discarded','encodedBytes','pending','maximumBytes','maximumPending','inFlight',
-          'heldPackets','maximumHeld','duplicates','lateFrames','reordered','reorderMs'])
+          'heldPackets','maximumHeld','duplicates','lateFrames','reordered','pressureDrains','reorderMs'])
           if(Number.isSafeInteger(data[key])&&data[key]>=0)row[key]=data[key]
         if(Number.isFinite(data.maximumResidualMs))row.maximumResidualMs=data.maximumResidualMs
         row.reason=[null,'VIDEO_API','VIDEO_CONFIG','VIDEO_DECODE','VIDEO_PACKET','VIDEO_CLOCK','VIDEO_BOUND','VIDEO_OUTPUT',
