@@ -1387,7 +1387,7 @@ buffer directly. Clock failures and deadlines permanently close owned resources.
 
 The next private layout copies received VP8 into a continuous owned decoder and
 releases its frames against the same audible PCM capture position. It retains
-at most four pending decode outputs, two transferred frames and a 32-frame /
+at most four pending decode/ready outputs, two transferred frames and a 32-frame /
 42.5-MiB presentation queue, reserving writer/generator ownership within 40 decoded
 frames and 64 MiB. Only I420/NV12 outputs at <= 1.5 bytes/pixel are admitted;
 four pending codec outputs still reserve full RGBA. Held encoded packets
@@ -1397,7 +1397,10 @@ The reorder window is 80 ms at a 200-ms hold, 240 ms at holds of at least
 the bound. Clean isolated-host 40-pair timing passes at a 200-ms hold before
 the added reorder policy. A reserved standard receiver can request native
 keyframe feedback, with one pending request and a bounded 1–5-second cooldown;
-actual encoded/decoded keys are required as response evidence. Impaired recovery
+actual encoded/decoded keys are required as response evidence. A separate
+private gap mode decodes contiguous RTP promptly and waits up to 700 ms only
+for pacing gaps at an 800-ms hold. Ready outputs share the four-frame decoder
+reservation until exact transfer credits return. Impaired recovery
 and the new policy remain unaccepted.
 
 Continuously impaired timing and nominal frame rate still fail. Native decoded

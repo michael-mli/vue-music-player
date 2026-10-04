@@ -1,41 +1,61 @@
 // Private continuous decoder. The caller owns delivered VideoFrames; neither
 // decoding nor capture-clock metadata grants permission to present them.
-export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80}={}) {
-  if(!Number.isInteger(reorderMs)||reorderMs<0||reorderMs>500)throw new Error('VIDEO_REORDER_CONFIG')
+export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAware=false}={}) {
+  if(!Number.isInteger(reorderMs)||reorderMs<0||reorderMs>700||typeof gapAware!=='boolean')throw new Error('VIDEO_REORDER_CONFIG')
   const heldLimit=reorderMs>240?20:8
   const expected=new Map(),pending=[]
   const held=new Map(),seen=new Set()
   let reorderTimer,flushing=false,maximumHeld=0,duplicates=0,lateFrames=0,reordered=0,pressureDrains=0,highestRtp=null
   let decoder,configured=false,closed=false,sequence=0,encodedBytes=0
+  let pumping=false,maximumReady=0,committedGaps=0,gapRepairs=0,transferWaits=0
   let lastRtp=null,lastTimestamp=0,captureAnchor=null,decoded=0,decodedKeyFrames=0,discarded=0,maximumBytes=0,maximumPending=0,maximumResidualMs=0
   const delta=(value,anchor)=>((value-anchor+0x80000000)>>>0)-0x80000000
   function snapshot(){return {closed,configured,decoded,decodedKeyFrames,discarded,encodedBytes,pending:expected.size,
-    maximumBytes,maximumPending,maximumResidualMs,heldPackets:held.size,maximumHeld,heldLimit,duplicates,lateFrames,reordered,pressureDrains,reorderMs}}
+    maximumBytes,maximumPending,maximumReady,maximumResidualMs,heldPackets:held.size,maximumHeld,heldLimit,duplicates,lateFrames,reordered,pressureDrains,reorderMs,
+    gapAware,committedGaps,gapRepairs,transferWaits}}
   function close(reason=null){
     if(closed)return
-    closed=true;clearTimeout(reorderTimer);held.clear();seen.clear();pending.length=0;expected.clear();encodedBytes=0
+    closed=true;clearTimeout(reorderTimer);held.clear();seen.clear();pending.length=0
+    for(const packet of expected.values())packet.frame?.close()
+    expected.clear();encodedBytes=0
     try{if(decoder?.state!=='closed')decoder?.close()}catch{}
     report({reason,...snapshot()})
   }
+  function pump(){
+    if(closed||pumping)return
+    pumping=true
+    try{
+      while(!closed&&expected.size){
+        const packet=expected.values().next().value,frame=packet.frame
+        if(!frame)break
+        const offset=captureAnchor?delta(packet.rtp,captureAnchor.rtp)/90:null
+        let result=false
+        if(captureAnchor&&performance.now()-captureAnchor.observedAt<=5000&&Math.abs(offset)<=5000){
+          result=deliver(frame,{id:++sequence,bytes:packet.frameBytes,rtpTimestamp:packet.rtp,
+            captureUnixMs:performance.timeOrigin+captureAnchor.capture+offset})
+        }
+        if(closed)return
+        if(result==='wait'){transferWaits++;break}
+        expected.delete(packet.timestamp);packet.frame=null
+        if(result!==true){discarded++;frame.close()}
+      }
+    }finally{pumping=false}
+  }
   function output(frame){
-    let transferred=false
+    let owned=false
     try{
       if(closed)return
       const packet=expected.get(frame.timestamp)
-      if(!packet||frame.codedWidth!==1280||frame.codedHeight!==720||frame.displayWidth!==1280||frame.displayHeight!==720)throw new Error('VIDEO_OUTPUT')
-      expected.delete(frame.timestamp);encodedBytes-=packet.bytes
+      if(!packet||packet.frame||frame.codedWidth!==1280||frame.codedHeight!==720||frame.displayWidth!==1280||frame.displayHeight!==720)throw new Error('VIDEO_OUTPUT')
       const bytes=frame.allocationSize()
       if(!['I420','NV12'].includes(frame.format)||!Number.isSafeInteger(bytes)||bytes<1||bytes>1280*720*3/2)throw new Error('VIDEO_OUTPUT')
       decoded++
       if(packet.type==='key')decodedKeyFrames++
-      if(!captureAnchor||performance.now()-captureAnchor.observedAt>5000){discarded++;return}
-      const offset=delta(packet.rtp,captureAnchor.rtp)/90
-      if(Math.abs(offset)>5000){discarded++;return}
-      transferred=deliver(frame,{id:++sequence,bytes,rtpTimestamp:packet.rtp,
-        captureUnixMs:performance.timeOrigin+captureAnchor.capture+offset})===true
-      if(!transferred)discarded++
+      encodedBytes-=packet.bytes;packet.bytes=0;packet.frame=frame;packet.frameBytes=bytes;owned=true
+      maximumReady=Math.max(maximumReady,[...expected.values()].filter(item=>item.frame).length)
+      pump()
     }catch{close('VIDEO_OUTPUT')}
-    finally{if(!transferred)frame.close();if(!closed)flush()}
+    finally{if(!owned)frame.close();if(!closed)flush()}
   }
   function decode(packet){
     const chunk=new EncodedVideoChunk({type:packet.type,timestamp:packet.timestamp,data:packet.data})
@@ -45,6 +65,7 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80}={}) {
   }
   function accept(packet){
     const step=lastRtp===null?0:delta(packet.rtp,lastRtp)
+    if(gapAware&&lastRtp!==null&&step>54*90)committedGaps++
     if(Number.isFinite(packet.capture)){
       const residual=captureAnchor?packet.capture-(captureAnchor.capture+delta(packet.rtp,captureAnchor.rtp)/90):0
       maximumResidualMs=Math.max(maximumResidualMs,Math.abs(residual))
@@ -66,8 +87,10 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80}={}) {
         const packet=[...held.values()].sort((a,b)=>delta(a.rtp,b.rtp))[0]
         const firstArrival=Math.min(...[...held.values()].map(item=>item.arrivedAt))
         const remaining=reorderMs-(performance.now()-firstArrival)
-        if(remaining>0&&!forceOne){reorderTimer=setTimeout(flush,Math.max(1,remaining));break}
-        if(remaining>0)pressureDrains++
+        const contiguous=gapAware&&lastRtp!==null&&delta(packet.rtp,lastRtp)<=54*90
+        if(remaining>0&&!forceOne&&!contiguous){reorderTimer=setTimeout(flush,Math.max(1,remaining));break}
+        if(remaining>0&&!contiguous)pressureDrains++
+        if(contiguous&&held.size>1)gapRepairs++
         forceOne=false
         held.delete(packet.rtp);accept(packet)
       }
@@ -81,7 +104,7 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80}={}) {
     decoder=new VideoDecoder({output,error:()=>close('VIDEO_DECODE')});decoder.configure(result.config);configured=true
     while(!closed&&pending.length)decode(pending.shift())
   }).catch(()=>close('VIDEO_CONFIG'))
-  return {snapshot,close,observe(frame,metadata){
+  return {snapshot,close,resume(){if(closed)return;try{pump();flush()}catch{close('VIDEO_OUTPUT')}},observe(frame,metadata){
     if(closed)return
     if(lastRtp===null&&frame.type!=='key')return
     try{

@@ -87,6 +87,9 @@ const opusDecodeProbe = process.env.KTV_ROOM_TEST_OPUS_DECODE === '1'
 const pcmPortProbe = process.env.KTV_ROOM_TEST_PCM_PORT === '1'
 const ownedPcm = process.env.KTV_ROOM_TEST_OWNED_PCM === '1'
 const ownedVideo=process.env.KTV_ROOM_TEST_OWNED_VIDEO==='1'
+const gapVideoReorder=process.env.KTV_ROOM_TEST_VIDEO_REORDER==='gap'
+assert.ok(process.env.KTV_ROOM_TEST_VIDEO_REORDER===undefined||gapVideoReorder&&ownedVideo&&avTiming,
+  'Gap reorder requires native owned-video timing on the nominal source profile')
 assert.ok(!ownedVideo||ownedPcm,'Owned video requires the owned PCM capture-clock output layout')
 const vp8DecodeProbe=process.env.KTV_ROOM_TEST_VP8_DECODE==='1'
 assert.ok(!vp8DecodeProbe||encodedTiming&&absoluteCapture&&!avTiming&&!codecExperiment&&!ownedPcm&&!opusDecodeProbe&&!pcmPortProbe,
@@ -390,7 +393,7 @@ try {
     await cdp(socket, 'Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', 'en');
       ${avTiming ? `(${installAvSourceMarkers.toString()})();` : ''}
       ${encodedApi==='legacy' ? 'window.RTCRtpScriptTransform=undefined;' : ''}
-      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify('('+encodedTimingWorker.toString()+')('+ (opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : vp8DecodeProbe?'null,null,null,'+createVp8DecodeProbe.toString():'') +');'+(pcmPortProbe||ownedPcm ? '('+installOpusPcmWorker.toString()+')('+bindOpusPcmPort.toString()+','+createOpusPcmStream.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString()+');' : '')+(ownedVideo?'('+installVp8FrameWorker.toString()+')('+createVp8FrameStream.toString()+','+(controlledPlayoutMs>=800?500:controlledPlayoutMs>=500?240:80)+','+receiverKeyframes+','+receiverKeyframeMs+');':''))},${JSON.stringify(receiverEncodedApi)});` : ''}
+      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify('('+encodedTimingWorker.toString()+')('+ (opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : vp8DecodeProbe?'null,null,null,'+createVp8DecodeProbe.toString():'') +');'+(pcmPortProbe||ownedPcm ? '('+installOpusPcmWorker.toString()+')('+bindOpusPcmPort.toString()+','+createOpusPcmStream.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString()+');' : '')+(ownedVideo?'('+installVp8FrameWorker.toString()+')('+createVp8FrameStream.toString()+','+(controlledPlayoutMs>=800?(gapVideoReorder?700:500):controlledPlayoutMs>=500?240:80)+','+receiverKeyframes+','+receiverKeyframeMs+','+gapVideoReorder+');':''))},${JSON.stringify(receiverEncodedApi)});` : ''}
       (${installEncodedLeaseObserver.toString()})();
       ${absoluteCapture ? `(${installAbsoluteCaptureExperiment.toString()})();` : ''}
       ${senderCadence ? `(${installSenderCadenceExperiment.toString()})();` : ''}

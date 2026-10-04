@@ -4,9 +4,10 @@ import vm from 'node:vm'
 import {setImmediate as tick} from 'node:timers/promises'
 import {createVp8FrameStream} from './party-vp8-frame-stream.mjs'
 
-async function fixture({hold=false,accept=true,reorderMs=0,format='I420'}={}){
+async function fixture({hold=false,accept=true,reorderMs=0,format='I420',gapAware=false}={}){
   const delivered=[],frames=[],reports=[],waiting=[]
   let now=1000,decoder,timerId=0
+  let acceptance=accept
   const timers=new Map()
   class Decoder{
     static async isConfigSupported(config){return {supported:true,config}}
@@ -18,16 +19,43 @@ async function fixture({hold=false,accept=true,reorderMs=0,format='I420'}={}){
   }
   const realm={ArrayBuffer,performance:{timeOrigin:10000,now:()=>now},VideoDecoder:Decoder,
     EncodedVideoChunk:class{constructor(config){Object.assign(this,config)}},
-    __encodedTimingCodecs:[{payloadType:96,mimeType:'video/vp8'}],deliver:(frame,packet)=>{if(accept)delivered.push({frame,...packet});return accept},report:row=>reports.push(row),reorderMs,
+    __encodedTimingCodecs:[{payloadType:96,mimeType:'video/vp8'}],deliver:(frame,packet)=>{if(acceptance===true)delivered.push({frame,...packet});return acceptance},report:row=>reports.push(row),reorderMs,gapAware,
     setTimeout(callback,delay){const id=++timerId;timers.set(id,{callback,at:now+delay});return id},clearTimeout(id){timers.delete(id)}}
   realm.self=realm
-  const stream=vm.runInNewContext(`(${createVp8FrameStream.toString()})(deliver,report,{reorderMs})`,realm)
+  const stream=vm.runInNewContext(`(${createVp8FrameStream.toString()})(deliver,report,{reorderMs,gapAware})`,realm)
   await tick()
   const send=(rtp,captureTime=rtp/90,type=frames.length?'delta':'key')=>stream.observe(
     {timestamp:rtp>>>0,type,data:new Uint8Array([7]).buffer},{captureTime,payloadType:96})
-  return {stream,send,delivered,frames,reports,waiting,timers,advance(value){now=value;for(const [id,timer]of[...timers])if(timer.at<=now){timers.delete(id);timer.callback()}},
+  return {stream,send,delivered,frames,reports,waiting,timers,setAccept(value){acceptance=value},advance(value){now=value;for(const [id,timer]of[...timers])if(timer.at<=now){timers.delete(id);timer.callback()}},
     flush(){while(waiting.length)decoder.callbacks.output(waiting.shift())}}
 }
+test('gap-only repair decodes contiguous RTP immediately and drains repaired history before its fixed deadline',async()=>{
+  const f=await fixture({gapAware:true,reorderMs:700,accept:false}),start=0xfffffe00
+  f.send(start,0);f.send((start+3600)>>>0,40);assert.equal(f.stream.snapshot().decoded,2)
+  f.send((start+10800)>>>0,120);f.advance(1600);assert.equal(f.stream.snapshot().decoded,2)
+  f.send((start+7200)>>>0,80)
+  assert.deepEqual(f.frames.map(frame=>frame.timestamp),[0,40000,80000,120000])
+  assert.equal(f.stream.snapshot().committedGaps,0);assert.equal(f.timers.size,0);f.stream.close()
+})
+test('gap expiry commits once and later packets cannot extend its original deadline',async()=>{
+  const f=await fixture({gapAware:true,reorderMs:700,accept:false});f.send(0);f.send(7200)
+  f.advance(1699);f.send(10800);assert.equal(f.stream.snapshot().decoded,1)
+  f.advance(1700);assert.equal(f.stream.snapshot().decoded,3)
+  assert.equal(f.stream.snapshot().committedGaps,1);assert.equal(f.timers.size,0);f.stream.close()
+})
+test('transfer congestion parks at most four decoded frames in the existing reservation then resumes in RTP order',async()=>{
+  const f=await fixture({accept:'wait',reorderMs:80});for(let i=0;i<5;i++)f.send(i*3600)
+  f.advance(1080);assert.equal(f.stream.snapshot().pending,4);assert.equal(f.stream.snapshot().maximumReady,4)
+  assert.equal(f.stream.snapshot().heldPackets,1);assert.equal(f.delivered.length,0)
+  f.setAccept(true);f.stream.resume()
+  assert.deepEqual(f.delivered.map(frame=>frame.rtpTimestamp),[0,3600,7200,10800,14400])
+  assert.equal(f.stream.snapshot().pending,0);assert.equal(f.stream.snapshot().encodedBytes,0)
+  for(const packet of f.delivered)packet.frame.close();f.stream.close()
+  assert.ok(f.frames.every(frame=>frame.closes===1))
+  const stopped=await fixture({accept:'wait',reorderMs:80});for(let i=0;i<4;i++)stopped.send(i*3600)
+  stopped.advance(1080);stopped.stream.close();stopped.setAccept(true);stopped.stream.resume()
+  assert.equal(stopped.delivered.length,0);assert.ok(stopped.frames.every(frame=>frame.closes===1))
+})
 test('continuous VP8 warms its decoder without capture headers then transfers associated bounded frames across RTP wrap',async()=>{
   const f=await fixture();const start=0xfffffe00
   f.send(start,NaN);assert.equal(f.frames[0].closes,1);assert.equal(f.delivered.length,0)

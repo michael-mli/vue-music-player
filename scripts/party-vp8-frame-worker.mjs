@@ -1,9 +1,10 @@
 // Private receiver worker. Decoding starts at the first received keyframe;
 // binding a port only transfers ownership, never permission to present output.
-export function installVp8FrameWorker(createStream,reorderMs=80,recover=false,recoveryMs=5000){
+export function installVp8FrameWorker(createStream,reorderMs=80,recover=false,recoveryMs=5000,gapAware=false){
   if(!Number.isInteger(recoveryMs)||recoveryMs<1000||recoveryMs>5000)throw new Error('VIDEO_RECOVERY_CONFIG')
   let stream,port,timer,bound=false,closed=false,reason=null,expiry,lastWall=Date.now(),lastMono=performance.now()
   let lastKey=-Infinity,lastRequest=-Infinity,keyframePending=false,keyframeRequests=0,keyframeFulfilled=0
+  let seenDamage=0
   const credits=new Map()
   const recovery=()=>({recovery:recover,recoveryMs,keyframeRequests,keyframeFulfilled,keyframePending})
   function close(code=null){
@@ -25,11 +26,12 @@ export function installVp8FrameWorker(createStream,reorderMs=80,recover=false,re
     if(recover&&typeof self.__requestOwnedVideoKeyframe!=='function'){close('VIDEO_RECOVERY_API');return}
     expiry??=Date.now()+10000
     stream=createStream((frame,packet)=>{
-      if(!check()||!port||credits.size>=2)return false
+      if(!check()||!port)return false
+      if(credits.size>=2)return 'wait'
       credits.set(packet.id,packet.bytes)
       try{port.postMessage({type:'video-frame',frame,...packet},[frame]);return true}
       catch{credits.delete(packet.id);close('VIDEO_PORT_TRANSFER');return false}
-    },row=>close(row.reason),{reorderMs})
+    },row=>close(row.reason),{reorderMs,gapAware})
     if(closed){stream.close();return}
     timer=setInterval(()=>{
       check()
@@ -41,9 +43,11 @@ export function installVp8FrameWorker(createStream,reorderMs=80,recover=false,re
     ensure();if(!check())return
     const before=stream.snapshot();stream.observe(frame,metadata)
     const after=stream.snapshot(),now=performance.now()
+    const damage=(after.lateFrames||0)+(after.committedGaps||0),newDamage=damage>seenDamage
+    seenDamage=damage
     if(closed||after.closed)return
     if(frame.type==='key'&&after.lateFrames===before.lateFrames&&after.duplicates===before.duplicates)lastKey=now
-    if(!recover||after.lateFrames<=before.lateFrames||keyframePending||now-lastRequest<recoveryMs||now-lastKey<1000)return
+    if(!recover||!newDamage||keyframePending||now-lastRequest<recoveryMs||now-lastKey<1000)return
     keyframePending=true;keyframeRequests++;lastRequest=now
     void Promise.resolve().then(()=>{if(!check())return;return self.__requestOwnedVideoKeyframe()})
       .then(()=>{if(!closed)keyframeFulfilled++})
@@ -68,6 +72,7 @@ export function installVp8FrameWorker(createStream,reorderMs=80,recover=false,re
       if(credit?.type==='video-stop'){close();return}
       if(credit?.type!=='video-consumed'||!Number.isSafeInteger(credit.id)||credits.get(credit.id)!==credit.bytes){close('VIDEO_PORT_CREDIT');return}
       credits.delete(credit.id)
+      stream?.resume?.()
     }
     port.start();ensure()
   })

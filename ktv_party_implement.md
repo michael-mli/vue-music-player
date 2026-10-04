@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **134/134** pass.
+checks pass; party units **125/125** and timing/capability fixtures **137/137** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -4429,3 +4429,39 @@ does not call source parameter APIs. Fixtures pass **134/134** in
 `/tmp/ktv-native-receiver-faster-recovery-fixtures-20261004.log`, including faster
 cooldown, recent keys and terminal rejection. Full native timing/recovery/handover,
 updated buffered expiry and all remaining release requirements remain open.
+
+
+### Gap-aware video repair and decoded transfer pressure — 2026-10-04
+
+The one-second receiver-feedback run also exits 1:
+`/tmp/ktv-owned-av-native-receiver1000-backpressure-full-udp-20261004.log`.
+Baseline maximum skew is 21.39 ms. During impairment, eight requests fulfill
+with nine new owned decoded and 11 encoded keys, but source/receiver rates fall
+to **2.68/2.75 fps**, and owned presentation to **2.59 fps**. Both decoders remain
+open; the original nominal quality gate fails. Faster feedback is not accepted.
+The default five-second interval remains unchanged.
+
+The next explicit private `KTV_ROOM_TEST_VIDEO_REORDER=gap` mode decodes RTP
+steps up to **54 ms** immediately (nominal 25-fps capture, allowing cadence
+quantization), and waits up to **700 ms** only on larger gaps at an 800-ms PCM
+hold. Earlier RTP repairs drain the ordered chain immediately; an unrepaired
+gap commits at the fixed original arrival deadline, with numeric diagnostics.
+This threshold is a pacing hypothesis, not a codec dependency declaration;
+encoder frame thinning can also create RTP gaps. Committed gaps and unique late
+discards can trigger the existing bounded native feedback policy.
+
+Decoded frames now wait for exact transfer credits inside the existing **four
+pending-output reservation**, rather than being discarded during a two-frame
+port burst. Native decode inputs and ready outputs share that same four-frame
+cap. Stop closes every retained ready frame; resume transfers in RTP order and
+cannot revive a closed decoder. The encoded queue remains **20 packets / 512
+KiB**, transfers two, presentation 32, total owned decoded frames 40 and payload
+reservation below 64 MiB. Original RTC bytes keep flowing unchanged.
+
+Fixtures pass **137/137** in
+`/tmp/ktv-owned-video-gap-transfer-backpressure-fixtures-20261004.log`, covering
+wrap, immediate contiguous decode, repaired gaps, fixed gap expiry, four-frame
+transfer pressure, exact close and no resurrection. A full UDP/recovery/handover
+run is in progress with five-second native feedback. Full timing, updated expiry,
+product integration and all remaining physical/mobile/capacity/release gates
+remain open.

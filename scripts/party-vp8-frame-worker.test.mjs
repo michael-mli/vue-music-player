@@ -45,7 +45,7 @@ test('bounded faster receiver recovery preserves recent-key suppression and clos
 })
 test('worker decoding warms before binding and transfers at most two credited frames without pausing codec state',()=>{
   const f=fixture();assert.equal(f.send(1),false);f.bind()
-  assert.equal(f.send(2),true);assert.equal(f.send(3),true);assert.equal(f.send(4),false)
+  assert.equal(f.send(2),true);assert.equal(f.send(3),true);assert.equal(f.send(4),'wait')
   assert.equal(f.decoded,4);assert.equal(f.port.messages.filter(row=>row.type==='video-frame').length,2)
   f.port.onmessage({data:{type:'video-consumed',id:2,bytes:1}});assert.equal(f.send(5),true)
   f.message({type:'video-stop'});assert.equal(f.port.closed,true)
