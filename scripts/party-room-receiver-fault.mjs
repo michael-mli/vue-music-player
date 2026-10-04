@@ -229,7 +229,12 @@ export async function runRoomReceiverFault({ mode, phone, audience, host, origin
     const replacementEvidence=(await replacementBrowser.audioEvidence()).filter(item=>item.captureHeartbeat&&item.time>=newAudible.time&&item.time<observation.finish)
     console.log('Integrated SFU receiver fault:',JSON.stringify({mode,clock,start,deadline,issued:issued.permit,
       stoppedLease:recovered.playback.lease,newAudible,quietAtNew,observation,
-      anchorWall,receiverHeartbeats:afterNew.filter(item=>item.captureHeartbeat).length,replacementHeartbeats:replacementEvidence.length}))
+      anchorWall,receiverHeartbeats:afterNew.filter(item=>item.captureHeartbeat).length,replacementHeartbeats:replacementEvidence.length,
+      replacementQuietHeartbeats:replacementEvidence.filter(item=>item.rmsAmplitude<=.02).length,
+      replacementMinimumRms:Math.min(...replacementEvidence.map(item=>item.rmsAmplitude)),
+      replacementMaximumRms:Math.max(...replacementEvidence.map(item=>item.rmsAmplitude)),
+      replacementFirstQuietMs:replacementEvidence.find(item=>item.rmsAmplitude<=.02)?.time-newAudible.time,
+      replacementLastQuietMs:replacementEvidence.findLast(item=>item.rmsAmplitude<=.02)?.time-newAudible.time}))
     check(quietAtNew?.audible===false&&afterNew.filter(item=>item.captureHeartbeat).length>=5&&
       afterNew.every(item=>!(item.audible===true||item.rmsAmplitude>.005)),
       `${label}: buffered old SFU output stays silent throughout replacement and render resume`)

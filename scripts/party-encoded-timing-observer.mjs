@@ -101,7 +101,7 @@ export function installEncodedTimingProbe(workerSource,receiverApi='native') {
       if(direction==='receive'&&data?.type==='video-port-error'){errors++;failures.pipe++;return}
       if(direction==='receive'&&data?.type==='video-port-state'){
         const row={worker:id,closed:data.closed===true,configured:data.configured===true,observedAt:performance.now()}
-        for(const key of ['decoded','decodedKeyFrames','discarded','encodedBytes','pending','maximumBytes','maximumPending','maximumReady','committedGaps','gapRepairs','transferWaits','inFlight',
+        for(const key of ['decoded','decodedKeyFrames','discarded','encodedBytes','pending','maximumBytes','maximumPending','maximumReady','committedGaps','contiguousDrains','transferWaits','inFlight',
           'heldPackets','maximumHeld','heldLimit','duplicates','lateFrames','reordered','pressureDrains','reorderMs','recoveryMs','keyframeRequests','keyframeFulfilled'])
           if(Number.isSafeInteger(data[key])&&data[key]>=0)row[key]=data[key]
         if(Number.isFinite(data.maximumResidualMs))row.maximumResidualMs=data.maximumResidualMs

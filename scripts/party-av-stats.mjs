@@ -53,9 +53,11 @@ export async function collectAvMediaStats() {
       if (['balanced', 'maintain-resolution', 'maintain-framerate'].includes(parameters.degradationPreference)) result.degradationPreference = parameters.degradationPreference
       result.encodings = (parameters.encodings || []).map(encoding => Object.fromEntries([
         'active', 'maxBitrate', 'maxFramerate', 'scaleResolutionDownBy', 'scalabilityMode',
+        'priority', 'networkPriority', 'bitratePriority',
       ].filter(key => typeof encoding[key] === 'number' && Number.isFinite(encoding[key]) ||
         key === 'active' && typeof encoding[key] === 'boolean' ||
-        key === 'scalabilityMode' && /^L[1-3]T[1-3](h|_KEY|_KEY_SHIFT)?$/.test(encoding[key] || ''))
+        key === 'scalabilityMode' && /^L[1-3]T[1-3](h|_KEY|_KEY_SHIFT)?$/.test(encoding[key] || '') ||
+        ['priority','networkPriority'].includes(key) && ['very-low','low','medium','high'].includes(encoding[key]))
         .map(key => [key, encoding[key]])))
       return result
     }))

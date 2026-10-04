@@ -1397,7 +1397,9 @@ The reorder window is 80 ms at a 200-ms hold, 240 ms at holds of at least
 the bound. Clean isolated-host 40-pair timing passes at a 200-ms hold before
 the added reorder policy. A reserved standard receiver can request native
 keyframe feedback, with one pending request and a bounded 1–5-second cooldown;
-actual encoded/decoded keys are required as response evidence. A separate
+actual encoded/decoded keys are required as response evidence. Feedback follows
+unique received frames discarded as late; pacing gaps alone cannot prove
+reference loss and do not request keys. A separate
 private gap mode decodes contiguous RTP promptly and waits up to 700 ms only
 for pacing gaps at an 800-ms hold. Ready outputs share the four-frame decoder
 reservation until exact transfer credits return. Impaired recovery

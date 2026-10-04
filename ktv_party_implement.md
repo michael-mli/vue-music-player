@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **137/137** pass.
+checks pass; party units **125/125** and timing/capability fixtures **139/139** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -4461,7 +4461,83 @@ reservation below 64 MiB. Original RTC bytes keep flowing unchanged.
 Fixtures pass **137/137** in
 `/tmp/ktv-owned-video-gap-transfer-backpressure-fixtures-20261004.log`, covering
 wrap, immediate contiguous decode, repaired gaps, fixed gap expiry, four-frame
-transfer pressure, exact close and no resurrection. A full UDP/recovery/handover
-run is in progress with five-second native feedback. Full timing, updated expiry,
-product integration and all remaining physical/mobile/capacity/release gates
-remain open.
+transfer pressure, exact close and no resurrection. The full UDP/recovery/handover result is recorded below. Full timing, updated
+expiry, product integration and all remaining physical/mobile/capacity/release
+gates remain open.
+
+
+### Gap experiment result and measured bandwidth allocation — 2026-10-04
+
+`/tmp/ktv-owned-av-gap-reorder-transfer-backpressure-full-udp-20261004.log`
+exits 1. Baseline maximum skew is **93.45 ms**, and both proxy routes are
+verified. During impairment source/receiver rates fall to **1.25/1.28 fps**;
+owned decode/presentation are **1.35/1.26 fps**, failing the unchanged nominal
+quality gate. Sixteen native requests fulfill during the phase, with 22 new
+encoded and 21 decoded keys. Both decoders stay open. The video worker reports
+121 committed pacing gaps, one unique late frame, three transfer waits, at most
+two ready outputs, four pending outputs and 20 held packets. Release lateness
+reaches **2201.11 ms**. Forty matched transitions are not obtained.
+
+Pacing gaps are not proof of missing VP8 references: encoder thinning can create
+the same RTP spacing. Treating these gaps as damage may cause extra feedback.
+That causal hypothesis needs an isolated comparison; API fulfillment and live
+decoders do not establish usable timing or cadence.
+
+Measured outbound byte deltas across impairment also expose a bandwidth
+allocation difference. Rates include encoded transport payload overhead:
+
+| Private run | Audio sent / median target (kbps) | Video sent / median target (kbps) |
+| --- | --- | --- |
+| Five-second feedback, PCM backpressure | 130.78 / 64 | 181.31 / 350 |
+| One-second feedback | 130.82 / 64 | 27.56 / 45.74 |
+| Gap reorder, five-second feedback | 130.83 / 64 | 21.53 / 30 |
+
+Audio RED contributes overhead beyond the 64-kbps primary Opus target. Video
+allocation falls near its floor in the failed cadence runs. These observations
+do not isolate feedback as the cause; impaired packet schedules differ between
+runs. The prescribed Opus target, RED policy, video cap, resolution and acceptance
+thresholds remain unchanged. Updated owned audio/video buffered-expiry validation
+is running separately before further timing changes.
+
+
+### Updated owned queues pass both-context expiry — 2026-10-04
+
+`/tmp/ktv-owned-av-ready-queue-both-context-expiry-20261004.log` exits 0 with
+**51/51** checks. The standard encoded receiver uses both owned VP8 video and
+owned PCM with the updated ready-output/credit backpressure. The renderer
+retains **691.97 ms** of actual future PCM (40 chunks / 307,200 bytes after
+subtracting the 96.80-ms report age). Both the PCM and final output audio clocks
+actually freeze, then resume for more than ten seconds while page callbacks
+remain blocked. Independent native capture confirms old buffered audio stays
+silent during replacement, meets the unchanged 150-ms expiry margin and
+preserves the configured old/new output separation. Replacement output stays
+audible. This is digital browser-output evidence, not physical acoustic proof.
+
+The feedback policy now follows unique received frames discarded as late and
+ignores committed RTP pacing gaps, which do not distinguish reference loss
+from encoder thinning. The former `gapRepairs` counter is named
+`contiguousDrains`: it measures contiguous held-chain draining, not uniquely
+identified network repairs. Fixtures pass **138/138** in
+`/tmp/ktv-owned-video-pacing-feedback-fixtures-20261004.log`. Sender diagnostics
+also retain allowlisted native priority/networkPriority and finite bitratePriority
+values for the next allocation comparison; focused diagnostics tests pass 2/2
+in `/tmp/ktv-sender-priority-diagnostics-fixtures-20261004.log`. No source
+allocation, audio RED or bitrate policy has changed. Source-task expiry is
+being checked next; full impaired timing and release acceptance remain open.
+
+
+### Source-task expiry retest needs replacement-output diagnosis — 2026-10-04
+
+`/tmp/ktv-owned-av-ready-queue-source-task-expiry-20261004.log` exits 1 after
+25 checks. It measures **762.24 ms** of future PCM, removes the old publisher
+and confirms that the source cannot renew before authority expires. The old
+buffered output stays silent throughout replacement. The independent replacement
+listener produces 14 heartbeats over the remaining 13.42-second blocked-page
+window, but fails the requirement that every heartbeat remains above RMS 0.02.
+The replacement is not accepted; bounded heartbeat level diagnostics are added
+for a causal rerun. This does not invalidate the separate 51/51 both-context
+result or prove source-stall acceptance. No timing or audible threshold changes.
+
+The full updated timing/capability fixture suite passes **139/139** in
+`/tmp/ktv-owned-video-pacing-feedback-all-fixtures-20261004.log`, including the
+new sender-allocation allowlist checks.

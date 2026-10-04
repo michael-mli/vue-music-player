@@ -5,11 +5,11 @@ import {setImmediate as tick} from 'node:timers/promises'
 import {installVp8FrameWorker} from './party-vp8-frame-worker.mjs'
 
 function fixture({recover=false,nativeRequest=true,recoveryMs=5000}={}){
-  let wall=1000,mono=0,listener,timer,delivered,decoded=0,lateFrames=0,requests=0,streamClosed=false
+  let wall=1000,mono=0,listener,timer,delivered,decoded=0,lateFrames=0,requests=0,streamClosed=false,committedGaps=0
   const reports=[]
   class Port{constructor(){this.messages=[]}postMessage(packet){this.messages.push(packet)}start(){}close(){this.closed=true}}
   const port=new Port()
-  const createStream=(deliver,report)=>{delivered=deliver;return {observe(frame){decoded++;if(frame.late)lateFrames++},snapshot:()=>({closed:streamClosed,decoded,lateFrames,duplicates:0}),
+  const createStream=(deliver,report)=>{delivered=deliver;return {observe(frame){decoded++;if(frame.late)lateFrames++;if(frame.gap)committedGaps++},snapshot:()=>({closed:streamClosed,decoded,lateFrames,committedGaps,duplicates:0}),
     close(reason){if(streamClosed)return;streamClosed=true;report({reason})}}}
   const realm={MessagePort:Port,Date:{now:()=>wall},performance:{now:()=>mono},
     __encodedTimingDirection:'receive',addEventListener:(name,callback)=>{listener=callback},
@@ -19,7 +19,7 @@ function fixture({recover=false,nativeRequest=true,recoveryMs=5000}={}){
   vm.runInNewContext(`(${installVp8FrameWorker.toString()})(createStream,80,recover,recoveryMs)`,realm)
   const message=data=>listener({data})
   return {realm,port,reports,message,bind(){message({type:'video-bind',port,expiryUnixMs:10000})},
-    send(id,late=false,type='delta'){realm.__observeOwnedVideo({late,type},{});return delivered?.({},{id,bytes:1,captureUnixMs:wall})},
+    send(id,late=false,type='delta',gap=false){realm.__observeOwnedVideo({late,type,gap},{});return delivered?.({},{id,bytes:1,captureUnixMs:wall})},
     advance(ms){wall+=ms;mono+=ms;timer?.()},get decoded(){return decoded},get requests(){return requests}}
 }
 test('native receiver recovery requests only new late references outside cooldown and stops permanently with the worker',async()=>{
@@ -59,4 +59,11 @@ test('forged frame credits and expiry permanently close the port and cannot rebi
   const expiry=fixture();expiry.bind();expiry.send(1);expiry.advance(9000)
   assert.equal(expiry.reports.at(-1).reason,'VIDEO_PORT_CLOCK')
   expiry.message({type:'video-renew',expiryUnixMs:20000});assert.equal(expiry.send(2),false)
+})
+
+test('encoder pacing gaps never request keyframes without a discarded received reference',async()=>{
+  const f=fixture({recover:true});f.bind();f.send(1,false,'key');f.advance(1500)
+  f.send(2,false,'delta',true);await tick();assert.equal(f.requests,0)
+  f.advance(5000);f.send(3,false,'delta',true);await tick();assert.equal(f.requests,0)
+  f.send(4,true);await tick();assert.equal(f.requests,1)
 })

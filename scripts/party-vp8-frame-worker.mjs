@@ -43,7 +43,9 @@ export function installVp8FrameWorker(createStream,reorderMs=80,recover=false,re
     ensure();if(!check())return
     const before=stream.snapshot();stream.observe(frame,metadata)
     const after=stream.snapshot(),now=performance.now()
-    const damage=(after.lateFrames||0)+(after.committedGaps||0),newDamage=damage>seenDamage
+    // RTP spacing also grows when the encoder intentionally omits frames.
+    // Request recovery only for an actual received reference discarded as late.
+    const damage=after.lateFrames||0,newDamage=damage>seenDamage
     seenDamage=damage
     if(closed||after.closed)return
     if(frame.type==='key'&&after.lateFrames===before.lateFrames&&after.duplicates===before.duplicates)lastKey=now
