@@ -1,6 +1,6 @@
 // Private receiver worker. Decoding starts at the first received keyframe;
 // binding a port only transfers ownership, never permission to present output.
-export function installVp8FrameWorker(createStream){
+export function installVp8FrameWorker(createStream,reorderMs=80){
   let stream,port,timer,bound=false,closed=false,reason=null,expiry,lastWall=Date.now(),lastMono=performance.now()
   const credits=new Map()
   function close(code=null){
@@ -25,7 +25,7 @@ export function installVp8FrameWorker(createStream){
       credits.set(packet.id,packet.bytes)
       try{port.postMessage({type:'video-frame',frame,...packet},[frame]);return true}
       catch{credits.delete(packet.id);close('VIDEO_PORT_TRANSFER');return false}
-    },row=>close(row.reason))
+    },row=>close(row.reason),{reorderMs})
     if(closed){stream.close();return}
     timer=setInterval(()=>{
       check()

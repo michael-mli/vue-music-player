@@ -1,7 +1,7 @@
 // Private continuous decoder. The caller owns delivered VideoFrames; neither
 // decoding nor capture-clock metadata grants permission to present them.
 export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80}={}) {
-  if(!Number.isInteger(reorderMs)||reorderMs<0||reorderMs>80)throw new Error('VIDEO_REORDER_CONFIG')
+  if(!Number.isInteger(reorderMs)||reorderMs<0||reorderMs>240)throw new Error('VIDEO_REORDER_CONFIG')
   const expected=new Map(),pending=[]
   const held=new Map(),seen=new Set()
   let reorderTimer,flushing=false,maximumHeld=0,duplicates=0,lateFrames=0,reordered=0,highestRtp=null
@@ -9,7 +9,7 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80}={}) {
   let lastRtp=null,lastTimestamp=0,captureAnchor=null,decoded=0,discarded=0,maximumBytes=0,maximumPending=0,maximumResidualMs=0
   const delta=(value,anchor)=>((value-anchor+0x80000000)>>>0)-0x80000000
   function snapshot(){return {closed,configured,decoded,discarded,encodedBytes,pending:expected.size,
-    maximumBytes,maximumPending,maximumResidualMs,heldPackets:held.size,maximumHeld,duplicates,lateFrames,reordered}}
+    maximumBytes,maximumPending,maximumResidualMs,heldPackets:held.size,maximumHeld,duplicates,lateFrames,reordered,reorderMs}}
   function close(reason=null){
     if(closed)return
     closed=true;clearTimeout(reorderTimer);held.clear();seen.clear();pending.length=0;expected.clear();encodedBytes=0

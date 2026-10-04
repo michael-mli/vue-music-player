@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **121/121** pass.
+checks pass; party units **125/125** and timing/capability fixtures **122/122** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -4112,3 +4112,26 @@ Timing fixtures pass **121/121**:
 ordering, fixed wait deadlines, byte/count overflow and cleanup. The next native
 comparison preserves the full UDP profile and every timing/quality limit; native
 reorder and visual-recovery acceptance remain pending.
+
+### Repair window within the existing hold — 2026-10-04
+
+The 80-ms video reorder run still fails to collect 40 impaired pairs:
+`/tmp/ktv-owned-av-video-reorder-full-udp-native-20261004.log`. It reorders 107
+frames but records **189 previously unseen late frames** and 43 duplicates.
+Source encoding is 20.08 fps; owned decoding 17.88 fps and presentation 17.67 fps,
+below the unchanged gates. Thirty video transitions are detected. The decoder
+remains live, with maximum held queue six and input bytes 16,383; native source/
+receiver counters show no new keyframe over the measured impaired interval.
+
+The private longer-hold layout now uses a **240-ms encoded reorder window** when
+configured PCM hold is at least 500 ms; the 200-ms layout retains an 80-ms window.
+This allocates time inside the existing hold and does not increase PCM hold.
+Held packets remain capped at eight, share the original 512-KiB encoded budget,
+and keep a fixed first-arrival deadline. The codec/presentation ownership and
+64-MiB limits are unchanged. This is a repair-window comparison, not an accepted
+adaptive latency policy. Keyframe/dependency recovery remains open.
+
+Timing fixtures pass **122/122**:
+`/tmp/ktv-owned-video-long-reorder-fixtures-20261004.log`, including a 180-ms late
+repair decoded in RTP order at the fixed 240-ms deadline. Native acceptance of
+the longer window remains pending; no product or deployment changes are made.
