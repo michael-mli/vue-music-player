@@ -86,7 +86,7 @@ function browserFixture(legacy,api='native') {
   const revoked = [], realm = { URL: class extends URL {
     static createObjectURL() { return 'blob:owned-'+(++nextUrl) }
     static revokeObjectURL(url) { revoked.push(url) }
-  }, Blob, RTCRtpReceiver: Receiver, RTCRtpSender: class {},
+  }, Blob, performance:{now:()=>7}, RTCRtpReceiver: Receiver, RTCRtpSender: class {},
   RTCRtpScriptTransform: class { constructor(worker, options) { this.worker = worker; this.options = options } },
   location: { href: 'https://owned.test/party', origin: 'https://owned.test' } }
   realm.window = { Worker, RTCPeerConnection: Peer }
@@ -160,4 +160,29 @@ test('sparse capture timestamps receive a bounded sample window without reading 
   assert.equal(f.messages.length, 56)
   assert.deepEqual(f.messages.filter(row => row.count > 300 && row.count < 400).map(row => row.values.captureTime),
     [301, 302, 303, 304, 305, 306, 307, 308])
+})
+
+test('owned decoder state retains only declared codec enums and bounded numeric diagnostics',()=>{
+  const f=browserFixture(true),peer=new f.realm.window.RTCPeerConnection(),receiver=f.receiver()
+  f.track(peer,receiver)
+  for(const codec of ['vp9','credential-url'])f.workers[0].dispatchEvent(new MessageEvent('message',{data:{
+    type:'video-port-state',codec,configured:true,closed:false,decoded:25,reason:null,privatePayload:'excluded'}}))
+  const rows=f.realm.window.__encodedTimingProbe.videoStates
+  assert.equal(rows[0].codec,'vp9');assert.equal(rows[1].codec,undefined)
+  assert.equal(rows[0].decoded,25);assert.ok(!/excluded|credential/.test(JSON.stringify(rows)))
+  f.realm.window.__encodedTimingProbe.close()
+})
+
+test('declared VP9 receiver codec parameters reach the worker without fmtp or unknown codec fields',()=>{
+  for(const api of ['native','standard']){
+    const f=browserFixture(true,api),peer=new f.realm.window.RTCPeerConnection(),receiver=f.receiver()
+    receiver.track.kind='video';receiver.getParameters=()=>({codecs:[
+      {payloadType:98,mimeType:'video/VP9',sdpFmtpLine:'private-secret'},
+      {payloadType:99,mimeType:'video/unknown',privateKey:'excluded'}]})
+    f.track(peer,receiver)
+    const codecs=api==='standard'?receiver.transform.options.codecs:f.workers[0].packet.data.codecs
+    assert.equal(codecs.length,1);assert.equal(codecs[0].mimeType,'video/vp9');assert.equal(codecs[0].payloadType,98)
+    assert.ok(!/private|secret|excluded|unknown/.test(JSON.stringify(codecs)))
+    f.realm.window.__encodedTimingProbe.close()
+  }
 })

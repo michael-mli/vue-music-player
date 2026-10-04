@@ -101,6 +101,7 @@ export function installEncodedTimingProbe(workerSource,receiverApi='native') {
       if(direction==='receive'&&data?.type==='video-port-error'){errors++;failures.pipe++;return}
       if(direction==='receive'&&data?.type==='video-port-state'){
         const row={worker:id,closed:data.closed===true,configured:data.configured===true,observedAt:performance.now()}
+        if(['vp8','vp9'].includes(data.codec))row.codec=data.codec
         for(const key of ['decoded','decodedKeyFrames','discarded','encodedBytes','pending','maximumBytes','maximumPending','maximumReady','committedGaps','contiguousDrains','transferWaits','inFlight',
           'heldPackets','maximumHeld','heldLimit','duplicates','lateFrames','reordered','pressureDrains','reorderMs','recoveryMs','keyframeRequests','keyframeFulfilled'])
           if(Number.isSafeInteger(data[key])&&data[key]>=0)row[key]=data[key]
@@ -208,12 +209,12 @@ export function installEncodedTimingProbe(workerSource,receiverApi='native') {
         if(legacyReceiver&&typeof receiver.createEncodedStreams==='function') {
           const {readable,writable}=receiver.createEncodedStreams()
           const codecs=(receiver.getParameters?.().codecs || []).filter(item=>Number.isInteger(item.payloadType)&&
-            item.payloadType>=0&&item.payloadType<=127&&['audio/opus','audio/red','video/vp8'].includes(item.mimeType?.toLowerCase()))
+            item.payloadType>=0&&item.payloadType<=127&&['audio/opus','audio/red','video/vp8','video/vp9'].includes(item.mimeType?.toLowerCase()))
             .slice(0,16).map(item=>({payloadType:item.payloadType,mimeType:item.mimeType.toLowerCase()}))
           worker.postMessage({kind,codecs,readable,writable},[readable,writable])
         } else if(!legacyReceiver&&scriptTransform) {
           const codecs=(receiver.getParameters?.().codecs || []).filter(item=>Number.isInteger(item.payloadType)&&
-            item.payloadType>=0&&item.payloadType<=127&&['audio/opus','audio/red','video/vp8'].includes(item.mimeType?.toLowerCase()))
+            item.payloadType>=0&&item.payloadType<=127&&['audio/opus','audio/red','video/vp8','video/vp9'].includes(item.mimeType?.toLowerCase()))
             .slice(0,16).map(item=>({payloadType:item.payloadType,mimeType:item.mimeType.toLowerCase()}))
           receiver.transform=new RTCRtpScriptTransform(worker,{kind,codecs})
         }

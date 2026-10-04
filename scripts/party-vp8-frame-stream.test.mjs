@@ -4,29 +4,29 @@ import vm from 'node:vm'
 import {setImmediate as tick} from 'node:timers/promises'
 import {createVp8FrameStream} from './party-vp8-frame-stream.mjs'
 
-async function fixture({hold=false,accept=true,reorderMs=0,format='I420',gapAware=false}={}){
+async function fixture({hold=false,accept=true,reorderMs=0,format='I420',gapAware=false,codec='vp8',receivedCodec=codec}={}){
   const delivered=[],frames=[],reports=[],waiting=[]
-  let now=1000,decoder,timerId=0
+  let now=1000,decoder,timerId=0,configUsed
   let acceptance=accept
   const timers=new Map()
   class Decoder{
     static async isConfigSupported(config){return {supported:true,config}}
     constructor(callbacks){this.callbacks=callbacks;this.state='configured';decoder=this}
-    configure(){}close(){this.state='closed'}
+    configure(config){configUsed=config}close(){this.state='closed'}
     decode(chunk){const frame={timestamp:chunk.timestamp,codedWidth:1280,codedHeight:720,displayWidth:1280,displayHeight:720,
       format,closes:0,allocationSize:()=>1280*720*3/2,close(){this.closes++}}
       frames.push(frame);if(hold)waiting.push(frame);else this.callbacks.output(frame)}
   }
   const realm={ArrayBuffer,performance:{timeOrigin:10000,now:()=>now},VideoDecoder:Decoder,
     EncodedVideoChunk:class{constructor(config){Object.assign(this,config)}},
-    __encodedTimingCodecs:[{payloadType:96,mimeType:'video/vp8'}],deliver:(frame,packet)=>{if(acceptance===true)delivered.push({frame,...packet});return acceptance},report:row=>reports.push(row),reorderMs,gapAware,
+    __encodedTimingCodecs:[{payloadType:96,mimeType:`video/${receivedCodec}`}],deliver:(frame,packet)=>{if(acceptance===true)delivered.push({frame,...packet});return acceptance},report:row=>reports.push(row),reorderMs,gapAware,codec,
     setTimeout(callback,delay){const id=++timerId;timers.set(id,{callback,at:now+delay});return id},clearTimeout(id){timers.delete(id)}}
   realm.self=realm
-  const stream=vm.runInNewContext(`(${createVp8FrameStream.toString()})(deliver,report,{reorderMs,gapAware})`,realm)
+  const stream=vm.runInNewContext(`(${createVp8FrameStream.toString()})(deliver,report,{reorderMs,gapAware,codec})`,realm)
   await tick()
   const send=(rtp,captureTime=rtp/90,type=frames.length?'delta':'key')=>stream.observe(
     {timestamp:rtp>>>0,type,data:new Uint8Array([7]).buffer},{captureTime,payloadType:96})
-  return {stream,send,delivered,frames,reports,waiting,timers,setAccept(value){acceptance=value},advance(value){now=value;for(const [id,timer]of[...timers])if(timer.at<=now){timers.delete(id);timer.callback()}},
+  return {get config(){return configUsed},stream,send,delivered,frames,reports,waiting,timers,setAccept(value){acceptance=value},advance(value){now=value;for(const [id,timer]of[...timers])if(timer.at<=now){timers.delete(id);timer.callback()}},
     flush(){while(waiting.length)decoder.callbacks.output(waiting.shift())}}
 }
 test('gap-only repair decodes contiguous RTP immediately and drains repaired history before its fixed deadline',async()=>{
@@ -144,4 +144,14 @@ test('an extended repair window retains a 350-ms reordered burst within the same
   f.advance(1500);assert.equal(f.stream.snapshot().decoded,17)
   assert.deepEqual(f.frames.map(frame=>frame.timestamp),Array.from({length:17},(_,i)=>i*40000))
   assert.equal(f.stream.snapshot().lateFrames,0);assert.equal(f.stream.snapshot().encodedBytes,0);f.stream.close()
+})
+
+test('declared nominal VP9 uses its exact decoder configuration and rejects another received codec',async()=>{
+  const f=await fixture({codec:'vp9'});f.send(0);f.send(3600)
+  assert.equal(f.config.codec,'vp09.00.31.08');assert.equal(f.config.codedWidth,1280)
+  assert.equal(f.config.codedHeight,720);assert.equal(f.stream.snapshot().decoded,2)
+  assert.equal(f.stream.snapshot().codec,'vp9')
+  for(const value of f.delivered)value.frame.close();f.stream.close()
+  const wrong=await fixture({codec:'vp9',receivedCodec:'vp8'});wrong.send(0)
+  assert.equal(wrong.reports.at(-1).reason,'VIDEO_PACKET');assert.equal(wrong.delivered.length,0)
 })

@@ -1,7 +1,9 @@
 // Private continuous decoder. The caller owns delivered VideoFrames; neither
 // decoding nor capture-clock metadata grants permission to present them.
-export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAware=false}={}) {
+export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAware=false,codec='vp8'}={}) {
   if(!Number.isInteger(reorderMs)||reorderMs<0||reorderMs>700||typeof gapAware!=='boolean')throw new Error('VIDEO_REORDER_CONFIG')
+  if(!['vp8','vp9'].includes(codec))throw new Error('VIDEO_CODEC_CONFIG')
+  const decoderCodec=codec==='vp9'?'vp09.00.31.08':'vp8'
   const heldLimit=reorderMs>240?20:8
   const expected=new Map(),pending=[]
   const held=new Map(),seen=new Set()
@@ -12,7 +14,7 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAwar
   const delta=(value,anchor)=>((value-anchor+0x80000000)>>>0)-0x80000000
   function snapshot(){return {closed,configured,decoded,decodedKeyFrames,discarded,encodedBytes,pending:expected.size,
     maximumBytes,maximumPending,maximumReady,maximumResidualMs,heldPackets:held.size,maximumHeld,heldLimit,duplicates,lateFrames,reordered,pressureDrains,reorderMs,
-    gapAware,committedGaps,contiguousDrains,transferWaits}}
+    codec,gapAware,committedGaps,contiguousDrains,transferWaits}}
   function close(reason=null){
     if(closed)return
     closed=true;clearTimeout(reorderTimer);held.clear();seen.clear();pending.length=0
@@ -98,7 +100,7 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAwar
     finally{flushing=false}
   }
   if(typeof VideoDecoder!=='function'||typeof EncodedVideoChunk!=='function')close('VIDEO_API')
-  else void VideoDecoder.isConfigSupported({codec:'vp8',codedWidth:1280,codedHeight:720,optimizeForLatency:true}).then(result=>{
+  else void VideoDecoder.isConfigSupported({codec:decoderCodec,codedWidth:1280,codedHeight:720,optimizeForLatency:true}).then(result=>{
     if(closed)return
     if(!result.supported){close('VIDEO_CONFIG');return}
     decoder=new VideoDecoder({output,error:()=>close('VIDEO_DECODE')});decoder.configure(result.config);configured=true
@@ -110,7 +112,7 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAwar
     try{
       const rtp=frame.timestamp
       if(!Number.isInteger(rtp)||rtp<0||rtp>0xffffffff||!['key','delta'].includes(frame.type)||
-        self.__encodedTimingCodecs?.find(codec=>codec.payloadType===metadata?.payloadType)?.mimeType!=='video/vp8')throw new Error('VIDEO_PACKET')
+        self.__encodedTimingCodecs?.find(item=>item.payloadType===metadata?.payloadType)?.mimeType!==`video/${codec}`)throw new Error('VIDEO_PACKET')
       const step=lastRtp===null?0:delta(rtp,lastRtp)
       if(seen.has(rtp)){discarded++;duplicates++;return}
       seen.add(rtp);if(seen.size>64)seen.delete(seen.values().next().value)

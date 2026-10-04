@@ -1406,7 +1406,9 @@ reservation until exact transfer credits return. Impaired recovery
 and the new policy remain unaccepted. A separate private allocation comparison
 raises only video local priority to match audio, retaining packet network priority
 and the nominal bitrate/framerate caps; actual native readback and full timing
-are required. It is not a deployed policy.
+are required. It is not a deployed policy. A marked nominal VP9 artifact may use the same
+owned ordering/decoder queues with exact received-codec validation; the default
+remains VP8, and no alternative codec has full acceptance.
 
 Continuously impaired timing and nominal frame rate still fail. Native decoded
 video can arrive too late, while the owned decoder still needs reliable packet

@@ -148,8 +148,10 @@ assert.ok(sourceStallMs === 0 || avTiming && remoteMode && Number.isInteger(sour
 const receiverTargetMs = process.env.KTV_ROOM_TEST_RECEIVER_TARGET_MS === undefined ? null : Number(process.env.KTV_ROOM_TEST_RECEIVER_TARGET_MS)
 const receiverSync = process.env.KTV_ROOM_TEST_RECEIVER_SYNC || 'off'
 const controlledPlayoutMs = process.env.KTV_ROOM_TEST_CONTROLLED_PLAYOUT_MS === undefined ? null : Number(process.env.KTV_ROOM_TEST_CONTROLLED_PLAYOUT_MS)
-assert.ok(!ownedPcm||controlledPlayoutMs!==null&&controlledPlayoutMs<=800&&!codecExperiment,
-  'Owned PCM requires its bounded controlled-video layout on the production codec')
+assert.ok(!ownedPcm||controlledPlayoutMs!==null&&controlledPlayoutMs<=800&&
+  (!codecExperiment||ownedVideo&&codecExperiment.codec==='vp9'&&codecExperiment.maxBitrate===350000&&
+    codecExperiment.keyframeMs===null&&codecExperiment.transport==='default'),
+  'Owned PCM requires its bounded production layout or explicitly marked nominal VP9 comparison')
 assert.ok(!absoluteCapture || encodedTiming || controlledPlayoutMs !== null && receiverFault !== 'off',
   'Absolute capture negotiation requires native frame timing or controlled native expiry evidence')
 assert.ok(controlledPlayoutMs === null || (avTiming || receiverFault !== 'off' || ownedPcm) && absoluteCapture && receiverSync === 'off' && receiverTargetMs === null &&
@@ -397,7 +399,7 @@ try {
     await cdp(socket, 'Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', 'en');
       ${avTiming ? `(${installAvSourceMarkers.toString()})();` : ''}
       ${encodedApi==='legacy' ? 'window.RTCRtpScriptTransform=undefined;' : ''}
-      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify('('+encodedTimingWorker.toString()+')('+ (opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : vp8DecodeProbe?'null,null,null,'+createVp8DecodeProbe.toString():'') +');'+(pcmPortProbe||ownedPcm ? '('+installOpusPcmWorker.toString()+')('+bindOpusPcmPort.toString()+','+createOpusPcmStream.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString()+');' : '')+(ownedVideo?'('+installVp8FrameWorker.toString()+')('+createVp8FrameStream.toString()+','+(controlledPlayoutMs>=800?(gapVideoReorder?700:500):controlledPlayoutMs>=500?240:80)+','+receiverKeyframes+','+receiverKeyframeMs+','+gapVideoReorder+');':''))},${JSON.stringify(receiverEncodedApi)});` : ''}
+      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify('('+encodedTimingWorker.toString()+')('+ (opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : vp8DecodeProbe?'null,null,null,'+createVp8DecodeProbe.toString():'') +');'+(pcmPortProbe||ownedPcm ? '('+installOpusPcmWorker.toString()+')('+bindOpusPcmPort.toString()+','+createOpusPcmStream.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString()+');' : '')+(ownedVideo?'('+installVp8FrameWorker.toString()+')('+createVp8FrameStream.toString()+','+(controlledPlayoutMs>=800?(gapVideoReorder?700:500):controlledPlayoutMs>=500?240:80)+','+receiverKeyframes+','+receiverKeyframeMs+','+gapVideoReorder+','+JSON.stringify(codecExperiment?.codec||'vp8')+');':''))},${JSON.stringify(receiverEncodedApi)});` : ''}
       (${installEncodedLeaseObserver.toString()})();
       ${absoluteCapture ? `(${installAbsoluteCaptureExperiment.toString()})();` : ''}
       ${senderCadence ? `(${installSenderCadenceExperiment.toString()})();` : ''}
@@ -563,7 +565,8 @@ try {
     check(state.pcm?.ready&&state.pcm.pcmRate===48000&&state.pcm.outputRate===await evaluate(audience,'__contexts[0].sampleRate')&&
       state.epochOffset===2208988800000,'owned audible PCM uses the default guarded output and verified common capture epoch')
     if(ownedVideo)check(!state.ownedVideo?.closed&&state.ownedVideo.decoder?.configured&&
-      !state.ownedVideo.decoder.closed,'owned received video retains a live bounded decoder for the current source')
+      !state.ownedVideo.decoder.closed&&state.ownedVideo.decoder.codec===(codecExperiment?.codec||'vp8'),
+      'owned received video retains a live bounded decoder for the declared current source codec')
     await poll(async()=>(await avBrowser.audioEvidence()).some(row=>row.captureHeartbeat&&row.onAmplitude>.02),
       'independent native owned PCM output')
     check(true,'independent native output contains the owned PCM backing tone')

@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **143/143** pass.
+checks pass; party units **125/125** and timing/capability fixtures **146/146** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -4624,3 +4624,76 @@ audio/caps/network priority, unsupported/rejected/readback failure, exact-profil
 admission and permanent stop. A full original-profile UDP/recovery/handover run
 is in progress. All original timing, 40-pair, nominal cadence and memory gates
 remain in force.
+
+
+### Equal local allocation does not close impaired cadence — 2026-10-04
+
+`/tmp/ktv-owned-av-equal-allocation-gap-reorder-full-udp-20261004.log` exits 1.
+Native readback confirms an actual successful transaction: video local priority
+is high, packet network priority remains low, and the 350-kbps/25-fps caps remain
+unchanged. Audio remains high/high at 64 kbps. Baseline maximum skew is
+**37.72 ms**. Impaired source/native receiver rates are **3.67/3.67 fps**;
+owned decode/presentation are **3.63/3.21 fps**. Forty matched transitions
+time out. Both decoders stay live. Seven requests fulfill, with nine new decoded
+and ten encoded keys. Video sends **32.46 kbps**, median target **48 kbps**;
+audio sends **130.79 kbps**, median primary target **64 kbps**. Release lateness
+reaches **746.84 ms**. Equal local priority does not resolve the observed
+allocation/cadence collapse and is not selected for production.
+
+Prior codec evidence is reviewed before another comparison: native VP9
+previously encoded 21.78 fps but decoded 16.90 fps, while H.264 cadence was
+unstable across traces. Owned bounded packet ordering is a new mechanism since
+those earlier native-output comparisons. No codec, priority or bitrate policy
+change is justified for deployment yet.
+
+
+### Declared VP9 through the owned reorder/decoder path — 2026-10-04
+
+A scoped comparison extends the private continuous decoder to declared VP9
+using `vp09.00.31.08`, while the default remains VP8. It requires native codec
+support, exact received payload MIME matching, 1280×720 output and the existing
+I420/NV12 allocation ceiling. Unknown codecs and fallback payloads fail before
+transfer. Four pending/ready outputs, two transferred outputs, 20 held encoded
+packets / 512 KiB and the 32-frame presentation queue remain unchanged. The
+[VP9 WebCodecs registration](https://www.w3.org/TR/webcodecs-vp9-codec-registration/)
+describes frame payloads and qualified codec strings; native capability and
+actual output still need the browser run.
+
+The harness admits owned PCM with an advanced codec only for an explicitly
+marked nominal VP9 comparison artifact: 350 kbps, requested 25 fps, default
+transport, no source keyframe override, and backup codec disabled by the private
+builder. This comparison retains the original Opus/RED policy, output permission
+guard, expiry and acceptance limits. Equal-priority tuning is not combined with
+this codec comparison. Fixtures pass **144/144** in
+`/tmp/ktv-owned-vp9-nominal-decoder-fixtures-20261004.log`. The separate build completes
+at `/tmp/ktv-codec-candidate-owned-vp9-20261004` with production source and
+every dist byte preserved (log `/tmp/ktv-owned-vp9-private-build-20261004.log`).
+Production and frozen preview index SHA256 remain
+`19c5921520411deb8728b7975dd8d7a6b362eb33cdb0a0fc46852aee52ecb9ed`.
+A full native UDP/recovery/handover run is in progress using the declared decoder,
+original source priorities and five-second late-reference feedback. No codec
+choice or release acceptance is claimed.
+
+
+### VP9 startup exposes a private worker codec allowlist omission — 2026-10-04
+
+`/tmp/ktv-owned-av-vp9-gap-reorder-full-udp-20261004.log` exits 1 before
+baseline timing: `VIDEO_PACKET`, no decoded video. Native sender and receiver
+metadata both identify **video/VP9**, while the worker receives no matching codec
+entry. The private receiver attachment still filters its native codec parameters
+to Opus/RED/VP8. This omitted VP9 from the worker before its exact payload-MIME
+validation; it does not establish a codec capability or timing failure.
+
+Both reserved-legacy and standard attachment paths now allowlist native VP9
+codec parameters as payloadType plus normalized MIME only, excluding fmtp and
+arbitrary fields. The decoder still rejects any mismatch with the artifact's
+declared codec. The suite before this admission fix passes **145/145** in
+`/tmp/ktv-owned-vp9-declared-codec-state-fixtures-20261004.log`; the added native
+codec-admission fixture verifies both API paths and secret-field exclusion. A
+corrected full run will follow fixture verification.
+
+
+The corrected codec-admission suite passes **146/146** in
+`/tmp/ktv-owned-vp9-codec-admission-fixtures-20261004.log`. The full corrected
+native run is in progress at
+`/tmp/ktv-owned-av-vp9-admitted-gap-reorder-full-udp-20261004.log`.

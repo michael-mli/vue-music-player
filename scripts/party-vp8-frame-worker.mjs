@@ -1,6 +1,7 @@
 // Private receiver worker. Decoding starts at the first received keyframe;
 // binding a port only transfers ownership, never permission to present output.
-export function installVp8FrameWorker(createStream,reorderMs=80,recover=false,recoveryMs=5000,gapAware=false){
+export function installVp8FrameWorker(createStream,reorderMs=80,recover=false,recoveryMs=5000,gapAware=false,codec='vp8'){
+  if(!['vp8','vp9'].includes(codec))throw new Error('VIDEO_CODEC_CONFIG')
   if(!Number.isInteger(recoveryMs)||recoveryMs<1000||recoveryMs>5000)throw new Error('VIDEO_RECOVERY_CONFIG')
   let stream,port,timer,bound=false,closed=false,reason=null,expiry,lastWall=Date.now(),lastMono=performance.now()
   let lastKey=-Infinity,lastRequest=-Infinity,keyframePending=false,keyframeRequests=0,keyframeFulfilled=0
@@ -31,7 +32,7 @@ export function installVp8FrameWorker(createStream,reorderMs=80,recover=false,re
       credits.set(packet.id,packet.bytes)
       try{port.postMessage({type:'video-frame',frame,...packet},[frame]);return true}
       catch{credits.delete(packet.id);close('VIDEO_PORT_TRANSFER');return false}
-    },row=>close(row.reason),{reorderMs,gapAware})
+    },row=>close(row.reason),{reorderMs,gapAware,codec})
     if(closed){stream.close();return}
     timer=setInterval(()=>{
       check()
