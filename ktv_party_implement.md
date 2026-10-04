@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **140/140** pass.
+checks pass; party units **125/125** and timing/capability fixtures **143/143** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -4588,3 +4588,39 @@ recorded limitation until sustained testing explains or excludes recurrence.
 The next full UDP/recovery/handover run uses gap-only reorder with five-second
 feedback for unique late received references only. Source/audio/video profiles
 and all original 40-pair, nominal cadence and timing thresholds remain intact.
+
+
+### Late-reference feedback result and allocation comparison — 2026-10-04
+
+`/tmp/ktv-owned-av-gap-reorder-late-reference-feedback-full-udp-20261004.log`
+exits 1. Clean baseline maximum skew is **43.15 ms**. Impaired source/native
+receiver rates are **7.10/7.02 fps**, with owned decode/presentation **6.92/6.75
+fps**; nominal cadence and 40 matched transitions still fail. Both owned
+decoders stay live. Six requests fulfill with ten new encoded and decoded
+keys. The worker sees 513 pacing gaps, eight unique late frames, 90 reordered
+frames, 148 contiguous drains and 13 transfer waits. Release lateness averages
+**19.46 ms** but reaches **620.08 ms**. Fewer requests do not establish usable
+cadence or complete timing acceptance.
+
+Native sender readback now confirms audio `priority=high` /
+`networkPriority=high` and video `priority=low` / `networkPriority=low`. Audio
+sends **130.75 kbps**, median primary target **64 kbps**; video sends **54.62
+kbps**, median target **59 kbps** despite its unchanged 350-kbps cap. This
+supports investigating relative allocation as a separate hypothesis.
+
+The explicit private `KTV_ROOM_TEST_SOURCE_PRIORITY=equal` comparison changes
+only the nominal video's local priority to high. Native transactions preserve
+networkPriority (packet DSCP), 350-kbps/25-fps caps, degradation preference,
+encoding shape and all audio parameters. Readback failure closes the experiment;
+phase evidence requires an actual successful transaction and current high video
+priority. No source keyframe parameter API is used. The distinction between
+local allocation priority and packet network priority follows the
+[W3C WebRTC Priority Control API](https://www.w3.org/TR/webrtc-priority/#dom-rtcrtpencodingparameters-priority).
+This is a private comparison, not a production policy or acceptance claim.
+
+Fixtures pass **143/143** in
+`/tmp/ktv-source-priority-allocation-fixtures-20261004.log`, including unchanged
+audio/caps/network priority, unsupported/rejected/readback failure, exact-profile
+admission and permanent stop. A full original-profile UDP/recovery/handover run
+is in progress. All original timing, 40-pair, nominal cadence and memory gates
+remain in force.

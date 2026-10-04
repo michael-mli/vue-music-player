@@ -46,6 +46,7 @@ import { analyseCodecQuality, analyseCaptureCadence } from './party-av-codec-qua
 import { installEncodedLeaseObserver } from './party-encoded-lease-observer.mjs'
 import { installSenderKeyframeExperiment } from './party-sender-keyframes.mjs'
 import { installSenderCadenceExperiment } from './party-sender-cadence-experiment.mjs'
+import { installSenderPriorityExperiment } from './party-sender-priority-experiment.mjs'
 import { keyframeRecoveryStep } from './party-keyframe-recovery.mjs'
 import { collectRtcFeedback } from './party-rtc-feedback.mjs'
 import { publisherRembSdp, installPublisherRembExperiment } from './party-publisher-feedback.mjs'
@@ -99,6 +100,9 @@ assert.ok(!pcmPortProbe || encodedTiming && absoluteCapture && !avTiming && !cod
 assert.ok(!opusDecodeProbe || encodedTiming && absoluteCapture && !avTiming && !codecExperiment,
   'Opus capability decoding requires native capture evidence separately from output timing or codec comparisons')
 const senderCadence = process.env.KTV_ROOM_TEST_SENDER_CADENCE === 'text-l1t2'
+const equalSourcePriority=process.env.KTV_ROOM_TEST_SOURCE_PRIORITY==='equal'
+assert.ok(process.env.KTV_ROOM_TEST_SOURCE_PRIORITY===undefined||equalSourcePriority&&avTiming&&encodedTiming&&ownedVideo&&!codecExperiment,
+  'Equal source allocation requires nominal owned-video timing without a codec profile change')
 assert.ok(process.env.KTV_ROOM_TEST_SENDER_CADENCE === undefined || senderCadence,
   'Unknown sender cadence experiment')
 assert.ok(!senderCadence || avTiming && encodedTiming && !codecExperiment,
@@ -397,6 +401,7 @@ try {
       (${installEncodedLeaseObserver.toString()})();
       ${absoluteCapture ? `(${installAbsoluteCaptureExperiment.toString()})();` : ''}
       ${senderCadence ? `(${installSenderCadenceExperiment.toString()})();` : ''}
+      ${equalSourcePriority ? `(${installSenderPriorityExperiment.toString()})();` : ''}
       window.__partyClocks=[]; window.__partyPlaybacks=[]; window.__phaseEvidence=[];
       window.__receivedPermits=[];
       if(${receiverFault!=='off'}) {
@@ -735,6 +740,15 @@ try {
           evaluate(audience,`(${collectAvMediaStats.toString()})()`),
         ])
         avTimingSamples.push({phase,source,receiver})
+        if(equalSourcePriority){
+          const allocation=await evaluate(sourcePage,'__avSenderPriority.snapshot()')
+          avTimingSamples.at(-1).sourcePriority=allocation
+          assert.ok(allocation.applied>=1&&!allocation.stopped&&allocation.failures.length===0,
+            'Private allocation uses an actual successful native priority transaction')
+          const videos=source.senderParameters.filter(row=>row.kind==='video')
+          assert.ok(videos.length===1&&videos[0].encodings.length===1&&videos[0].encodings[0].priority==='high',
+            'Private source video retains the requested local allocation priority')
+        }
         if (demandKeyframes) {
           const audios = receiver.reports.filter(row => row.type === 'inbound-rtp' && row.kind === 'audio')
           const videos = receiver.reports.filter(row => row.type === 'inbound-rtp' && row.kind === 'video')
@@ -1149,7 +1163,7 @@ try {
     'TypeError','RangeError','ReferenceError','NetworkError','AbortError','InvalidStateError','OperationError']
   console.error('Runtime error categories:',JSON.stringify(errors.slice(0,8).map(message=>known.find(code=>message.includes(code))||'RuntimeError')))
   console.error('Media HTTP status (paths only):', JSON.stringify(mediaHttp))
-  for (const session of sessionSockets.keys()) console.error('UI state:', JSON.stringify(await evaluate(session, ` (async () => ({status:document.querySelector('[data-party-media-status]')?.textContent,encodedLeaseEvents:window.__encodedLeaseEvents,publisherFeedback:window.__publisherRembExperiment?.snapshot(),senderKeyframes:window.__avSenderKeyframes?.snapshot(),
+  for (const session of sessionSockets.keys()) console.error('UI state:', JSON.stringify(await evaluate(session, ` (async () => ({status:document.querySelector('[data-party-media-status]')?.textContent,encodedLeaseEvents:window.__encodedLeaseEvents,publisherFeedback:window.__publisherRembExperiment?.snapshot(),senderKeyframes:window.__avSenderKeyframes?.snapshot(),senderPriority:window.__avSenderPriority?.snapshot(),
     errors:[...document.querySelectorAll('[role=alert]')].map(item=>item.textContent), diagnostics:[...document.querySelectorAll('dl')].map(item=>item.textContent),
     av:window.__avObserver?.evidence,avSources:window.__avSources,phase:window.__phaseEvidence,clocks:window.__partyClocks,playbacks:window.__partyPlaybacks,gains:window.__gainNodes.map(node=>({gain:node.gain.value,context:window.__contexts.indexOf(node.context),automation:node.__automation})),receivedPeaks:window.__analyser?(()=>{const data=new Float32Array(__analyser.frequencyBinCount);__analyser.getFloatFrequencyData(data);return [440,660,880].map(frequency=>{const center=Math.round(frequency*__analyser.fftSize/__receiveContext.sampleRate);const value=Math.max(...data.slice(center-2,center+3));return Number.isFinite(value)?value:-120})})():null,ice:window.__iceEvidence, output:window.__outputEvidence, sources:window.__sourceEvidence, contexts:window.__contexts.map(item=>({state:item.state,time:item.currentTime})), canvas:[...document.querySelectorAll('canvas')].map(item=>({width:item.width,height:item.height,connected:item.isConnected})),
     video:[...document.querySelectorAll('video')].map(item=>({width:item.videoWidth,height:item.videoHeight,ready:item.readyState,paused:item.paused,muted:item.muted,tracks:item.srcObject?.getTracks().map(track=>({kind:track.kind,state:track.readyState,muted:track.muted,settings:track.getSettings()}))})),
@@ -1157,6 +1171,7 @@ try {
   }))()` ).catch(() => ({}))))
   throw error
 } finally {
+  if(equalSourcePriority)for(const session of sessionSockets.keys())await evaluate(session,'__avSenderPriority?.close()').catch(()=>{})
   if(pcmPortProbe)for(const session of sessionSockets.keys())await evaluate(session,'__receivedPcmProbe?.close()').catch(()=>{})
   if(controlledPlayoutMs !== null)for(const session of sessionSockets.keys()) await evaluate(session,'__controlledReceiver?.close()').catch(()=>{})
   if(encodedTiming) for(const session of sessionSockets.keys()) await evaluate(session,'__encodedTimingProbe?.close()').catch(()=>{})

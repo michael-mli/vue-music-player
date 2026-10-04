@@ -1403,7 +1403,10 @@ reference loss and do not request keys. A separate
 private gap mode decodes contiguous RTP promptly and waits up to 700 ms only
 for pacing gaps at an 800-ms hold. Ready outputs share the four-frame decoder
 reservation until exact transfer credits return. Impaired recovery
-and the new policy remain unaccepted.
+and the new policy remain unaccepted. A separate private allocation comparison
+raises only video local priority to match audio, retaining packet network priority
+and the nominal bitrate/framerate caps; actual native readback and full timing
+are required. It is not a deployed policy.
 
 Continuously impaired timing and nominal frame rate still fail. Native decoded
 video can arrive too late, while the owned decoder still needs reliable packet
