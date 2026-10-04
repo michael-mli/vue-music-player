@@ -9,15 +9,15 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
   let decoded = 0, gaps = 0, duplicates = 0, maximumChunks = 0, maximumBytes = 0
   let lastCaptureUnixMs=null,maximumResidualMs=0,captureAnchor=null
   let scheduledCaptureUnixMs=null,captureOffsetMs=0,maximumOffsetMs=0
-  let recovered=0
+  let recovered=0,closeReason=null,flushing=false,backpressureEvents=0
   let reorderTimer=null,reordered=0,maximumHeld=0
   const delta = (value, previous) => ((value-previous+0x80000000)>>>0)-0x80000000
   function snapshot() { return { closed, configured, decoded, gaps, duplicates, chunks:credits.size,
     encodedBytes, pcmBytes, maximumChunks, maximumBytes,lastCaptureUnixMs,maximumResidualMs,recovered,
-    scheduledCaptureUnixMs,captureOffsetMs,maximumOffsetMs,reordered,heldPackets:held.size,maximumHeld } }
+    scheduledCaptureUnixMs,captureOffsetMs,maximumOffsetMs,reordered,heldPackets:held.size,maximumHeld,reason:closeReason,backpressureEvents } }
   function close(reason = null) {
     if (closed) return
-    closed = true;clearTimeout(reorderTimer);held.clear()
+    closed = true;closeReason=reason;clearTimeout(reorderTimer);held.clear()
     pending.length = 0; expected.length = 0; credits.clear(); encodedBytes = 0; pcmBytes = 0
     try { if (decoder?.state !== 'closed') decoder?.close() } catch {}
     report({ type:'closed', reason, ...snapshot() })
@@ -69,6 +69,8 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
   function discard(packet){held.delete(packet.rtp);encodedBytes-=packet.bytes}
   function fail(error){close(['PCM_CLOCK','PCM_BOUND','PCM_PACKET'].includes(error.message)?error.message:'PCM_PACKET')}
   function flush(){
+    if(closed||flushing)return
+    flushing=true
     clearTimeout(reorderTimer);reorderTimer=null
     try{
       while(!closed&&held.size){
@@ -84,6 +86,7 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
             if(delta(rtp,lastEnd)<0)continue
             if(packetFrames(block.data)>block.timestampOffset)throw new Error('PCM_PACKET')
             if(delta(rtp,lastEnd)>0&&!expired)break
+            if(credits.size>=48||pcmBytes+packetFrames(block.data)*8>1024*1024){backpressureEvents++;return}
             accept(block.data,rtp,packet.capture-block.timestampOffset/48,true)
             if(closed)return
           }
@@ -92,9 +95,11 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
           reorderTimer=setTimeout(flush,Math.max(1,reorderMs-(performance.now()-packet.arrivedAt)))
           return
         }
+        if(credits.size>=48||pcmBytes+packetFrames(packet.data)*8>1024*1024){backpressureEvents++;return}
         discard(packet);accept(packet.data,packet.rtp,packet.capture)
       }
     }catch(error){fail(error)}
+    finally{flushing=false}
   }
   if (typeof AudioDecoder !== 'function' || typeof EncodedAudioChunk !== 'function') close('PCM_API')
   else void AudioDecoder.isConfigSupported({codec:'opus',sampleRate:48000,numberOfChannels:2}).then(result=>{
@@ -149,6 +154,7 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
       const credit = credits.get(id)
       if (!credit?.delivered || !Number.isSafeInteger(bytes) || credit.bytes!==bytes) { close('PCM_CREDIT'); return }
       credits.delete(id); pcmBytes -= bytes
+      flush()
     }, close, snapshot
   }
 }

@@ -4370,3 +4370,32 @@ cooldown, recent-key suppression, stop, missing API and missing/reset native
 keyframe response evidence. A full 40-pair UDP/recovery/handover run is in
 progress on the unchanged nominal profile and memory/timing limits. Impaired
 acceptance, product integration and remaining release requirements stay open.
+
+
+### PCM credit backpressure during native feedback testing — 2026-10-04
+
+`/tmp/ktv-owned-av-native-receiver-recovery-full-udp-20261004.log` exits 1.
+Clean baseline maximum skew is **80.99 ms**, with both UDP proxy routes verified.
+The owned PCM decoder closes near the start of impairment (`PLAYOUT_PCM_DECODER`
+at the adapter), before any receiver keyframe request; maximum PCM credits are
+48. Default output latency at closure is 41.05 ms, so this is a different failure
+from the earlier 202.99-ms output guard closure. Native source/receiver video
+rates remain **22.79/22.51 fps**, while closed owned presentation supplies no
+valid impaired evidence. The Native receiver feedback hypothesis is untested.
+
+The PCM decoder previously treated a full 48-credit render queue as a terminal
+bound violation. It now pauses decoding inside the existing **eight-packet /
+512-KiB shared encoded queue**, then resumes on exact consumed credits. Partial
+RED repairs retain their remaining primary/history until credits become available
+and do not decode recovered samples twice. PCM remains at **48 chunks / 1 MiB**;
+continued decoder/render stalls still overflow the unchanged encoded bound and
+close permanently. Fixed capture scheduling, source/clock/expiry limits and all
+video/memory/timing gates remain unchanged. Terminal decoder/port reasons are
+now propagated as allowlisted error codes for the next native diagnosis.
+
+Fixtures pass **133/133** in
+`/tmp/ktv-owned-pcm-credit-backpressure-fixtures-20261004.log`, including staged
+RED credit return and stalled render/decode overflow without resurrection.
+A full standard-receiver UDP/recovery/handover rerun is in progress. Buffered
+expiry with the updated owned video/PCM path, sustained output, recovery, product
+integration and the full physical/mobile/capacity/release gates remain pending.

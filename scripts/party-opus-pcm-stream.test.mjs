@@ -52,7 +52,7 @@ test('RED recovers two missing primary packets in RTP order and excludes pre-sta
   first.stream.observe({timestamp:1920,data:red([1920,960]).buffer},{captureTime:40,payloadType:63})
   assert.equal(first.packets.length,1);assert.equal(first.packets[0].rtpTimestamp,1920);first.stream.close()
 })
-test('RED recovery across RTP wrap preserves credits; overlapping repair or bounded overflow closes safely',async()=>{
+test('RED recovery across RTP wrap preserves credits and resumes bounded repairs as render credits arrive',async()=>{
   const f=fixture();await tick();const start=0xfffffe00;f.send(start,0)
   f.stream.observe({timestamp:(start+1920)>>>0,data:red([960]).buffer},{captureTime:40,payloadType:63})
   assert.equal(f.stream.snapshot().recovered,1);assert.equal(f.stream.snapshot().gaps,0)
@@ -62,7 +62,13 @@ test('RED recovery across RTP wrap preserves credits; overlapping repair or boun
   assert.equal(bad.messages[0].reason,'PCM_PACKET');assert.equal(bad.stream.snapshot().pcmBytes,0)
   const full=fixture();await tick();for(let i=0;i<47;i++)full.send(i*960)
   full.stream.observe({timestamp:49*960,data:red([1920,960]).buffer},{captureTime:980,payloadType:63})
-  assert.equal(full.messages[0].reason,'PCM_BOUND');assert.equal(full.stream.snapshot().pcmBytes,0)
+  assert.equal(full.stream.snapshot().closed,false);assert.equal(full.stream.snapshot().chunks,48)
+  assert.equal(full.stream.snapshot().heldPackets,1);assert.equal(full.stream.snapshot().recovered,1)
+  full.stream.consumed({id:full.packets[0].id,bytes:7680})
+  assert.equal(full.stream.snapshot().recovered,2);assert.equal(full.packets.length,49)
+  full.stream.consumed({id:full.packets[1].id,bytes:7680})
+  assert.equal(full.packets.length,50);assert.equal(full.stream.snapshot().gaps,0)
+  assert.equal(full.stream.snapshot().heldPackets,0);full.stream.close()
 })
 test('bounded reordering admits an earlier primary without silence, handles wrap and cannot refresh capture authority',async()=>{
   const f=fixture({reorderMs:80});await tick();const start=0xfffffe00
@@ -137,12 +143,12 @@ test('renderer consumes stream credits across RTP wrap and renders missing packe
 test('stalled decoding or rendering stays bounded and cannot reopen after overflow',async()=>{
   for(const delayed of [false,true]) {
     const f=fixture({delayed});await tick()
-    for(let i=0;i<49;i++)f.send(i*960)
+    for(let i=0;i<57;i++)f.send(i*960)
     assert.equal(f.messages[0].reason,'PCM_BOUND')
     assert.equal(f.stream.snapshot().maximumChunks,48)
     assert.equal(f.stream.snapshot().pcmBytes,0);assert.equal(f.stream.snapshot().encodedBytes,0)
     f.flush();assert.ok(f.outputs.every(frame=>frame.closes===1))
-    const count=f.packets.length;f.send(49*960);assert.equal(f.packets.length,count)
+    const count=f.packets.length;f.send(57*960);assert.equal(f.packets.length,count)
   }
 })
 test('duplicate packets never read payload; invalid clocks, PCM and forged credits fail closed',async()=>{

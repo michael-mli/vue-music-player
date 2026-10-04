@@ -90,9 +90,11 @@ export function installEncodedTimingProbe(workerSource,receiverApi='native') {
     worker.addEventListener('message', ({ data }) => {
       if(direction==='receive'&&data?.type==='pcm-port-state') {
         const row={worker:id,closed:data.closed===true,configured:data.configured===true,observedAt:performance.now()}
-        for(const key of ['decoded','gaps','duplicates','chunks','encodedBytes','pcmBytes','maximumChunks','maximumBytes','recovered','reordered','heldPackets','maximumHeld'])
+        for(const key of ['decoded','gaps','duplicates','chunks','encodedBytes','pcmBytes','maximumChunks','maximumBytes','recovered','reordered','heldPackets','maximumHeld','backpressureEvents'])
           if(Number.isSafeInteger(data[key])&&data[key]>=0)row[key]=data[key]
         for(const key of ['lastCaptureUnixMs','maximumResidualMs','scheduledCaptureUnixMs','captureOffsetMs','maximumOffsetMs'])if(Number.isFinite(data[key]))row[key]=data[key]
+        row.reason=[null,'PCM_CLOCK','PCM_BOUND','PCM_PACKET','PCM_OUTPUT','PCM_API','PCM_CONFIG','PCM_DECODE','PCM_CREDIT',
+          'PCM_PORT_CLOCK','PCM_PORT_SCHEDULE','PCM_PORT_MESSAGE','PCM_PORT_DECODER'].includes(data.reason)?data.reason:'PCM_PORT_DECODER'
         pcmStates.push(row);if(pcmStates.length>64)pcmStates.shift();return
       }
       if(direction==='receive'&&data?.type==='pcm-port-error'){errors++;failures.pipe++;return}
