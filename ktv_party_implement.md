@@ -4281,3 +4281,20 @@ checks pass **8/8** in
 encoded count above the selected cap. A full UDP/recovery/handover run without
 keyframe requests is in progress. Native acceptance and product integration
 remain pending; all physical/mobile/capacity/persistent-SFU release work remains.
+
+
+### Extended-window startup output failure — 2026-10-04
+
+`/tmp/ktv-owned-av-extended-repair-full-udp-native-20261004.log` exits 1 before
+baseline matching: owned PCM closes with `PLAYOUT_PCM_OUTPUT_LATENCY` when
+measured default-context output latency reaches **202.99 ms**, beyond the existing
+200-ms safety bound. The controller reports `PLAYOUT_AUDIO_CLOCK` after the
+adapter closes. Video remains healthy until that teardown: maximum held encoded
+queue 16, pending decode outputs three, input bytes 30,347, presentation queue
+16 frames / 22,118,400 bytes; release maximum lateness 32.05 ms. There is no
+encoded timing error, frame-clock jump or video allocation overflow.
+
+This run establishes neither clean nor impaired acceptance. One unchanged
+repeat is in progress to determine whether the output-latency failure recurs;
+no clock limit, output timestamp, PCM hold or timing/FPS threshold is adjusted.
+Native output stability and the extended packet-repair policy remain pending.
