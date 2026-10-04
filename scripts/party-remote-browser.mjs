@@ -21,10 +21,10 @@ async function unusedLocalPort(port) {
   await new Promise(resolve => server.close(resolve))
 }
 
-export async function createOwnedRemoteBrowser({ host, knownHosts, micFile, frontendPort, debugPort = 9243, isolatedOutput = false, captureOutput = isolatedOutput, captureActivity = false,
+export async function createOwnedRemoteBrowser({ host, knownHosts, micFile, frontendPort, debugPort = 9243, localDebugPort = debugPort,isolatedOutput = false, captureOutput = isolatedOutput, captureActivity = false,
   chromeBin = process.env.KTV_ROOM_TEST_CHROME_BIN || '/usr/bin/google-chrome' }) {
   if (!/^[A-Za-z0-9_-]+@[A-Za-z0-9.-]+$/.test(host || '') || !knownHosts ||
-    ![debugPort, ...(frontendPort === undefined ? [] : [frontendPort])].every(port => Number.isInteger(port) && port >= 1024 && port <= 65535) || frontendPort === debugPort) {
+    ![debugPort,localDebugPort, ...(frontendPort === undefined ? [] : [frontendPort])].every(port => Number.isInteger(port) && port >= 1024 && port <= 65535) || frontendPort === debugPort) {
     throw new Error('Invalid owned remote browser fixture configuration')
   }
   if(captureOutput&&!isolatedOutput) throw new Error('Output capture requires an isolated output')
@@ -32,7 +32,7 @@ export async function createOwnedRemoteBrowser({ host, knownHosts, micFile, fron
   if (!/^\/[A-Za-z0-9_./-]+$/.test(chromeBin) || chromeBin.split('/').includes('..')) throw new Error('Invalid owned browser binary path')
   const remotePorts = [debugPort, ...(frontendPort === undefined ? [] : [frontendPort])]
   const portFilter = '( ' + remotePorts.map(port => `sport = :${port}`).join(' or ') + ' )'
-  await unusedLocalPort(debugPort)
+  await unusedLocalPort(localDebugPort)
   const options = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'StrictHostKeyChecking=yes',
     '-o', `UserKnownHostsFile=${knownHosts}`]
   const ssh = (command, input) => run('ssh', [...options, host, command], input)
@@ -146,11 +146,11 @@ echo $!
     if (!/^[1-9][0-9]*$/.test(output)) throw new Error('Remote browser owner PID was not verified')
     pid = Number(output)
     forward = spawn('ssh', [...options, '-o', 'ExitOnForwardFailure=yes', '-N',
-      '-L', `127.0.0.1:${debugPort}:127.0.0.1:${debugPort}`,
+      '-L', `127.0.0.1:${localDebugPort}:127.0.0.1:${debugPort}`,
       ...(frontendPort === undefined ? [] : ['-R', `127.0.0.1:${frontendPort}:127.0.0.1:${frontendPort}`]), host], { stdio: 'ignore' })
     let forwardError = false
     forward.on('error', () => { forwardError = true })
-    const debuggerUrl = `http://127.0.0.1:${debugPort}`
+    const debuggerUrl = `http://127.0.0.1:${localDebugPort}`
     for (let attempt = 0; attempt < 100; attempt++) {
       if (forwardError || forward.exitCode !== null || forward.signalCode !== null) throw new Error('Owned SSH forwards did not start')
       let ready = false

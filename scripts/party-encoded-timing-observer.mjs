@@ -14,6 +14,10 @@ export function encodedTimingWorker(createAudioProbe = null, primaryPayload = nu
       let metadata={};try{metadata=frame.getMetadata?.()||{}}catch{}
       videoProbe??=createVideoProbe();videoProbe.observe(frame,metadata)
     }
+    if(kind==='video'&&self.__encodedTimingDirection==='receive'&&typeof self.__observeOwnedVideo==='function'){
+      let metadata={};try{metadata=frame.getMetadata?.()||{}}catch{}
+      self.__observeOwnedVideo(frame,metadata)
+    }
     const count = ++counts[kind]
     if (count > 4000) return
     const regular = count <= 8 || count % 100 === 0
@@ -64,10 +68,10 @@ export function installEncodedTimingProbe(workerSource) {
       readable.pipeThrough(stream).pipeTo(writable).catch(()=>self.postMessage({type:'timing-probe-error'}));
     };
     self.onrtctransform=({transformer})=>{self.__encodedTimingCodecs=transformer.options.codecs;attach(transformer.readable,transformer.writable,transformer.options.kind)};
-    self.onmessage=({data})=>{if(data?.type?.startsWith('pcm-'))return;self.__encodedTimingCodecs=data.codecs;attach(data.readable,data.writable,data.kind)};
+    self.onmessage=({data})=>{if(data?.type?.startsWith('pcm-')||data?.type?.startsWith('video-'))return;self.__encodedTimingCodecs=data.codecs;attach(data.readable,data.writable,data.kind)};
   `], { type: 'text/javascript' }))
   const records = [], states=[], audioDecoders=[],videoDecoders=[], workers = new Set(), urls = new Set([receiverUrl]), observedReceivers=new WeakSet()
-  const receiverWorkers=new WeakMap(),workerIds=new WeakMap(),pcmStates=[]
+  const receiverWorkers=new WeakMap(),workerIds=new WeakMap(),pcmStates=[],videoStates=[]
   let errors = 0, sequence = 0, wrappedSenders = 0
   const failures = { worker:0, pipe:0, occupied:0, unsupported:0 }
   function track(worker, direction) {
@@ -83,6 +87,16 @@ export function installEncodedTimingProbe(workerSource) {
         pcmStates.push(row);if(pcmStates.length>64)pcmStates.shift();return
       }
       if(direction==='receive'&&data?.type==='pcm-port-error'){errors++;failures.pipe++;return}
+      if(direction==='receive'&&data?.type==='video-port-error'){errors++;failures.pipe++;return}
+      if(direction==='receive'&&data?.type==='video-port-state'){
+        const row={worker:id,closed:data.closed===true,configured:data.configured===true,observedAt:performance.now()}
+        for(const key of ['decoded','discarded','encodedBytes','pending','maximumBytes','maximumPending','inFlight'])
+          if(Number.isSafeInteger(data[key])&&data[key]>=0)row[key]=data[key]
+        if(Number.isFinite(data.maximumResidualMs))row.maximumResidualMs=data.maximumResidualMs
+        row.reason=[null,'VIDEO_API','VIDEO_CONFIG','VIDEO_DECODE','VIDEO_PACKET','VIDEO_CLOCK','VIDEO_BOUND','VIDEO_OUTPUT',
+          'VIDEO_PORT_CLOCK','VIDEO_PORT_TRANSFER','VIDEO_PORT_MESSAGE','VIDEO_PORT_CREDIT'].includes(data.reason)?data.reason:'VIDEO_OUTPUT'
+        videoStates.push(row);if(videoStates.length>64)videoStates.shift();return
+      }
       if(direction==='receive'&&data?.type==='encoded-video-decode'&&['complete','error','unsupported','timeout','closed'].includes(data.status)){
         const row={worker:id,status:data.status,
           reason:[null,'API','CONFIG','DECODE','OUTPUT','CODEC','CLOCK','BOUND','TIMEOUT'].includes(data.reason)?data.reason:'OUTPUT',records:[]}
@@ -193,7 +207,7 @@ export function installEncodedTimingProbe(workerSource) {
       })
     }
   }
-  window.__encodedTimingProbe = { records,states,audioDecoders,videoDecoders,pcmStates,
+  window.__encodedTimingProbe = { records,states,audioDecoders,videoDecoders,pcmStates,videoStates,
     receiverWorker(track){return receiverWorkers.get(track)},workerId(worker){return workerIds.get(worker)}, features:{scriptTransform,
     legacySender:typeof RTCRtpSender.prototype.createEncodedStreams==='function',
     legacyReceiver, receiverApi:legacyReceiver?'legacy':scriptTransform?'standard':'unsupported'},

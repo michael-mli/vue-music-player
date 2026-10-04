@@ -25,6 +25,22 @@ test('a different controller session or exceeded frame/byte bound fails quality'
     assert.ok(analyseControlledReceiverQuality([sample(10, 1000), sample(260, 11000, extra)], 'impaired').errors.length > 0)
   }
 })
+test('owned video requires its actual decoder and unique draws to meet nominal cadence within the redistributed budget',()=>{
+  const owned=(count,time)=>sample(count,time,{drawn:count,maximumQueued:32,maximumBytes:33*1024*1024,
+    ownedVideo:{closed:false,maximumInFlight:2,decoder:{worker:1,configured:true,closed:false,
+      decoded:count,observedAt:time,maximumPending:4,maximumBytes:512*1024}}})
+  const first=owned(10,1000),last=owned(260,11000)
+  const good=analyseControlledReceiverQuality([first,last],'impaired')
+  assert.equal(good.decodedFps,25);assert.equal(good.drawnFps,25);assert.deepEqual(good.errors,[])
+  last.receiver.controlledReceiver.active.drawn=110
+  assert.ok(analyseControlledReceiverQuality([first,last],'impaired').errors.includes('PLAYOUT_OWNED_VIDEO_FPS'))
+  last.receiver.controlledReceiver.active.drawn=260
+  last.receiver.controlledReceiver.active.ownedVideo.decoder.decoded=110
+  assert.ok(analyseControlledReceiverQuality([first,last],'impaired').errors.includes('PLAYOUT_OWNED_VIDEO_FPS'))
+  last.receiver.controlledReceiver.active.ownedVideo.decoder.decoded=260
+  last.receiver.controlledReceiver.active.maximumQueued=33
+  assert.ok(analyseControlledReceiverQuality([first,last],'impaired').errors.includes('PLAYOUT_OWNED_VIDEO_EVIDENCE'))
+})
 
 test('the private decoder/player pair must have exactly one visible current stream with no raw audible path or stale players', () => {
   const element = controlled => ({ controlled, display: controlled ? 'block' : 'none', paused: false, muted: true,

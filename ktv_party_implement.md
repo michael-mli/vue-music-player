@@ -2,7 +2,7 @@
 
 Created: 2026-09-29
 
-Last updated: 2026-10-03
+Last updated: 2026-10-04
 
 Design reference: [ktv_party.md](ktv_party.md)
 
@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **110/110** pass.
+checks pass; party units **125/125** and timing/capability fixtures **119/119** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -4019,3 +4019,49 @@ clock discontinuity, diagnostic privacy and unchanged sender/receiver frame flow
 The bytes/codec interpretation follows the [W3C VP8 WebCodecs registration](https://www.w3.org/TR/webcodecs-vp8-codec-registration/)
 and the [encoded receiver transform boundary](https://www.w3.org/TR/webrtc-encoded-transform/).
 Product sources and the public deployment remain unchanged.
+
+### Continuous owned video prototype — 2026-10-04
+
+The private receiver now optionally warms a continuous VP8 decoder from the first
+keyframe, closes startup frames without capture metadata, and transfers later
+capture-associated VideoFrames into the existing PCM-clock presentation queue.
+Original RTC frames still flow unchanged. Video does not connect another audio
+output; the existing default-rate final lease graph retains audible authority.
+Decoder errors, clock discontinuity, forged credits and resource deadlines close
+owned frames, buffers and ports without allowing renewal to revive them.
+
+The decoder initially allowed two pending frames. Functional room/handover checks
+pass **43/43** (`/tmp/ktv-owned-av-functional-clock-diagnostic-native-20261003.log`),
+but two clean A/V attempts close during startup. The diagnostic run establishes
+`VIDEO_BOUND`, with two pending frames and no capture discontinuity:
+`/tmp/ktv-owned-av-clean-200-decoder-diagnostic-native-20261003.log`. The earlier
+failure remains recorded at `/tmp/ktv-owned-av-clean-200-native-20261003.log`.
+
+The pending decoder allowance is now four, with at most two transferred frames.
+The presentation queue is reduced to **32 frames / 33 MiB**. Including four
+decoder-pending frames, two transfers, one writer and one generator preserves the
+original **40-frame** ownership bound. Reserving eight full RGBA frames, 1 MiB
+PCM and two 512-KiB encoded budgets with the 33-MiB queue stays below **64 MiB**.
+Native codec/platform buffers outside this ownership accounting still require
+aggregate measurement. Expected decoder output retains metadata rather than a
+second JavaScript payload after WebCodecs takes its chunk copy.
+
+Quality checks require actual owned decoder output and unique draws, as well as
+presented frames, to remain **20–30 fps**. Synthetic presented counters cannot
+substitute for a slow decoder or repeated draws. Tests retain the smaller owned
+queue/codec limits. All timing fixtures pass **119/119**:
+`/tmp/ktv-owned-video-isolated-host-fixtures-20261004.log`.
+
+The four-pending clean attempt does not pass:
+`/tmp/ktv-owned-av-clean-200-four-pending-native-20261004.log`. The source enters
+audio recovery after calculated phase reaches approximately **141 ms**. Existing
+rate correction is active (up to 1.005); clock RTT is low. This does not prove
+shared-host CPU load caused the source-clock failure. No source drift, marker,
+quality or expiry gate is relaxed.
+
+The native harness can now place the receiver on a separate SSH host with an
+independent loopback debug-forward port and binary path. The next comparison uses
+the same verified Chrome **154.0.8037.92** on separate four-CPU source/receiver
+hosts to distinguish shared-host effects. Source settings, capture evidence and
+acceptance gates remain unchanged. Clean timing, impaired timing, sustained
+clocks, owned-video integrated expiry and product/release acceptance are pending.
