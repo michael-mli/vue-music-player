@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { analyseCodecQuality, analyseCaptureCadence } from './party-av-codec-quality.mjs'
+import { analyseCodecQuality, analyseCaptureCadence, analyseSourceAllocation } from './party-av-codec-quality.mjs'
 
 test('periodic keyframes require measured cadence and reject missing, reset or ineffective counters', () => {
   const rows = fixture()
@@ -98,4 +98,42 @@ test('declared smaller bitrate caps retain nominal cadence, resolution and the o
     row.source.reports[0].framesEncoded = index * 50
   })
   assert.ok(analyseCodecQuality(rows, 'impaired', 'vp9', null, 175000).errors.includes('sourceFps-outside-nominal-range'))
+})
+
+
+function allocationFixture(){
+  const rows=fixture()
+  rows.forEach((row,index)=>{
+    Object.assign(row.source.reports[0],{peer:0,bytesSent:index*62500,targetBitrate:30000,
+      qualityLimitationReason:'none',secret:'private-video'})
+    row.source.reports.push({type:'outbound-rtp',kind:'audio',peer:0,ssrc:3,bytesSent:index*80000,secret:'private-audio'},
+      {type:'selected-transport',peer:0,availableOutgoingBitrate:50000+index*10000,currentRoundTripTime:.34,
+        localCandidateId:'private-candidate'})
+  });return rows
+}
+test('allocation diagnostics distinguish browser estimates and actual audio/video rates without inferring CPU or link limits',()=>{
+  const result=analyseSourceAllocation(allocationFixture(),'impaired')
+  assert.deepEqual(result.errors,[]);assert.equal(result.audioSharesTransport,true)
+  assert.deepEqual(result.videoTargetBps,{minimum:30000,median:30000,maximum:30000})
+  assert.deepEqual(result.estimatedVideoTransportBps,{minimum:50000,median:60000,maximum:70000})
+  assert.equal(result.videoBitrateBps,100000);assert.equal(result.audioBitrateBps,128000)
+  assert.equal(result.reportedVideoLimitation.none,3);assert.equal(result.reportedVideoLimitation.cpu,0)
+  assert.equal(/private-|ssrc|candidate|secret/.test(JSON.stringify(result)),false)
+  const rows=allocationFixture();rows.forEach(row=>row.source.reports[1].peer=1)
+  assert.equal(analyseSourceAllocation(rows,'impaired').audioSharesTransport,false)
+})
+test('allocation evidence rejects missing estimates, changed paths, reset counters and ambiguous transport without choosing favorable samples',()=>{
+  for(const change of [
+    rows=>{delete rows[1].source.reports[0].targetBitrate},
+    rows=>{rows[1].source.reports[2].availableOutgoingBitrate=Infinity},
+    rows=>{rows[2].source.reports[0].ssrc=9},
+    rows=>{rows[2].source.reports[1].bytesSent=1},
+    rows=>{rows[1].source.time=rows[0].source.time},
+    rows=>{rows[1].source.reports.push({...rows[1].source.reports[2]})},
+    rows=>{rows[1].source.reports[2].peer=1},
+  ]){
+    const rows=allocationFixture();change(rows)
+    assert.ok(analyseSourceAllocation(rows,'impaired').errors.length)
+  }
+  assert.deepEqual(analyseSourceAllocation(Array(1025).fill(null),'impaired').errors,['allocation-sample-bound'])
 })

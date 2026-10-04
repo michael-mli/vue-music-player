@@ -91,3 +91,58 @@ export function analyseCaptureCadence(samples, phase) {
   }
   return result
 }
+
+
+// Diagnostic evidence only: estimated transport capacity is not a measured
+// link limit or a reason to waive the cadence/skew release requirements.
+export function analyseSourceAllocation(samples, phase) {
+  const result={phase,samples:0,errors:[]}
+  if(!Array.isArray(samples)||samples.length>1024){result.errors.push('allocation-sample-bound');return result}
+  const rows=samples.filter(item=>item.phase===phase);result.samples=rows.length
+  if(rows.length<2){result.errors.push('insufficient-samples');return result}
+  const selected=rows.map(item=>{
+    const reports=item.source?.reports||[]
+    const video=reports.filter(row=>row.type==='outbound-rtp'&&row.kind==='video')
+    const audio=reports.filter(row=>row.type==='outbound-rtp'&&row.kind==='audio')
+    const transport=reports.filter(row=>row.type==='selected-transport'&&row.peer===video[0]?.peer)
+    return {time:item.source?.time,video,audio,transport}
+  })
+  if(selected.some(row=>row.video.length!==1||row.audio.length!==1||row.transport.length!==1)){
+    result.errors.push('ambiguous-allocation-path');return result
+  }
+  const first=selected[0],last=selected.at(-1),duration=last.time-first.time
+  if(duration<5000||!Number.isFinite(duration)||selected.some((row,index)=>!Number.isFinite(row.time)||
+    index&&row.time<=selected[index-1].time)){
+    result.errors.push('invalid-observation-clock');return result
+  }
+  for(const kind of ['video','audio']){
+    const initial=first[kind][0]
+    if(!Number.isSafeInteger(initial.peer)||initial.peer<0||initial.peer>=16||!Number.isFinite(initial.ssrc)||
+      selected.some(row=>row[kind][0].peer!==initial.peer||row[kind][0].ssrc!==initial.ssrc)){
+      result.errors.push('allocation-path-changed');return result
+    }
+    const bytes=selected.map(row=>row[kind][0].bytesSent)
+    if(bytes.some((value,index)=>!Number.isSafeInteger(value)||value<0||index&&value<bytes[index-1])){
+      result.errors.push('invalid-allocation-counter');return result
+    }
+  }
+  function distribution(values){
+    if(values.some(value=>!Number.isFinite(value)||value<0))return null
+    const sorted=values.slice().sort((a,b)=>a-b),middle=Math.floor(sorted.length/2)
+    return {minimum:sorted[0],median:sorted.length%2?sorted[middle]:(sorted[middle-1]+sorted[middle])/2,maximum:sorted.at(-1)}
+  }
+  const targets=distribution(selected.map(row=>row.video[0].targetBitrate))
+  const available=distribution(selected.map(row=>row.transport[0].availableOutgoingBitrate))
+  const rtt=distribution(selected.map(row=>row.transport[0].currentRoundTripTime))
+  if(!targets||!available||!rtt){result.errors.push('invalid-allocation-estimate');return result}
+  result.durationMs=duration
+  result.audioSharesTransport=selected.every(row=>row.audio[0].peer===row.video[0].peer)
+  result.videoTargetBps=targets;result.estimatedVideoTransportBps=available;result.videoTransportRttSeconds=rtt
+  for(const kind of ['video','audio'])result[kind+'BitrateBps']=(last[kind][0].bytesSent-first[kind][0].bytesSent)*8000/duration
+  result.reportedVideoLimitation={none:0,cpu:0,bandwidth:0,other:0,absent:0}
+  for(const row of selected){
+    const reason=row.video[0].qualityLimitationReason
+    result.reportedVideoLimitation[['none','cpu','bandwidth','other'].includes(reason)?reason:'absent']++
+  }
+  return result
+}

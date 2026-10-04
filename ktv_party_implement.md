@@ -49,7 +49,7 @@ is a preview; public online media is still disabled.
 
 | Check | Current evidence | Status |
 | --- | --- | --- |
-| Timing/capability fixtures | 158/158 | Pass |
+| Timing/capability fixtures | 160/160 | Pass |
 | Buffered expiry after both render contexts freeze/resume | 51/51, latest reader/revalidation | Pass for digital fixture |
 | Buffered expiry while source and listener pages stall | 46/46, latest reader/revalidation | Pass for digital fixture |
 | Fresh clean 40-pair A/V regression | 50/50; p95 52.44 ms / max 54.11 ms; nominal cadence | Pass for digital fixture |
@@ -70,7 +70,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **158/158** pass.
+checks pass; party units **125/125** and timing/capability fixtures **160/160** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -4949,3 +4949,41 @@ These results close the fresh clean and digital expiry regressions for this
 private change. Continuously impaired timing/cadence, actual revalidation
 listening quality, product integration and the remaining physical/mobile/
 capacity/release gates remain open. No deployed product asset changes.
+
+
+### Bounded allocation evidence separates capture from encoding — 2026-10-04
+
+The existing native capture diagnostic is extended with a separate allocation
+summary in successful and failed A/V runs. It reports actual sent audio/video
+rates, video target bitrate, the selected video transport's estimated outgoing
+capacity and RTT, and the browser's enumerated quality-limitation counters.
+It verifies a stable media path, monotonic byte counters, one matching selected
+transport and all samples' estimates. Missing/ambiguous/reset evidence fails the
+diagnostic. Output contains only fixed numeric summaries and enums; no candidate
+IDs, track identifiers, SDP or arbitrary report properties. It creates no new
+release exception or sender policy. Distinct audio/video peers are identified
+rather than assuming a common allocation budget.
+
+Reanalysis of the existing full failed UDP runs with the new helper gives:
+
+| Private comparison | Actual captured fps | Encoded fps | Median video target kbps | Median estimated outgoing kbps | Actual video/audio kbps |
+| --- | --- | --- | --- | --- | --- |
+| VP9 declared references + presentation pressure | 24.99 | 13.86 | 30.00 | 53.65 | 45.52 / 130.80 |
+| VP8 gap ordering + late-reference feedback | 25.00 | 7.10 | 59.00 | 126.88 | 54.62 / 130.75 |
+| VP8 equal local video priority | 25.01 | 3.67 | 48.00 | 104.16 | 32.46 / 130.79 |
+
+Each impaired phase has 86 samples over approximately 90 seconds, shares its
+actual audio/video peer, and has median video-transport RTT **338–344 ms**.
+All report the browser limitation enum `none`; this enum alone cannot explain
+or clear the observed encoded-frame shortfall. Stable 25-fps capture and low
+encoder targets are consistent with sender allocation pressure; these data do
+not prove its cause. Browser bandwidth estimates are predictions, not measured
+link-capacity limits. Independent random loss schedules prevent ranking the
+comparisons by these numbers.
+
+The new diagnostic validates all three retained native timelines without errors;
+this is reanalysis, not a new native acceptance run. Fixtures pass **160/160** in
+`/tmp/ktv-source-allocation-evidence-fixtures-20261004.log`, including unknown
+estimates, ambiguous transport, path/counter resets, distinct audio peers and
+private-field exclusion. Native runner syntax and `git diff --check` pass.
+Public product assets and all release requirements remain unchanged.
