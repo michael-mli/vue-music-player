@@ -15,7 +15,7 @@ async function fixture({hold=false,wrongSize=false,pendingConfig=false}={}){
     decode(chunk){
       chunks.push(chunk)
       const frame={timestamp:chunk.timestamp,codedWidth:wrongSize?640:1280,codedHeight:720,displayWidth:1280,displayHeight:720,
-        closes:0,allocationSize:()=>1280*720*3/2,close(){this.closes++}}
+        format:'I420',closes:0,allocationSize:()=>1280*720*3/2,close(){this.closes++}}
       frames.push(frame);if(hold)waiting.push(frame);else this.callbacks.output(frame)
     }
   }
@@ -40,6 +40,7 @@ test('eight received VP8 frames retain capture/RTP associations, preserve bytes 
   assert.deepEqual(Array.from(r.records,row=>row.rtpTimestamp),Array.from({length:8},(_,i)=>i*3600))
   assert.ok(r.records.every((row,i)=>row.captureUnixMs===10000+i*40&&row.width===1280&&row.height===720))
   assert.ok(f.frames.every(frame=>frame.closes===1))
+  assert.ok(r.records.every(row=>row.format==='I420'&&row.allocationBytes===1382400))
   f.probe.observe({get data(){throw new Error('closed probe cannot read')}},{captureTime:400})
   assert.equal(f.messages.length,1)
 })

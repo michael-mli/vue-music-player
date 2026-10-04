@@ -106,6 +106,7 @@ export function installEncodedTimingProbe(workerSource) {
         for(const key of ['maximumCaptureResidualMs','maximumProjectionMs'])if(Number.isFinite(data[key])&&data[key]>=0)row[key]=data[key]
         for(const record of (Array.isArray(data.records)?data.records:[]).slice(0,8)){
           const safe={}
+          if(['I420','I420A','I422','I444','NV12','RGBA','RGBX','BGRA','BGRX'].includes(record?.format))safe.format=record.format
           for(const key of ['timestamp','rtpTimestamp','captureUnixMs','width','height','allocationBytes','encodedArrivalMs','decodeDelayMs'])
             if(Number.isFinite(record?.[key]))safe[key]=record[key]
           row.records.push(safe)

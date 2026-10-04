@@ -33,6 +33,7 @@ export function createVp8DecodeProbe() {
       expected.delete(frame.timestamp);encodedBytes-=packet.bytes
       records.push({timestamp:frame.timestamp,rtpTimestamp:packet.rtp,captureUnixMs:packet.captureUnixMs,
         width:frame.codedWidth,height:frame.codedHeight,allocationBytes:bytes,
+        format:['I420','I420A','I422','I444','NV12','RGBA','RGBX','BGRA','BGRX'].includes(frame.format)?frame.format:null,
         encodedArrivalMs:packet.arrivalMs,decodeDelayMs:performance.now()-packet.observedAt})
       complete()
     }catch{finish('error','OUTPUT')}

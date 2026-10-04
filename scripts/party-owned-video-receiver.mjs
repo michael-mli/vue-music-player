@@ -26,7 +26,7 @@ export function createOwnedVideoReceiver(track){
         !Number.isInteger(data.rtpTimestamp)||data.rtpTimestamp<0||data.rtpTimestamp>0xffffffff||
         !Number.isFinite(data.captureUnixMs)||data.captureUnixMs<=lastCapture||
         data.frame.codedWidth!==1280||data.frame.codedHeight!==720||
-        !Number.isSafeInteger(data.bytes)||data.bytes<1||data.bytes>1280*720*4||data.frame.allocationSize()!==data.bytes){
+        !['I420','NV12'].includes(data.frame.format)||!Number.isSafeInteger(data.bytes)||data.bytes<1||data.bytes>1280*720*3/2||data.frame.allocationSize()!==data.bytes){
         if(data?.frame instanceof VideoFrame)data.frame.close();throw new Error('PLAYOUT_VIDEO_TRANSFER')
       }
       lastId=data.id;lastCapture=data.captureUnixMs

@@ -26,7 +26,7 @@ test('a different controller session or exceeded frame/byte bound fails quality'
   }
 })
 test('owned video requires its actual decoder and unique draws to meet nominal cadence within the redistributed budget',()=>{
-  const owned=(count,time)=>sample(count,time,{drawn:count,maximumQueued:32,maximumBytes:33*1024*1024,
+  const owned=(count,time)=>sample(count,time,{drawn:count,maximumQueued:32,maximumBytes:42.5*1024*1024,
     ownedVideo:{closed:false,maximumInFlight:2,decoder:{worker:1,configured:true,closed:false,
       decoded:count,observedAt:time,maximumPending:4,maximumBytes:512*1024}}})
   const first=owned(10,1000),last=owned(260,11000)

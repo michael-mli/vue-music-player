@@ -24,7 +24,7 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80}={}) {
       if(!packet||frame.codedWidth!==1280||frame.codedHeight!==720||frame.displayWidth!==1280||frame.displayHeight!==720)throw new Error('VIDEO_OUTPUT')
       expected.delete(frame.timestamp);encodedBytes-=packet.bytes
       const bytes=frame.allocationSize()
-      if(!Number.isSafeInteger(bytes)||bytes<1||bytes>1280*720*4)throw new Error('VIDEO_OUTPUT')
+      if(!['I420','NV12'].includes(frame.format)||!Number.isSafeInteger(bytes)||bytes<1||bytes>1280*720*3/2)throw new Error('VIDEO_OUTPUT')
       decoded++
       if(!captureAnchor||performance.now()-captureAnchor.observedAt>5000){discarded++;return}
       const offset=delta(packet.rtp,captureAnchor.rtp)/90

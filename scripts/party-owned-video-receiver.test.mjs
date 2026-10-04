@@ -6,7 +6,7 @@ import {createOwnedVideoReceiver} from './party-owned-video-receiver.mjs'
 function fixture(){
   const channels=[],messages=[]
   class Port{constructor(){this.messages=[]}postMessage(data){this.messages.push(data)}start(){}close(){this.closed=true}}
-  class Frame{constructor(){this.codedWidth=1280;this.codedHeight=720;this.closes=0}allocationSize(){return 100}close(){this.closes++}}
+  class Frame{constructor(){this.codedWidth=1280;this.codedHeight=720;this.format='I420';this.closes=0}allocationSize(){return 100}close(){this.closes++}}
   const worker={postMessage:packet=>messages.push(packet)},track={}
   const realm={ReadableStream,VideoFrame:Frame,Date:{now:()=>1000},
     MessageChannel:class{constructor(){this.port1=new Port();this.port2=new Port();channels.push(this)}},
@@ -30,4 +30,8 @@ test('overflow closes every transferred frame, drains late arrivals and prevents
   const late=f.send(4);assert.equal(late.closes,1)
   f.channels[0].port1.onmessage({data:{type:'video-stop'}})
   assert.equal(f.channels[0].port1.closed,true)
+})
+test('a non-YUV transfer cannot consume the bounded presentation reservation',()=>{
+  const f=fixture(),frame=new f.Frame();frame.format='RGBA';f.send(1,frame)
+  assert.equal(f.adapter.snapshot().error,'PLAYOUT_VIDEO_TRANSFER');assert.equal(frame.closes,1)
 })

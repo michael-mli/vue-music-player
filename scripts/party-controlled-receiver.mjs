@@ -37,10 +37,11 @@ export function installControlledReceiver(Clock, FrameQueue, delayMs = 800, crea
     try { audioReader = new MediaStreamTrackProcessor({ track: audioClone, maxBufferSize: 1 }).readable.getReader() }
     catch (failure) { video?.close();clone?.stop(); audioClone.stop(); void reader.cancel().catch(()=>{}); outputTrack.stop(); void writer.abort().catch(() => {}); player.srcObject = null; throw failure }
     original.after(player); const oldDisplay = original.style.display; original.style.display = 'none'
-    // Owned video reserves eight frames: four decoder-pending, two transferred,
-    // one writer and one generator. 33 MiB + eight full RGBA frames + 1 MiB
-    // PCM + two 512-KiB encoded budgets stays below the original 64 MiB.
-    const queue = new FrameQueue(ownedVideo?32:34, (ownedVideo?33:ownedPcm?41:42) * 1024 * 1024), videoClock = new Clock(90000), audioClock = new Clock(48000)
+    // Four pending codec outputs reserve full RGBA allocations. Owned outputs
+    // strictly admit I420/NV12 at <= 1.5 bytes/pixel, including two transfers,
+    // writer and generator. 42.5 MiB + 4 RGBA + 4 YUV + 2 MiB PCM/encoded
+    // is 63.83 MiB; 32 queued + eight reserved frames remains <= 40.
+    const queue = new FrameQueue(ownedVideo?32:34, (ownedVideo?42.5:ownedPcm?41:42) * 1024 * 1024), videoClock = new Clock(90000), audioClock = new Clock(48000)
     let epochOffset=null
     function pcmClock(){const data=state.pcm.snapshot(),decoder=data.decoder;return {status:data.closed?'lost':decoder?.decoded>=2?'ready':'waiting',
       anchors:decoder?.decoded||0,ageMs:decoder?Date.now()-decoder.lastCaptureUnixMs:null,maximumResidualMs:decoder?.maximumResidualMs||0}}
@@ -235,7 +236,7 @@ export function analyseControlledReceiverQuality(samples, phase) {
     const decoderFirst=first?.ownedVideo?.decoder,decoderLast=last?.ownedVideo?.decoder
     if(values.some(item=>!item?.ownedVideo||item.ownedVideo.closed||!item.ownedVideo.decoder?.configured||
       item.ownedVideo.decoder.closed||item.ownedVideo.maximumInFlight>2||item.ownedVideo.decoder.maximumPending>4||
-      item.ownedVideo.decoder.maximumBytes>512*1024||item.maximumQueued>32||item.maximumBytes>33*1024*1024||
+      item.ownedVideo.decoder.maximumBytes>512*1024||item.maximumQueued>32||item.maximumBytes>42.5*1024*1024||
       item.ownedVideo.decoder.worker!==decoderFirst?.worker))errors.push('PLAYOUT_OWNED_VIDEO_EVIDENCE')
     const decoderDuration=decoderLast?.observedAt-decoderFirst?.observedAt
     decodedFps=decoderDuration>0?(decoderLast.decoded-decoderFirst.decoded)/decoderDuration*1000:null

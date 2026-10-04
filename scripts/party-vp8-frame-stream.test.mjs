@@ -4,7 +4,7 @@ import vm from 'node:vm'
 import {setImmediate as tick} from 'node:timers/promises'
 import {createVp8FrameStream} from './party-vp8-frame-stream.mjs'
 
-async function fixture({hold=false,accept=true,reorderMs=0}={}){
+async function fixture({hold=false,accept=true,reorderMs=0,format='I420'}={}){
   const delivered=[],frames=[],reports=[],waiting=[]
   let now=1000,decoder,timerId=0
   const timers=new Map()
@@ -13,7 +13,7 @@ async function fixture({hold=false,accept=true,reorderMs=0}={}){
     constructor(callbacks){this.callbacks=callbacks;this.state='configured';decoder=this}
     configure(){}close(){this.state='closed'}
     decode(chunk){const frame={timestamp:chunk.timestamp,codedWidth:1280,codedHeight:720,displayWidth:1280,displayHeight:720,
-      closes:0,allocationSize:()=>1280*720*3/2,close(){this.closes++}}
+      format,closes:0,allocationSize:()=>1280*720*3/2,close(){this.closes++}}
       frames.push(frame);if(hold)waiting.push(frame);else this.callbacks.output(frame)}
   }
   const realm={ArrayBuffer,performance:{timeOrigin:10000,now:()=>now},VideoDecoder:Decoder,
@@ -43,6 +43,13 @@ test('a full transfer port can drop presentation while decoding every input and 
   assert.equal(f.stream.snapshot().decoded,100);assert.equal(f.stream.snapshot().discarded,100)
   assert.ok(f.frames.every(frame=>frame.closes===1));assert.equal(f.stream.snapshot().maximumPending,1)
   f.stream.close()
+})
+test('owned decoder rejects larger or unknown frame formats before transferring ownership',async()=>{
+  for(const format of ['RGBA',null]){
+    const f=await fixture({format});f.send(0)
+    assert.equal(f.reports[0].reason,'VIDEO_OUTPUT')
+    assert.equal(f.delivered.length,0);assert.equal(f.frames[0].closes,1)
+  }
 })
 test('stalled native decoding has at most four pending frames and fails closed without resurrection',async()=>{
   const f=await fixture({hold:true});for(let i=0;i<5;i++)f.send(i*3600)

@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **123/123** pass.
+checks pass; party units **125/125** and timing/capability fixtures **125/125** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -4153,3 +4153,30 @@ is increased. Timing fixtures pass **123/123** in
 `/tmp/ktv-owned-video-pressure-fixtures-20261004.log`, including burst admission
 and saturated-decoder closure. A full native UDP/recovery/handover rerun is in
 progress. Product integration and all remaining release gates remain open.
+
+
+### Native decoded-frame memory reservation — 2026-10-04
+
+The burst-pressure rerun reaches audible PCM/video startup, then fails the clean
+baseline with `PLAYOUT_QUEUE_BOUND`:
+`/tmp/ktv-owned-av-video-pressure-full-udp-native-20261004.log`.
+Source/encoded rates are 25.03/24.98 fps; owned decode/draw are 25.09/24.33 fps.
+The queue retains 25 I420 frames (34,560,000 bytes) before the next frame exceeds
+the earlier 33-MiB suballocation. Impaired phases are not reached.
+
+A separate native eight-frame probe passes **39/39** in
+`/tmp/ktv-vp8-received-format-native-20261004.log`: every output is I420 and
+allocates **1,382,400 bytes** at 1280×720. Output-format telemetry admits only
+known enum values and retains the existing eight-record cap.
+
+The private continuous decoder and transfer adapter now strictly admit I420/NV12
+outputs at no more than 1.5 bytes per pixel, rejecting other/unknown formats
+before transfer. The presentation suballocation becomes **32 frames / 42.5 MiB**.
+Four codec-pending outputs still reserve full RGBA; the two transferred frames,
+writer and generator reserve bounded YUV allocations. Including 1 MiB of PCM and
+two 512-KiB encoded budgets, retained payload reservation is **63.83 MiB / 40
+frames**, within the original gates. Opaque codec/platform storage and sustained
+memory acceptance remain open; this is a private format restriction, not a
+claim of mobile compatibility or deployment. Fixtures pass **125/125** in
+`/tmp/ktv-owned-video-yuv-budget-fixtures-20261004.log`. Full native UDP evidence
+with the redistributed budget remains pending.
