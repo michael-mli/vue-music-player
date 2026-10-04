@@ -64,3 +64,19 @@ test('startup can discard unpresentable frames while retaining a monotonic captu
   const selected = queue.take(200); assert.equal(selected.frame, frames[1]); selected.frame.close()
   queue.close(); assert.ok(frames.every(value => value.closed === 1))
 })
+
+test('one bounded producer waits for frame or byte space and stop resolves it without admitting more frames',async()=>{
+  const bytes=1280*720*3/2,queue=new CaptureFrameQueue(2,bytes*2),frames=[frame(bytes),frame(bytes),frame(bytes)]
+  queue.push(frames[0],0);queue.push(frames[1],40)
+  let resumed=false;const pending=queue.waitForSpace(bytes).then(value=>{resumed=value;return value})
+  await Promise.resolve();assert.equal(resumed,false);assert.equal(queue.snapshot().queued,2)
+  assert.throws(()=>queue.waitForSpace(bytes),/PLAYOUT_QUEUE_PRODUCER/)
+  const selected=queue.take(0);selected.frame.close();assert.equal(await pending,true)
+  queue.push(frames[2],80);const stopping=queue.waitForSpace(bytes);queue.close()
+  assert.equal(await stopping,false);assert.equal(await queue.waitForSpace(bytes),false)
+  assert.equal(queue.snapshot().queued,0);assert.equal(queue.snapshot().bytes,0)
+  assert.ok(frames.every(value=>value.closed===1))
+  const byteBound=new CaptureFrameQueue(2,bytes),original=frame(bytes);byteBound.push(original,0)
+  const space=byteBound.waitForSpace(bytes);byteBound.discardPending();assert.equal(await space,true)
+  assert.throws(()=>byteBound.waitForSpace(bytes+1),/PLAYOUT_FRAME_SIZE/);byteBound.close()
+})

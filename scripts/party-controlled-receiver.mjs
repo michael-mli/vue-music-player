@@ -47,14 +47,14 @@ export function installControlledReceiver(Clock, FrameQueue, delayMs = 800, crea
       anchors:decoder?.decoded||0,ageMs:decoder?Date.now()-decoder.lastCaptureUnixMs:null,maximumResidualMs:decoder?.maximumResidualMs||0}}
     let closed = false, frameId, presentationId, presented = 0, drawn = 0, missing = 0, maximumBytes = 0, maximumQueued = 0
     let firstPresentation = null, lastPresentation = null, error = null, ready = false, writing = false, lastOutputTimestamp = -Infinity
-    let decodedAudio = 0, closedAtUnixMs = null
+    let decodedAudio = 0, closedAtUnixMs = null, waitingReadFrame = null, presentationBackpressure = 0
     const videoArrival={count:0,totalMs:0,maximumMs:0,afterHold:0}
     const videoRelease={count:0,totalLateMs:0,maximumLateMs:0,over150:0,over250:0}
     const item = { original, state, snapshot() { return { session, ready, closed, closedAtUnixMs, error,
       delayMs, audioDelayMs: ownedPcm?delayMs:state.delay.delayTime.value * 1000,
       ...(ownedPcm?{pcm:state.pcm.snapshot(),epochOffset}:{}),
       ...(ownedVideo?{ownedVideo:video.snapshot()}:{}),
-      drawn, presented, missing, decodedAudio, maximumBytes, maximumQueued,
+      drawn, presented, missing, decodedAudio, maximumBytes, maximumQueued,presentationBackpressure,waitingReadFrame:waitingReadFrame?1:0,
       ...(ownedPcm?{videoArrival:{...videoArrival,meanMs:videoArrival.count?videoArrival.totalMs/videoArrival.count:null},
         videoRelease:{...videoRelease,meanLateMs:videoRelease.count?videoRelease.totalLateMs/videoRelease.count:null}}:{}),
       firstPresentation, lastPresentation, width: player.videoWidth, height: player.videoHeight, ...queue.snapshot(),
@@ -64,6 +64,9 @@ export function installControlledReceiver(Clock, FrameQueue, delayMs = 800, crea
         closed = true; closedAtUnixMs = Date.now(); state.sync.gain.value = 0
         state.pcm?.close()
         cancelAnimationFrame(frameId); player.cancelVideoFrameCallback(presentationId)
+        // The adapter still owns the borrowed frame's unreturned credit and
+        // closes it below, including a frame waiting for presentation space.
+        waitingReadFrame=null
         queue.close();video?.close(); clone?.stop(); audioClone.stop()
         void reader.cancel().catch(() => {}); void audioReader.cancel().catch(() => {})
         void writer.abort().catch(() => {}).finally(() => writer.releaseLock())
@@ -124,6 +127,18 @@ export function installControlledReceiver(Clock, FrameQueue, delayMs = 800, crea
             if(age>delayMs)videoArrival.afterHold++
           }
           if ((ownedPcm?pcmClock():audioClock.snapshot(now)).status === 'waiting') queue.discardPending()
+          if(ownedVideo){
+            if(queue.snapshot().queued>=32)presentationBackpressure++
+            // This borrowed frame keeps its existing transfer credit until
+            // admission. One pending reader remains inside the two-flight cap.
+            waitingReadFrame=frame
+            const admitted=await queue.waitForSpace(frame.allocationSize())
+            waitingReadFrame=null
+            if(closed||!admitted)break
+            if(video.snapshot().closed)throw new Error('PLAYOUT_VIDEO_DECODER')
+            const age=Date.now()-capture
+            if(!Number.isFinite(age)||age< -80||age>5000){video.consumed(value);frame.close();throw new Error('PLAYOUT_VIDEO_AGE')}
+          }
           queue.push(frame, capture)
           video?.consumed(value)
           const snapshot = queue.snapshot()

@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **153/153** pass.
+checks pass; party units **125/125** and timing/capability fixtures **154/154** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -4795,3 +4795,31 @@ independent gap traversal, required-reference repair, fixed missing-reference
 expiry, unsupported declarations and feedback only for missing references.
 A full native run is in progress at
 `/tmp/ktv-owned-av-vp9-required-references-full-udp-20261004.log`.
+
+
+### Presentation credit pressure after declared-reference decode — 2026-10-04
+
+`/tmp/ktv-owned-av-vp9-required-references-full-udp-20261004.log` exits 1
+before completing the six-pair baseline: the presentation queue reaches its
+unchanged bound and closes with `PLAYOUT_QUEUE_BOUND`. The source/native
+receiver retain **24.98/24.72 fps**. All 389 copied/decoded packets expose
+usable declarations; there are no missing references, late or reordered frames.
+This demonstrates reference-mode startup decoding but not baseline timing or
+impaired acceptance.
+
+The owned-video reader now waits for presentation space while retaining the
+existing transfer credit for its borrowed frame. One pending producer propagates
+pressure through the two-flight adapter and four pending decoder slots; the
+presentation queue stays **32 frames / 42.5 MiB**, with the same 40-frame /
+64-MiB payload reservation. Byte pressure also waits. Rendering or startup
+discard returns space; close resolves a waiting producer without admission,
+and the adapter releases its borrowed frame. Capture age is checked again
+after waiting. A second pending producer and invalid byte reservation are
+rejected. Native receive payloads and output permission remain unchanged.
+
+Fixtures pass **154/154** in
+`/tmp/ktv-video-presentation-credit-backpressure-fixtures-20261004.log`, covering
+frame/byte pressure, exact release and stop without resurrection. The integrated
+reference-mode rerun is in progress at
+`/tmp/ktv-owned-av-vp9-reference-presentation-backpressure-full-udp-20261004.log`.
+Updated buffered-expiry regression checks are required after this reader change.
