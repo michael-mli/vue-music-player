@@ -19,6 +19,7 @@ import { createKtvAssets } from '../server/ktv-assets.js'
 import { createKtvMediaWorker } from '../server/ktv-media-worker.js'
 import { createMediaTcpProxy } from './party-media-tcp-proxy.mjs'
 import { createMediaUdpProxy } from './party-media-udp-proxy.mjs'
+import { createLocalIceGuard } from './party-local-ice-guard.mjs'
 import { createOwnedRemoteBrowser } from './party-remote-browser.mjs'
 import { runRoomReceiverFault } from './party-room-receiver-fault.mjs'
 import { installAbsoluteCaptureExperiment } from './party-absolute-capture-experiment.mjs'
@@ -181,7 +182,7 @@ const provider = new RoomServiceClient(upstreamUrl, apiKey, apiSecret, { request
 const db = initDb(root), contexts = [], debuggerSockets = [], pending = new Map(), sessionSockets = new Map(), sessionTargets = new Map(), errors = [], mediaHttp = []
 const ownedTcp = new Set()
 const trackTcp = server => server.on('connection', socket => { ownedTcp.add(socket); socket.once('close', () => ownedTcp.delete(socket)) })
-let mediaProxy, audienceCircuits, frontend, backend, worker, realtime, chrome, remoteBrowser, avBrowser, hostBrowser, pulseModule, pathRoom, nativeSyncAudience, senderKeyframePage, running = false, nextId = 0, passed = 0
+let mediaProxy, localIceGuard, audienceCircuits, frontend, backend, worker, realtime, chrome, remoteBrowser, avBrowser, hostBrowser, pulseModule, pathRoom, nativeSyncAudience, senderKeyframePage, running = false, nextId = 0, passed = 0
 const check = (value, label) => { assert.ok(value, label); passed++; console.log(`PASS ${label}`) }
 const poll = async (work, label, timeout = 20000) => {
   const deadline = Date.now() + timeout
@@ -254,6 +255,11 @@ try {
     mediaProxy = await (impairmentProtocol === 'udp' ? createMediaUdpProxy : createMediaTcpProxy)({
       listenPort: impairmentProtocol === 'udp' ? 7882 : 7881, upstreamPort: impairmentProtocol === 'udp' ? 17902 : 17901,
       listenHost: '0.0.0.0', upstreamHost })
+    if(process.env.KTV_ROOM_TEST_BLOCK_LOCAL_ICE_BYPASS==='1'){
+      assert.ok(remoteMode&&impairmentProtocol==='udp','Local ICE isolation requires the owned remote UDP fixture')
+      localIceGuard=await createLocalIceGuard()
+      console.log('Private local ICE guard: active; scoped UDP source port 17902; 15-minute watchdog')
+    }
   }
   const rtc = remoteMode
     ? `  node_ip: ${process.env.KTV_ROOM_TEST_PUBLIC_IP}\n  use_external_ip: false\n  tcp_port: ${mediaImpairment ? 17901 : 7881}\n  udp_port: ${mediaImpairment ? 17902 : 7882}\n  interfaces:\n    includes: [${process.env.KTV_ROOM_TEST_INTERFACE}]\n`
@@ -813,6 +819,7 @@ try {
   }
   if (mediaImpairment) {
     const selected = [...await routes(phone), ...await routes(audience)]
+    console.log('Private selected media routes:',JSON.stringify(selected))
     check(selected.length>=2 && selected.every(item=>item.protocol===impairmentProtocol&&item.port===(impairmentProtocol==='udp'?7882:7881)), `publisher and audience media traverse the owned ${impairmentProtocol.toUpperCase()} proxy with no bypass`)
     mediaProxy.profile({delayMs:150,jitterMs:40,lossRate:impairmentProtocol==='udp'?0.05:0})
     if(avTiming) { await new Promise(resolve=>setTimeout(resolve,2000));await measureAv('impaired');await evaluate(audience,'__avObserver.stopRecording()');if(receiverSync!=='off')await evaluate(audience,'__avNativeSync.close()') }
@@ -1148,6 +1155,7 @@ try {
   for (const socket of ownedTcp) socket.destroy()
   for (const server of [frontend, backend]) if (server?.listening) await new Promise(resolve => { server.close(resolve); server.closeAllConnections() })
   if (running) await exec('docker', ['rm', '-f', container]).catch(() => {})
+  if(localIceGuard)await localIceGuard.close().catch(()=>{console.error('Private local ICE guard cleanup failed');process.exitCode=1})
   if (pulseModule) await exec('pactl', ['unload-module', pulseModule]).catch(() => {})
   db.close(); await fs.rm(root, { recursive: true, force: true })
 }

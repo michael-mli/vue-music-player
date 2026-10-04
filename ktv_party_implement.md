@@ -4174,9 +4174,30 @@ outputs at no more than 1.5 bytes per pixel, rejecting other/unknown formats
 before transfer. The presentation suballocation becomes **32 frames / 42.5 MiB**.
 Four codec-pending outputs still reserve full RGBA; the two transferred frames,
 writer and generator reserve bounded YUV allocations. Including 1 MiB of PCM and
-two 512-KiB encoded budgets, retained payload reservation is **63.83 MiB / 40
+two 512-KiB encoded budgets, retained payload reservation is **63.84 MiB / 40
 frames**, within the original gates. Opaque codec/platform storage and sustained
 memory acceptance remain open; this is a private format restriction, not a
 claim of mobile compatibility or deployment. Fixtures pass **125/125** in
 `/tmp/ktv-owned-video-yuv-budget-fixtures-20261004.log`. Full native UDP evidence
 with the redistributed budget remains pending.
+
+
+### Local receiver route isolation — 2026-10-04
+
+The redistributed-budget run passes six clean baseline pairs with maximum skew
+**62.14 ms**, source-to-video maximum **1046.30 ms** and a live bounded decoder:
+`/tmp/ktv-owned-av-yuv-budget-full-udp-native-20261004.log`. It stops at the
+unchanged no-bypass gate before any packet-loss phase. With the receiver on the
+SFU host, server-initiated local ICE checks can establish a direct peer-reflexive
+path outside the proxy; rewriting signaled candidates alone cannot isolate it.
+
+An explicit private `KTV_ROOM_TEST_BLOCK_LOCAL_ICE_BYPASS=1` option now installs
+one uniquely identified output rule for new UDP connections from fixture source
+port 17902 to local destinations. Established proxy-created replies remain
+allowed. The independent 15-minute watchdog and stdin closure remove the exact
+rule; normal cleanup verifies its absence. No existing policy is replaced.
+Native datagram checks verify proxy replies, blocked unsolicited local traffic
+and restored traffic after removal. Selected route logging contains only protocol
+and port, and the original no-bypass gate remains required. A full guarded-route
+UDP/recovery/handover run is in progress. Earlier bypassed runs provide no
+impaired-network acceptance.
