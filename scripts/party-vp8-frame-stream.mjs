@@ -10,15 +10,18 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAwar
   let reorderTimer,flushing=false,maximumHeld=0,duplicates=0,lateFrames=0,reordered=0,pressureDrains=0,highestRtp=null
   let decoder,configured=false,closed=false,sequence=0,encodedBytes=0
   let pumping=false,maximumReady=0,committedGaps=0,contiguousDrains=0,transferWaits=0
+  let outputDiagnostic=null,normalizedOutputs=0,maximumCopyBytes=0
   let lastRtp=null,lastTimestamp=0,captureAnchor=null,decoded=0,decodedKeyFrames=0,discarded=0,maximumBytes=0,maximumPending=0,maximumResidualMs=0
   const delta=(value,anchor)=>((value-anchor+0x80000000)>>>0)-0x80000000
   function snapshot(){return {closed,configured,decoded,decodedKeyFrames,discarded,encodedBytes,pending:expected.size,
     maximumBytes,maximumPending,maximumReady,maximumResidualMs,heldPackets:held.size,maximumHeld,heldLimit,duplicates,lateFrames,reordered,pressureDrains,reorderMs,
-    codec,gapAware,committedGaps,contiguousDrains,transferWaits}}
+    codec,gapAware,committedGaps,contiguousDrains,transferWaits,outputDiagnostic,normalizedOutputs,maximumCopyBytes}}
   function close(reason=null){
     if(closed)return
     closed=true;clearTimeout(reorderTimer);held.clear();seen.clear();pending.length=0
-    for(const packet of expected.values())packet.frame?.close()
+    for(const packet of expected.values()){
+      packet.frame?.close();packet.copyFrame?.close();packet.copyFrame=null
+    }
     expected.clear();encodedBytes=0
     try{if(decoder?.state!=='closed')decoder?.close()}catch{}
     report({reason,...snapshot()})
@@ -43,21 +46,52 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAwar
       }
     }finally{pumping=false}
   }
-  function output(frame){
-    let owned=false
+  async function output(frame){
+    let owned=false,packet
     try{
       if(closed)return
-      const packet=expected.get(frame.timestamp)
-      if(!packet||packet.frame||frame.codedWidth!==1280||frame.codedHeight!==720||frame.displayWidth!==1280||frame.displayHeight!==720)throw new Error('VIDEO_OUTPUT')
+      packet=expected.get(frame.timestamp)
+      if(!outputDiagnostic){
+        outputDiagnostic={associated:!!packet}
+        for(const key of ['codedWidth','codedHeight','displayWidth','displayHeight'])
+          if(Number.isSafeInteger(frame[key])&&frame[key]>=0&&frame[key]<=8192)outputDiagnostic[key]=frame[key]
+        if(['I420','I420A','I422','I444','I420P10','I422P10','I444P10','NV12','RGBA','RGBX','BGRA','BGRX'].includes(frame.format))
+          outputDiagnostic.format=frame.format
+        const allocation=frame.allocationSize()
+        if(Number.isSafeInteger(allocation)&&allocation>=0&&allocation<=16*1024*1024)outputDiagnostic.bytes=allocation
+      }
+      if(!packet||packet.outputStarted||frame.displayWidth!==1280||frame.displayHeight!==720)throw new Error('VIDEO_OUTPUT')
+      packet.outputStarted=true
       const bytes=frame.allocationSize()
       if(!['I420','NV12'].includes(frame.format)||!Number.isSafeInteger(bytes)||bytes<1||bytes>1280*720*3/2)throw new Error('VIDEO_OUTPUT')
+      if(frame.codedWidth!==1280||frame.codedHeight!==720){
+        const rect=frame.visibleRect
+        if(typeof VideoFrame!=='function'||typeof frame.copyTo!=='function'||
+          !Number.isSafeInteger(frame.codedWidth)||frame.codedWidth<1280||frame.codedWidth>1344||
+          !Number.isSafeInteger(frame.codedHeight)||frame.codedHeight<720||frame.codedHeight>784||
+          !rect||rect.width!==1280||rect.height!==720||!Number.isSafeInteger(rect.x)||!Number.isSafeInteger(rect.y)||
+          rect.x<0||rect.y<0||rect.x+1280>frame.codedWidth||rect.y+720>frame.codedHeight)throw new Error('VIDEO_OUTPUT')
+        // The full-RGBA slot covers padded YUV plus this exact visible copy.
+        // Close the original before constructing its replacement so each
+        // pending slot retains at most one decoded frame throughout the copy.
+        const input=frame,format=frame.format,timestamp=frame.timestamp,colorSpace=frame.colorSpace
+        const data=new ArrayBuffer(bytes);maximumCopyBytes=Math.max(maximumCopyBytes,bytes)
+        packet.copyFrame=input;owned=true
+        const layout=await input.copyTo(data,{rect:{x:rect.x,y:rect.y,width:1280,height:720}})
+        if(closed)return
+        input.close();packet.copyFrame=null;frame=null;owned=false
+        frame=new VideoFrame(data,{format,codedWidth:1280,codedHeight:720,displayWidth:1280,displayHeight:720,timestamp,layout,colorSpace})
+        if(frame.codedWidth!==1280||frame.codedHeight!==720||frame.displayWidth!==1280||frame.displayHeight!==720||
+          frame.format!==format||frame.allocationSize()!==bytes)throw new Error('VIDEO_OUTPUT')
+        normalizedOutputs++
+      }
       decoded++
       if(packet.type==='key')decodedKeyFrames++
       encodedBytes-=packet.bytes;packet.bytes=0;packet.frame=frame;packet.frameBytes=bytes;owned=true
       maximumReady=Math.max(maximumReady,[...expected.values()].filter(item=>item.frame).length)
       pump()
     }catch{close('VIDEO_OUTPUT')}
-    finally{if(!owned)frame.close();if(!closed)flush()}
+    finally{if(!owned)frame?.close();if(!closed)flush()}
   }
   function decode(packet){
     const chunk=new EncodedVideoChunk({type:packet.type,timestamp:packet.timestamp,data:packet.data})

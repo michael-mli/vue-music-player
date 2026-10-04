@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **146/146** pass.
+checks pass; party units **125/125** and timing/capability fixtures **148/148** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -4697,3 +4697,40 @@ The corrected codec-admission suite passes **146/146** in
 `/tmp/ktv-owned-vp9-codec-admission-fixtures-20261004.log`. The full corrected
 native run is in progress at
 `/tmp/ktv-owned-av-vp9-admitted-gap-reorder-full-udp-20261004.log`.
+
+
+### Declared VP9 first output fails the native frame contract — 2026-10-04
+
+`/tmp/ktv-owned-av-vp9-admitted-gap-reorder-full-udp-20261004.log` exits 1
+before timing, with a configured VP9 decoder and `VIDEO_OUTPUT` on its first
+output. No frame is transferred or presented. This differs from the corrected
+codec-parameter omission. The exact timestamp association, dimensions, known
+format and allocation ceiling remain strict. A single bounded output-shape
+diagnostic is added to distinguish these contract failures without recording
+image bytes. VP9 timing and cadence remain untested on the owned path.
+
+
+### Native codec padding normalized inside the existing reservation — 2026-10-04
+
+`/tmp/ktv-owned-av-vp9-output-shape-native-20261004.log` exits 1 before timing
+and identifies the first output precisely: associated timestamp, I420, coded
+**1344×720**, displayed **1280×720**, visible-plane allocation **1,382,400
+bytes**. Chrome's coded-width padding triggers the strict 1280 coded-width
+check; the visible image and nominal presentation resolution match the profile.
+
+The private decoder now copies an exact 1280×720 native visible rectangle into
+a nominal native VideoFrame, preserving pixel format, timestamp and color space.
+There is no image scaling. It accepts at most 64 pixels of coded padding per
+dimension, with the exact visible/display size and existing I420/NV12 byte
+ceiling. The original closes before constructing the replacement. One decoded
+frame remains owned per pending slot; padded YUV plus its temporary visible copy
+fit inside the existing full-RGBA slot reservation. No queue, aggregate frame
+count or 64-MiB payload ceiling grows. Stop closes originals during async copies
+and completed copies cannot transfer or construct replacement frames afterward.
+
+Fixtures pass **148/148** in
+`/tmp/ktv-owned-video-padding-normalization-fixtures-20261004.log`, including
+exact nominal transfer and four pending copies closed once without resurrection.
+The full VP9 UDP/recovery/handover run is in progress at
+`/tmp/ktv-owned-av-vp9-normalized-gap-reorder-full-udp-20261004.log`. Actual
+VP9 output/cadence/timing and all release requirements remain open.

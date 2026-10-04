@@ -102,7 +102,15 @@ export function installEncodedTimingProbe(workerSource,receiverApi='native') {
       if(direction==='receive'&&data?.type==='video-port-state'){
         const row={worker:id,closed:data.closed===true,configured:data.configured===true,observedAt:performance.now()}
         if(['vp8','vp9'].includes(data.codec))row.codec=data.codec
-        for(const key of ['decoded','decodedKeyFrames','discarded','encodedBytes','pending','maximumBytes','maximumPending','maximumReady','committedGaps','contiguousDrains','transferWaits','inFlight',
+        if(data.outputDiagnostic){
+          const input=data.outputDiagnostic,value={associated:input.associated===true}
+          for(const key of ['codedWidth','codedHeight','displayWidth','displayHeight'])
+            if(Number.isSafeInteger(input[key])&&input[key]>=0&&input[key]<=8192)value[key]=input[key]
+          if(Number.isSafeInteger(input.bytes)&&input.bytes>=0&&input.bytes<=16*1024*1024)value.bytes=input.bytes
+          if(['I420','I420A','I422','I444','I420P10','I422P10','I444P10','NV12','RGBA','RGBX','BGRA','BGRX'].includes(input.format))value.format=input.format
+          row.outputDiagnostic=value
+        }
+        for(const key of ['decoded','decodedKeyFrames','discarded','encodedBytes','pending','maximumBytes','maximumPending','maximumReady','committedGaps','contiguousDrains','transferWaits','normalizedOutputs','maximumCopyBytes','inFlight',
           'heldPackets','maximumHeld','heldLimit','duplicates','lateFrames','reordered','pressureDrains','reorderMs','recoveryMs','keyframeRequests','keyframeFulfilled'])
           if(Number.isSafeInteger(data[key])&&data[key]>=0)row[key]=data[key]
         if(Number.isFinite(data.maximumResidualMs))row.maximumResidualMs=data.maximumResidualMs

@@ -4,8 +4,8 @@ import vm from 'node:vm'
 import {setImmediate as tick} from 'node:timers/promises'
 import {createVp8FrameStream} from './party-vp8-frame-stream.mjs'
 
-async function fixture({hold=false,accept=true,reorderMs=0,format='I420',gapAware=false,codec='vp8',receivedCodec=codec}={}){
-  const delivered=[],frames=[],reports=[],waiting=[]
+async function fixture({hold=false,accept=true,reorderMs=0,format='I420',gapAware=false,codec='vp8',receivedCodec=codec,padded=false,copyHold=false}={}){
+  const delivered=[],frames=[],reports=[],waiting=[],copies=[]
   let now=1000,decoder,timerId=0,configUsed
   let acceptance=accept
   const timers=new Map()
@@ -13,12 +13,18 @@ async function fixture({hold=false,accept=true,reorderMs=0,format='I420',gapAwar
     static async isConfigSupported(config){return {supported:true,config}}
     constructor(callbacks){this.callbacks=callbacks;this.state='configured';decoder=this}
     configure(config){configUsed=config}close(){this.state='closed'}
-    decode(chunk){const frame={timestamp:chunk.timestamp,codedWidth:1280,codedHeight:720,displayWidth:1280,displayHeight:720,
+    decode(chunk){const frame={timestamp:chunk.timestamp,codedWidth:padded?1344:1280,codedHeight:720,displayWidth:1280,displayHeight:720,
+      visibleRect:{x:0,y:0,width:1280,height:720},
+      copyTo(data,options){assert.equal(options.rect.width,1280);assert.equal(options.rect.height,720);assert.equal(data.byteLength,1382400);
+        const layout=[{offset:0,stride:1280},{offset:921600,stride:640},{offset:1152000,stride:640}];
+        return copyHold?new Promise(resolve=>copies.push(()=>resolve(layout))):Promise.resolve(layout)},
       format,closes:0,allocationSize:()=>1280*720*3/2,close(){this.closes++}}
       frames.push(frame);if(hold)waiting.push(frame);else this.callbacks.output(frame)}
   }
   const realm={ArrayBuffer,performance:{timeOrigin:10000,now:()=>now},VideoDecoder:Decoder,
     EncodedVideoChunk:class{constructor(config){Object.assign(this,config)}},
+    VideoFrame:class{constructor(data,config){Object.assign(this,config);this.closes=0;frames.push(this)}
+      allocationSize(){return 1382400}close(){this.closes++}},
     __encodedTimingCodecs:[{payloadType:96,mimeType:`video/${receivedCodec}`}],deliver:(frame,packet)=>{if(acceptance===true)delivered.push({frame,...packet});return acceptance},report:row=>reports.push(row),reorderMs,gapAware,codec,
     setTimeout(callback,delay){const id=++timerId;timers.set(id,{callback,at:now+delay});return id},clearTimeout(id){timers.delete(id)}}
   realm.self=realm
@@ -26,7 +32,7 @@ async function fixture({hold=false,accept=true,reorderMs=0,format='I420',gapAwar
   await tick()
   const send=(rtp,captureTime=rtp/90,type=frames.length?'delta':'key')=>stream.observe(
     {timestamp:rtp>>>0,type,data:new Uint8Array([7]).buffer},{captureTime,payloadType:96})
-  return {get config(){return configUsed},stream,send,delivered,frames,reports,waiting,timers,setAccept(value){acceptance=value},advance(value){now=value;for(const [id,timer]of[...timers])if(timer.at<=now){timers.delete(id);timer.callback()}},
+  return {get config(){return configUsed},finishCopies(){while(copies.length)copies.shift()()},stream,send,delivered,frames,reports,waiting,timers,setAccept(value){acceptance=value},advance(value){now=value;for(const [id,timer]of[...timers])if(timer.at<=now){timers.delete(id);timer.callback()}},
     flush(){while(waiting.length)decoder.callbacks.output(waiting.shift())}}
 }
 test('gap-only repair decodes contiguous RTP immediately and drains repaired history before its fixed deadline',async()=>{
@@ -154,4 +160,19 @@ test('declared nominal VP9 uses its exact decoder configuration and rejects anot
   for(const value of f.delivered)value.frame.close();f.stream.close()
   const wrong=await fixture({codec:'vp9',receivedCodec:'vp8'});wrong.send(0)
   assert.equal(wrong.reports.at(-1).reason,'VIDEO_PACKET');assert.equal(wrong.delivered.length,0)
+})
+
+test('codec padding is copied without scaling and releases the original before transferring a nominal frame',async()=>{
+  const f=await fixture({codec:'vp9',padded:true});f.send(0);await tick()
+  assert.equal(f.delivered.length,1);assert.equal(f.delivered[0].frame.codedWidth,1280)
+  assert.equal(f.delivered[0].frame.codedHeight,720);assert.equal(f.frames[0].closes,1)
+  assert.equal(f.stream.snapshot().normalizedOutputs,1);assert.equal(f.stream.snapshot().maximumCopyBytes,1382400)
+  f.delivered[0].frame.close();f.stream.close();assert.ok(f.frames.every(frame=>frame.closes===1))
+})
+test('stop during a bounded padding copy closes every original once and never constructs or transfers replacements',async()=>{
+  const f=await fixture({codec:'vp9',padded:true,copyHold:true})
+  for(let i=0;i<4;i++)f.send(i*3600)
+  assert.equal(f.stream.snapshot().pending,4);assert.equal(f.stream.snapshot().maximumCopyBytes,1382400)
+  f.stream.close();f.finishCopies();await tick()
+  assert.equal(f.delivered.length,0);assert.equal(f.frames.length,4);assert.ok(f.frames.every(frame=>frame.closes===1))
 })
