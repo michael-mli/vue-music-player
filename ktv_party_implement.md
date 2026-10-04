@@ -4823,3 +4823,24 @@ frame/byte pressure, exact release and stop without resurrection. The integrated
 reference-mode rerun is in progress at
 `/tmp/ktv-owned-av-vp9-reference-presentation-backpressure-full-udp-20261004.log`.
 Updated buffered-expiry regression checks are required after this reader change.
+
+
+### Reference ordering with presentation pressure: clean baseline, impaired failure — 2026-10-04
+
+`/tmp/ktv-owned-av-vp9-reference-presentation-backpressure-full-udp-20261004.log`
+exits 1. The six-pair baseline completes with maximum skew **73.14 ms**,
+source/native/owned/presented rates **24.96/24.86/25.00/24.61 fps**. Impaired
+rates fall to **13.86/8.92/8.34/8.40 fps** and the required 40 matched
+transitions time out. Both owned decoders remain active. Eleven phase requests
+fulfill, with 17 new decoded and 21 encoded keys. The stream reports 298 missing
+declared references, 49 unique late frames and 115 reordered frames. Release
+lateness averages **14.84 ms** but reaches **1112.04 ms**, with four releases
+above 250 ms. Maximum presentation occupancy is 25; this particular run never
+requires presentation backpressure, so its native pressure behavior remains
+unproven despite passing bounded fixtures. Source allocation/cadence and complete
+impaired timing remain open.
+
+Updated both-context expiry is being checked on the nominal production VP8
+artifact after the asynchronous reader change, followed by source-task expiry.
+The previously accepted 51/51 and 46/46 results predate that change. Neither VP9
+nor dependency ordering is selected for product integration or deployment.
