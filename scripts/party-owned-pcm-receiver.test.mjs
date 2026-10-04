@@ -43,6 +43,8 @@ test('capture cursor uses output position and accepts the established 20-ms forw
   f.output.getOutputTimestamp=()=>({contextTime:.95,performanceTime:2015})
   assert.ok(Number.isFinite(f.receiver.captureCursor()))
   f.output.getOutputTimestamp=()=>({contextTime:.95,performanceTime:2021})
+  assert.equal(f.receiver.captureCursor(),null);assert.equal(f.receiver.node.gain.value,0)
+  f.advance(2050);f.output.getOutputTimestamp=()=>({contextTime:.95,performanceTime:2071})
   assert.equal(f.receiver.captureCursor(),null);assert.equal(f.receiver.snapshot().error,'PLAYOUT_PCM_OUTPUT_AGE')
 })
 test('video cursor follows the capture phase of audible PCM rather than a newer queued packet',async()=>{
@@ -72,4 +74,47 @@ test('closing during module startup cannot later bind a decoder or revive output
   const f=await fixture({pendingModule:true});f.receiver.close();f.moduleReady();await tick()
   assert.equal(f.receiver.snapshot().closed,true);assert.equal(f.receiver.snapshot().ready,false)
   assert.equal(f.messages.filter(row=>row.type==='pcm-bind').length,0);assert.equal(f.original.stops,0)
+})
+
+test('a brief invalid output timestamp stays silent and emits no cursor until an unchanged-bound sample validates',async()=>{
+  const f=await fixture();assert.ok(Number.isFinite(f.receiver.captureCursor()))
+  f.output.getOutputTimestamp=()=>({contextTime:.95,performanceTime:1021})
+  assert.equal(f.receiver.captureCursor(),null);assert.equal(f.receiver.node.gain.value,0)
+  assert.equal(f.receiver.snapshot().closed,false);assert.equal(f.receiver.snapshot().validatingOutput,true)
+  f.advance(1016);f.contexts[0].currentTime=.216;f.output.getOutputTimestamp=()=>({contextTime:.95,performanceTime:1006})
+  assert.ok(Number.isFinite(f.receiver.captureCursor()));assert.equal(f.receiver.node.gain.value,1)
+  assert.equal(f.receiver.snapshot().validatingOutput,false)
+  f.output.getOutputTimestamp=()=>({contextTime:.5,performanceTime:1006})
+  assert.equal(f.receiver.captureCursor(),null);assert.equal(f.receiver.node.gain.value,0)
+  f.advance(1066);assert.equal(f.receiver.captureCursor(),null)
+  assert.equal(f.receiver.snapshot().error,'PLAYOUT_PCM_OUTPUT_LATENCY')
+  f.output.getOutputTimestamp=()=>({contextTime:.95,performanceTime:1056})
+  assert.equal(f.receiver.captureCursor(),null);assert.equal(f.receiver.node.gain.value,0)
+})
+test('a healthy timestamp after the bounded recheck cannot revive playback',async()=>{
+  const f=await fixture();f.output.getOutputTimestamp=()=>({contextTime:0,performanceTime:0})
+  assert.equal(f.receiver.captureCursor(),null);f.advance(1050)
+  f.output.getOutputTimestamp=()=>({contextTime:.95,performanceTime:1040})
+  assert.equal(f.receiver.captureCursor(),null);assert.equal(f.receiver.snapshot().closed,true)
+  assert.equal(f.receiver.node.gain.value,0)
+})
+
+
+test('valid output revalidation cannot restore gain when the capture phase is invalid',async()=>{
+  const f=await fixture();assert.ok(Number.isFinite(f.receiver.captureCursor()))
+  f.output.getOutputTimestamp=()=>({contextTime:.95,performanceTime:1021})
+  assert.equal(f.receiver.captureCursor(),null);assert.equal(f.receiver.node.gain.value,0)
+  f.advance(1016);f.contexts[0].currentTime=.216
+  f.output.getOutputTimestamp=()=>({contextTime:.95,performanceTime:1006})
+  f.states.push({worker:7,scheduledCaptureUnixMs:700,captureOffsetMs:201,
+    configured:true,closed:false,decoded:11,observedAt:1016,lastCaptureUnixMs:1016})
+  assert.equal(f.receiver.captureCursor(),null);assert.equal(f.receiver.snapshot().error,'PLAYOUT_PCM_CLOCK')
+  assert.equal(f.receiver.snapshot().closed,true);assert.equal(f.receiver.node.gain.value,0)
+})
+test('a reversed observation clock during output revalidation closes without restoring gain',async()=>{
+  const f=await fixture();f.output.getOutputTimestamp=()=>({contextTime:.95,performanceTime:1021})
+  assert.equal(f.receiver.captureCursor(),null);f.advance(999)
+  f.output.getOutputTimestamp=()=>({contextTime:.95,performanceTime:989})
+  assert.equal(f.receiver.captureCursor(),null);assert.equal(f.receiver.snapshot().error,'PLAYOUT_PCM_OUTPUT_AGE')
+  assert.equal(f.receiver.snapshot().closed,true);assert.equal(f.receiver.node.gain.value,0)
 })

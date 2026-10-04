@@ -9,6 +9,8 @@ export function createOwnedPcmReceiver(Queue,worklet,context,track,nativeSource,
   let lastCursor=-Infinity
   let clock=null
   let queue=null
+  let badOutputSince=null
+  let badOutputCode=null
   function row(){return window.__encodedTimingProbe.pcmStates.findLast(item=>item.worker===workerId)}
   function close(){
     if(closed)return
@@ -17,6 +19,15 @@ export function createOwnedPcmReceiver(Queue,worklet,context,track,nativeSource,
     capture?.stream.getTracks().forEach(value=>value.stop());if(url)URL.revokeObjectURL(url);void pcmContext?.close()
   }
   function fail(code){error=code;close()}
+  function invalidOutput(code,now){
+    // Never estimate a cursor or emit PCM from an invalid native sample.
+    // A brief timestamp quantization outlier can be rechecked while silent;
+    // sustained failure remains terminal and no output permit is renewed here.
+    node.gain.value=0
+    if(badOutputSince===null){badOutputSince=now;badOutputCode=code}
+    if(!Number.isFinite(now)||now<badOutputSince||now-badOutputSince>=50)fail(code)
+    return null
+  }
   void(async()=>{
     try{
       pcmContext=new AudioContext({sampleRate:48000});await pcmContext.resume()
@@ -55,7 +66,7 @@ export function createOwnedPcmReceiver(Queue,worklet,context,track,nativeSource,
     }catch{fail('PLAYOUT_PCM_CREATE')}
   })()
   return {node,close,snapshot(){const state=row();return {ready,closed,error,delayMs,
-    pcmRate:pcmContext?.sampleRate||null,outputRate:context.sampleRate,decoder:state||null,clock,queue}},
+    pcmRate:pcmContext?.sampleRate||null,outputRate:context.sampleRate,decoder:state||null,clock,queue,validatingOutput:badOutputSince!==null}},
     captureCursor(){
       const state=row(),now=performance.now()
       if(closed||!ready||!state?.configured||state.closed||state.decoded<2)return null
@@ -64,9 +75,12 @@ export function createOwnedPcmReceiver(Queue,worklet,context,track,nativeSource,
       clock={ageMs:age,latencyMs:(context.currentTime-output.contextTime)*1000}
       // The existing native-source freshness contract allows a reported sample
       // timestamp up to 20 ms ahead of observation due to clock quantization.
-      if(!Number.isFinite(output.contextTime)||output.contextTime<=0||!Number.isFinite(age)||age< -20||age>200){fail('PLAYOUT_PCM_OUTPUT_AGE');return null}
+      if(!Number.isFinite(output.contextTime)||output.contextTime<=0||!Number.isFinite(age)||age< -20||age>200)return invalidOutput('PLAYOUT_PCM_OUTPUT_AGE',now)
       const latency=(context.currentTime-output.contextTime)*1000
-      if(!Number.isFinite(latency)||latency<0||latency>200){fail('PLAYOUT_PCM_OUTPUT_LATENCY');return null}
+      if(!Number.isFinite(latency)||latency<0||latency>200)return invalidOutput('PLAYOUT_PCM_OUTPUT_LATENCY',now)
+      if(badOutputSince!==null){
+        if(now<badOutputSince||now-badOutputSince>=50){fail(badOutputCode);return null}
+      }
       const scheduledCursor=anchor.wall+(pcmContext.currentTime*48000-anchor.frame)/48-delayMs-latency
       // Use a phase observation at or before the audible sample position,
       // rather than a newer packet still waiting in the PCM hold queue.
@@ -79,6 +93,7 @@ export function createOwnedPcmReceiver(Queue,worklet,context,track,nativeSource,
       clock.cursorStepMs=Number.isFinite(lastCursor)?cursor-lastCursor:null
       if(!Number.isFinite(cursor)||cursor<lastCursor-80){fail('PLAYOUT_PCM_OUTPUT_REVERSE');return null}
       lastCursor=Math.max(lastCursor,cursor)
+      if(badOutputSince!==null){badOutputSince=null;badOutputCode=null;node.gain.value=1}
       return cursor
     }}
 }

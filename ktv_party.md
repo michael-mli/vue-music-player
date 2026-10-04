@@ -1414,6 +1414,16 @@ RTP-gap waits, keeps required references within a fixed 700-ms bound, discards
 inputs whose required references never arrive, and requests bounded recovery
 only for such misses. Incomplete declarations close this mode permanently.
 
+The private owned PCM adapter preserves the existing native output-sample age
+(-20 to 200 ms) and latency (0 to 200 ms) bounds. An invalid observation mutes
+the adapter and yields no video capture cursor. It can recover only from a
+fully valid output/capture/phase/cursor observation within 50 ms; an invalid or
+late recheck closes it permanently. This creates no output permission and
+continues through the application's final deadline guard. Updated independent
+native both-context and source-task expiry fixtures pass 51/51 and 46/46;
+physical output, audible continuity during revalidation and impaired timing
+remain unverified. The behavior remains private.
+
 Continuously impaired timing and nominal frame rate still fail. Native decoded
 video can arrive too late, while the owned decoder still needs reliable packet
 ordering and codec recovery. Product integration, adaptive recovery,

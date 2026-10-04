@@ -45,6 +45,21 @@ is a preview; public online media is still disabled.
    SFU/TURN service, run release/post-release checks and enable public media after
    the applicable P06/P07/P08 gates pass.
 
+### Latest private receiver candidate
+
+| Check | Current evidence | Status |
+| --- | --- | --- |
+| Timing/capability fixtures | 158/158 | Pass |
+| Buffered expiry after both render contexts freeze/resume | 51/51, latest reader/revalidation | Pass for digital fixture |
+| Buffered expiry while source and listener pages stall | 46/46, latest reader/revalidation | Pass for digital fixture |
+| Fresh clean 40-pair A/V regression | 50/50; p95 52.44 ms / max 54.11 ms; nominal cadence | Pass for digital fixture |
+| Continuous impaired-network A/V and nominal frame rate | Latest VP9 reference-mode run times out; presented 8.40 fps | Fail |
+| Product integration and physical/mobile/capacity acceptance | Required work remains | Open |
+
+These scripts are private. The deployed preview remains `acb583b`, with public
+online media disabled. The original video cadence and timing requirements are
+unchanged; the optional adaptive-video preference question has no answer yet.
+
 Recording/export, reactions, themes and remote duets remain optional P09 work.
 
 Current status: The receiver-safe encoded activation preview is deployed at
@@ -55,7 +70,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **154/154** pass.
+checks pass; party units **125/125** and timing/capability fixtures **158/158** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -4844,3 +4859,93 @@ Updated both-context expiry is being checked on the nominal production VP8
 artifact after the asynchronous reader change, followed by source-task expiry.
 The previously accepted 51/51 and 46/46 results predate that change. Neither VP9
 nor dependency ordering is selected for product integration or deployment.
+
+
+### Presentation-reader expiry regressions and silent timestamp revalidation — 2026-10-04
+
+The updated reader has not yet passed both native expiry regressions.
+`/tmp/ktv-owned-av-presentation-backpressure-both-context-expiry-20261004.log`
+exits 1 after 31 checks. It observes **824.37 ms** of future owned PCM,
+47 chunks / 360,960 bytes, old-output silence and 16 audible replacement
+heartbeats. Its independent monitor reports **200.121 ms** of queued capture
+at the replacement boundary, exceeding the unchanged **100 ms** measurement
+bound. These observations do not establish accepted expiry timing.
+
+`/tmp/ktv-owned-av-presentation-backpressure-source-task-expiry-20261004.log`
+exits 1 after 12 checks, before the source fault. The native output timestamp is
+**20.8 ms ahead** of observation, outside the existing 20-ms allowance. The
+owned PCM adapter closes with `PLAYOUT_PCM_OUTPUT_AGE`; this run provides no
+source-task expiry result.
+
+The private adapter now mutes output and returns no capture cursor while an
+invalid native timestamp is rechecked. A valid observation within **50 ms** can
+restore output only after all original freshness, phase and cursor checks pass.
+Invalid observations continuing for 50 ms, or a healthy observation arriving
+later, permanently close the adapter. Age (-20 to 200 ms), latency (0 to 200 ms),
+capture freshness and cursor bounds remain unchanged. The adapter creates no
+output permission; the existing final deadline guard remains authoritative.
+Fixtures verify immediate silence/no cursor, bounded recovery, terminal failure
+and inability to revive after timeout. Native expiry and audible continuity
+remain required before selecting this behavior for product integration.
+
+The original 720p / 20–30-fps release requirement remains in force. A user
+preference question about adaptive video cadence is pending; no requirement has
+been changed on the basis of elapsed time.
+
+
+### Silent-revalidation candidate passes both-context expiry — 2026-10-04
+
+`/tmp/ktv-owned-av-output-revalidation-both-context-expiry-20261004.log`
+exits 0 with **51/51** native built-app checks. At the fault boundary the owned
+PCM renderer retains **817.5 ms** of future samples, 45 chunks / 345,600 bytes,
+with 68.5-ms report age deducted. Both render contexts freeze and resume while
+page callbacks remain blocked. Old output stays silent, 15 replacement
+heartbeats remain audible (minimum RMS **0.07724**), and unchanged expiry,
+separation and resource checks pass. Independent monitor queues at the old/new
+edges are **-0.353 ms / 1.051 ms**, inside the 100-ms bound. This validates the
+latest reader/revalidation combination for this digital fault; it does not
+prove physical timing, impaired A/V acceptance or audible revalidation quality.
+Source-task expiry is being checked separately.
+
+
+### Silent-revalidation candidate passes source-task expiry — 2026-10-04
+
+`/tmp/ktv-owned-av-output-revalidation-source-task-expiry-20261004.log`
+exits 0 with **46/46** native built-app checks. Before the blocked source/page
+fault the owned renderer retains **855.63 ms** of future PCM, 44 chunks /
+337,920 bytes, with 12.70-ms report age deducted. Expired output remains silent;
+13 replacement heartbeats remain audible (minimum RMS **0.07828**).
+Independent capture queues are **0.127 ms / 1.436 ms**. The unchanged 150-ms
+expiry margin, configured old/new separation and exact-old-session resource
+classification pass. Together with the preceding 51/51 run, this closes the
+updated asynchronous reader's two digital buffered-expiry regression checks.
+It does not establish impaired A/V timing, physical/device acceptance or
+click-free audible timestamp revalidation. A fresh 40-pair clean A/V regression
+is being checked before committing this private adapter change.
+
+
+The final timestamp-revalidation fixture run passes **156/156** in
+`/tmp/ktv-output-revalidation-final-fixtures-20261004.log`. Product source,
+production dist, timing limits and public media configuration are unchanged.
+
+
+### Updated reader/revalidation passes clean 40-pair A/V regression — 2026-10-04
+
+`/tmp/ktv-owned-av-output-revalidation-clean-800-20261004.log` exits 0
+with **50/50** native built-app checks on the nominal VP8 720p / 25-fps profile
+and 800-ms owned PCM/video hold. All **40** transitions match, with zero
+unmatched audio/video markers, absolute skew p95 **52.44 ms**, maximum
+**54.11 ms**. Source/native/owned-decoded/drawn/presented rates are
+**25.01/24.99/25.00/24.79/24.79 fps**, inside the original 20–30-fps bound.
+Median observed audio/video delays are **962.27/930.20 ms**, so this result does
+not establish minimum practical latency. Codec and presentation quality checks
+report no errors. The original independent monitor and memory bounds pass.
+
+Two additional negative fixtures verify that a valid output timestamp cannot
+restore gain when capture phase is invalid or the observation clock reverses.
+The completed fixture suite passes **158/158** in
+`/tmp/ktv-output-revalidation-capture-safety-fixtures-20261004.log`.
+These results close the fresh clean and digital expiry regressions for this
+private change. Continuously impaired timing/cadence, actual revalidation
+listening quality, product integration and the remaining physical/mobile/
+capacity/release gates remain open. No deployed product asset changes.
