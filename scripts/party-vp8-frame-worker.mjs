@@ -1,12 +1,14 @@
 // Private receiver worker. Decoding starts at the first received keyframe;
 // binding a port only transfers ownership, never permission to present output.
-export function installVp8FrameWorker(createStream,reorderMs=80){
+export function installVp8FrameWorker(createStream,reorderMs=80,recover=false){
   let stream,port,timer,bound=false,closed=false,reason=null,expiry,lastWall=Date.now(),lastMono=performance.now()
+  let lastKey=-Infinity,lastRequest=-Infinity,keyframePending=false,keyframeRequests=0,keyframeFulfilled=0
   const credits=new Map()
+  const recovery=()=>({recovery:recover,keyframeRequests,keyframeFulfilled,keyframePending})
   function close(code=null){
     if(closed)return
     closed=true;reason=code;clearInterval(timer);stream?.close(code);credits.clear()
-    self.postMessage({type:'video-port-state',...stream?.snapshot(),closed,reason,inFlight:0})
+    self.postMessage({type:'video-port-state',...stream?.snapshot(),...recovery(),closed,reason,inFlight:0})
     try{port?.postMessage({type:'video-stop'})}catch{}
     port?.close()
   }
@@ -19,6 +21,7 @@ export function installVp8FrameWorker(createStream,reorderMs=80){
   }
   function ensure(){
     if(stream||closed)return
+    if(recover&&typeof self.__requestOwnedVideoKeyframe!=='function'){close('VIDEO_RECOVERY_API');return}
     expiry??=Date.now()+10000
     stream=createStream((frame,packet)=>{
       if(!check()||!port||credits.size>=2)return false
@@ -29,12 +32,21 @@ export function installVp8FrameWorker(createStream,reorderMs=80){
     if(closed){stream.close();return}
     timer=setInterval(()=>{
       check()
-      self.postMessage({type:'video-port-state',...stream.snapshot(),closed,reason,inFlight:credits.size})
+      self.postMessage({type:'video-port-state',...stream.snapshot(),...recovery(),closed,reason,inFlight:credits.size})
     },100)
   }
   self.__observeOwnedVideo=(frame,metadata)=>{
     if(self.__encodedTimingDirection!=='receive'||closed)return
-    ensure();if(check())stream.observe(frame,metadata)
+    ensure();if(!check())return
+    const before=stream.snapshot();stream.observe(frame,metadata)
+    const after=stream.snapshot(),now=performance.now()
+    if(closed||after.closed)return
+    if(frame.type==='key'&&after.lateFrames===before.lateFrames&&after.duplicates===before.duplicates)lastKey=now
+    if(!recover||after.lateFrames<=before.lateFrames||keyframePending||now-lastRequest<5000||now-lastKey<1000)return
+    keyframePending=true;keyframeRequests++;lastRequest=now
+    void Promise.resolve().then(()=>{if(!check())return;return self.__requestOwnedVideoKeyframe()})
+      .then(()=>{if(!closed)keyframeFulfilled++})
+      .catch(()=>close('VIDEO_RECOVERY_REQUEST')).finally(()=>{keyframePending=false})
   }
   self.addEventListener('message',({data})=>{
     if(data?.type==='video-stop'){close();return}

@@ -99,12 +99,13 @@ export function installEncodedTimingProbe(workerSource,receiverApi='native') {
       if(direction==='receive'&&data?.type==='video-port-error'){errors++;failures.pipe++;return}
       if(direction==='receive'&&data?.type==='video-port-state'){
         const row={worker:id,closed:data.closed===true,configured:data.configured===true,observedAt:performance.now()}
-        for(const key of ['decoded','discarded','encodedBytes','pending','maximumBytes','maximumPending','inFlight',
-          'heldPackets','maximumHeld','heldLimit','duplicates','lateFrames','reordered','pressureDrains','reorderMs'])
+        for(const key of ['decoded','decodedKeyFrames','discarded','encodedBytes','pending','maximumBytes','maximumPending','inFlight',
+          'heldPackets','maximumHeld','heldLimit','duplicates','lateFrames','reordered','pressureDrains','reorderMs','keyframeRequests','keyframeFulfilled'])
           if(Number.isSafeInteger(data[key])&&data[key]>=0)row[key]=data[key]
         if(Number.isFinite(data.maximumResidualMs))row.maximumResidualMs=data.maximumResidualMs
+        row.recovery=data.recovery===true;row.keyframePending=data.keyframePending===true
         row.reason=[null,'VIDEO_API','VIDEO_CONFIG','VIDEO_DECODE','VIDEO_PACKET','VIDEO_CLOCK','VIDEO_BOUND','VIDEO_OUTPUT',
-          'VIDEO_PORT_CLOCK','VIDEO_PORT_TRANSFER','VIDEO_PORT_MESSAGE','VIDEO_PORT_CREDIT'].includes(data.reason)?data.reason:'VIDEO_OUTPUT'
+          'VIDEO_PORT_CLOCK','VIDEO_PORT_TRANSFER','VIDEO_PORT_MESSAGE','VIDEO_PORT_CREDIT','VIDEO_RECOVERY_API','VIDEO_RECOVERY_REQUEST'].includes(data.reason)?data.reason:'VIDEO_OUTPUT'
         videoStates.push(row);if(videoStates.length>64)videoStates.shift();return
       }
       if(direction==='receive'&&data?.type==='encoded-video-decode'&&['complete','error','unsupported','timeout','closed'].includes(data.status)){

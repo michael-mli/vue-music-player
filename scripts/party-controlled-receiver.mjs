@@ -218,6 +218,22 @@ export function installControlledReceiver(Clock, FrameQueue, delayMs = 800, crea
     } }
 }
 
+export function analyseReceiverKeyframeRecovery(samples,phase){
+  const rows=samples.filter(item=>item.phase===phase),errors=[]
+  const decoders=rows.map(item=>item.receiver?.controlledReceiver?.active?.ownedVideo?.decoder)
+  const sources=rows.map(item=>item.source?.reports?.filter(row=>row.type==='outbound-rtp'&&row.kind==='video')||[])
+  const first=decoders[0],last=decoders.at(-1)
+  if(rows.length<2||decoders.some(row=>!row?.recovery||row.closed||row.worker!==first?.worker||
+    ['keyframeRequests','keyframeFulfilled','decodedKeyFrames'].some(key=>!Number.isSafeInteger(row[key])||row[key]<0))||
+    sources.some(row=>row.length!==1||!Number.isSafeInteger(row[0].keyFramesEncoded)||row[0].keyFramesEncoded<0))
+    return {phase,errors:['PLAYOUT_KEYFRAME_EVIDENCE']}
+  const requests=last.keyframeRequests-first.keyframeRequests,fulfilled=last.keyframeFulfilled-first.keyframeFulfilled,
+    decodedKeys=last.decodedKeyFrames-first.decodedKeyFrames,encodedKeys=sources.at(-1)[0].keyFramesEncoded-sources[0][0].keyFramesEncoded
+  if([requests,fulfilled,decodedKeys,encodedKeys].some(value=>value<0))errors.push('PLAYOUT_KEYFRAME_RESET')
+  if(requests>0&&(fulfilled<1||decodedKeys<1||encodedKeys<1))errors.push('PLAYOUT_KEYFRAME_RESPONSE')
+  return {phase,requests,fulfilled,decodedKeys,encodedKeys,errors}
+}
+
 export function analyseControlledReceiverQuality(samples, phase) {
   const values = samples.filter(item => item.phase === phase).map(item => item.receiver.controlledReceiver?.active)
   const errors = [], first = values[0], last = values.at(-1)

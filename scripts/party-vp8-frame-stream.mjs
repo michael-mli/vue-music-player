@@ -7,9 +7,9 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80}={}) {
   const held=new Map(),seen=new Set()
   let reorderTimer,flushing=false,maximumHeld=0,duplicates=0,lateFrames=0,reordered=0,pressureDrains=0,highestRtp=null
   let decoder,configured=false,closed=false,sequence=0,encodedBytes=0
-  let lastRtp=null,lastTimestamp=0,captureAnchor=null,decoded=0,discarded=0,maximumBytes=0,maximumPending=0,maximumResidualMs=0
+  let lastRtp=null,lastTimestamp=0,captureAnchor=null,decoded=0,decodedKeyFrames=0,discarded=0,maximumBytes=0,maximumPending=0,maximumResidualMs=0
   const delta=(value,anchor)=>((value-anchor+0x80000000)>>>0)-0x80000000
-  function snapshot(){return {closed,configured,decoded,discarded,encodedBytes,pending:expected.size,
+  function snapshot(){return {closed,configured,decoded,decodedKeyFrames,discarded,encodedBytes,pending:expected.size,
     maximumBytes,maximumPending,maximumResidualMs,heldPackets:held.size,maximumHeld,heldLimit,duplicates,lateFrames,reordered,pressureDrains,reorderMs}}
   function close(reason=null){
     if(closed)return
@@ -27,6 +27,7 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80}={}) {
       const bytes=frame.allocationSize()
       if(!['I420','NV12'].includes(frame.format)||!Number.isSafeInteger(bytes)||bytes<1||bytes>1280*720*3/2)throw new Error('VIDEO_OUTPUT')
       decoded++
+      if(packet.type==='key')decodedKeyFrames++
       if(!captureAnchor||performance.now()-captureAnchor.observedAt>5000){discarded++;return}
       const offset=delta(packet.rtp,captureAnchor.rtp)/90
       if(Math.abs(offset)>5000){discarded++;return}

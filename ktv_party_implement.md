@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **130/130** pass.
+checks pass; party units **125/125** and timing/capability fixtures **133/133** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -4344,3 +4344,29 @@ Fixtures pass **130/130** in
 `/tmp/ktv-standard-receiver-reserved-fixtures-20261004.log`. A separate native
 reserved-standard probe is in progress; no capture, keyframe invocation or
 impaired recovery acceptance is claimed yet.
+
+
+### Working standard receive path and bounded native feedback — 2026-10-04
+
+The reserved standard receiver probe passes **40/40**:
+`/tmp/ktv-vp8-standard-reserved-receiver-native-20261004.log`. Eight actual
+received VP8 frames decode with two capture anchors, and the worker observes
+the native `sendKeyFrameRequest` method. This is capability evidence only.
+
+An explicit private `KTV_ROOM_TEST_RECEIVER_KEYFRAME_RECOVERY=1` option now
+requests a keyframe through that actual standard receiver transformer after a
+new unique late-frame discard. Requests have one pending promise at most, a
+five-second cooldown and one-second suppression after an admitted keyframe.
+Missing native methods or rejected requests permanently close owned resources.
+The policy follows each current receiver worker across handover and does not
+call source `setParameters`, grant publication or increase buffering/bitrate.
+
+Scalar diagnostics record requested/fulfilled counts and actual owned decoded
+keyframes. The native acceptance gate independently requires advancing encoder
+and decoded keyframe counters when requests occur; fulfilled API calls alone
+are insufficient. Fixture checks pass **133/133** in
+`/tmp/ktv-native-receiver-keyframe-evidence-fixtures-20261004.log`, covering
+cooldown, recent-key suppression, stop, missing API and missing/reset native
+keyframe response evidence. A full 40-pair UDP/recovery/handover run is in
+progress on the unchanged nominal profile and memory/timing limits. Impaired
+acceptance, product integration and remaining release requirements stay open.

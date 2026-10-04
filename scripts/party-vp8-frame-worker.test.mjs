@@ -1,24 +1,38 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
+import {setImmediate as tick} from 'node:timers/promises'
 import {installVp8FrameWorker} from './party-vp8-frame-worker.mjs'
 
-function fixture(){
-  let wall=1000,mono=0,listener,timer,delivered,decoded=0,streamClosed=false
+function fixture({recover=false,nativeRequest=true}={}){
+  let wall=1000,mono=0,listener,timer,delivered,decoded=0,lateFrames=0,requests=0,streamClosed=false
   const reports=[]
   class Port{constructor(){this.messages=[]}postMessage(packet){this.messages.push(packet)}start(){}close(){this.closed=true}}
   const port=new Port()
-  const createStream=(deliver,report)=>{delivered=deliver;return {observe(){decoded++},snapshot:()=>({closed:streamClosed,decoded}),
+  const createStream=(deliver,report)=>{delivered=deliver;return {observe(frame){decoded++;if(frame.late)lateFrames++},snapshot:()=>({closed:streamClosed,decoded,lateFrames,duplicates:0}),
     close(reason){if(streamClosed)return;streamClosed=true;report({reason})}}}
   const realm={MessagePort:Port,Date:{now:()=>wall},performance:{now:()=>mono},
     __encodedTimingDirection:'receive',addEventListener:(name,callback)=>{listener=callback},
     setInterval:callback=>{timer=callback;return 1},clearInterval:()=>{timer=null},postMessage:row=>reports.push(row),createStream}
-  realm.self=realm;vm.runInNewContext(`(${installVp8FrameWorker.toString()})(createStream)`,realm)
+  if(nativeRequest)realm.__requestOwnedVideoKeyframe=async()=>{requests++}
+  realm.self=realm;realm.recover=recover;vm.runInNewContext(`(${installVp8FrameWorker.toString()})(createStream,80,recover)`,realm)
   const message=data=>listener({data})
   return {realm,port,reports,message,bind(){message({type:'video-bind',port,expiryUnixMs:10000})},
-    send(id){realm.__observeOwnedVideo({},{});return delivered?.({},{id,bytes:1,captureUnixMs:wall})},
-    advance(ms){wall+=ms;mono+=ms;timer?.()},get decoded(){return decoded}}
+    send(id,late=false,type='delta'){realm.__observeOwnedVideo({late,type},{});return delivered?.({},{id,bytes:1,captureUnixMs:wall})},
+    advance(ms){wall+=ms;mono+=ms;timer?.()},get decoded(){return decoded},get requests(){return requests}}
 }
+test('native receiver recovery requests only new late references outside cooldown and stops permanently with the worker',async()=>{
+  const f=fixture({recover:true});f.bind();f.send(1,false,'key');f.advance(500);f.send(2,true);await tick()
+  assert.equal(f.requests,0);f.advance(1000);f.send(3,true);await tick();assert.equal(f.requests,1)
+  f.advance(1000);f.send(4,true);await tick();assert.equal(f.requests,1)
+  f.advance(4000);f.send(5,true);await tick();assert.equal(f.requests,2)
+  f.advance(100);assert.equal(f.reports.at(-1).keyframeFulfilled,2)
+  f.message({type:'video-stop'});f.send(6,true);await tick();assert.equal(f.requests,2)
+})
+test('recovery refuses a worker without the actual receiver request method',()=>{
+  const f=fixture({recover:true,nativeRequest:false});f.bind();f.send(1,true)
+  assert.equal(f.reports.at(-1).reason,'VIDEO_RECOVERY_API');assert.equal(f.requests,0)
+})
 test('worker decoding warms before binding and transfers at most two credited frames without pausing codec state',()=>{
   const f=fixture();assert.equal(f.send(1),false);f.bind()
   assert.equal(f.send(2),true);assert.equal(f.send(3),true);assert.equal(f.send(4),false)

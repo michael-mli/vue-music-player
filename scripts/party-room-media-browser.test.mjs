@@ -38,7 +38,7 @@ import { installVp8FrameWorker } from './party-vp8-frame-worker.mjs'
 import { createOwnedVideoReceiver } from './party-owned-video-receiver.mjs'
 import { RtpCaptureClock, analyseCaptureClocks } from './party-rtp-capture-clock.mjs'
 import { CaptureFrameQueue } from './party-capture-frame-queue.mjs'
-import { installControlledReceiver, analyseControlledReceiverQuality, hasSingleAudienceOutput } from './party-controlled-receiver.mjs'
+import { installControlledReceiver, analyseControlledReceiverQuality, analyseReceiverKeyframeRecovery, hasSingleAudienceOutput } from './party-controlled-receiver.mjs'
 import { encodedTimingWorker, installEncodedTimingProbe } from './party-encoded-timing-observer.mjs'
 import { installAvSourceMarkers, installAvObserver, analyseAvObservations } from './party-av-observer.mjs'
 import { collectAvMediaStats } from './party-av-stats.mjs'
@@ -121,6 +121,9 @@ assert.ok(publisherFeedback === 'default' || codecExperiment.transport !== 'dual
   'Legacy dual-peer publisher feedback must retain its negotiated TWCC estimator')
 const senderKeyframeMs = process.env.KTV_ROOM_TEST_SENDER_KEYFRAME_MS === undefined ? null : Number(process.env.KTV_ROOM_TEST_SENDER_KEYFRAME_MS)
 const demandKeyframes = process.env.KTV_ROOM_TEST_DEMAND_KEYFRAMES === '1'
+const receiverKeyframes=process.env.KTV_ROOM_TEST_RECEIVER_KEYFRAME_RECOVERY==='1'
+assert.ok(!receiverKeyframes||ownedVideo&&avTiming&&receiverEncodedApi==='standard'&&senderKeyframeMs===null&&!demandKeyframes,
+  'Receiver keyframe recovery requires standard owned video without a competing sender policy')
 assert.ok(!codecExperiment || codecExperiment.maxBitrate === 350000 || senderKeyframeMs === null && !demandKeyframes,
   'Native sender keyframe comparisons require the original bitrate policy')
 assert.ok(!demandKeyframes || avTiming && (codecExperiment && codecExperiment.keyframeMs == null || ownedVideo && !codecExperiment) && senderKeyframeMs === null,
@@ -383,7 +386,7 @@ try {
     await cdp(socket, 'Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', 'en');
       ${avTiming ? `(${installAvSourceMarkers.toString()})();` : ''}
       ${encodedApi==='legacy' ? 'window.RTCRtpScriptTransform=undefined;' : ''}
-      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify('('+encodedTimingWorker.toString()+')('+ (opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : vp8DecodeProbe?'null,null,null,'+createVp8DecodeProbe.toString():'') +');'+(pcmPortProbe||ownedPcm ? '('+installOpusPcmWorker.toString()+')('+bindOpusPcmPort.toString()+','+createOpusPcmStream.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString()+');' : '')+(ownedVideo?'('+installVp8FrameWorker.toString()+')('+createVp8FrameStream.toString()+','+(controlledPlayoutMs>=800?500:controlledPlayoutMs>=500?240:80)+');':''))},${JSON.stringify(receiverEncodedApi)});` : ''}
+      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify('('+encodedTimingWorker.toString()+')('+ (opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : vp8DecodeProbe?'null,null,null,'+createVp8DecodeProbe.toString():'') +');'+(pcmPortProbe||ownedPcm ? '('+installOpusPcmWorker.toString()+')('+bindOpusPcmPort.toString()+','+createOpusPcmStream.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString()+');' : '')+(ownedVideo?'('+installVp8FrameWorker.toString()+')('+createVp8FrameStream.toString()+','+(controlledPlayoutMs>=800?500:controlledPlayoutMs>=500?240:80)+','+receiverKeyframes+');':''))},${JSON.stringify(receiverEncodedApi)});` : ''}
       (${installEncodedLeaseObserver.toString()})();
       ${absoluteCapture ? `(${installAbsoluteCaptureExperiment.toString()})();` : ''}
       ${senderCadence ? `(${installSenderCadenceExperiment.toString()})();` : ''}
@@ -1057,6 +1060,12 @@ try {
   // Production also has to retain nominal quality. The pinned SDK defaults to
   // VP8; comparison artifacts declare their own expected codec explicitly.
   const expectedCodec=codecExperiment?.codec || 'vp8'
+  if(receiverKeyframes){
+    const studies=[...new Set(avTimingSamples.map(item=>item.phase))].map(phase=>analyseReceiverKeyframeRecovery(avTimingSamples,phase))
+    console.log('Private native receiver keyframe responses:',JSON.stringify(studies))
+    check(studies.some(row=>row.requests>0)&&studies.every(row=>row.errors.length===0),
+      'native receiver recovery observes fulfilled requests plus actual newly encoded and owned decoded keyframes')
+  }
   const codecQualities=avMeasurements.map(measurement=>
     analyseCodecQuality(avTimingSamples,measurement.phase,expectedCodec,(senderKeyframeMs??codecExperiment?.keyframeMs??null),codecExperiment?.maxBitrate ?? 350000))
   for (const quality of codecQualities) console.log('Native codec quality:',JSON.stringify(quality))
@@ -1115,6 +1124,8 @@ try {
     console.error('Native capture versus encoding on failure:',JSON.stringify(analyseCaptureCadence(avTimingSamples,phase)))
   for(const phase of new Set(avTimingSamples.map(item=>item.phase)))
     console.error('Native codec quality on failure:',JSON.stringify(analyseCodecQuality(avTimingSamples,phase,codecExperiment?.codec || 'vp8',(senderKeyframeMs??codecExperiment?.keyframeMs??null),codecExperiment?.maxBitrate ?? 350000)))
+  if(receiverKeyframes)for(const phase of new Set(avTimingSamples.map(item=>item.phase)))
+    console.error('Private native receiver keyframe responses on failure:',JSON.stringify(analyseReceiverKeyframeRecovery(avTimingSamples,phase)))
   if(controlledPlayoutMs !== null)for(const phase of new Set(avTimingSamples.map(item=>item.phase)))
     console.error('Controlled native presentation quality on failure:',JSON.stringify(analyseControlledReceiverQuality(avTimingSamples,phase)))
   if(avBrowser) console.error('Private receiver output:',JSON.stringify(await avBrowser.audioEvidence().catch(()=>({error:'capture unavailable'}))))

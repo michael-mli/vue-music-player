@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
-import { installControlledReceiver, analyseControlledReceiverQuality, hasSingleAudienceOutput } from './party-controlled-receiver.mjs'
+import { installControlledReceiver, analyseControlledReceiverQuality, analyseReceiverKeyframeRecovery, hasSingleAudienceOutput } from './party-controlled-receiver.mjs'
 import { CaptureFrameQueue } from './party-capture-frame-queue.mjs'
 
 function sample(presented, lastPresentation, extra = {}) {
@@ -10,6 +10,14 @@ function sample(presented, lastPresentation, extra = {}) {
     maximumBytes: 50000000, maximumQueued: 35, presented, lastPresentation, ...extra
   } } } }
 }
+test('native receiver recovery requires actual encoded and decoded keys in addition to fulfilled requests',()=>{
+  const row=(requests,keys)=>({...sample(10,1000,{ownedVideo:{decoder:{worker:1,recovery:true,closed:false,
+    keyframeRequests:requests,keyframeFulfilled:requests,decodedKeyFrames:keys}}}),
+    source:{reports:[{type:'outbound-rtp',kind:'video',keyFramesEncoded:keys}]}})
+  assert.deepEqual(analyseReceiverKeyframeRecovery([row(0,1),row(1,2)],'impaired').errors,[])
+  assert.ok(analyseReceiverKeyframeRecovery([row(0,1),row(1,1)],'impaired').errors.includes('PLAYOUT_KEYFRAME_RESPONSE'))
+  assert.ok(analyseReceiverKeyframeRecovery([row(1,2),row(0,1)],'impaired').errors.includes('PLAYOUT_KEYFRAME_RESET'))
+})
 test('actual presented frame counters establish nominal controlled output cadence', () => {
   const result = analyseControlledReceiverQuality([sample(10, 1000), sample(260, 11000)], 'impaired')
   assert.equal(result.fps, 25); assert.equal(result.durationMs, 10000); assert.deepEqual(result.errors, [])
