@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **129/129** pass.
+checks pass; party units **125/125** and timing/capability fixtures **130/130** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -4309,8 +4309,8 @@ UDP proxy port 7882. No output-latency shutdown recurs. During impairment, nativ
 source/receiver rates are **20.63/20.51 fps**; the owned decoder remains open,
 reorders **263 frames** and discards **20 unique late frames**, with no pressure
 drains. Maximum held queue is 17/20 and encoded input 29,946/524,288 bytes.
-Arrival maximum is 1039 ms; release maximum lateness is 118.51 ms. Only **seven
-video marker transitions** are detected, so 40 matched pairs are not collected.
+Arrival maximum is 1039 ms; release maximum lateness is 118.51 ms. Owned presentation is **19.97 fps**, below the unchanged 20-fps floor.
+Only **seven video marker transitions** are detected, so 40 matched pairs are not collected.
 Longer packet retention improves reordering but does not establish reliable
 codec-reference recovery or impaired acceptance.
 
@@ -4327,3 +4327,20 @@ recovery or a product source/encoder policy change. Existing fixtures pass
 eight-frame standard receiver probe is in progress. Invocation, actual encoded
 keyframe responses, original nominal cadence and full impaired/handover timing
 still require proof.
+
+
+### Standard receiver reservation diagnostic — 2026-10-04
+
+`/tmp/ktv-vp8-standard-receiver-native-20261004.log` exits 1 before decoding:
+standard worker streams and the keyframe-request method are observed, but no
+received frame/capture timestamps appear. There are no worker/pipe exceptions.
+API exposure is not a working receive path.
+
+The private selector now retains constructor-time encoded-stream reservation
+when Chrome exposes its legacy API, even when the requested receive attachment
+is standard. It continues selecting exactly one receive API, preserves the
+SDK's configuration updates and does not overwrite existing transforms.
+Fixtures pass **130/130** in
+`/tmp/ktv-standard-receiver-reserved-fixtures-20261004.log`. A separate native
+reserved-standard probe is in progress; no capture, keyframe invocation or
+impaired recovery acceptance is claimed yet.

@@ -130,7 +130,8 @@ test('explicit standard receiver selection avoids legacy streams when both nativ
   const f=browserFixture(true,'standard'),configuration={iceTransportPolicy:'relay'},
     peer=new f.realm.window.RTCPeerConnection(configuration),receiver=f.receiver()
   f.track(peer,receiver);f.track(peer,receiver)
-  assert.equal(peer.configuration,configuration);assert.equal(receiver.streams,undefined)
+  assert.equal(peer.configuration.encodedInsertableStreams,true);assert.equal(peer.configuration.iceTransportPolicy,'relay')
+  assert.equal(receiver.streams,undefined)
   assert.equal(receiver.transform.worker,f.workers[0]);assert.equal(f.workers.length,1)
   assert.equal(f.realm.window.__encodedTimingProbe.features.receiverApi,'standard')
   f.realm.window.__encodedTimingProbe.close()

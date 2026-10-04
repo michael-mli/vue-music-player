@@ -187,15 +187,16 @@ export function installEncodedTimingProbe(workerSource,receiverApi='native') {
   }
   const Peer = window.RTCPeerConnection
   const scriptTransform = typeof RTCRtpScriptTransform === 'function'
-  const legacyReceiver = receiverApi!=='standard'&&typeof RTCRtpReceiver.prototype.createEncodedStreams === 'function'
+  const reserveEncodedStreams=typeof RTCRtpReceiver.prototype.createEncodedStreams === 'function'
+  const legacyReceiver = receiverApi!=='standard'&&reserveEncodedStreams
   window.RTCPeerConnection = class extends Peer {
     setConfiguration(configuration) {
       // LiveKit reapplies the configuration after joining. Preserve the same
       // immutable encoded-stream opt-in used when this private peer was made.
-      return super.setConfiguration(legacyReceiver?{...configuration,encodedInsertableStreams:true}:configuration)
+      return super.setConfiguration(reserveEncodedStreams?{...configuration,encodedInsertableStreams:true}:configuration)
     }
     constructor(...args) {
-      super(...(legacyReceiver ? [{...args[0],encodedInsertableStreams:true},...args.slice(1)] : args))
+      super(...(reserveEncodedStreams ? [{...args[0],encodedInsertableStreams:true},...args.slice(1)] : args))
       this.addEventListener('track', ({ receiver }) => {
         if(observedReceivers.has(receiver))return
         if(receiver.transform){errors++;failures.occupied++;return}
