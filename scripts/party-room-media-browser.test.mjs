@@ -44,6 +44,7 @@ import { installAvSourceMarkers, installAvObserver, analyseAvObservations } from
 import { collectAvMediaStats } from './party-av-stats.mjs'
 import { analyseCodecQuality, analyseCaptureCadence, analyseSourceAllocation } from './party-av-codec-quality.mjs'
 import { analyseAudioRedEvidence } from './party-audio-red-experiment.mjs'
+import { publisherVideoFloorSdp, installVideoFloorExperiment } from './party-video-floor-experiment.mjs'
 import { installEncodedLeaseObserver } from './party-encoded-lease-observer.mjs'
 import { installSenderKeyframeExperiment } from './party-sender-keyframes.mjs'
 import { installSenderCadenceExperiment } from './party-sender-cadence-experiment.mjs'
@@ -120,6 +121,11 @@ assert.ok(!decodedTrackProbe||absoluteCapture&&!avTiming,
 const encodedApi = process.env.KTV_ROOM_TEST_ENCODED_API || 'native'
 assert.ok(['native','legacy'].includes(encodedApi)&&(encodedApi==='native'||encodedTiming),
   'A private encoded API comparison requires timing observation')
+const videoFloor=process.env.KTV_ROOM_TEST_VIDEO_MIN_BITRATE!==undefined
+assert.ok(!videoFloor||process.env.KTV_ROOM_TEST_VIDEO_MIN_BITRATE==='250000'&&avTiming&&encodedTiming&&ownedPcm&&ownedVideo&&
+  codecExperiment?.codec==='vp9'&&codecExperiment.maxBitrate===350000&&codecExperiment.transport==='default'&&
+  codecExperiment.keyframeMs===null&&!audioRedComparison&&!equalSourcePriority&&!senderCadence,
+  'Private video floor requires the marked nominal VP9/RED profile without another sender comparison')
 const receiverFault = process.env.KTV_ROOM_TEST_RECEIVER_FAULT || 'off'
 assert.ok(!ownedPcm || encodedTiming && absoluteCapture && !opusDecodeProbe && !pcmPortProbe,
   'Owned PCM requires received capture/worker evidence without another audio probe')
@@ -137,6 +143,8 @@ const senderKeyframeMs = process.env.KTV_ROOM_TEST_SENDER_KEYFRAME_MS === undefi
 const demandKeyframes = process.env.KTV_ROOM_TEST_DEMAND_KEYFRAMES === '1'
 const receiverKeyframes=process.env.KTV_ROOM_TEST_RECEIVER_KEYFRAME_RECOVERY==='1'
 const receiverKeyframeMs=Number(process.env.KTV_ROOM_TEST_RECEIVER_KEYFRAME_INTERVAL_MS||5000)
+assert.ok(!videoFloor||publisherFeedback==='default'&&senderKeyframeMs===null&&!demandKeyframes,
+  'Private video floor retains native transport feedback and default sender keyframes')
 assert.ok(Number.isInteger(receiverKeyframeMs)&&receiverKeyframeMs>=1000&&receiverKeyframeMs<=5000&&
   (receiverKeyframes||process.env.KTV_ROOM_TEST_RECEIVER_KEYFRAME_INTERVAL_MS===undefined),
   'Private receiver recovery requires an explicit bounded 1000–5000 ms interval')
@@ -493,6 +501,7 @@ try {
           }).filter(line=>line!==null).join('\\r\\n');return remote.call(this,{type:value.type,sdp});
         };
       }
+      ${videoFloor ? `(${installVideoFloorExperiment.toString()})(${publisherVideoFloorSdp.toString()});` : ''}
       const timestamp = AudioContext.prototype.getOutputTimestamp;
       AudioContext.prototype.getOutputTimestamp = function() { const output = timestamp.call(this); window.__outputEvidence.push({ ...output, context: window.__contexts.indexOf(this), now: performance.now(), render: this.currentTime, latency: this.outputLatency }); if (__outputEvidence.length > 24) __outputEvidence.shift(); return output; };
       const getMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
@@ -579,6 +588,12 @@ try {
     await poll(async()=>(await avBrowser.audioEvidence()).some(row=>row.captureHeartbeat&&row.onAmplitude>.02),
       'independent native owned PCM output')
     check(true,'independent native output contains the owned PCM backing tone')
+  }
+  if(videoFloor){
+    const evidence=await evaluate(phone,'__videoFloorExperiment.snapshot()')
+    console.log('Private native video bitrate floor:',JSON.stringify(evidence))
+    check(evidence.verified>=1&&evidence.verified===evidence.applied&&!evidence.closed&&!evidence.error,
+      'actual publisher answer retains the private 250-kbps VP9 codec floor')
   }
   if(audioRedComparison){
     const records=[]
@@ -762,6 +777,10 @@ try {
           evaluate(audience,`(${collectAvMediaStats.toString()})()`),
         ])
         avTimingSamples.push({phase,source,receiver})
+        if(videoFloor){
+          const floor=source.videoFloor
+          assert.ok(floor?.verified>=1&&!floor.error&&!floor.closed,'Current native publisher retains the verified private codec floor')
+        }
         if(equalSourcePriority){
           const allocation=await evaluate(sourcePage,'__avSenderPriority.snapshot()')
           avTimingSamples.at(-1).sourcePriority=allocation
@@ -1120,6 +1139,11 @@ try {
     const senders=sample.source?.senderParameters?.filter(row=>row.kind==='audio')||[]
     return senders.length===1&&senders[0].encodings?.length===1&&senders[0].encodings[0].maxBitrate===64000
   }),'private RED comparison retains the actual 64-kbps Opus cap throughout every measured phase')
+  if(videoFloor)for(const session of sessionSockets.keys()){
+    const evidence=await evaluate(session,'__videoFloorExperiment.snapshot()')
+    check(!evidence.error&&!evidence.closed&&evidence.applied===evidence.verified,
+      'private video floor has no ignored or failed native application through handover')
+  }
   if(senderCadence) check(avTimingSamples.length > 1 && avTimingSamples.every(sample => {
     const senders = sample.source?.senderParameters?.filter(sender => sender.kind === 'video') || []
     return senders.length === 1 && senders[0].contentHint === 'text' &&

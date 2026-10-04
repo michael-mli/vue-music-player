@@ -49,7 +49,7 @@ is a preview; public online media is still disabled.
 
 | Check | Current evidence | Status |
 | --- | --- | --- |
-| Timing/capability fixtures | 162/162 | Pass |
+| Timing/capability fixtures | 166/166 | Pass |
 | Buffered expiry after both render contexts freeze/resume | 51/51, latest reader/revalidation | Pass for digital fixture |
 | Buffered expiry while source and listener pages stall | 46/46, latest reader/revalidation | Pass for digital fixture |
 | Fresh clean 40-pair A/V regression | 50/50; p95 52.44 ms / max 54.11 ms; nominal cadence | Pass for digital fixture |
@@ -70,7 +70,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **162/162** pass.
+checks pass; party units **125/125** and timing/capability fixtures **166/166** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -5048,3 +5048,65 @@ selected for production. Different random loss schedules do not establish
 relative superiority or an isolated causal explanation for the remaining
 bandwidth collapse. The selected RED policy, all release requirements and
 public media state are unchanged.
+
+
+### Private bounded native video minimum prepared — 2026-10-04
+
+After the RED-off comparison fails, the next isolated variable is a fixed
+**250-kbps minimum** codec bitrate, keeping the selected RED policy and the
+existing **350-kbps video ceiling**. The purpose is to test the observed
+encoder-target collapse on the fixed delay/jitter/random-loss fixture; it is
+not proof of available link capacity or a selected general-network policy.
+WebRTC's [native bitrate parser](https://webrtc.googlesource.com/src/+/refs/heads/main/media/engine/webrtc_media_engine.cc)
+converts codec minimum parameters from kbps, while its
+[video send channel](https://webrtc.googlesource.com/src/+/refs/heads/main/media/engine/webrtc_video_engine.cc)
+can feed codec constraints into call allocation. Browser/version support and
+actual behavior still require native evidence.
+
+`KTV_ROOM_TEST_VIDEO_MIN_BITRATE=250000` requires the existing marked nominal
+VP9/RED build, owned PCM/video, native feedback and default source keyframes.
+It cannot combine with RED-off, local-priority, cadence, alternate transport,
+bitrate-cap or periodic-keyframe comparisons. The fixture rewrites only actual
+publisher answers, normalizing shared VP9 codec parameters in video sections;
+audio, media payload types, codec profiles, feedback, authorization and timing
+remain unchanged. Actual native answer readback must retain the parameter;
+missing/conflicting declarations, ignored application and native rejection fail
+the experiment. Listener answers remain untouched. The wrapper restores its
+original method on close and never reports raw SDP. Native retention is not
+itself evidence that the desired allocation or cadence occurs.
+
+Fixtures pass **166/166** in
+`/tmp/ktv-video-floor-recorded-native-policy-fixtures-20261004.log`, covering
+both line endings, shared codec normalization, unchanged audio/feedback, absent
+fmtp, conflicts, codec/SDP bounds, listener scoping, ignored/rejected application,
+terminal failure and closure during an outstanding native call. Native runner
+syntax and `git diff --check` pass. The unchanged full 40-pair UDP journey is
+running in `/tmp/ktv-owned-av-vp9-250k-floor-required-references-full-udp-20261004.log`.
+No new frontend artifact is built or deployed for this injected private test.
+
+
+### Native floor restores sender cadence; receiver recovery still fails — 2026-10-04
+
+`/tmp/ktv-owned-av-vp9-250k-floor-required-references-full-udp-20261004.log`
+exits 1: the 40 impaired pairs time out before recovery/handover acceptance.
+Native answer retention passes and remains verified in every sampled phase.
+The six-pair baseline has maximum skew **62.00 ms**, zero unmatched audio and
+one unmatched video marker, within the original allowances.
+
+Across 85 impaired samples / 89.59 seconds, capture / encoding stay
+**24.99 / 24.86 fps**, meeting the source-cadence requirement. Estimated outgoing
+capacity is bounded below at the requested **250 kbps**, median **517.46 kbps**;
+video target minimum / median / maximum are **132.52 / 333.86 / 350 kbps**.
+Actual sent video / audio are **146.93 / 130.78 kbps**; primary Opus/RED and the
+350-kbps video cap remain intact. Median RTT is **338 ms**. This is actual native
+evidence that the floor affects the sender budget/cadence in this run, while
+its exact behavior across real bandwidth limits and other browsers is unproven.
+
+Native receiver decoding is **16.92 fps**, owned decoding **16.44 fps** and
+drawn/presented output **15.80 fps**, all below the required nominal receiver
+cadence. Thirteen native recovery requests fulfill, with 20 new decoded and
+22 encoded keys during impairment. Complete matching and timing remain
+unaccepted. The floor is not selected for product integration or deployment.
+The next isolated comparison retains this sender budget and shortens the existing
+bounded receiver recovery cooldown from 5 seconds to **2.5 seconds**; all source
+settings and release criteria remain fixed.

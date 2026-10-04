@@ -64,6 +64,7 @@ export async function collectAvMediaStats() {
   if (senderParameters.length > 32 || senderParameters.some(item => item.encodings.length > 3)) throw new Error('AV_STATS_SENDER_LIMIT')
   return { time: performance.timeOrigin + performance.now(), reports: reports.flat(), senderParameters,
     ...(window.__controlledReceiver ? { controlledReceiver: window.__controlledReceiver.snapshot() } : {}),
+    ...(window.__videoFloorExperiment ? { videoFloor: window.__videoFloorExperiment.snapshot() } : {}),
     receiverTargets: window.__peers.flatMap((peer, index) => peer.getReceivers().map(receiver => ({
       peer: index, kind: receiver.track?.kind,
       targetSupported: 'jitterBufferTarget' in receiver,
