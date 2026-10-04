@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **125/125** pass.
+checks pass; party units **125/125** and timing/capability fixtures **126/126** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -4201,3 +4201,27 @@ and restored traffic after removal. Selected route logging contains only protoco
 and port, and the original no-bypass gate remains required. A full guarded-route
 UDP/recovery/handover run is in progress. Earlier bypassed runs provide no
 impaired-network acceptance.
+
+
+### Verified-route owned video impairment — 2026-10-04
+
+`/tmp/ktv-owned-av-yuv-isolated-route-full-udp-native-20261004.log` exits 1.
+Both selected paths are verified UDP proxy port 7882. Baseline maximum skew is
+89.69 ms, with nominal source/decode/draw rates and no queue failure. The impaired
+phase times out collecting 40 pairs: only **13 video transitions** are detected.
+The live decoder reorders 89 frames, discards 155 unique late frames and performs
+14 bounded pressure drains. Source capture/encode rates are **25.00/19.44 fps**;
+owned decode/presentation are **17.66/17.47 fps**, below the unchanged 20-fps
+floor. Arrival mean/max are 540.80/836 ms; release maximum lateness is 47.63 ms.
+There is no codec/clock shutdown or memory overflow, but this is failed timing/
+quality evidence. Normal cleanup verifies that the local ICE rule is removed.
+
+The existing native sender-keyframe experiment can now run with the private
+owned-video layout on the original VP8/350-kbps/25-fps policy, without a marked
+alternate-codec build or competing keyframe policy. A 1000-ms request interval
+is being tested to recover codec references lost through missing/late frames.
+Actual native keyframe counters, full marker matching and nominal quality remain
+required; a fulfilled API request alone is insufficient. Previous native-video
+keyframe experiments did not establish acceptance. Product integration remains
+open. The retained-frame reservation regression passes with the full fixtures
+**126/126** in `/tmp/ktv-owned-video-memory-reservation-fixtures-20261004.log`.

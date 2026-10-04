@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
 import { installControlledReceiver, analyseControlledReceiverQuality, hasSingleAudienceOutput } from './party-controlled-receiver.mjs'
+import { CaptureFrameQueue } from './party-capture-frame-queue.mjs'
 
 function sample(presented, lastPresentation, extra = {}) {
   return { phase: 'impaired', receiver: { controlledReceiver: { active: {
@@ -40,6 +41,16 @@ test('owned video requires its actual decoder and unique draws to meet nominal c
   last.receiver.controlledReceiver.active.ownedVideo.decoder.decoded=260
   last.receiver.controlledReceiver.active.maximumQueued=33
   assert.ok(analyseControlledReceiverQuality([first,last],'impaired').errors.includes('PLAYOUT_OWNED_VIDEO_EVIDENCE'))
+})
+test('the YUV presentation reservation retains 32 actual-size frames within the aggregate 64-MiB limit',()=>{
+  const bytes=1280*720*3/2,queue=new CaptureFrameQueue(32,42.5*1024*1024),frames=[]
+  for(let i=0;i<33;i++)frames.push({codedWidth:1280,codedHeight:720,closes:0,allocationSize:()=>bytes,close(){this.closes++}})
+  for(let i=0;i<32;i++)queue.push(frames[i],i*40)
+  assert.equal(queue.snapshot().queued,32);assert.equal(queue.snapshot().bytes,32*bytes)
+  const reservation=42.5*1024*1024+4*1280*720*4+4*bytes+2*1024*1024
+  assert.ok(reservation<64*1024*1024)
+  assert.throws(()=>queue.push(frames[32],1280),/PLAYOUT_QUEUE_BOUND/)
+  assert.equal(frames[32].closes,1);queue.close();assert.ok(frames.every(frame=>frame.closes===1))
 })
 
 test('the private decoder/player pair must have exactly one visible current stream with no raw audible path or stale players', () => {

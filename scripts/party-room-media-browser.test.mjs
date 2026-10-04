@@ -122,9 +122,9 @@ assert.ok(!codecExperiment || codecExperiment.maxBitrate === 350000 || senderKey
   'Native sender keyframe comparisons require the original bitrate policy')
 assert.ok(!demandKeyframes || avTiming && codecExperiment && codecExperiment.keyframeMs == null && senderKeyframeMs === null,
   'Demand recovery requires a private native comparison without another keyframe policy')
-assert.ok(senderKeyframeMs === null || avTiming && codecExperiment && codecExperiment.keyframeMs == null &&
+assert.ok(senderKeyframeMs === null || avTiming && (codecExperiment && codecExperiment.keyframeMs == null || ownedVideo && !codecExperiment) &&
   Number.isInteger(senderKeyframeMs) && senderKeyframeMs >= 250 && senderKeyframeMs <= 5000,
-  'Sender keyframes require a private native comparison without the worker keyframe policy')
+  'Sender keyframes require a private codec or owned-video comparison without another keyframe policy')
 const sourceStallMs = Number(process.env.KTV_ROOM_TEST_OUTPUT_STALL_MS || 0)
 assert.ok(sourceStallMs === 0 || avTiming && remoteMode && Number.isInteger(sourceStallMs) && sourceStallMs >= 20 && sourceStallMs <= 100,
   'Owned native output stall requires remote A/V timing and a bounded 20–100 ms pause')
