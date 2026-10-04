@@ -107,3 +107,13 @@ test('longer playout can retain 180-ms repairs without extending its 240-ms enco
   assert.equal(f.stream.snapshot().lateFrames,0);assert.equal(f.stream.snapshot().maximumHeld,5)
   assert.equal(f.stream.snapshot().reorderMs,240);f.stream.close()
 })
+test('an extended repair window retains a 350-ms reordered burst within the same encoded byte budget',async()=>{
+  const f=await fixture({reorderMs:500,accept:false});f.send(0);f.send(16*3600)
+  f.advance(1350);for(let i=1;i<16;i++)f.send(i*3600)
+  assert.equal(f.stream.snapshot().heldPackets,16);assert.equal(f.stream.snapshot().heldLimit,20)
+  assert.equal(f.stream.snapshot().maximumBytes,16);assert.equal(f.stream.snapshot().pressureDrains,0)
+  f.advance(1499);assert.equal(f.stream.snapshot().decoded,1)
+  f.advance(1500);assert.equal(f.stream.snapshot().decoded,17)
+  assert.deepEqual(f.frames.map(frame=>frame.timestamp),Array.from({length:17},(_,i)=>i*40000))
+  assert.equal(f.stream.snapshot().lateFrames,0);assert.equal(f.stream.snapshot().encodedBytes,0);f.stream.close()
+})

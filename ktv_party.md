@@ -1388,10 +1388,10 @@ releases its frames against the same audible PCM capture position. It retains
 at most four pending decode outputs, two transferred frames and a 32-frame /
 42.5-MiB presentation queue, reserving writer/generator ownership within 40 decoded
 frames and 64 MiB. Only I420/NV12 outputs at <= 1.5 bytes/pixel are admitted;
-four pending codec outputs still reserve full RGBA. Eight held encoded packets
-share a 512-KiB input budget.
-The reorder window is 80 ms at a 200-ms hold and 240 ms at holds of at least
-500 ms; queue pressure drains the oldest retained packet without increasing
+four pending codec outputs still reserve full RGBA. Held encoded packets
+share a 512-KiB input budget (eight at shorter holds, up to 20 at 800 ms).
+The reorder window is 80 ms at a 200-ms hold, 240 ms at holds of at least
+500 ms and 500 ms at an 800-ms hold; queue pressure drains the oldest retained packet without increasing
 the bound. Clean isolated-host 40-pair timing passes at a 200-ms hold before
 the added reorder policy. Impaired recovery and the new policy remain unaccepted.
 

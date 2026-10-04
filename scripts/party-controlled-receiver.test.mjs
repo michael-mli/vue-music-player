@@ -29,7 +29,7 @@ test('a different controller session or exceeded frame/byte bound fails quality'
 test('owned video requires its actual decoder and unique draws to meet nominal cadence within the redistributed budget',()=>{
   const owned=(count,time)=>sample(count,time,{drawn:count,maximumQueued:32,maximumBytes:42.5*1024*1024,
     ownedVideo:{closed:false,maximumInFlight:2,decoder:{worker:1,configured:true,closed:false,
-      decoded:count,observedAt:time,maximumPending:4,maximumBytes:512*1024}}})
+      decoded:count,observedAt:time,maximumPending:4,maximumBytes:512*1024,heldLimit:20,maximumHeld:20}}})
   const first=owned(10,1000),last=owned(260,11000)
   const good=analyseControlledReceiverQuality([first,last],'impaired')
   assert.equal(good.decodedFps,25);assert.equal(good.drawnFps,25);assert.deepEqual(good.errors,[])
@@ -40,6 +40,9 @@ test('owned video requires its actual decoder and unique draws to meet nominal c
   assert.ok(analyseControlledReceiverQuality([first,last],'impaired').errors.includes('PLAYOUT_OWNED_VIDEO_FPS'))
   last.receiver.controlledReceiver.active.ownedVideo.decoder.decoded=260
   last.receiver.controlledReceiver.active.maximumQueued=33
+  assert.ok(analyseControlledReceiverQuality([first,last],'impaired').errors.includes('PLAYOUT_OWNED_VIDEO_EVIDENCE'))
+  last.receiver.controlledReceiver.active.maximumQueued=32
+  last.receiver.controlledReceiver.active.ownedVideo.decoder.maximumHeld=21
   assert.ok(analyseControlledReceiverQuality([first,last],'impaired').errors.includes('PLAYOUT_OWNED_VIDEO_EVIDENCE'))
 })
 test('the YUV presentation reservation retains 32 actual-size frames within the aggregate 64-MiB limit',()=>{

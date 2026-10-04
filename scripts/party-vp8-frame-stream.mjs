@@ -1,7 +1,8 @@
 // Private continuous decoder. The caller owns delivered VideoFrames; neither
 // decoding nor capture-clock metadata grants permission to present them.
 export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80}={}) {
-  if(!Number.isInteger(reorderMs)||reorderMs<0||reorderMs>240)throw new Error('VIDEO_REORDER_CONFIG')
+  if(!Number.isInteger(reorderMs)||reorderMs<0||reorderMs>500)throw new Error('VIDEO_REORDER_CONFIG')
+  const heldLimit=reorderMs>240?20:8
   const expected=new Map(),pending=[]
   const held=new Map(),seen=new Set()
   let reorderTimer,flushing=false,maximumHeld=0,duplicates=0,lateFrames=0,reordered=0,pressureDrains=0,highestRtp=null
@@ -9,7 +10,7 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80}={}) {
   let lastRtp=null,lastTimestamp=0,captureAnchor=null,decoded=0,discarded=0,maximumBytes=0,maximumPending=0,maximumResidualMs=0
   const delta=(value,anchor)=>((value-anchor+0x80000000)>>>0)-0x80000000
   function snapshot(){return {closed,configured,decoded,discarded,encodedBytes,pending:expected.size,
-    maximumBytes,maximumPending,maximumResidualMs,heldPackets:held.size,maximumHeld,duplicates,lateFrames,reordered,pressureDrains,reorderMs}}
+    maximumBytes,maximumPending,maximumResidualMs,heldPackets:held.size,maximumHeld,heldLimit,duplicates,lateFrames,reordered,pressureDrains,reorderMs}}
   function close(reason=null){
     if(closed)return
     closed=true;clearTimeout(reorderTimer);held.clear();seen.clear();pending.length=0;expected.clear();encodedBytes=0
@@ -94,12 +95,12 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80}={}) {
       const data=frame.data
       if(!(data instanceof ArrayBuffer)||data.byteLength<1||data.byteLength>256*1024)throw new Error('VIDEO_PACKET')
       // A network burst can fill the time-based queue before its deadline.
-      // Decode the oldest retained packet rather than allocating a ninth copy.
+      // Decode the oldest retained packet before exceeding the encoded count.
       // A stalled decoder still fails closed at the same queue/input bounds.
-      if(held.size>=8)flush(true)
+      if(held.size>=heldLimit)flush(true)
       if(closed)return
       if(lastRtp!==null&&delta(rtp,lastRtp)<=0){discarded++;lateFrames++;return}
-      if(held.size>=8||encodedBytes+data.byteLength>512*1024||reorderMs===0&&expected.size>=4)throw new Error('VIDEO_BOUND')
+      if(held.size>=heldLimit||encodedBytes+data.byteLength>512*1024||reorderMs===0&&expected.size>=4)throw new Error('VIDEO_BOUND')
       const packet={rtp,type:frame.type,bytes:data.byteLength,data:data.slice(0),capture:metadata?.captureTime,arrivedAt:performance.now()}
       if(highestRtp!==null&&delta(rtp,highestRtp)<0)reordered++
       else highestRtp=rtp

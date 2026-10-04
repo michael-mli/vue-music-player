@@ -236,6 +236,8 @@ export function analyseControlledReceiverQuality(samples, phase) {
     const decoderFirst=first?.ownedVideo?.decoder,decoderLast=last?.ownedVideo?.decoder
     if(values.some(item=>!item?.ownedVideo||item.ownedVideo.closed||!item.ownedVideo.decoder?.configured||
       item.ownedVideo.decoder.closed||item.ownedVideo.maximumInFlight>2||item.ownedVideo.decoder.maximumPending>4||
+      ![8,20].includes(item.ownedVideo.decoder.heldLimit)||!Number.isSafeInteger(item.ownedVideo.decoder.maximumHeld)||
+      item.ownedVideo.decoder.maximumHeld<0||item.ownedVideo.decoder.maximumHeld>item.ownedVideo.decoder.heldLimit||
       item.ownedVideo.decoder.maximumBytes>512*1024||item.maximumQueued>32||item.maximumBytes>42.5*1024*1024||
       item.ownedVideo.decoder.worker!==decoderFirst?.worker))errors.push('PLAYOUT_OWNED_VIDEO_EVIDENCE')
     const decoderDuration=decoderLast?.observedAt-decoderFirst?.observedAt

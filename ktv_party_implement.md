@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **128/128** pass.
+checks pass; party units **125/125** and timing/capability fixtures **129/129** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -4252,3 +4252,32 @@ run is in progress, retaining route isolation, original codec/bitrate, memory
 bounds and timing/quality thresholds. Demand timing remains scoped to the initial
 publisher as in the earlier private demand experiment; full post-handover timing
 remains a separate required gate. Product integration and release stay open.
+
+
+### Extended encoded repair within the existing PCM hold — 2026-10-04
+
+The owned demand run also exits 1:
+`/tmp/ktv-owned-av-yuv-demand-full-udp-native-20261004.log`.
+Eleven requests complete, 39 video transitions appear, but 40 impaired matched
+pairs are not collected; native source/receiver rates fall to **2.88/2.79 fps**.
+The owned decoder remains open with 25 unique late frames. Neither periodic
+nor five-second demand recovery satisfies the current nominal policy.
+
+The next private experiment retains copied encoded packets for up to **500 ms**
+inside the existing **800-ms PCM hold**. Longer packet retention uses at most
+**20 compressed packets**, still sharing the unchanged **512-KiB encoded budget**
+with pending codec inputs. The earlier eight-packet count could drain before
+repairs arriving after 240 ms; byte bounds continue to reject oversized/burst
+input. Shorter holds retain the previous 80/240-ms windows and eight-packet cap.
+First-arrival deadlines, four pending decode outputs, two transfers, 32 queued
+decoded frames, 40 total decoded frames and 64-MiB payload reservation remain
+bounded. No PCM hold, bitrate or timing/FPS acceptance threshold is increased.
+
+Fixtures pass **129/129** in
+`/tmp/ktv-owned-video-extended-repair-fixtures-20261004.log`, including a 350-ms
+late burst decoded in RTP order without pressure drains. Additional quality
+checks pass **8/8** in
+`/tmp/ktv-owned-video-extended-repair-quality-fixtures-20261004.log`, rejecting
+encoded count above the selected cap. A full UDP/recovery/handover run without
+keyframe requests is in progress. Native acceptance and product integration
+remain pending; all physical/mobile/capacity/persistent-SFU release work remains.
