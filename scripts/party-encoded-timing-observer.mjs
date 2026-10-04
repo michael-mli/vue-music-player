@@ -115,12 +115,13 @@ export function installEncodedTimingProbe(workerSource,receiverApi='native') {
           if(['I420','I420A','I422','I444','I420P10','I422P10','I444P10','NV12','RGBA','RGBX','BGRA','BGRX'].includes(input.format))value.format=input.format
           row.outputDiagnostic=value
         }
-        for(const key of ['decoded','decodedKeyFrames','discarded','encodedBytes','pending','maximumBytes','maximumPending','maximumReady','committedGaps','contiguousDrains','transferWaits','normalizedOutputs','maximumCopyBytes','inFlight',
+        for(const key of ['decoded','decodedKeyFrames','discarded','encodedBytes','pending','maximumBytes','maximumPending','maximumReady','committedGaps','contiguousDrains','transferWaits','normalizedOutputs','maximumCopyBytes','dependencyPackets','referenceMisses','inFlight',
           'heldPackets','maximumHeld','heldLimit','duplicates','lateFrames','reordered','pressureDrains','reorderMs','recoveryMs','keyframeRequests','keyframeFulfilled'])
           if(Number.isSafeInteger(data[key])&&data[key]>=0)row[key]=data[key]
         if(Number.isFinite(data.maximumResidualMs))row.maximumResidualMs=data.maximumResidualMs
         row.recovery=data.recovery===true;row.keyframePending=data.keyframePending===true;row.gapAware=data.gapAware===true
-        row.reason=[null,'VIDEO_API','VIDEO_CONFIG','VIDEO_DECODE','VIDEO_PACKET','VIDEO_CLOCK','VIDEO_BOUND','VIDEO_OUTPUT',
+        row.dependencyAware=data.dependencyAware===true
+        row.reason=[null,'VIDEO_API','VIDEO_CONFIG','VIDEO_DECODE','VIDEO_PACKET','VIDEO_REFERENCE','VIDEO_CLOCK','VIDEO_BOUND','VIDEO_OUTPUT',
           'VIDEO_PORT_CLOCK','VIDEO_PORT_TRANSFER','VIDEO_PORT_MESSAGE','VIDEO_PORT_CREDIT','VIDEO_RECOVERY_API','VIDEO_RECOVERY_REQUEST'].includes(data.reason)?data.reason:'VIDEO_OUTPUT'
         videoStates.push(row);if(videoStates.length>64)videoStates.shift();return
       }

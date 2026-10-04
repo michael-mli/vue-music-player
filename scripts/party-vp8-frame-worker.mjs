@@ -1,7 +1,8 @@
 // Private receiver worker. Decoding starts at the first received keyframe;
 // binding a port only transfers ownership, never permission to present output.
-export function installVp8FrameWorker(createStream,reorderMs=80,recover=false,recoveryMs=5000,gapAware=false,codec='vp8'){
+export function installVp8FrameWorker(createStream,reorderMs=80,recover=false,recoveryMs=5000,gapAware=false,codec='vp8',dependencyAware=false){
   if(!['vp8','vp9'].includes(codec))throw new Error('VIDEO_CODEC_CONFIG')
+  if(typeof dependencyAware!=='boolean'||dependencyAware&&(!gapAware||codec!=='vp9'))throw new Error('VIDEO_REORDER_CONFIG')
   if(!Number.isInteger(recoveryMs)||recoveryMs<1000||recoveryMs>5000)throw new Error('VIDEO_RECOVERY_CONFIG')
   let stream,port,timer,bound=false,closed=false,reason=null,expiry,lastWall=Date.now(),lastMono=performance.now()
   let lastKey=-Infinity,lastRequest=-Infinity,keyframePending=false,keyframeRequests=0,keyframeFulfilled=0
@@ -32,7 +33,7 @@ export function installVp8FrameWorker(createStream,reorderMs=80,recover=false,re
       credits.set(packet.id,packet.bytes)
       try{port.postMessage({type:'video-frame',frame,...packet},[frame]);return true}
       catch{credits.delete(packet.id);close('VIDEO_PORT_TRANSFER');return false}
-    },row=>close(row.reason),{reorderMs,gapAware,codec})
+    },row=>close(row.reason),{reorderMs,gapAware,codec,dependencyAware})
     if(closed){stream.close();return}
     timer=setInterval(()=>{
       check()
@@ -46,7 +47,7 @@ export function installVp8FrameWorker(createStream,reorderMs=80,recover=false,re
     const after=stream.snapshot(),now=performance.now()
     // RTP spacing also grows when the encoder intentionally omits frames.
     // Request recovery only for an actual received reference discarded as late.
-    const damage=after.lateFrames||0,newDamage=damage>seenDamage
+    const damage=dependencyAware?(after.referenceMisses||0):(after.lateFrames||0),newDamage=damage>seenDamage
     seenDamage=damage
     if(closed||after.closed)return
     if(frame.type==='key'&&after.lateFrames===before.lateFrames&&after.duplicates===before.duplicates)lastKey=now

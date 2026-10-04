@@ -1,12 +1,18 @@
 // Private continuous decoder. The caller owns delivered VideoFrames; neither
 // decoding nor capture-clock metadata grants permission to present them.
-export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAware=false,codec='vp8'}={}) {
+export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAware=false,codec='vp8',dependencyAware=false}={}) {
   if(!Number.isInteger(reorderMs)||reorderMs<0||reorderMs>700||typeof gapAware!=='boolean')throw new Error('VIDEO_REORDER_CONFIG')
   if(!['vp8','vp9'].includes(codec))throw new Error('VIDEO_CODEC_CONFIG')
+  if(typeof dependencyAware!=='boolean'||dependencyAware&&(!gapAware||codec!=='vp9'))throw new Error('VIDEO_REORDER_CONFIG')
   const decoderCodec=codec==='vp9'?'vp09.00.31.08':'vp8'
   const heldLimit=reorderMs>240?20:8
   const expected=new Map(),pending=[]
   const held=new Map(),seen=new Set()
+  const references=new Set()
+  let referenceKey=null,dependencyPackets=0,referenceMisses=0
+  const dependencies=metadata=>Number.isSafeInteger(metadata?.frameId)&&metadata.frameId>=0&&
+    Array.isArray(metadata.dependencies)&&metadata.dependencies.length<=8&&
+    metadata.dependencies.every(id=>Number.isSafeInteger(id)&&id>=0)
   let reorderTimer,flushing=false,maximumHeld=0,duplicates=0,lateFrames=0,reordered=0,pressureDrains=0,highestRtp=null
   let decoder,configured=false,closed=false,sequence=0,encodedBytes=0
   let pumping=false,maximumReady=0,committedGaps=0,contiguousDrains=0,transferWaits=0
@@ -15,10 +21,10 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAwar
   const delta=(value,anchor)=>((value-anchor+0x80000000)>>>0)-0x80000000
   function snapshot(){return {closed,configured,decoded,decodedKeyFrames,discarded,encodedBytes,pending:expected.size,
     maximumBytes,maximumPending,maximumReady,maximumResidualMs,heldPackets:held.size,maximumHeld,heldLimit,duplicates,lateFrames,reordered,pressureDrains,reorderMs,
-    codec,gapAware,committedGaps,contiguousDrains,transferWaits,outputDiagnostic,normalizedOutputs,maximumCopyBytes}}
+    codec,gapAware,dependencyAware,dependencyPackets,referenceMisses,committedGaps,contiguousDrains,transferWaits,outputDiagnostic,normalizedOutputs,maximumCopyBytes}}
   function close(reason=null){
     if(closed)return
-    closed=true;clearTimeout(reorderTimer);held.clear();seen.clear();pending.length=0
+    closed=true;clearTimeout(reorderTimer);held.clear();seen.clear();references.clear();pending.length=0
     for(const packet of expected.values()){
       packet.frame?.close();packet.copyFrame?.close();packet.copyFrame=null
     }
@@ -110,11 +116,20 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAwar
     }
     packet.timestamp=lastTimestamp+Math.round(step/90*1000)
     if(!Number.isSafeInteger(packet.timestamp))throw new Error('VIDEO_CLOCK')
-    expected.set(packet.timestamp,packet);lastRtp=packet.rtp;lastTimestamp=packet.timestamp
+    lastRtp=packet.rtp;lastTimestamp=packet.timestamp
+    if(dependencyAware&&packet.dependencies&&packet.type!=='key'&&packet.dependencies.some(id=>!references.has(id))){
+      referenceMisses++;discarded++;encodedBytes-=packet.bytes;packet.data=null;return
+    }
+    if(packet.frameId!==undefined){
+      if(packet.type==='key'){references.clear();referenceKey=packet.frameId}
+      references.add(packet.frameId)
+      while(references.size>257){const oldest=[...references].find(id=>id!==referenceKey);references.delete(oldest)}
+    }
+    expected.set(packet.timestamp,packet)
     maximumPending=Math.max(maximumPending,expected.size)
     if(configured)decode(packet);else pending.push(packet)
   }
-  function failure(error){close(['VIDEO_PACKET','VIDEO_CLOCK','VIDEO_BOUND'].includes(error.message)?error.message:'VIDEO_DECODE')}
+  function failure(error){close(['VIDEO_PACKET','VIDEO_CLOCK','VIDEO_BOUND','VIDEO_REFERENCE'].includes(error.message)?error.message:'VIDEO_DECODE')}
   function flush(forceOne=false){
     if(closed||flushing)return
     flushing=true;clearTimeout(reorderTimer);reorderTimer=null
@@ -123,7 +138,9 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAwar
         const packet=[...held.values()].sort((a,b)=>delta(a.rtp,b.rtp))[0]
         const firstArrival=Math.min(...[...held.values()].map(item=>item.arrivedAt))
         const remaining=reorderMs-(performance.now()-firstArrival)
-        const contiguous=gapAware&&lastRtp!==null&&delta(packet.rtp,lastRtp)<=54*90
+        const contiguous=dependencyAware&&packet.dependencies?
+          packet.type==='key'||packet.dependencies.every(id=>references.has(id)):
+          gapAware&&lastRtp!==null&&delta(packet.rtp,lastRtp)<=54*90
         if(remaining>0&&!forceOne&&!contiguous){reorderTimer=setTimeout(flush,Math.max(1,remaining));break}
         if(remaining>0&&!contiguous)pressureDrains++
         if(contiguous&&held.size>1)contiguousDrains++
@@ -154,6 +171,7 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAwar
       if(step>450000)throw new Error('VIDEO_CLOCK')
       const data=frame.data
       if(!(data instanceof ArrayBuffer)||data.byteLength<1||data.byteLength>256*1024)throw new Error('VIDEO_PACKET')
+      if(dependencyAware&&(!dependencies(metadata)||frame.type!=='key'&&metadata.dependencies.length===0))throw new Error('VIDEO_REFERENCE')
       // A network burst can fill the time-based queue before its deadline.
       // Decode the oldest retained packet before exceeding the encoded count.
       // A stalled decoder still fails closed at the same queue/input bounds.
@@ -162,6 +180,9 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAwar
       if(lastRtp!==null&&delta(rtp,lastRtp)<=0){discarded++;lateFrames++;return}
       if(held.size>=heldLimit||encodedBytes+data.byteLength>512*1024||reorderMs===0&&expected.size>=4)throw new Error('VIDEO_BOUND')
       const packet={rtp,type:frame.type,bytes:data.byteLength,data:data.slice(0),capture:metadata?.captureTime,arrivedAt:performance.now()}
+      if(dependencyAware&&dependencies(metadata)&&(frame.type==='key'||metadata.dependencies.length>0)){
+        packet.frameId=metadata.frameId;packet.dependencies=metadata.dependencies.slice();dependencyPackets++
+      }
       if(highestRtp!==null&&delta(rtp,highestRtp)<0)reordered++
       else highestRtp=rtp
       encodedBytes+=packet.bytes;maximumBytes=Math.max(maximumBytes,encodedBytes)

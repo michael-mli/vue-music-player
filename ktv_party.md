@@ -1408,7 +1408,11 @@ raises only video local priority to match audio, retaining packet network priori
 and the nominal bitrate/framerate caps; actual native readback and full timing
 are required. It is not a deployed policy. A marked nominal VP9 artifact may use the same
 owned ordering/decoder queues with exact received-codec validation; the default
-remains VP8, and no alternative codec has full acceptance.
+remains VP8, and no alternative codec has full acceptance. The explicit private
+VP9 dependency mode uses native reference declarations to bypass unnecessary
+RTP-gap waits, keeps required references within a fixed 700-ms bound, discards
+inputs whose required references never arrive, and requests bounded recovery
+only for such misses. Incomplete declarations close this mode permanently.
 
 Continuously impaired timing and nominal frame rate still fail. Native decoded
 video can arrive too late, while the owned decoder still needs reliable packet

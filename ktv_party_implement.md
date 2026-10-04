@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **149/149** pass.
+checks pass; party units **125/125** and timing/capability fixtures **153/153** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -4764,3 +4764,34 @@ presence flag and a validated 0–8 dependency count. Raw reference IDs are
 excluded. A native VP9 run is collecting these capabilities at
 `/tmp/ktv-owned-av-vp9-reference-capability-full-udp-20261004.log` without any
 dependency-based policy change.
+
+
+### Native reference declarations verified; explicit dependency ordering — 2026-10-04
+
+`/tmp/ktv-owned-av-vp9-reference-capability-full-udp-20261004.log` exits 1
+for timing/cadence. Baseline source/native rates are **25.03/24.77 fps**;
+impaired source/native rates are **19.77/14.72 fps**, and owned presentation
+fails. All 37 sampled received VP9 packets expose a valid frame ID: one
+independent header and 36 headers with one declared reference. This supports
+a dependency-specific ordering experiment; it is not full timing acceptance.
+
+The explicit private `KTV_ROOM_TEST_VIDEO_REORDER=dependency` mode requires
+the marked nominal VP9 artifact and native standard-receiver keyframe recovery.
+It decodes across RTP gaps when declared references have already been submitted
+to the same decoder. Required references wait inside the original fixed 700-ms
+arrival deadline and encoded bounds. A missing required reference at deadline
+is discarded without decoding its payload, increments a reference-miss counter
+and can request bounded native recovery. Unique late higher-layer frames alone
+do not trigger global keyframes in this mode. Absent/malformed declarations
+close permanently, avoiding timing-based dependency guesses.
+
+Submitted reference IDs are bounded to 256 recent IDs plus the current key,
+cleared at keyframes and stop. Reference metadata does not create output
+authority or alter RTC payloads. The original RTP/capture-clock checks, strict
+nominal output, 40 decoded-frame/64-MiB payload reservation and all timing/cadence
+gates remain intact. Fixtures pass **153/153** in
+`/tmp/ktv-video-required-reference-recovery-fixtures-20261004.log`, covering
+independent gap traversal, required-reference repair, fixed missing-reference
+expiry, unsupported declarations and feedback only for missing references.
+A full native run is in progress at
+`/tmp/ktv-owned-av-vp9-required-references-full-udp-20261004.log`.

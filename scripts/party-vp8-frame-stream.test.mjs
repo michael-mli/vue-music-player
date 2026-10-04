@@ -4,7 +4,7 @@ import vm from 'node:vm'
 import {setImmediate as tick} from 'node:timers/promises'
 import {createVp8FrameStream} from './party-vp8-frame-stream.mjs'
 
-async function fixture({hold=false,accept=true,reorderMs=0,format='I420',gapAware=false,codec='vp8',receivedCodec=codec,padded=false,copyHold=false}={}){
+async function fixture({hold=false,accept=true,reorderMs=0,format='I420',gapAware=false,codec='vp8',receivedCodec=codec,padded=false,copyHold=false,dependencyAware=false}={}){
   const delivered=[],frames=[],reports=[],waiting=[],copies=[]
   let now=1000,decoder,timerId=0,configUsed
   let acceptance=accept
@@ -25,13 +25,13 @@ async function fixture({hold=false,accept=true,reorderMs=0,format='I420',gapAwar
     EncodedVideoChunk:class{constructor(config){Object.assign(this,config)}},
     VideoFrame:class{constructor(data,config){Object.assign(this,config);this.closes=0;frames.push(this)}
       allocationSize(){return 1382400}close(){this.closes++}},
-    __encodedTimingCodecs:[{payloadType:96,mimeType:`video/${receivedCodec}`}],deliver:(frame,packet)=>{if(acceptance===true)delivered.push({frame,...packet});return acceptance},report:row=>reports.push(row),reorderMs,gapAware,codec,
+    __encodedTimingCodecs:[{payloadType:96,mimeType:`video/${receivedCodec}`}],deliver:(frame,packet)=>{if(acceptance===true)delivered.push({frame,...packet});return acceptance},report:row=>reports.push(row),reorderMs,gapAware,codec,dependencyAware,
     setTimeout(callback,delay){const id=++timerId;timers.set(id,{callback,at:now+delay});return id},clearTimeout(id){timers.delete(id)}}
   realm.self=realm
-  const stream=vm.runInNewContext(`(${createVp8FrameStream.toString()})(deliver,report,{reorderMs,gapAware,codec})`,realm)
+  const stream=vm.runInNewContext(`(${createVp8FrameStream.toString()})(deliver,report,{reorderMs,gapAware,codec,dependencyAware})`,realm)
   await tick()
-  const send=(rtp,captureTime=rtp/90,type=frames.length?'delta':'key')=>stream.observe(
-    {timestamp:rtp>>>0,type,data:new Uint8Array([7]).buffer},{captureTime,payloadType:96})
+  const send=(rtp,captureTime=rtp/90,type=frames.length?'delta':'key',reference={})=>stream.observe(
+    {timestamp:rtp>>>0,type,data:new Uint8Array([7]).buffer},{captureTime,payloadType:96,...reference})
   return {get config(){return configUsed},finishCopies(){while(copies.length)copies.shift()()},stream,send,delivered,frames,reports,waiting,timers,setAccept(value){acceptance=value},advance(value){now=value;for(const [id,timer]of[...timers])if(timer.at<=now){timers.delete(id);timer.callback()}},
     flush(){while(waiting.length)decoder.callbacks.output(waiting.shift())}}
 }
@@ -175,4 +175,41 @@ test('stop during a bounded padding copy closes every original once and never co
   assert.equal(f.stream.snapshot().pending,4);assert.equal(f.stream.snapshot().maximumCopyBytes,1382400)
   f.stream.close();f.finishCopies();await tick()
   assert.equal(f.delivered.length,0);assert.equal(f.frames.length,4);assert.ok(f.frames.every(frame=>frame.closes===1))
+})
+
+test('declared references decode across unnecessary RTP gaps and hold only a missing required reference',async()=>{
+  const f=await fixture({codec:'vp9',gapAware:true,dependencyAware:true,reorderMs:700})
+  f.send(0,0,'key',{frameId:10,dependencies:[]})
+  f.send(7200,80,'delta',{frameId:12,dependencies:[10]})
+  assert.equal(f.stream.snapshot().decoded,2);assert.equal(f.timers.size,0)
+  f.send(3600,40,'delta',{frameId:11,dependencies:[10]})
+  assert.equal(f.stream.snapshot().lateFrames,1);assert.equal(f.stream.snapshot().referenceMisses,0)
+  for(const packet of f.delivered)packet.frame.close();f.stream.close()
+  const repair=await fixture({codec:'vp9',gapAware:true,dependencyAware:true,reorderMs:700})
+  repair.send(0,0,'key',{frameId:1,dependencies:[]})
+  repair.send(7200,80,'delta',{frameId:3,dependencies:[2]});repair.advance(1699)
+  assert.equal(repair.stream.snapshot().decoded,1)
+  repair.send(3600,40,'delta',{frameId:2,dependencies:[1]})
+  assert.equal(repair.stream.snapshot().decoded,3);assert.equal(repair.stream.snapshot().referenceMisses,0)
+  for(const packet of repair.delivered)packet.frame.close();repair.stream.close()
+})
+test('missing declared references expire at the fixed bound without decoding an unsafe input or retaining its payload',async()=>{
+  const f=await fixture({codec:'vp9',gapAware:true,dependencyAware:true,reorderMs:700})
+  f.send(0,0,'key',{frameId:1,dependencies:[]})
+  f.send(7200,80,'delta',{frameId:3,dependencies:[2]});f.advance(1700)
+  assert.equal(f.stream.snapshot().decoded,1);assert.equal(f.stream.snapshot().referenceMisses,1)
+  assert.equal(f.stream.snapshot().encodedBytes,0)
+  f.send(10800,120,'delta',{frameId:4,dependencies:[1]});assert.equal(f.stream.snapshot().decoded,2)
+  for(const packet of f.delivered)packet.frame.close();f.stream.close()
+})
+
+test('explicit reference mode closes permanently on absent or malformed native declarations',async()=>{
+  for(const metadata of [{},{frameId:2,dependencies:[]},{frameId:2,dependencies:['private']},
+    {frameId:2,dependencies:Array(9).fill(1)},{frameId:-1,dependencies:[1]}]){
+    const f=await fixture({codec:'vp9',gapAware:true,dependencyAware:true,reorderMs:700})
+    f.send(0,0,'key',{frameId:1,dependencies:[]});f.send(3600,40,'delta',metadata)
+    assert.equal(f.reports.at(-1).reason,'VIDEO_REFERENCE');assert.equal(f.stream.snapshot().closed,true)
+    f.send(7200,80,'delta',{frameId:3,dependencies:[1]});assert.equal(f.stream.snapshot().decoded,1)
+    for(const packet of f.delivered)packet.frame.close()
+  }
 })
