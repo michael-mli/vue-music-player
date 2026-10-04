@@ -4298,3 +4298,32 @@ This run establishes neither clean nor impaired acceptance. One unchanged
 repeat is in progress to determine whether the output-latency failure recurs;
 no clock limit, output timestamp, PCM hold or timing/FPS threshold is adjusted.
 Native output stability and the extended packet-repair policy remain pending.
+
+
+### Extended repair repeat and native receiver feedback capability — 2026-10-04
+
+The unchanged repeat exits 1:
+`/tmp/ktv-owned-av-extended-repair-repeat-full-udp-native-20261004.log`.
+Baseline maximum skew is **72.57 ms**, with both selected paths verified through
+UDP proxy port 7882. No output-latency shutdown recurs. During impairment, native
+source/receiver rates are **20.63/20.51 fps**; the owned decoder remains open,
+reorders **263 frames** and discards **20 unique late frames**, with no pressure
+drains. Maximum held queue is 17/20 and encoded input 29,946/524,288 bytes.
+Arrival maximum is 1039 ms; release maximum lateness is 118.51 ms. Only **seven
+video marker transitions** are detected, so 40 matched pairs are not collected.
+Longer packet retention improves reordering but does not establish reliable
+codec-reference recovery or impaired acceptance.
+
+A private `KTV_ROOM_TEST_RECEIVER_ENCODED_API=standard` selector now permits
+testing the standard receive transform when Chrome exposes both APIs. Defaults
+continue using the existing native choice. The standard worker observes whether
+its actual transformer exposes `sendKeyFrameRequest`, without requesting a
+frame yet. The API is defined by the
+[encoded-transform specification](https://www.w3.org/TR/webrtc-encoded-transform/#dom-rtcrtpscripttransformer-sendkeyframerequest).
+This is a capability study of receiver feedback through the SFU, not accepted
+recovery or a product source/encoder policy change. Existing fixtures pass
+**129/129**; explicit dual-API standard selection also passes in
+`/tmp/ktv-standard-receiver-api-selection-fixtures-20261004.log`. A native
+eight-frame standard receiver probe is in progress. Invocation, actual encoded
+keyframe responses, original nominal cadence and full impaired/handover timing
+still require proof.

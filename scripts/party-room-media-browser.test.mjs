@@ -79,6 +79,9 @@ if (codecExperiment) {
 }
 const avTiming = process.env.KTV_ROOM_TEST_AV_TIMING === '1'
 const encodedTiming = process.env.KTV_ROOM_TEST_ENCODED_TIMING === '1'
+const receiverEncodedApi=process.env.KTV_ROOM_TEST_RECEIVER_ENCODED_API||'native'
+assert.ok(['native','standard'].includes(receiverEncodedApi)&&(receiverEncodedApi==='native'||encodedTiming),
+  'Receiver API selection requires private encoded-frame evidence')
 const absoluteCapture = process.env.KTV_ROOM_TEST_ABSOLUTE_CAPTURE === '1'
 const opusDecodeProbe = process.env.KTV_ROOM_TEST_OPUS_DECODE === '1'
 const pcmPortProbe = process.env.KTV_ROOM_TEST_PCM_PORT === '1'
@@ -380,7 +383,7 @@ try {
     await cdp(socket, 'Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', 'en');
       ${avTiming ? `(${installAvSourceMarkers.toString()})();` : ''}
       ${encodedApi==='legacy' ? 'window.RTCRtpScriptTransform=undefined;' : ''}
-      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify('('+encodedTimingWorker.toString()+')('+ (opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : vp8DecodeProbe?'null,null,null,'+createVp8DecodeProbe.toString():'') +');'+(pcmPortProbe||ownedPcm ? '('+installOpusPcmWorker.toString()+')('+bindOpusPcmPort.toString()+','+createOpusPcmStream.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString()+');' : '')+(ownedVideo?'('+installVp8FrameWorker.toString()+')('+createVp8FrameStream.toString()+','+(controlledPlayoutMs>=800?500:controlledPlayoutMs>=500?240:80)+');':''))});` : ''}
+      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify('('+encodedTimingWorker.toString()+')('+ (opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : vp8DecodeProbe?'null,null,null,'+createVp8DecodeProbe.toString():'') +');'+(pcmPortProbe||ownedPcm ? '('+installOpusPcmWorker.toString()+')('+bindOpusPcmPort.toString()+','+createOpusPcmStream.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString()+');' : '')+(ownedVideo?'('+installVp8FrameWorker.toString()+')('+createVp8FrameStream.toString()+','+(controlledPlayoutMs>=800?500:controlledPlayoutMs>=500?240:80)+');':''))},${JSON.stringify(receiverEncodedApi)});` : ''}
       (${installEncodedLeaseObserver.toString()})();
       ${absoluteCapture ? `(${installAbsoluteCaptureExperiment.toString()})();` : ''}
       ${senderCadence ? `(${installSenderCadenceExperiment.toString()})();` : ''}
@@ -566,6 +569,9 @@ try {
       'actual audio/video encoded capture clocks independently match the same native delivery epoch')
   }
   if(vp8DecodeProbe){
+    if(receiverEncodedApi==='standard')check(await evaluate(audience,
+      "__encodedTimingProbe.features.receiverApi==='standard'&&__encodedTimingProbe.states.some(row=>row.direction==='receive'&&row.kind==='video'&&row.state==='keyframe-api')"),
+      'actual standard receiver transform exposes the native keyframe-request method')
     const evidence=await poll(()=>evaluate(audience,'__encodedTimingProbe.videoDecoders[0]'),
       'actual received VP8 decoder capability',40000)
     console.log('Native received VP8 decoding:',JSON.stringify(evidence))

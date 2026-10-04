@@ -57,7 +57,9 @@ export function encodedTimingWorker(createAudioProbe = null, primaryPayload = nu
   }
 }
 
-export function installEncodedTimingProbe(workerSource) {
+export function installEncodedTimingProbe(workerSource,receiverApi='native') {
+  if(!['native','standard'].includes(receiverApi))throw new Error('TIMING_RECEIVER_API')
+  if(receiverApi==='standard'&&typeof RTCRtpScriptTransform!=='function')throw new Error('TIMING_RECEIVER_API')
   const Worker = window.Worker
   const receiverUrl = URL.createObjectURL(new Blob([`self.__encodedTimingDirection='receive';\n` + workerSource + `
     self.postMessage({type:'timing-probe-state',state:'boot'});
@@ -67,7 +69,14 @@ export function installEncodedTimingProbe(workerSource) {
       self.__encodedTimingKind=null;
       readable.pipeThrough(stream).pipeTo(writable).catch(()=>self.postMessage({type:'timing-probe-error'}));
     };
-    self.onrtctransform=({transformer})=>{self.__encodedTimingCodecs=transformer.options.codecs;attach(transformer.readable,transformer.writable,transformer.options.kind)};
+    self.onrtctransform=({transformer})=>{
+      self.__encodedTimingCodecs=transformer.options.codecs;
+      if(transformer.options.kind==='video'){
+        self.__requestOwnedVideoKeyframe=typeof transformer.sendKeyFrameRequest==='function'?()=>transformer.sendKeyFrameRequest():null;
+        self.postMessage({type:'timing-probe-state',state:self.__requestOwnedVideoKeyframe?'keyframe-api':'keyframe-unsupported',kind:'video'});
+      }
+      attach(transformer.readable,transformer.writable,transformer.options.kind)
+    };
     self.onmessage=({data})=>{if(data?.type?.startsWith('pcm-')||data?.type?.startsWith('video-'))return;self.__encodedTimingCodecs=data.codecs;attach(data.readable,data.writable,data.kind)};
   `], { type: 'text/javascript' }))
   const records = [], states=[], audioDecoders=[],videoDecoders=[], workers = new Set(), urls = new Set([receiverUrl]), observedReceivers=new WeakSet()
@@ -125,7 +134,7 @@ export function installEncodedTimingProbe(workerSource) {
         audioDecoders.push(row); if (audioDecoders.length > 16) audioDecoders.shift()
         return
       }
-      if(data?.type==='timing-probe-state'&&['boot','stream','frame'].includes(data.state)) {
+      if(data?.type==='timing-probe-state'&&['boot','stream','frame','keyframe-api','keyframe-unsupported'].includes(data.state)) {
         states.push({worker:id,direction,state:data.state,kind:['audio','video'].includes(data.kind)?data.kind:null})
         if(states.length>64)states.shift()
         return
@@ -178,7 +187,7 @@ export function installEncodedTimingProbe(workerSource) {
   }
   const Peer = window.RTCPeerConnection
   const scriptTransform = typeof RTCRtpScriptTransform === 'function'
-  const legacyReceiver = typeof RTCRtpReceiver.prototype.createEncodedStreams === 'function'
+  const legacyReceiver = receiverApi!=='standard'&&typeof RTCRtpReceiver.prototype.createEncodedStreams === 'function'
   window.RTCPeerConnection = class extends Peer {
     setConfiguration(configuration) {
       // LiveKit reapplies the configuration after joining. Preserve the same

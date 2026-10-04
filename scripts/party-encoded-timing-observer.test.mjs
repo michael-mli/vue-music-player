@@ -66,7 +66,7 @@ test('explicit received video capability observation does not stop at sparse met
 
 import { installEncodedTimingProbe } from './party-encoded-timing-observer.mjs'
 
-function browserFixture(legacy) {
+function browserFixture(legacy,api='native') {
   const workers = []
   class Worker extends EventTarget {
     constructor(url, options) { super(); this.url = url; this.options = options; workers.push(this) }
@@ -90,7 +90,7 @@ function browserFixture(legacy) {
   RTCRtpScriptTransform: class { constructor(worker, options) { this.worker = worker; this.options = options } },
   location: { href: 'https://owned.test/party', origin: 'https://owned.test' } }
   realm.window = { Worker, RTCPeerConnection: Peer }
-  vm.runInNewContext('('+installEncodedTimingProbe.toString()+')("owned worker source")', realm)
+  vm.runInNewContext('('+installEncodedTimingProbe.toString()+')("owned worker source",'+JSON.stringify(api)+')', realm)
   return { realm, workers, revoked, receiver: () => new Receiver(),
     track(peer, receiver) { const event = new Event('track'); event.receiver = receiver; peer.dispatchEvent(event) } }
 }
@@ -125,6 +125,15 @@ test('standard-only probe retains native configuration and existing transforms c
   assert.equal(occupied.transform, transform)
   assert.equal(f.realm.window.__encodedTimingProbe.failures.occupied, 1)
   assert.equal(f.workers.length, 1)
+})
+test('explicit standard receiver selection avoids legacy streams when both native APIs exist',()=>{
+  const f=browserFixture(true,'standard'),configuration={iceTransportPolicy:'relay'},
+    peer=new f.realm.window.RTCPeerConnection(configuration),receiver=f.receiver()
+  f.track(peer,receiver);f.track(peer,receiver)
+  assert.equal(peer.configuration,configuration);assert.equal(receiver.streams,undefined)
+  assert.equal(receiver.transform.worker,f.workers[0]);assert.equal(f.workers.length,1)
+  assert.equal(f.realm.window.__encodedTimingProbe.features.receiverApi,'standard')
+  f.realm.window.__encodedTimingProbe.close()
 })
 test('received video decoder diagnostics allowlist scalars and cap frames and generations',()=>{
   const f=browserFixture(true),peer=new f.realm.window.RTCPeerConnection(),receiver=f.receiver()
