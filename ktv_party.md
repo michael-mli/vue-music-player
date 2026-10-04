@@ -1376,7 +1376,9 @@ expiry with both contexts suspended/resumed and page callbacks blocked.
 
 Opus RED repair uses RFC 2198 timestamp offsets. An 80-ms reorder window retains
 at most eight encoded packets within the shared 512-KiB encoded budget. PCM stays
-within 48 chunks / 1 MiB. Advancing capture anchors retain the 80-ms discontinuity
+within 48 chunks / 1 MiB. Full render credits pause decoding in the existing
+encoded queue until exact credits return; sustained overflow still closes.
+Advancing capture anchors retain the 80-ms discontinuity
 limit; continuous sample scheduling and observed capture phase remain separate,
 with a 200-ms cumulative phase cap until rate correction is implemented. Video
 uses phase history at the audible position. Renderer telemetry counts future
@@ -1393,7 +1395,10 @@ share a 512-KiB input budget (eight at shorter holds, up to 20 at 800 ms).
 The reorder window is 80 ms at a 200-ms hold, 240 ms at holds of at least
 500 ms and 500 ms at an 800-ms hold; queue pressure drains the oldest retained packet without increasing
 the bound. Clean isolated-host 40-pair timing passes at a 200-ms hold before
-the added reorder policy. Impaired recovery and the new policy remain unaccepted.
+the added reorder policy. A reserved standard receiver can request native
+keyframe feedback, with one pending request and a bounded 1–5-second cooldown;
+actual encoded/decoded keys are required as response evidence. Impaired recovery
+and the new policy remain unaccepted.
 
 Continuously impaired timing and nominal frame rate still fail. Native decoded
 video can arrive too late, while the owned decoder still needs reliable packet

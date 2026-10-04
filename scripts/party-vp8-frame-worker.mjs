@@ -1,10 +1,11 @@
 // Private receiver worker. Decoding starts at the first received keyframe;
 // binding a port only transfers ownership, never permission to present output.
-export function installVp8FrameWorker(createStream,reorderMs=80,recover=false){
+export function installVp8FrameWorker(createStream,reorderMs=80,recover=false,recoveryMs=5000){
+  if(!Number.isInteger(recoveryMs)||recoveryMs<1000||recoveryMs>5000)throw new Error('VIDEO_RECOVERY_CONFIG')
   let stream,port,timer,bound=false,closed=false,reason=null,expiry,lastWall=Date.now(),lastMono=performance.now()
   let lastKey=-Infinity,lastRequest=-Infinity,keyframePending=false,keyframeRequests=0,keyframeFulfilled=0
   const credits=new Map()
-  const recovery=()=>({recovery:recover,keyframeRequests,keyframeFulfilled,keyframePending})
+  const recovery=()=>({recovery:recover,recoveryMs,keyframeRequests,keyframeFulfilled,keyframePending})
   function close(code=null){
     if(closed)return
     closed=true;reason=code;clearInterval(timer);stream?.close(code);credits.clear()
@@ -42,7 +43,7 @@ export function installVp8FrameWorker(createStream,reorderMs=80,recover=false){
     const after=stream.snapshot(),now=performance.now()
     if(closed||after.closed)return
     if(frame.type==='key'&&after.lateFrames===before.lateFrames&&after.duplicates===before.duplicates)lastKey=now
-    if(!recover||after.lateFrames<=before.lateFrames||keyframePending||now-lastRequest<5000||now-lastKey<1000)return
+    if(!recover||after.lateFrames<=before.lateFrames||keyframePending||now-lastRequest<recoveryMs||now-lastKey<1000)return
     keyframePending=true;keyframeRequests++;lastRequest=now
     void Promise.resolve().then(()=>{if(!check())return;return self.__requestOwnedVideoKeyframe()})
       .then(()=>{if(!closed)keyframeFulfilled++})

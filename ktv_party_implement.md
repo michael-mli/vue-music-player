@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **133/133** pass.
+checks pass; party units **125/125** and timing/capability fixtures **134/134** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -4399,3 +4399,33 @@ RED credit return and stalled render/decode overflow without resurrection.
 A full standard-receiver UDP/recovery/handover rerun is in progress. Buffered
 expiry with the updated owned video/PCM path, sustained output, recovery, product
 integration and the full physical/mobile/capacity/release gates remain pending.
+
+
+### Actual native feedback responses with live PCM — 2026-10-04
+
+`/tmp/ktv-owned-av-receiver-recovery-pcm-backpressure-full-udp-20261004.log`
+exits 1, but both owned decoders remain live. Baseline maximum skew is **28.44
+ms**. Impaired native source/receiver rates are **24.99/20.55 fps**, with owned
+decode/presentation **24.39/23.74 fps**. Twelve native receiver requests fulfill;
+encoder and owned decoded key counters advance by **19 and 16**, satisfying
+the independent feedback-response gate. The decoder reorders 316 frames and
+discards 41 unique late frames. PCM retains at most 43 chunks; no backpressure
+is needed in this run, so native credit-pressure recovery is not yet proven.
+
+Full marker acceptance still fails: there are 37 impaired video transitions
+(43 includes six baseline transitions), fewer than the required 40 matched pairs.
+A diagnostic reconstruction from saved observations finds 34 pairs, absolute
+p95/max **468.23/690.86 ms**, three unmatched video transitions and at least
+11 unmatched audio edges. The diagnostic audio cutoff uses the first recorded
+phase stats sample (and a separate -1000-ms comparison), rather than the exact
+start callback, so unmatched-audio counts are diagnostic only. Both comparisons
+retain 34 pairs and the same skew. No timing or quality gate is relaxed.
+
+A private bounded receiver-feedback interval now permits **1000–5000 ms**; the
+default remains five seconds, with one pending request and recent-key suppression.
+A one-second interval is being tested because five-second recovery still leaves
+missing/delayed marker transitions. It uses actual receiver RTCP feedback and
+does not call source parameter APIs. Fixtures pass **134/134** in
+`/tmp/ktv-native-receiver-faster-recovery-fixtures-20261004.log`, including faster
+cooldown, recent keys and terminal rejection. Full native timing/recovery/handover,
+updated buffered expiry and all remaining release requirements remain open.

@@ -4,7 +4,7 @@ import vm from 'node:vm'
 import {setImmediate as tick} from 'node:timers/promises'
 import {installVp8FrameWorker} from './party-vp8-frame-worker.mjs'
 
-function fixture({recover=false,nativeRequest=true}={}){
+function fixture({recover=false,nativeRequest=true,recoveryMs=5000}={}){
   let wall=1000,mono=0,listener,timer,delivered,decoded=0,lateFrames=0,requests=0,streamClosed=false
   const reports=[]
   class Port{constructor(){this.messages=[]}postMessage(packet){this.messages.push(packet)}start(){}close(){this.closed=true}}
@@ -15,7 +15,8 @@ function fixture({recover=false,nativeRequest=true}={}){
     __encodedTimingDirection:'receive',addEventListener:(name,callback)=>{listener=callback},
     setInterval:callback=>{timer=callback;return 1},clearInterval:()=>{timer=null},postMessage:row=>reports.push(row),createStream}
   if(nativeRequest)realm.__requestOwnedVideoKeyframe=async()=>{requests++}
-  realm.self=realm;realm.recover=recover;vm.runInNewContext(`(${installVp8FrameWorker.toString()})(createStream,80,recover)`,realm)
+  realm.self=realm;realm.recover=recover;realm.recoveryMs=recoveryMs
+  vm.runInNewContext(`(${installVp8FrameWorker.toString()})(createStream,80,recover,recoveryMs)`,realm)
   const message=data=>listener({data})
   return {realm,port,reports,message,bind(){message({type:'video-bind',port,expiryUnixMs:10000})},
     send(id,late=false,type='delta'){realm.__observeOwnedVideo({late,type},{});return delivered?.({},{id,bytes:1,captureUnixMs:wall})},
@@ -32,6 +33,15 @@ test('native receiver recovery requests only new late references outside cooldow
 test('recovery refuses a worker without the actual receiver request method',()=>{
   const f=fixture({recover:true,nativeRequest:false});f.bind();f.send(1,true)
   assert.equal(f.reports.at(-1).reason,'VIDEO_RECOVERY_API');assert.equal(f.requests,0)
+})
+test('bounded faster receiver recovery preserves recent-key suppression and closes on rejected requests',async()=>{
+  const f=fixture({recover:true,recoveryMs:1000});f.bind();f.send(1,false,'key')
+  f.advance(1000);f.send(2,true);await tick();assert.equal(f.requests,1)
+  f.advance(500);f.send(3,true);await tick();assert.equal(f.requests,1)
+  f.advance(500);f.send(4,true);await tick();assert.equal(f.requests,2)
+  f.realm.__requestOwnedVideoKeyframe=async()=>{throw new Error('private rejection')}
+  f.advance(1000);f.send(5,true);await tick()
+  assert.equal(f.reports.at(-1).reason,'VIDEO_RECOVERY_REQUEST');assert.equal(f.port.closed,true)
 })
 test('worker decoding warms before binding and transfers at most two credited frames without pausing codec state',()=>{
   const f=fixture();assert.equal(f.send(1),false);f.bind()

@@ -122,6 +122,10 @@ assert.ok(publisherFeedback === 'default' || codecExperiment.transport !== 'dual
 const senderKeyframeMs = process.env.KTV_ROOM_TEST_SENDER_KEYFRAME_MS === undefined ? null : Number(process.env.KTV_ROOM_TEST_SENDER_KEYFRAME_MS)
 const demandKeyframes = process.env.KTV_ROOM_TEST_DEMAND_KEYFRAMES === '1'
 const receiverKeyframes=process.env.KTV_ROOM_TEST_RECEIVER_KEYFRAME_RECOVERY==='1'
+const receiverKeyframeMs=Number(process.env.KTV_ROOM_TEST_RECEIVER_KEYFRAME_INTERVAL_MS||5000)
+assert.ok(Number.isInteger(receiverKeyframeMs)&&receiverKeyframeMs>=1000&&receiverKeyframeMs<=5000&&
+  (receiverKeyframes||process.env.KTV_ROOM_TEST_RECEIVER_KEYFRAME_INTERVAL_MS===undefined),
+  'Private receiver recovery requires an explicit bounded 1000–5000 ms interval')
 assert.ok(!receiverKeyframes||ownedVideo&&avTiming&&receiverEncodedApi==='standard'&&senderKeyframeMs===null&&!demandKeyframes,
   'Receiver keyframe recovery requires standard owned video without a competing sender policy')
 assert.ok(!codecExperiment || codecExperiment.maxBitrate === 350000 || senderKeyframeMs === null && !demandKeyframes,
@@ -386,7 +390,7 @@ try {
     await cdp(socket, 'Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', 'en');
       ${avTiming ? `(${installAvSourceMarkers.toString()})();` : ''}
       ${encodedApi==='legacy' ? 'window.RTCRtpScriptTransform=undefined;' : ''}
-      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify('('+encodedTimingWorker.toString()+')('+ (opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : vp8DecodeProbe?'null,null,null,'+createVp8DecodeProbe.toString():'') +');'+(pcmPortProbe||ownedPcm ? '('+installOpusPcmWorker.toString()+')('+bindOpusPcmPort.toString()+','+createOpusPcmStream.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString()+');' : '')+(ownedVideo?'('+installVp8FrameWorker.toString()+')('+createVp8FrameStream.toString()+','+(controlledPlayoutMs>=800?500:controlledPlayoutMs>=500?240:80)+','+receiverKeyframes+');':''))},${JSON.stringify(receiverEncodedApi)});` : ''}
+      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify('('+encodedTimingWorker.toString()+')('+ (opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : vp8DecodeProbe?'null,null,null,'+createVp8DecodeProbe.toString():'') +');'+(pcmPortProbe||ownedPcm ? '('+installOpusPcmWorker.toString()+')('+bindOpusPcmPort.toString()+','+createOpusPcmStream.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString()+');' : '')+(ownedVideo?'('+installVp8FrameWorker.toString()+')('+createVp8FrameStream.toString()+','+(controlledPlayoutMs>=800?500:controlledPlayoutMs>=500?240:80)+','+receiverKeyframes+','+receiverKeyframeMs+');':''))},${JSON.stringify(receiverEncodedApi)});` : ''}
       (${installEncodedLeaseObserver.toString()})();
       ${absoluteCapture ? `(${installAbsoluteCaptureExperiment.toString()})();` : ''}
       ${senderCadence ? `(${installSenderCadenceExperiment.toString()})();` : ''}
