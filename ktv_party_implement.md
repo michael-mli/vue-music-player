@@ -4065,3 +4065,21 @@ the same verified Chrome **154.0.8037.92** on separate four-CPU source/receiver
 hosts to distinguish shared-host effects. Source settings, capture evidence and
 acceptance gates remain unchanged. Clean timing, impaired timing, sustained
 clocks, owned-video integrated expiry and product/release acceptance are pending.
+
+### Owned audio/video clean timing on separate hosts — 2026-10-04
+
+The separate-host clean run passes **50/50**:
+`/tmp/ktv-owned-av-clean-200-isolated-host-native-20261004.log`. All 40 marker
+pairs match with zero unmatched audio/video edges. Skew is **35.89-ms p95 /
+52.37-ms maximum**. Source capture/encoding is **24.99 fps**, owned decoding
+**25.01 fps**, unique draws **24.68 fps** and actual presentation **24.66 fps**,
+with the original 1280×720 / 25-fps / 350-kbit/s policy and unchanged quality gates.
+
+The configured hold is 200 ms; actual audio observation is **415.37-ms median /
+455.83-ms p95 / 457.61-ms maximum**, and video observation reaches **480.30 ms**.
+The hold setting is not total latency. This confirms clean relative alignment,
+not minimum practical latency, impaired acceptance, sustained clocks or physical
+guide alignment. The prior shared-host source-clock failure remains recorded;
+one passing isolated run does not establish its cause. The next full UDP and
+handover run retains 150-ms delay, 40-ms jitter and 5% loss on both proxy legs,
+40 impaired pairs, nominal quality and all capture/matching gates.
