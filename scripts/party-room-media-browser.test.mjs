@@ -45,6 +45,7 @@ import { collectAvMediaStats } from './party-av-stats.mjs'
 import { analyseCodecQuality, analyseCaptureCadence, analyseSourceAllocation } from './party-av-codec-quality.mjs'
 import { analyseAudioRedEvidence } from './party-audio-red-experiment.mjs'
 import { publisherVideoFloorSdp, installVideoFloorExperiment } from './party-video-floor-experiment.mjs'
+import { analyseSfuAllocationLogs, sfuLogByteLimit } from './party-sfu-allocation-evidence.mjs'
 import { installEncodedLeaseObserver } from './party-encoded-lease-observer.mjs'
 import { installSenderKeyframeExperiment } from './party-sender-keyframes.mjs'
 import { installSenderCadenceExperiment } from './party-sender-cadence-experiment.mjs'
@@ -122,6 +123,9 @@ const encodedApi = process.env.KTV_ROOM_TEST_ENCODED_API || 'native'
 assert.ok(['native','legacy'].includes(encodedApi)&&(encodedApi==='native'||encodedTiming),
   'A private encoded API comparison requires timing observation')
 const videoFloor=process.env.KTV_ROOM_TEST_VIDEO_MIN_BITRATE!==undefined
+const sfuAllocationEvidence=process.env.KTV_ROOM_TEST_SFU_ALLOCATION_EVIDENCE==='1'
+assert.ok(process.env.KTV_ROOM_TEST_SFU_ALLOCATION_EVIDENCE===undefined||sfuAllocationEvidence&&remoteMode&&videoFloor,
+  'Private SFU observation requires the unchanged remote VP9 floor comparison')
 assert.ok(!videoFloor||process.env.KTV_ROOM_TEST_VIDEO_MIN_BITRATE==='250000'&&avTiming&&encodedTiming&&ownedPcm&&ownedVideo&&
   codecExperiment?.codec==='vp9'&&codecExperiment.maxBitrate===350000&&codecExperiment.transport==='default'&&
   codecExperiment.keyframeMs===null&&!audioRedComparison&&!equalSourcePriority&&!senderCadence,
@@ -219,6 +223,7 @@ const db = initDb(root), contexts = [], debuggerSockets = [], pending = new Map(
 const ownedTcp = new Set()
 const trackTcp = server => server.on('connection', socket => { ownedTcp.add(socket); socket.once('close', () => ownedTcp.delete(socket)) })
 let mediaProxy, localIceGuard, audienceCircuits, frontend, backend, worker, realtime, chrome, remoteBrowser, avBrowser, hostBrowser, pulseModule, pathRoom, nativeSyncAudience, senderKeyframePage, receiverFaultEvidence, running = false, nextId = 0, passed = 0
+const sfuAllocationWindows=[]
 const check = (value, label) => { assert.ok(value, label); passed++; console.log(`PASS ${label}`) }
 const poll = async (work, label, timeout = 20000) => {
   const deadline = Date.now() + timeout
@@ -300,9 +305,11 @@ try {
   const rtc = remoteMode
     ? `  node_ip: ${process.env.KTV_ROOM_TEST_PUBLIC_IP}\n  use_external_ip: false\n  tcp_port: ${mediaImpairment ? 17901 : 7881}\n  udp_port: ${mediaImpairment ? 17902 : 7882}\n  interfaces:\n    includes: [${process.env.KTV_ROOM_TEST_INTERFACE}]\n`
     : '  node_ip: 127.0.0.1\n  use_external_ip: false\n  tcp_port: 17901\n  udp_port: 17902\n  enable_loopback_candidate: true\n  interfaces:\n    includes: [lo]\n'
-  await fs.writeFile(config, `port: 17900\nbind_addresses: [127.0.0.1]\nrtc:\n${rtc}room:\n  max_participants: 6\n  sync_streams: true\n  playout_delay:\n    enabled: ${playoutHints==='adaptive'}\n    min: 0\n    max: ${playoutMaxMs}\nkeys:\n  ${apiKey}: ${apiSecret}\nlogging:\n  level: warn\n`, { mode: 0o600 })
+  const logging=sfuAllocationEvidence?'  json: true\n  sample: false\n  component_levels:\n    sub: debug\n':''
+  await fs.writeFile(config, `port: 17900\nbind_addresses: [127.0.0.1]\nrtc:\n${rtc}room:\n  max_participants: 6\n  sync_streams: true\n  playout_delay:\n    enabled: ${playoutHints==='adaptive'}\n    min: 0\n    max: ${playoutMaxMs}\nkeys:\n  ${apiKey}: ${apiSecret}\nlogging:\n  level: warn\n${logging}`, { mode: 0o600 })
   console.log('Fixture SFU policy:',JSON.stringify({syncStreams:true,playoutHints,playoutMaxMs}))
   await exec('docker', ['run', '-d', '--name', container, '--network', 'host', '--user', `${process.getuid()}:${process.getgid()}`,
+    ...(sfuAllocationEvidence?['--log-driver=json-file','--log-opt=max-size=32m','--log-opt=max-file=1']:[]),
     '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', '-v', `${config}:/run/livekit.yaml:ro`, image, '--config', '/run/livekit.yaml'])
   running = true
   await poll(async () => { try { return (await fetch(upstreamUrl)).ok } catch { return false } }, 'owned SFU starts')
@@ -761,6 +768,18 @@ try {
   }
   let recoveryLastRequest = null, recoveryPending, recoveryEncoded = 0
   async function measureAv(phase, sourcePage = phone) {
+    let allocationWindow
+    if(sfuAllocationEvidence){
+      const grants=db.prepare("SELECT identity FROM ktv_media_grants WHERE scope = 'audience' AND state = 'active'").all()
+      const publishers=db.prepare("SELECT identity FROM ktv_media_grants WHERE scope = 'publisher' AND state = 'active'").all()
+      assert.equal(grants.length,1,'SFU allocation evidence requires one exact current audience')
+      assert.equal(publishers.length,1,'SFU allocation evidence requires one exact current publisher')
+      const tracks=(await provider.listParticipants(`ktv-${room.room.id}`)).find(p=>p.identity===publishers[0].identity)?.tracks.filter(t=>t.type===1)
+      assert.equal(tracks?.length,1,'SFU allocation evidence requires one exact current video track')
+      allocationWindow={phase,start:Date.now(),end:null,identity:grants[0].identity,track:tracks[0].sid}
+      sfuAllocationWindows.push(allocationWindow)
+    }
+    try {
     // Phase setup can include several seconds of network settling. Seed a fresh
     // progress window while preserving the request cooldown across that gap.
     let recoveryState
@@ -846,6 +865,7 @@ try {
     check(result.unmatchedVideo.length<=1&&result.unmatchedAudio<=1, `${phase} marker matching accounts for observed audio/video edges without selecting only aligned pairs`)
     check(result.pairs.every(item=>item.videoDelayMs>=0&&item.videoDelayMs<2000), `${phase} captured marker has a valid source-to-received video observation delay`)
     check(result.pairs.every(item=>Number.isFinite(item.captureQueueMs)&&Math.abs(item.captureQueueMs)<100&&item.captureCallMs<20),`${phase} private output monitor capture queue and timing call remain bounded`)
+    } finally { if(allocationWindow)allocationWindow.end=Date.now() }
   }
   if(avTiming) {
     if (receiverSync !== 'off') {
@@ -1230,6 +1250,18 @@ try {
   }))()` ).catch(() => ({}))))
   throw error
 } finally {
+  if(sfuAllocationEvidence&&running){
+    // Docker stores bounded private logs; read only after timing has stopped.
+    // execFile errors can include raw output, so emit a fixed failure code only.
+    let evidence
+    try {
+      const logs=await exec('docker',['logs',container],{maxBuffer:sfuLogByteLimit,timeout:10000})
+      evidence=analyseSfuAllocationLogs(logs.stdout+logs.stderr,sfuAllocationWindows)
+    } catch { evidence={errors:['SFU_LOG_READ'],phases:[]} }
+    console.log('Private SFU allocation evidence:',JSON.stringify(evidence))
+    if(evidence.errors.length||!evidence.phases.length)process.exitCode=1
+  }
+  if(videoFloor)for(const session of sessionSockets.keys())await evaluate(session,'__videoFloorExperiment?.close()').catch(()=>{})
   if(equalSourcePriority)for(const session of sessionSockets.keys())await evaluate(session,'__avSenderPriority?.close()').catch(()=>{})
   if(pcmPortProbe)for(const session of sessionSockets.keys())await evaluate(session,'__receivedPcmProbe?.close()').catch(()=>{})
   if(controlledPlayoutMs !== null)for(const session of sessionSockets.keys()) await evaluate(session,'__controlledReceiver?.close()').catch(()=>{})

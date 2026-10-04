@@ -5110,3 +5110,70 @@ unaccepted. The floor is not selected for product integration or deployment.
 The next isolated comparison retains this sender budget and shortens the existing
 bounded receiver recovery cooldown from 5 seconds to **2.5 seconds**; all source
 settings and release criteria remain fixed.
+
+
+### Shorter recovery with the retained native floor still fails — 2026-10-04
+
+`/tmp/ktv-owned-av-vp9-250k-floor-recovery2500-full-udp-20261004.log`
+exits 1: the unchanged 40 impaired matches time out. Native video retains the
+250-kbps floor throughout; source encoding remains **24.68 fps**. Over 86
+impaired samples / 89.65 seconds, video target median is **282.04 kbps**, estimated
+outgoing capacity minimum / median **250 / 402.78 kbps**, and actual sent video /
+audio **154.12 / 130.82 kbps**. Recovery requests increase to **23**, all fulfilled,
+with **29** new decoded and **35** encoded keys, but native receiver / owned
+receiver / presented cadence remain **16.11 / 16.23 / 16.06 fps**. Full A/V,
+receiver nominal cadence and post-outage/handover acceptance remain unproved.
+This run does not establish that a shorter cooldown solves recovery. Default
+production recovery and media policy remain unchanged. The next investigation
+checks SFU forwarding/allocation and received dependencies rather than choosing
+another cooldown without evidence.
+
+### Passive SFU allocation evidence — 2026-10-04
+
+Added private `KTV_ROOM_TEST_SFU_ALLOCATION_EVIDENCE=1` to the existing nominal
+VP9/floor comparison. It enables unsampled subscriber debug JSON in the pinned
+SFU without changing allocation, codecs, media profiles, impairment or release
+criteria. Each measured phase binds to its exact active audience identity and
+the current publisher's single video track. Raw logs stay in the private,
+bounded fixture container; parsing occurs after timing stops, before container
+removal. The collector accepts at most 16 MiB, 64 KiB per line, 1,024 allocation
+changes and eight non-overlapping phase windows. It emits only fixed phase,
+layer, pause and reason enums, numeric bandwidth ranges and state durations.
+Unknown schema, missing initial state, reversed timestamps, ambiguous scope
+and bounds/read failures remain explicit diagnostic failures; no identity,
+room, track, raw log or arbitrary server field is returned. The private native
+video-floor hook now explicitly restores its original method during cleanup.
+
+The allocation schema and subscriber component come from pinned LiveKit
+v1.13.7 source, including its `BandwidthRquested` log key. **169/169** timing /
+capability fixtures pass in `/tmp/ktv-sfu-allocation-fixtures-20261004.log`;
+runner syntax and whitespace checks pass. The original full UDP journey,
+including its five-second recovery interval, is running in
+`/tmp/ktv-owned-av-vp9-floor250-sfu-allocation-full-udp-20261004.log`.
+This is observability work; it does not establish SFU throttling or resolve
+the remaining receiver cadence, recovery and release gates.
+
+### Native SFU evidence excludes layer reduction in this run — 2026-10-04
+
+`/tmp/ktv-owned-av-vp9-floor250-sfu-allocation-full-udp-20261004.log`
+exits 1 after the unchanged 40 impaired pairs time out. The passive collector
+accepts actual pinned-server JSON with **zero diagnostic errors** and exact
+listener/video scope. Across the **11.835-second baseline** and **90.092-second
+impaired phase**, the SFU target stays at spatial **0**, temporal **2**:
+no allocation changes, deficiency, inactive target or bandwidth pause occur.
+The logged maximum temporal layer is 3; this is an allocation ceiling, not a
+claim that the actual `L1T3` source emits four layers. Logged requested/needed
+bandwidth remains the initial allocation record (**19,759 bps**); those fields
+are not continuously measured sender throughput or available bandwidth.
+
+Capture / encoding remain **25.00 / 24.94 fps**, while native receiver decoding
+is **14.36 fps**, owned decoding **14.02 fps** and presentation **13.93 fps**.
+The original 350-kbps video cap, source dimensions, Opus/RED, impairment, native
+five-second recovery policy and timing criteria remain intact. Fourteen recovery
+requests fulfill, with 21 new decoded and 27 encoded keys; full matching still
+fails. This excludes a logged SFU target-layer reduction as the cause in this
+run. It does not prove successful forwarding or identify the packet/reference
+repair failure yet. Receiver repair and reordering remain the next investigation;
+no SFU minimum-channel-capacity override is justified by this evidence.
+The candidate is not selected for deployment. Fixture resources and the scoped
+local ICE guard are cleaned up after the failed journey.
