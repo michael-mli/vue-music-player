@@ -7,6 +7,27 @@ const sample = (time = 1000, frames = 25, lag = 0, keys = 1) => ({ time,
   video: { timestamp: time, ssrc: 2, estimatedPlayoutTimestamp: 4000000000000 + time + lag,
     framesDecoded: frames, keyFramesDecoded: keys } })
 const step = (row, state) => keyframeRecoveryStep(row.time, row.audio, row.video, state)
+const ownedStep=(row,state,lateFrames=0,extra={})=>keyframeRecoveryStep(row.time,row.audio,row.video,state,
+  {worker:1,configured:true,closed:false,lateFrames,...extra})
+test('owned late-reference recovery uses advancing discards with the existing cooldown and decoded-key suppression',()=>{
+  let state=ownedStep(sample()).state
+  const repair=ownedStep(sample(2000,50),state,1)
+  assert.equal(repair.request,true);assert.equal(repair.reason,'late-reference');state=repair.state
+  for(let time=3000;time<7000;time+=1000){
+    const next=ownedStep(sample(time,time/40),state,time/1000)
+    assert.equal(next.request,false);state=next.state
+  }
+  assert.equal(ownedStep(sample(7000,175),state,7).request,true)
+  assert.equal(ownedStep(sample(7000,175,0,2),state,7).request,false)
+  assert.equal(ownedStep(sample(7000,175),state,state.lateFrames).request,false)
+})
+test('owned recovery rejects missing, closed, switched or reversed decoder evidence',()=>{
+  const state=ownedStep(sample(),undefined,5).state
+  for(const extra of [{closed:true},{configured:false},{worker:2},{worker:undefined},{lateFrames:4},{lateFrames:undefined}]){
+    const next=ownedStep(sample(2000,50),state,6,extra)
+    assert.equal(next.valid,false);assert.equal(next.request,false)
+  }
+})
 test('native delay recovery seeds evidence and requests only bounded lag or stalled decoded frames', () => {
   const first = step(sample())
   assert.equal(first.request, false)

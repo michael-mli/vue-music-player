@@ -120,7 +120,7 @@ const senderKeyframeMs = process.env.KTV_ROOM_TEST_SENDER_KEYFRAME_MS === undefi
 const demandKeyframes = process.env.KTV_ROOM_TEST_DEMAND_KEYFRAMES === '1'
 assert.ok(!codecExperiment || codecExperiment.maxBitrate === 350000 || senderKeyframeMs === null && !demandKeyframes,
   'Native sender keyframe comparisons require the original bitrate policy')
-assert.ok(!demandKeyframes || avTiming && codecExperiment && codecExperiment.keyframeMs == null && senderKeyframeMs === null,
+assert.ok(!demandKeyframes || avTiming && (codecExperiment && codecExperiment.keyframeMs == null || ownedVideo && !codecExperiment) && senderKeyframeMs === null,
   'Demand recovery requires a private native comparison without another keyframe policy')
 assert.ok(senderKeyframeMs === null || avTiming && (codecExperiment && codecExperiment.keyframeMs == null || ownedVideo && !codecExperiment) &&
   Number.isInteger(senderKeyframeMs) && senderKeyframeMs >= 250 && senderKeyframeMs <= 5000,
@@ -730,7 +730,8 @@ try {
             sourceVideo.keyFramesEncoded > recoveryPending.keys) {
             recoveryEncoded++; recoveryPending = null
           }
-          const decision = keyframeRecoveryStep(receiver.time, audios[0], videos[0], recoveryState)
+          const decision = keyframeRecoveryStep(receiver.time, audios[0], videos[0], recoveryState,
+            ownedVideo?(receiver.controlledReceiver?.active?.ownedVideo?.decoder??{}):null)
           assert.ok(decision.valid, 'Private recovery refuses missing, reset or stale native progress')
           if (decision.request) recoveryLastRequest = receiver.time
           recoveryState = { ...decision.state, lastRequestMs: recoveryLastRequest }

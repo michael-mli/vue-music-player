@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **126/126** pass.
+checks pass; party units **125/125** and timing/capability fixtures **128/128** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -4225,3 +4225,30 @@ required; a fulfilled API request alone is insufficient. Previous native-video
 keyframe experiments did not establish acceptance. Product integration remains
 open. The retained-frame reservation regression passes with the full fixtures
 **126/126** in `/tmp/ktv-owned-video-memory-reservation-fixtures-20261004.log`.
+
+
+### Bounded owned-video keyframe demand — 2026-10-04
+
+The 1000-ms periodic run exits 1:
+`/tmp/ktv-owned-av-yuv-keyframe1000-full-udp-native-20261004.log`.
+Actual native encoder counters show 0.994 keyframes/s under impairment and
+104 accepted/fulfilled API requests. Fifty video marker transitions appear,
+but 40 matched pairs are not collected. Source capture remains 24.99 fps while
+encoding falls to **1.06 fps**; owned decode/presentation are **1.02/1.07 fps**.
+The decoder remains open with six unique late frames, but nominal quality fails.
+Keyframe API completion is therefore not acceptance.
+
+The existing private demand-recovery policy now accepts the owned decoder's
+monotonic unique-late-frame counter. A newly discarded reference can trigger a
+manual sender keyframe request, with the original five-second cooldown and
+recent-decoded-keyframe suppression. Missing/closed/switched/reset decoder
+evidence is rejected. Decisions use only native transport/decoder progress,
+not marker IDs, pixels, lyric state or observed marker skew. Encoder counters
+must independently show new keyframes after requests.
+
+Fixtures pass **128/128** in
+`/tmp/ktv-owned-video-demand-recovery-fixtures-20261004.log`. A 40-pair impaired
+run is in progress, retaining route isolation, original codec/bitrate, memory
+bounds and timing/quality thresholds. Demand timing remains scoped to the initial
+publisher as in the earlier private demand experiment; full post-handover timing
+remains a separate required gate. Product integration and release stay open.
