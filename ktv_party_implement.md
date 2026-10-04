@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **119/119** pass.
+checks pass; party units **125/125** and timing/capability fixtures **121/121** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -4083,3 +4083,32 @@ guide alignment. The prior shared-host source-clock failure remains recorded;
 one passing isolated run does not establish its cause. The next full UDP and
 handover run retains 150-ms delay, 40-ms jitter and 5% loss on both proxy legs,
 40 impaired pairs, nominal quality and all capture/matching gates.
+
+### Encoded video order and impaired owned decoding — 2026-10-04
+
+The first separate-host full UDP attempt fails to collect 40 impaired pairs:
+`/tmp/ktv-owned-av-full-udp-isolated-host-native-20261004.log`. Baseline six pairs
+have 41.75-ms maximum skew. Impaired source encoding remains **23.49 fps**, but
+owned decoding falls to **19.51 fps**, unique draws/presentation to **19.23 fps**,
+and only 13 video transitions are observed. All original FPS/matching gates fail
+the run. The controller remains live with no capture discontinuity, maximum
+pending decoder count three and bounded input bytes. Decoded video arrives with
+307-ms mean / 525-ms maximum age, with no arrival after the 800-ms hold; late
+release stays below 45 ms. This differs from the previous native-video late
+delivery failure and does not establish acceptable visual decoding.
+
+The decoder had dropped every non-advancing RTP timestamp, combining duplicates
+with previously unseen late frames. It now distinguishes those cases using a
+64-entry numeric history and adds a bounded **80-ms encoded reorder window**
+before owned decoding. At most eight held packets share the same **512-KiB**
+encoded budget with pending native decoder input. A newly arrived earlier frame
+cannot extend the first queued arrival's deadline. Decoder completion drains the
+ordered queue without exceeding four pending outputs. The first keyframe still
+warms the codec immediately. Stop/error clears all held copies and timers.
+Original RTC frames are forwarded in their original order and remain unchanged.
+
+Timing fixtures pass **121/121**:
+`/tmp/ktv-owned-video-reorder-fixtures-20261004.log`, including RTP wrap, late
+ordering, fixed wait deadlines, byte/count overflow and cleanup. The next native
+comparison preserves the full UDP profile and every timing/quality limit; native
+reorder and visual-recovery acceptance remain pending.

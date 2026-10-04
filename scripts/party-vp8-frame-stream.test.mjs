@@ -4,9 +4,10 @@ import vm from 'node:vm'
 import {setImmediate as tick} from 'node:timers/promises'
 import {createVp8FrameStream} from './party-vp8-frame-stream.mjs'
 
-async function fixture({hold=false,accept=true}={}){
+async function fixture({hold=false,accept=true,reorderMs=0}={}){
   const delivered=[],frames=[],reports=[],waiting=[]
-  let now=1000,decoder
+  let now=1000,decoder,timerId=0
+  const timers=new Map()
   class Decoder{
     static async isConfigSupported(config){return {supported:true,config}}
     constructor(callbacks){this.callbacks=callbacks;this.state='configured';decoder=this}
@@ -17,13 +18,14 @@ async function fixture({hold=false,accept=true}={}){
   }
   const realm={ArrayBuffer,performance:{timeOrigin:10000,now:()=>now},VideoDecoder:Decoder,
     EncodedVideoChunk:class{constructor(config){Object.assign(this,config)}},
-    __encodedTimingCodecs:[{payloadType:96,mimeType:'video/vp8'}],deliver:(frame,packet)=>{if(accept)delivered.push({frame,...packet});return accept},report:row=>reports.push(row)}
+    __encodedTimingCodecs:[{payloadType:96,mimeType:'video/vp8'}],deliver:(frame,packet)=>{if(accept)delivered.push({frame,...packet});return accept},report:row=>reports.push(row),reorderMs,
+    setTimeout(callback,delay){const id=++timerId;timers.set(id,{callback,at:now+delay});return id},clearTimeout(id){timers.delete(id)}}
   realm.self=realm
-  const stream=vm.runInNewContext(`(${createVp8FrameStream.toString()})(deliver,report)`,realm)
+  const stream=vm.runInNewContext(`(${createVp8FrameStream.toString()})(deliver,report,{reorderMs})`,realm)
   await tick()
   const send=(rtp,captureTime=rtp/90,type=frames.length?'delta':'key')=>stream.observe(
     {timestamp:rtp>>>0,type,data:new Uint8Array([7]).buffer},{captureTime,payloadType:96})
-  return {stream,send,delivered,frames,reports,waiting,advance(value){now=value},
+  return {stream,send,delivered,frames,reports,waiting,timers,advance(value){now=value;for(const [id,timer]of[...timers])if(timer.at<=now){timers.delete(id);timer.callback()}},
     flush(){while(waiting.length)decoder.callbacks.output(waiting.shift())}}
 }
 test('continuous VP8 warms its decoder without capture headers then transfers associated bounded frames across RTP wrap',async()=>{
@@ -54,4 +56,26 @@ test('late duplicates do not read payload or refresh capture evidence; clock jum
   assert.equal(f.stream.snapshot().closed,false)
   f.advance(7001);f.send(3600,NaN);assert.equal(f.stream.snapshot().discarded,3)
   f.send(7200,161);assert.equal(f.reports[0].reason,'VIDEO_CLOCK')
+})
+test('video reorder window decodes earlier RTP first without extending the first arrival deadline',async()=>{
+  const f=await fixture({reorderMs:80,accept:false});const start=0xfffffe00
+  f.send(start,0);f.send((start+7200)>>>0,80)
+  f.advance(1060);f.send((start+3600)>>>0,40)
+  assert.equal(f.stream.snapshot().decoded,1);f.advance(1079);assert.equal(f.stream.snapshot().decoded,1)
+  f.advance(1080);assert.equal(f.stream.snapshot().decoded,3)
+  assert.equal(f.frames[1].timestamp,40000);assert.equal(f.frames[2].timestamp,80000)
+  assert.equal(f.stream.snapshot().reordered,1);assert.equal(f.stream.snapshot().maximumHeld,2)
+  assert.equal(f.stream.snapshot().encodedBytes,0);assert.equal(f.timers.size,0)
+  f.stream.close()
+})
+test('reorder queue and shared encoded budget stay bounded, release on stop, and distinguish unseen late frames',async()=>{
+  const f=await fixture({reorderMs:80,accept:false});f.send(0)
+  for(let i=1;i<10;i++)f.send(i*3600)
+  assert.equal(f.reports[0].reason,'VIDEO_BOUND');assert.equal(f.stream.snapshot().maximumHeld,8)
+  assert.equal(f.stream.snapshot().encodedBytes,0);assert.equal(f.timers.size,0)
+  const late=await fixture({reorderMs:80,accept:false});late.send(0);late.send(7200)
+  late.advance(1080);late.send(3600);late.send(3600)
+  assert.equal(late.stream.snapshot().lateFrames,1);assert.equal(late.stream.snapshot().duplicates,1)
+  late.send(10800);late.stream.close();late.advance(1200)
+  assert.equal(late.stream.snapshot().decoded,2);assert.equal(late.timers.size,0)
 })
