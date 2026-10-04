@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **148/148** pass.
+checks pass; party units **125/125** and timing/capability fixtures **149/149** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -4734,3 +4734,33 @@ exact nominal transfer and four pending copies closed once without resurrection.
 The full VP9 UDP/recovery/handover run is in progress at
 `/tmp/ktv-owned-av-vp9-normalized-gap-reorder-full-udp-20261004.log`. Actual
 VP9 output/cadence/timing and all release requirements remain open.
+
+
+### Normalized VP9 runs, but impaired timing/cadence still fail — 2026-10-04
+
+`/tmp/ktv-owned-av-vp9-normalized-gap-reorder-full-udp-20261004.log` exits 1.
+All 1905 decoded outputs normalize successfully, with maximum visible copy
+**1,382,400 bytes**, at most four pending/ready outputs and 20 held packets.
+Both decoders remain live. Baseline source/native/owned/presented rates are
+**25.10/24.91/25.12/24.46 fps**, with maximum skew **77.40 ms**. Impaired
+rates are **17.46/12.18/16.05/11.81 fps**; the required 40 matched transitions
+time out. Three native requests fulfill, with five new encoded/decoded keys.
+Release lateness averages **80.74 ms**, reaches **1528.68 ms**, and exceeds
+250 ms on 105 releases. Codec normalization is proven on actual output;
+VP9 is not accepted for timing or cadence and is not selected for production.
+
+VP9 observations expose native spatial/temporal indices. A bounded dependency
+capability counter is added next: presence of a valid frame ID and an optional
+0–8 dependency count, without retaining IDs or reference arrays. This checks
+whether native dependency declarations can distinguish missing required
+references from omitted higher temporal layers before any ordering change.
+No dependency-based decode or feedback policy is enabled yet.
+
+
+Dependency capability fixtures pass **149/149** in
+`/tmp/ktv-video-dependency-capability-fixtures-20261004.log`; focused observer
+forwarding checks also pass. Both worker and page retain only a 0/1 frame-ID
+presence flag and a validated 0–8 dependency count. Raw reference IDs are
+excluded. A native VP9 run is collecting these capabilities at
+`/tmp/ktv-owned-av-vp9-reference-capability-full-udp-20261004.log` without any
+dependency-based policy change.

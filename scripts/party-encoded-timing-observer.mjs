@@ -36,6 +36,11 @@ export function encodedTimingWorker(createAudioProbe = null, primaryPayload = nu
       'width', 'height', 'spatialIndex', 'temporalIndex']) {
       if (Number.isFinite(metadata[key])) values[key] = metadata[key]
     }
+    if(kind==='video'){
+      values.frameIdPresent=Number.isSafeInteger(metadata.frameId)&&metadata.frameId>=0?1:0
+      if(Array.isArray(metadata.dependencies)&&metadata.dependencies.length<=8&&
+        metadata.dependencies.every(id=>Number.isSafeInteger(id)&&id>=0))values.dependencyCount=metadata.dependencies.length
+    }
     const mimeType = /^(audio|video)\/[a-zA-Z0-9-]+$/.test(metadata.mimeType || '') ? metadata.mimeType : null
     self.postMessage({ type: 'encoded-timing', kind, count, time: performance.timeOrigin + performance.now(),
       realmTimeOrigin: performance.timeOrigin,
@@ -159,6 +164,9 @@ export function installEncodedTimingProbe(workerSource,receiverApi='native') {
         'width', 'height', 'spatialIndex', 'temporalIndex']) {
         if (Number.isFinite(data.values?.[key])) values[key] = data.values[key]
       }
+      if([0,1].includes(data.values?.frameIdPresent))values.frameIdPresent=data.values.frameIdPresent
+      if(Number.isSafeInteger(data.values?.dependencyCount)&&data.values.dependencyCount>=0&&data.values.dependencyCount<=8)
+        values.dependencyCount=data.values.dependencyCount
       records.push({ worker: id, direction, kind: data.kind, count: data.count, time: data.time, values,
         realmTimeOrigin: Number.isFinite(data.realmTimeOrigin) ? data.realmTimeOrigin : null,
         rtpTimestamp: Number.isFinite(data.rtpTimestamp) ? data.rtpTimestamp : null,

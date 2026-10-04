@@ -186,3 +186,14 @@ test('declared VP9 receiver codec parameters reach the worker without fmtp or un
     f.realm.window.__encodedTimingProbe.close()
   }
 })
+
+test('video dependency capability reports bounded counts without retaining reference IDs',()=>{
+  const f=fixture(),stream=f.stream({},'video')
+  const frame={timestamp:1,type:'delta',getMetadata:()=>({frameId:900,dependencies:[700,800]})}
+  stream.transformer.transform(frame,{enqueue(){}})
+  assert.equal(f.messages[0].values.frameIdPresent,1);assert.equal(f.messages[0].values.dependencyCount,2)
+  assert.ok(!/700|800|900/.test(JSON.stringify(f.messages)))
+  frame.getMetadata=()=>({frameId:-1,dependencies:Array(9).fill(1)})
+  stream.transformer.transform(frame,{enqueue(){}})
+  assert.equal(f.messages[1].values.frameIdPresent,0);assert.equal(f.messages[1].values.dependencyCount,undefined)
+})
