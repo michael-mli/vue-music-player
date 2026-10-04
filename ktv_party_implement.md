@@ -49,11 +49,11 @@ is a preview; public online media is still disabled.
 
 | Check | Current evidence | Status |
 | --- | --- | --- |
-| Timing/capability fixtures | 160/160 | Pass |
+| Timing/capability fixtures | 162/162 | Pass |
 | Buffered expiry after both render contexts freeze/resume | 51/51, latest reader/revalidation | Pass for digital fixture |
 | Buffered expiry while source and listener pages stall | 46/46, latest reader/revalidation | Pass for digital fixture |
 | Fresh clean 40-pair A/V regression | 50/50; p95 52.44 ms / max 54.11 ms; nominal cadence | Pass for digital fixture |
-| Continuous impaired-network A/V and nominal frame rate | Latest VP9 reference-mode run times out; presented 8.40 fps | Fail |
+| Continuous impaired-network A/V and nominal frame rate | RED-on and RED-off VP9 comparisons time out; required cadence fails | Fail |
 | Product integration and physical/mobile/capacity acceptance | Required work remains | Open |
 
 These scripts are private. The deployed preview remains `acb583b`, with public
@@ -70,7 +70,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **160/160** pass.
+checks pass; party units **125/125** and timing/capability fixtures **162/162** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -4987,3 +4987,64 @@ this is reanalysis, not a new native acceptance run. Fixtures pass **160/160** i
 estimates, ambiguous transport, path/counter resets, distinct audio peers and
 private-field exclusion. Native runner syntax and `git diff --check` pass.
 Public product assets and all release requirements remain unchanged.
+
+
+### Private audio redundancy comparison prepared — 2026-10-04
+
+A new marked-artifact option, `--audio-red off`, isolates the observed redundancy
+cost. It changes only the exact publisher `red: true` option to `red: false`,
+keeping primary Opus **64 kbps**, DTX disabled, 720p / 25-fps video, video ceiling
+**350 kbps**, transport, keyframe policy, source leases and timing requirements.
+The builder refuses changed/ambiguous production audio source or combinations
+with another transport, bitrate or periodic-keyframe experiment. Default builds
+retain RED. The comparison artifact remains excluded from static publication;
+production source and every production dist byte are preserved by the builder.
+
+The native comparison requires owned PCM/video and the existing nominal VP9
+profile. Actual sent and received encoded-frame MIME must both prove Opus without
+RED (at least eight observations in each direction), with the real sender's
+single 64-kbps encoding verified initially and throughout measured phases.
+Primary Opus RTP codec stats alone cannot prove absence of RED wrapping.
+The recorded earlier native comparison observes `audio/red` in both directions.
+Disabling redundancy can increase unrepaired audio gaps; audible quality, loss
+recovery and full timing/cadence acceptance remain required. This is a private
+comparison and does not change the selected production policy.
+
+Fixtures pass **162/162** in
+`/tmp/ktv-audio-red-comparison-fixtures-20261004.log`, covering exact source
+transformation, unknown/missing/mixed MIME evidence, minimum observations,
+private-field exclusion and bounded record count. The private artifact is being
+built at `/tmp/ktv-codec-candidate-owned-vp9-red-off-20261004`; the next check is
+the unchanged full UDP impairment / recovery / handover journey with 40 pairs.
+
+
+### Removing audio redundancy does not close impaired timing — 2026-10-04
+
+The marked build completes with production source and every dist byte preserved
+(log `/tmp/ktv-owned-vp9-audio-red-off-private-build-20261004.log`).
+`/tmp/ktv-owned-av-vp9-red-off-required-references-full-udp-20261004.log`
+exits 1: the required 40 impaired pairs time out, before recovery/handover checks.
+Actual initial sent/received frames prove Opus without RED (11/19 observations),
+and the real 64-kbps sender cap passes. The six-pair baseline has maximum skew
+**71.01 ms**, zero unmatched markers and nominal capture/encode/decode/presentation.
+
+Across 86 impaired samples / 89.36 seconds, capture stays **25.01 fps**, encoding
+falls to **11.95 fps**, native receiver decoding **7.66 fps**, owned decoding
+**7.81 fps** and drawn/presented output **7.52 fps**. Actual sent audio falls to
+**64.41 kbps**, confirming the intended overhead change, while video sends
+**29.86 kbps**. Median video target / browser estimated outgoing capacity remain
+**30.00 / 44.71 kbps**; median RTT is **337 ms**. The browser still reports `none`
+for its video quality limitation. Eleven recovery requests fulfill, producing
+14 new decoded and 18 encoded keys during impairment. Both owned decoders stay
+active within their existing reservations. Release lateness averages **35.73 ms**,
+reaches **1372.20 ms**, and exceeds 250 ms on 40 releases. No presentation-pressure
+wait is exercised (maximum queue 23), so native pressure remains unproven.
+
+The audio decoder reports **407,040 missing sample frames (8.48 seconds at
+48 kHz)** over its full observed session, with **zero RED recoveries**. This is
+counter evidence of unrepaired gaps, not a physical listening-quality score.
+Removing RED has not produced an acceptable cadence/timing result and is not
+selected for production. Different random loss schedules do not establish
+relative superiority or an isolated causal explanation for the remaining
+bandwidth collapse. The selected RED policy, all release requirements and
+public media state are unchanged.

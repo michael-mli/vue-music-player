@@ -8,19 +8,23 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { build } from 'vite'
 import { periodicKeyframeWorker } from './party-codec-keyframes.mjs'
+import { audioRedComparisonSource } from './party-audio-red-experiment.mjs'
 
 const args = process.argv.slice(2), options = {}
 if (args.length===1&&args[0]==='--help') {
-  console.log('Use --codec vp8|vp9|h264 --out-dir /tmp/ktv-codec-candidate-NAME [--keyframe-ms 250..5000] [--transport default|dual] [--max-bitrate 64000..350000]; creates a private, non-publishable comparison build.')
+  console.log('Use --codec vp8|vp9|h264 --out-dir /tmp/ktv-codec-candidate-NAME [--keyframe-ms 250..5000] [--transport default|dual] [--max-bitrate 64000..350000] [--audio-red on|off]; creates a private, non-publishable comparison build.')
   process.exit(0)
 }
 for (let index = 0; index < args.length; index += 2) {
-  assert.ok(['--codec', '--out-dir','--keyframe-ms','--transport','--max-bitrate'].includes(args[index]) && args[index + 1], 'Use --codec vp8|vp9|h264 --out-dir /tmp/ktv-codec-candidate-NAME [--keyframe-ms 250..5000] [--transport default|dual] [--max-bitrate 64000..350000]')
+  assert.ok(['--codec', '--out-dir','--keyframe-ms','--transport','--max-bitrate','--audio-red'].includes(args[index]) && args[index + 1], 'Use --codec vp8|vp9|h264 --out-dir /tmp/ktv-codec-candidate-NAME [--keyframe-ms 250..5000] [--transport default|dual] [--max-bitrate 64000..350000] [--audio-red on|off]')
   assert.ok(!Object.hasOwn(options, args[index]), 'Duplicate experiment option')
   options[args[index]] = args[index + 1]
 }
 const codec = options['--codec'], directory = path.resolve(options['--out-dir'] || '.')
 const transport = options['--transport'] || 'default'
+const redOption=options['--audio-red']||'on'
+assert.ok(['on','off'].includes(redOption),'Invalid private audio RED policy')
+const audioRed=redOption==='on'
 const maxBitrate = Number(options['--max-bitrate'] ?? 350000)
 assert.ok(Number.isInteger(maxBitrate) && maxBitrate >= 64000 && maxBitrate <= 350000,
   'Private bitrate cap must retain the original 350-kbit/s ceiling')
@@ -28,6 +32,8 @@ assert.ok(['default', 'dual'].includes(transport), 'Unsupported private transpor
 const keyframeMs = options['--keyframe-ms'] === undefined ? null : Number(options['--keyframe-ms'])
 assert.ok(keyframeMs===null||Number.isInteger(keyframeMs)&&keyframeMs>=250&&keyframeMs<=5000,'Invalid keyframe interval')
 assert.ok(['vp8', 'vp9', 'h264'].includes(codec), 'Unsupported comparison codec')
+assert.ok(audioRed||transport==='default'&&keyframeMs===null&&maxBitrate===350000,
+  'Private audio RED comparison retains the nominal transport, keyframe and video caps')
 assert.match(directory, /^\/tmp\/ktv-codec-candidate-[A-Za-z0-9_-]+$/, 'Private experiment output directory required')
 await fs.mkdir(directory, { mode: 0o700 }) // Refuse existing artifacts and symlinks.
 const root = path.resolve('.'), transportPath = path.join(root, 'src/services/partyMediaTransport.ts')
@@ -49,7 +55,7 @@ const originalDist = await distDigest()
 const source = await fs.readFile(transportPath, 'utf8')
 const needle = "degradationPreference: 'maintain-resolution', simulcast: false, screenShareEncoding: { maxBitrate: 350000, maxFramerate: 25 }"
 assert.equal(source.split(needle).length, 2, 'Production publisher options changed; inspect the experiment transform')
-let transformed = source.replace(needle, `videoCodec: '${codec}', backupCodec: false, ${needle}`)
+let transformed = audioRedComparisonSource(source,audioRed).replace(needle, `videoCodec: '${codec}', backupCodec: false, ${needle}`)
 transformed = transformed.replace('screenShareEncoding: { maxBitrate: 350000, maxFramerate: 25 }',
   `screenShareEncoding: { maxBitrate: ${maxBitrate}, maxFramerate: 25 }`)
 if (transport === 'dual') {
@@ -60,14 +66,14 @@ if (transport === 'dual') {
 const workerPath=path.join(root,'src/services/partyEncodedLease.worker.js')
 const workerSource=await fs.readFile(workerPath,'utf8')
 const modifiedWorker=keyframeMs===null?workerSource:periodicKeyframeWorker(workerSource,keyframeMs)
-const marker = { version: 1, privateCodecExperiment: true, codec, backupCodec: false,keyframeMs,transport,
+const marker = { version: 1, privateCodecExperiment: true, codec, backupCodec: false,keyframeMs,transport,audioRed,
   width: 1280, height: 720, fps: 25, maxBitrate,
   sourceCommit: execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim(),
   transportSha256: createHash('sha256').update(source).digest('hex'),
   effectiveTransportSha256: createHash('sha256').update(transformed).digest('hex'),
   effectiveWorkerSha256:createHash('sha256').update(modifiedWorker).digest('hex'),
   clientVersion: JSON.parse(await fs.readFile('node_modules/livekit-client/package.json', 'utf8')).version,
-  note: 'Native SDK codec behavior applies; no clock, capture cadence, authorization, guard or observation limit changes.',
+  note: 'Private codec/audio RED comparison; native SDK behavior applies. No clock, capture cadence, authorization, guard or observation limit changes.',
 }
 await fs.writeFile(path.join(directory, 'ktv-codec-experiment.json'), JSON.stringify(marker, null, 2) + '\n', { mode: 0o600 })
 let transforms = 0, workerLoads=0

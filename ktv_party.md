@@ -1414,6 +1414,15 @@ RTP-gap waits, keeps required references within a fixed 700-ms bound, discards
 inputs whose required references never arrive, and requests bounded recovery
 only for such misses. Incomplete declarations close this mode permanently.
 
+A marked private audio comparison can disable RED while keeping the primary
+Opus 64-kbps target, DTX policy and nominal video settings. Both sent and received
+encoded-frame MIME must prove the selected policy; primary Opus RTP statistics
+can still identify Opus when its payload is RED wrapped. The actual native
+RED-off comparison reduces sent audio to 64.41 kbps but still times out on
+impaired 40-pair matching and falls below nominal frame rate. It reports 8.48
+seconds of missing audio sample frames without redundancy recovery over its
+observed session. RED remains the selected production policy.
+
 The private owned PCM adapter preserves the existing native output-sample age
 (-20 to 200 ms) and latency (0 to 200 ms) bounds. An invalid observation mutes
 the adapter and yields no video capture cursor. It can recover only from a

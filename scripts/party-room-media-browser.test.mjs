@@ -43,6 +43,7 @@ import { encodedTimingWorker, installEncodedTimingProbe } from './party-encoded-
 import { installAvSourceMarkers, installAvObserver, analyseAvObservations } from './party-av-observer.mjs'
 import { collectAvMediaStats } from './party-av-stats.mjs'
 import { analyseCodecQuality, analyseCaptureCadence, analyseSourceAllocation } from './party-av-codec-quality.mjs'
+import { analyseAudioRedEvidence } from './party-audio-red-experiment.mjs'
 import { installEncodedLeaseObserver } from './party-encoded-lease-observer.mjs'
 import { installSenderKeyframeExperiment } from './party-sender-keyframes.mjs'
 import { installSenderCadenceExperiment } from './party-sender-cadence-experiment.mjs'
@@ -70,6 +71,7 @@ catch (error) { if (error.code !== 'ENOENT') throw error }
 if (codecExperiment) {
   assert.ok(codecExperiment.version===1&&codecExperiment.privateCodecExperiment===true&&
     ['vp8','vp9','h264'].includes(codecExperiment.codec)&&codecExperiment.backupCodec===false&&
+    (codecExperiment.audioRed==null||typeof codecExperiment.audioRed==='boolean')&&
     codecExperiment.width===1280&&codecExperiment.height===720&&codecExperiment.fps===25&&
     Number.isInteger(codecExperiment.maxBitrate)&&codecExperiment.maxBitrate>=64000&&codecExperiment.maxBitrate<=350000&&
     (codecExperiment.transport==null||['default','dual'].includes(codecExperiment.transport))&&
@@ -88,6 +90,10 @@ const opusDecodeProbe = process.env.KTV_ROOM_TEST_OPUS_DECODE === '1'
 const pcmPortProbe = process.env.KTV_ROOM_TEST_PCM_PORT === '1'
 const ownedPcm = process.env.KTV_ROOM_TEST_OWNED_PCM === '1'
 const ownedVideo=process.env.KTV_ROOM_TEST_OWNED_VIDEO==='1'
+const audioRedComparison=codecExperiment?.audioRed===false
+assert.ok(!audioRedComparison||avTiming&&encodedTiming&&ownedPcm&&ownedVideo&&
+  codecExperiment.codec==='vp9'&&codecExperiment.transport==='default'&&codecExperiment.keyframeMs===null&&
+  codecExperiment.maxBitrate===350000,'Private audio RED comparison requires nominal VP9 owned-output timing')
 const dependencyVideoReorder=process.env.KTV_ROOM_TEST_VIDEO_REORDER==='dependency'
 const gapVideoReorder=process.env.KTV_ROOM_TEST_VIDEO_REORDER==='gap'||dependencyVideoReorder
 assert.ok(process.env.KTV_ROOM_TEST_VIDEO_REORDER===undefined||gapVideoReorder&&ownedVideo&&avTiming,
@@ -573,6 +579,16 @@ try {
     await poll(async()=>(await avBrowser.audioEvidence()).some(row=>row.captureHeartbeat&&row.onAmplitude>.02),
       'independent native owned PCM output')
     check(true,'independent native output contains the owned PCM backing tone')
+  }
+  if(audioRedComparison){
+    const records=[]
+    for(const session of [phone,audience])records.push(...await evaluate(session,'__encodedTimingProbe.records'))
+    const evidence=analyseAudioRedEvidence(records,false)
+    console.log('Private selected audio RED policy:',JSON.stringify(evidence))
+    check(evidence.errors.length===0,'actual sent and received encoded audio is Opus without RED in the marked private comparison')
+    const parameters=(await evaluate(phone,`(${collectAvMediaStats.toString()})()`)).senderParameters.filter(row=>row.kind==='audio')
+    check(parameters.length===1&&parameters[0].encodings.length===1&&parameters[0].encodings[0].maxBitrate===64000,
+      'private RED comparison retains the actual single 64-kbps Opus sender cap')
   }
   if(opusDecodeProbe) {
     const evidence=await poll(()=>evaluate(audience,'__encodedTimingProbe.audioDecoders[0]'),
@@ -1100,6 +1116,10 @@ try {
     console.log('Native capture versus encoding:',JSON.stringify(analyseCaptureCadence(avTimingSamples,phase)))
   for(const phase of new Set(avTimingSamples.map(item=>item.phase)))
     console.log('Native source allocation:',JSON.stringify(analyseSourceAllocation(avTimingSamples,phase)))
+  if(audioRedComparison)check(avTimingSamples.length>1&&avTimingSamples.every(sample=>{
+    const senders=sample.source?.senderParameters?.filter(row=>row.kind==='audio')||[]
+    return senders.length===1&&senders[0].encodings?.length===1&&senders[0].encodings[0].maxBitrate===64000
+  }),'private RED comparison retains the actual 64-kbps Opus cap throughout every measured phase')
   if(senderCadence) check(avTimingSamples.length > 1 && avTimingSamples.every(sample => {
     const senders = sample.source?.senderParameters?.filter(sender => sender.kind === 'video') || []
     return senders.length === 1 && senders[0].contentHint === 'text' &&
@@ -1136,6 +1156,11 @@ try {
       console.log('Native RTP capture clock study:',JSON.stringify(analyseCaptureClocks(evidence.records)))
       check(evidence.errors===0,'encoded timing observers forward native frames without errors')
       observed.push(...evidence.records)
+    }
+    if(audioRedComparison){
+      const evidence=analyseAudioRedEvidence(observed,false)
+      console.log('Private final audio RED policy:',JSON.stringify(evidence))
+      check(evidence.errors.length===0,'private audio RED policy remains selected through every observed publisher and receiver')
     }
     for(const direction of ['send','receive'])for(const kind of ['audio','video'])
       check(observed.filter(row=>row.direction===direction&&row.kind===kind&&Number.isFinite(row.rtpTimestamp)).length>=8,
