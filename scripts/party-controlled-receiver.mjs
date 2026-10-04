@@ -47,10 +47,10 @@ export function installControlledReceiver(Clock, FrameQueue, delayMs = 800, crea
       anchors:decoder?.decoded||0,ageMs:decoder?Date.now()-decoder.lastCaptureUnixMs:null,maximumResidualMs:decoder?.maximumResidualMs||0}}
     let closed = false, frameId, presentationId, presented = 0, drawn = 0, missing = 0, maximumBytes = 0, maximumQueued = 0
     let firstPresentation = null, lastPresentation = null, error = null, ready = false, writing = false, lastOutputTimestamp = -Infinity
-    let decodedAudio = 0
+    let decodedAudio = 0, closedAtUnixMs = null
     const videoArrival={count:0,totalMs:0,maximumMs:0,afterHold:0}
     const videoRelease={count:0,totalLateMs:0,maximumLateMs:0,over150:0,over250:0}
-    const item = { original, state, snapshot() { return { session, ready, closed, error,
+    const item = { original, state, snapshot() { return { session, ready, closed, closedAtUnixMs, error,
       delayMs, audioDelayMs: ownedPcm?delayMs:state.delay.delayTime.value * 1000,
       ...(ownedPcm?{pcm:state.pcm.snapshot(),epochOffset}:{}),
       ...(ownedVideo?{ownedVideo:video.snapshot()}:{}),
@@ -61,7 +61,7 @@ export function installControlledReceiver(Clock, FrameQueue, delayMs = 800, crea
       audioClock: ownedPcm?pcmClock():audioClock.snapshot(performance.now()), videoClock: videoClock.snapshot(performance.now()) } },
       close() {
         if (closed) return
-        closed = true; state.sync.gain.value = 0
+        closed = true; closedAtUnixMs = Date.now(); state.sync.gain.value = 0
         state.pcm?.close()
         cancelAnimationFrame(frameId); player.cancelVideoFrameCallback(presentationId)
         queue.close();video?.close(); clone?.stop(); audioClone.stop()
@@ -263,6 +263,23 @@ export function analyseControlledReceiverQuality(samples, phase) {
       errors.push('PLAYOUT_OWNED_VIDEO_FPS')
   }
   return { phase, samples: values.length, fps, ...(ownedVideo?{decodedFps,drawnFps}:{}),durationMs: Number.isFinite(durationMs) ? durationMs : null, errors }
+}
+
+// Forced source expiry can leave stale reader callbacks queued behind the
+// blocked page. Accept their terminal clock closure only for the exact old
+// session, after independently verified silence and the delivered deadline.
+export function hasBoundedControlledReceiver(snapshot, expiryFault = null) {
+  return [snapshot.active, ...snapshot.history].filter(Boolean).every(item => {
+    if (!Number.isSafeInteger(item.maximumBytes) || item.maximumBytes < 0 || item.maximumBytes > 64 * 1024 * 1024 ||
+      !Number.isSafeInteger(item.maximumQueued) || item.maximumQueued < 0 || item.maximumQueued > 40) return false
+    if (!item.error) return true
+    return expiryFault?.silenceVerified === true && Number.isSafeInteger(expiryFault.expiredSession) &&
+      item.session === expiryFault.expiredSession && item.closed === true &&
+      Number.isFinite(expiryFault.expiredAfterUnixMs) && Number.isFinite(item.closedAtUnixMs) &&
+      item.closedAtUnixMs >= expiryFault.expiredAfterUnixMs &&
+      ['PLAYOUT_VIDEO_AGE', 'PLAYOUT_AUDIO_CLOCK'].includes(item.error) &&
+      item.pcm?.closed === true && item.ownedVideo?.closed === true && item.queued === 0 && item.bytes === 0
+  })
 }
 
 // The private controller keeps a hidden native decoder and one visible video

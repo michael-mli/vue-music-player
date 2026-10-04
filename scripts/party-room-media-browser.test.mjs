@@ -38,7 +38,7 @@ import { installVp8FrameWorker } from './party-vp8-frame-worker.mjs'
 import { createOwnedVideoReceiver } from './party-owned-video-receiver.mjs'
 import { RtpCaptureClock, analyseCaptureClocks } from './party-rtp-capture-clock.mjs'
 import { CaptureFrameQueue } from './party-capture-frame-queue.mjs'
-import { installControlledReceiver, analyseControlledReceiverQuality, analyseReceiverKeyframeRecovery, hasSingleAudienceOutput } from './party-controlled-receiver.mjs'
+import { installControlledReceiver, analyseControlledReceiverQuality, analyseReceiverKeyframeRecovery, hasSingleAudienceOutput, hasBoundedControlledReceiver } from './party-controlled-receiver.mjs'
 import { encodedTimingWorker, installEncodedTimingProbe } from './party-encoded-timing-observer.mjs'
 import { installAvSourceMarkers, installAvObserver, analyseAvObservations } from './party-av-observer.mjs'
 import { collectAvMediaStats } from './party-av-stats.mjs'
@@ -195,7 +195,7 @@ const provider = new RoomServiceClient(upstreamUrl, apiKey, apiSecret, { request
 const db = initDb(root), contexts = [], debuggerSockets = [], pending = new Map(), sessionSockets = new Map(), sessionTargets = new Map(), errors = [], mediaHttp = []
 const ownedTcp = new Set()
 const trackTcp = server => server.on('connection', socket => { ownedTcp.add(socket); socket.once('close', () => ownedTcp.delete(socket)) })
-let mediaProxy, localIceGuard, audienceCircuits, frontend, backend, worker, realtime, chrome, remoteBrowser, avBrowser, hostBrowser, pulseModule, pathRoom, nativeSyncAudience, senderKeyframePage, running = false, nextId = 0, passed = 0
+let mediaProxy, localIceGuard, audienceCircuits, frontend, backend, worker, realtime, chrome, remoteBrowser, avBrowser, hostBrowser, pulseModule, pathRoom, nativeSyncAudience, senderKeyframePage, receiverFaultEvidence, running = false, nextId = 0, passed = 0
 const check = (value, label) => { assert.ok(value, label); passed++; console.log(`PASS ${label}`) }
 const poll = async (work, label, timeout = 20000) => {
   const deadline = Date.now() + timeout
@@ -669,7 +669,7 @@ try {
   check(Boolean(syncAudio&&syncVideo&&syncAudio.cnames.some(value=>syncVideo.cnames.includes(value))&&syncAudio.streams.some(value=>syncVideo.streams.includes(value))), 'negotiated receiver audio/video share an RTCP synchronization identity')
 
   if(receiverFault!=='off') {
-    await runRoomReceiverFault({mode:receiverFault,phone,audience,host,origin,pathRoom,firstPublisher,
+    receiverFaultEvidence=await runRoomReceiverFault({mode:receiverFault,phone,audience,host,origin,pathRoom,firstPublisher,
       api,evaluate,click,poll,check,db,provider,replacementBrowser:hostBrowser,receiverBrowser:avBrowser,
       controlledDelayMs: controlledPlayoutMs,ownedPcm})
   } else {
@@ -1102,9 +1102,8 @@ try {
   if(controlledPlayoutMs !== null)for(const session of sessionSockets.keys()) {
     const evidence=await evaluate(session,'__controlledReceiver.snapshot()')
     console.log('Private controlled receiver evidence:',JSON.stringify(evidence))
-    check([evidence.active,...evidence.history].filter(Boolean).every(item=>!item.error&&
-      item.maximumBytes<=64*1024*1024&&item.maximumQueued<=40),
-      'controlled receiver keeps native frame/byte bounds without clock or renderer failure')
+    check(hasBoundedControlledReceiver(evidence,session===audience?receiverFaultEvidence:null),
+      'controlled receiver keeps native frame/byte bounds without unexpected clock or renderer failure')
   }
   if(encodedTiming) {
     console.log('Private encoded API selection:',encodedApi)

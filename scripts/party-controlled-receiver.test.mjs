@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
-import { installControlledReceiver, analyseControlledReceiverQuality, analyseReceiverKeyframeRecovery, hasSingleAudienceOutput } from './party-controlled-receiver.mjs'
+import { installControlledReceiver, analyseControlledReceiverQuality, analyseReceiverKeyframeRecovery, hasSingleAudienceOutput, hasBoundedControlledReceiver } from './party-controlled-receiver.mjs'
 import { CaptureFrameQueue } from './party-capture-frame-queue.mjs'
 
 function sample(presented, lastPresentation, extra = {}) {
@@ -132,4 +132,21 @@ test('owned PCM replaces only the guarded audible input and releases its adapter
   assert.equal(realm.window.__controlledReceiver.snapshot().sources,1)
   source.disconnect();assert.equal(closes,1);assert.equal(realm.window.__controlledReceiver.snapshot().sources,0)
   realm.window.__controlledReceiver.close()
+})
+
+test('forced expiry accepts only the exact closed old session after verified silence and deadline',()=>{
+  const fault={expiredSession:1,expiredAfterUnixMs:2000,silenceVerified:true}
+  const old={session:1,closed:true,closedAtUnixMs:2100,error:'PLAYOUT_VIDEO_AGE',
+    maximumBytes:1024,maximumQueued:2,queued:0,bytes:0,pcm:{closed:true},ownedVideo:{closed:true}}
+  const evidence=(row=old)=>({active:{session:2,error:null,maximumBytes:1024,maximumQueued:2},history:[row]})
+  assert.equal(hasBoundedControlledReceiver(evidence(),fault),true)
+  assert.equal(hasBoundedControlledReceiver(evidence()),false)
+  for(const extra of [{session:2},{closed:false},{closedAtUnixMs:1999},{closedAtUnixMs:NaN},
+    {error:'PLAYOUT_QUEUE_BOUND'},{queued:1},{bytes:1},{pcm:{closed:false}},{ownedVideo:{closed:false}},
+    {maximumBytes:64*1024*1024+1},{maximumQueued:41}])
+    assert.equal(hasBoundedControlledReceiver(evidence({...old,...extra}),fault),false)
+  for(const extra of [{silenceVerified:false},{expiredSession:null},{expiredAfterUnixMs:NaN}])
+    assert.equal(hasBoundedControlledReceiver(evidence(),{...fault,...extra}),false)
+  const replacement=evidence();replacement.active.error='PLAYOUT_AUDIO_CLOCK'
+  assert.equal(hasBoundedControlledReceiver(replacement,fault),false)
 })

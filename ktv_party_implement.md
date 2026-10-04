@@ -55,7 +55,7 @@ The coupled update includes media protocol 2, durable issued-output reservations
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
 Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
-checks pass; party units **125/125** and timing/capability fixtures **139/139** pass.
+checks pass; party units **125/125** and timing/capability fixtures **140/140** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
@@ -4541,3 +4541,50 @@ result or prove source-stall acceptance. No timing or audible threshold changes.
 The full updated timing/capability fixture suite passes **139/139** in
 `/tmp/ktv-owned-video-pacing-feedback-all-fixtures-20261004.log`, including the
 new sender-allocation allowlist checks.
+
+
+### Exact expired-session classification after a blocked callback — 2026-10-04
+
+The diagnostic source-task rerun
+`/tmp/ktv-owned-av-ready-queue-source-task-expiry-diagnostic-20261004.log`
+exits 1 after 36 checks. All 13 replacement-output heartbeats remain audible
+(minimum RMS **0.07652**, no samples below 0.02); old output remains silent
+and the unchanged expiry/separation checks pass. The final resource check rejects
+the old controller's `PLAYOUT_VIDEO_AGE` / PCM `PLAYOUT_PCM_CLOCK` terminal
+closure when stale queued callbacks run after the blocked page resumes.
+This is a different result from the earlier replacement-output interruption;
+the earlier failure remains recorded and is not reclassified.
+
+The private controller now records its terminal Unix time. Only the exact old
+controller session captured immediately before the source fault can accept a
+terminal `PLAYOUT_VIDEO_AGE` or `PLAYOUT_AUDIO_CLOCK` result after the delivered
+cutoff. This classification is available only after every independent native
+silence, replacement-audibility, timing and separation assertion succeeds. Both
+owned adapters must be closed, the decoded frame queue empty, and the original
+frame/byte maxima within bounds. Earlier closures, other sessions, current
+replacement errors, memory overflows and incomplete cleanup still fail. Normal
+timing runs have no expiry exception. Fixtures pass **140/140** in
+`/tmp/ktv-owned-expiry-session-classification-fixtures-20261004.log`; negative
+cases cover every classification condition. An integrated source-task rerun
+with the recorded closure time is in progress.
+
+
+### Updated owned queues pass source-task expiry — 2026-10-04
+
+`/tmp/ktv-owned-av-source-task-expiry-bound-session-20261004.log` exits 0
+with **46/46** checks. The real standard receiver retains **769.67 ms** of
+future PCM (41 chunks / 314,880 bytes after 34-ms report age). The old source
+cannot renew before the output cutoff; provider removal and a fresh replacement
+publisher occur while the old listener page remains blocked. Independent capture
+confirms old buffered output stays silent within the unchanged expiry and
+separation limits. All 14 replacement heartbeats remain audible (minimum RMS
+**0.07824**); bounded resources and the exact expired-session classification pass.
+Together with the separate **51/51** both-context freeze/resume result, this
+closes these digital buffered-expiry regressions for the updated owned queue
+path. It does not establish sustained, physical, mobile or impaired timing
+acceptance. The previous intermittent replacement-output failure remains a
+recorded limitation until sustained testing explains or excludes recurrence.
+
+The next full UDP/recovery/handover run uses gap-only reorder with five-second
+feedback for unique late received references only. Source/audio/video profiles
+and all original 40-pair, nominal cadence and timing thresholds remain intact.

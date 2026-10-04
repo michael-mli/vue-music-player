@@ -46,7 +46,7 @@ export async function runRoomReceiverFault({ mode, phone, audience, host, origin
     const controlled=window.__controlledReceiver?.snapshot().active;
     return {muted:video.muted,targets:receivers.map(item=>item.jitterBufferTarget),contexts:receivedContexts.length,
       videoTargets:videoReceivers.map(item=>item.jitterBufferTarget),pcmContexts:pcmContexts.length,
-      controlled:controlled?{ready:controlled.ready,error:controlled.error,audioDelayMs:controlled.audioDelayMs,
+      controlled:controlled?{session:controlled.session,ready:controlled.ready,error:controlled.error,audioDelayMs:controlled.audioDelayMs,
         videoWidth:controlled.width,videoHeight:controlled.height}:null,
       backingSources:__bufferSources.length};
   })()`)
@@ -119,6 +119,7 @@ export async function runRoomReceiverFault({ mode, phone, audience, host, origin
       evidence.some(item=>item.captureHeartbeat&&item.time>=beforeStall-1200&&item.time<=beforeStall&&item.rmsAmplitude>.02),
       `${label}: controlled output is active and independently audible immediately before the actual stall`)
   }
+  const expiredSession=controlledDelayMs!==null?await evaluate(audience,'__controlledReceiver.snapshot().active.session'):null
   const start = await evaluate(audience, 'performance.timeOrigin+performance.now()')
   const deadline = await evaluate(audience, `performance.timeOrigin+${issued.permit.expiresServerMs}-${clock.offsetMs}`)
   let stalled, sourceStalled
@@ -257,6 +258,9 @@ export async function runRoomReceiverFault({ mode, phone, audience, host, origin
     await click(phone,'Stop streaming on this device')
     await poll(async()=>db.prepare('SELECT state FROM ktv_media_grants WHERE identity = ?').get(replacement.identity)?.state==='revoked',
       'replacement publisher is revoked during fixture cleanup')
+    return mode==='source-task-stall'&&ownedPcm?{
+      expiredSession,expiredAfterUnixMs:deadline,silenceVerified:true
+    }:null
   } finally {
     // Pending evaluations settle naturally within the bounded stall. Closing
     // the fixture early must not leave rejected CDP promises unobserved.
