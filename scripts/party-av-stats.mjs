@@ -67,6 +67,7 @@ export async function collectAvMediaStats() {
     ...(window.__videoFloorExperiment ? { videoFloor: window.__videoFloorExperiment.snapshot() } : {}),
     ...(window.__sourceMarkerProbe ? { sourceMarkerProbe: window.__sourceMarkerProbe.snapshot() } : {}),
     ...(window.__nativeReceiverMarkerProbe ? { nativeReceiverMarkerProbe: window.__nativeReceiverMarkerProbe.snapshot() } : {}),
+    ...(window.__senderTemporalExperiment ? { sourceTemporal: window.__senderTemporalExperiment.snapshot() } : {}),
     receiverTargets: window.__peers.flatMap((peer, index) => peer.getReceivers().map(receiver => ({
       peer: index, kind: receiver.track?.kind,
       targetSupported: 'jitterBufferTarget' in receiver,

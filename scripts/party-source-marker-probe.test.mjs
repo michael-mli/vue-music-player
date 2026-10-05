@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { setImmediate as tick } from 'node:timers/promises'
-import { installSourceMarkerProbe } from './party-source-marker-probe.mjs'
+import { installSourceMarkerProbe, hasBoundedMarkerProbe } from './party-source-marker-probe.mjs'
 
 function frame(id, { format = 'RGBA', pending = false } = {}) {
   const bits=[1,0,1,0,...Array.from({length:8},(_,i)=>id>>(7-i)&1)];bits.push(bits.slice(4).reduce((sum,bit)=>sum^bit,0))
@@ -75,7 +75,9 @@ test('failed native processor creation stops only the private clone',t=>{
 })
 test('native receiver probe samples only the received track and keeps publisher diagnostics separate',async t=>{
   const f=fixture(t), received=f.track()
-  f.peer.getReceivers=()=>[{track:received}]
+  const unused=f.track()
+  f.peer.getReceivers=()=>[{track:unused},{track:received}]
+  window.document={querySelector(selector){assert.equal(selector,'[data-party-media-screen] video');return {srcObject:{getVideoTracks:()=>[received]}}}}
   installSourceMarkerProbe(async()=>({valid:false}))
   installSourceMarkerProbe(async()=>({valid:false}),'native-receiver')
   const source=frame(2), native=frame(1)
@@ -88,4 +90,13 @@ test('native receiver probe samples only the received track and keeps publisher 
   receiver.close();await tick();assert.equal(f.probe.snapshot().closed,false)
   assert.equal(received.stops,0);assert.equal(source.closes,1);assert.equal(native.closes,1)
   assert.throws(()=>installSourceMarkerProbe(async()=>({valid:false}),'unknown'),/^Error: SOURCE_MARKER_ROLE$/)
+})
+test('native marker evidence rejects failed, missing, inconsistent and oversized diagnostic snapshots',()=>{
+  const value={closed:false,error:null,reads:4,invalid:0,transitions:3,regressions:1,maximumCopyBytes:53248}
+  assert.equal(hasBoundedMarkerProbe(value),true)
+  for(const change of [{closed:true},{error:'SOURCE_MARKER_READ'},{reads:undefined},{invalid:5},
+    {transitions:5},{regressions:4},{maximumCopyBytes:65537},{maximumCopyBytes:0},{reads:NaN}])
+    assert.equal(hasBoundedMarkerProbe({...value,...change}),false)
+  assert.equal(hasBoundedMarkerProbe(null),false)
+  assert.equal(hasBoundedMarkerProbe({...value,reads:0,transitions:0,regressions:0,maximumCopyBytes:0}),true)
 })

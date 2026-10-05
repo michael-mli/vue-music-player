@@ -49,7 +49,7 @@ is a preview; public online media is still disabled.
 
 | Check | Current evidence | Status |
 | --- | --- | --- |
-| Timing/capability fixtures | 186/186 | Pass |
+| Timing/capability fixtures | 189/189 | Pass |
 | Buffered expiry after both render contexts freeze/resume | 51/51, latest PCM pressure handling | Pass for digital fixture |
 | Buffered expiry while source and listener pages stall | 46/46, latest reader/revalidation | Pass for digital fixture |
 | Fresh clean 40-pair A/V regression | 50/50; p95 52.44 ms / max 54.11 ms; nominal cadence | Pass for digital fixture |
@@ -5379,3 +5379,49 @@ comparing captured, Chrome-native decoded and owned-decoded markers is running
 in `/tmp/ktv-owned-av-vp9-source-native-owned-markers-full-udp-20261004.log`.
 This comparison cannot qualify a release while the original timing/cadence gates
 remain unmet.
+
+
+The initial native-versus-owned comparison stops before baseline measurement with
+`SOURCE_MARKER_TRACK`: LiveKit retains an unused live video receiver as well as
+the subscribed receiver, so selecting all live receivers is not exact enough.
+It produces no native pixel-order evidence. The diagnostic now requires the one
+native video track attached to the current room screen and its exact receiver
+object; a test includes an additional unused receiver. **186/186** fixtures pass
+in `/tmp/ktv-exact-native-marker-probe-fixtures-20261004.log`. The corrected
+comparison is running in
+`/tmp/ktv-owned-av-vp9-exact-source-native-owned-markers-full-udp-20261004.log`.
+
+
+### Both native and owned decoders reproduce the pixel reversal — 2026-10-04
+
+The corrected exact-track comparison,
+`/tmp/ktv-owned-av-vp9-exact-source-native-owned-markers-full-udp-20261004.log`,
+exits 1 at impaired unmatched-edge accounting. Actual captured pixels have zero
+backward identities in both phases; Chrome-native and owned decoding each record
+two during the clean baseline. This excludes the presentation observer and an
+owned-decoder-only failure as sole explanations. Encoder, forwarding or shared
+decoding behavior still need isolation; this is not proof of a particular bug.
+All three probes remain live with bounded copies (source **53,248** bytes,
+native **19,968** bytes).
+
+The run reaches 40 impaired matched pairs but also has **69 unmatched video and
+four unmatched audio edges**, exceeding the original allowance of one per kind.
+Matched p95 / maximum skew is **496.33 / 728.31 ms**, above **150 / 250 ms**.
+Source / native cadence is **24.74 / 18.50 fps**, with native cadence below 20.
+Final native / owned backward marker counts are **47 / 46**; source stays zero.
+PCM remains alive with **28,800** measured missing samples (0.60 seconds), maximum
+seven held packets and no early pressure drain. This remains a failed run.
+
+Added a private, native-API `KTV_ROOM_TEST_SOURCE_TEMPORAL=L1T1` comparison against
+the SDK's actual VP9 `L1T3` sender. It changes only temporal structure: content
+hint stays `motion`, resolution stays 1280-by-720, requested cadence stays 25 fps,
+max video remains 350 kbps, and audio RED, floor, impairment, ownership/expiry and
+all acceptance gates remain intact. Native readback must retain the new structure
+and the original caps on every sample. Changed source policies fail explicitly.
+This tests a shared source/receive-path hypothesis; no result is assumed.
+Capture/native probe snapshots now also fail on closed/error/missing/inconsistent
+or oversized diagnostics instead of interpreting failed reads as ordered pixels.
+**189/189** fixtures pass in
+`/tmp/ktv-temporal-native-marker-fixtures-20261004.log`.
+The full comparison is running in
+`/tmp/ktv-owned-av-vp9-l1t1-source-native-owned-markers-full-udp-20261004.log`.

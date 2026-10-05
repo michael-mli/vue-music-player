@@ -1,10 +1,13 @@
-// Private read-only diagnostic. Clones only the exact current publisher video;
+// Private read-only diagnostic. Clones only the exact current video track;
 // no additional publication, camera request, output, grant or media mutation.
 export function installSourceMarkerProbe(readYuv, role = 'publisher') {
   if (!['publisher', 'native-receiver'].includes(role)) throw new Error('SOURCE_MARKER_ROLE')
   const key = role === 'publisher' ? '__sourceMarkerProbe' : '__nativeReceiverMarkerProbe'
+  const nativeTracks = role === 'native-receiver' ?
+    window.document.querySelector('[data-party-media-screen] video')?.srcObject?.getVideoTracks() : null
   const senders = window.__peers.flatMap(peer => role === 'publisher' ? peer.getSenders() : peer.getReceivers())
-    .filter(sender => sender.track?.kind === 'video' && sender.track.readyState === 'live')
+    .filter(sender => sender.track?.kind === 'video' && sender.track.readyState === 'live' &&
+      (role === 'publisher' || nativeTracks?.length === 1 && sender.track === nativeTracks[0]))
   if (senders.length !== 1 || typeof MediaStreamTrackProcessor !== 'function' || typeof readYuv !== 'function') throw new Error('SOURCE_MARKER_TRACK')
   const original = senders[0].track
   if (window[key]?.sameSource(original) && !window[key].snapshot().closed) return
@@ -67,4 +70,13 @@ export function installSourceMarkerProbe(readYuv, role = 'publisher') {
     } catch { close('SOURCE_MARKER_READ') }
     finally { reader.releaseLock() }
   })()
+}
+
+export function hasBoundedMarkerProbe(value) {
+  if (!value || value.closed !== false || value.error !== null) return false
+  const keys = ['reads', 'invalid', 'transitions', 'regressions', 'maximumCopyBytes']
+  return keys.every(key => Number.isSafeInteger(value[key]) && value[key] >= 0) &&
+    value.invalid <= value.reads && value.transitions <= value.reads &&
+    value.regressions <= value.transitions && value.maximumCopyBytes <= 65536 &&
+    (value.reads === 0 || value.maximumCopyBytes >= 13312)
 }

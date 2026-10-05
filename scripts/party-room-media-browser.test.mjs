@@ -37,7 +37,8 @@ import { createVp8FrameStream } from './party-vp8-frame-stream.mjs'
 import { installVp8FrameWorker } from './party-vp8-frame-worker.mjs'
 import { createOwnedVideoReceiver } from './party-owned-video-receiver.mjs'
 import { readDecodedVideoMarker } from './party-decoded-marker-probe.mjs'
-import { installSourceMarkerProbe } from './party-source-marker-probe.mjs'
+import { installSourceMarkerProbe, hasBoundedMarkerProbe } from './party-source-marker-probe.mjs'
+import { installSenderTemporalExperiment } from './party-sender-temporal-experiment.mjs'
 import { RtpCaptureClock, analyseCaptureClocks } from './party-rtp-capture-clock.mjs'
 import { CaptureFrameQueue } from './party-capture-frame-queue.mjs'
 import { installControlledReceiver, analyseControlledReceiverQuality, analyseReceiverKeyframeRecovery, hasSingleAudienceOutput, hasBoundedControlledReceiver } from './party-controlled-receiver.mjs'
@@ -126,6 +127,9 @@ const encodedApi = process.env.KTV_ROOM_TEST_ENCODED_API || 'native'
 assert.ok(['native','legacy'].includes(encodedApi)&&(encodedApi==='native'||encodedTiming),
   'A private encoded API comparison requires timing observation')
 const videoFloor=process.env.KTV_ROOM_TEST_VIDEO_MIN_BITRATE!==undefined
+const senderTemporal=process.env.KTV_ROOM_TEST_SOURCE_TEMPORAL==='L1T1'
+assert.ok(process.env.KTV_ROOM_TEST_SOURCE_TEMPORAL===undefined||senderTemporal&&videoFloor&&
+  ownedVideo&&avTiming&&codecExperiment?.codec==='vp9','Private temporal comparison requires nominal VP9 floor timing')
 const videoMarkerProbe=process.env.KTV_ROOM_TEST_DECODED_MARKER_PROBE==='1'
 assert.ok(process.env.KTV_ROOM_TEST_DECODED_MARKER_PROBE===undefined||videoMarkerProbe&&ownedVideo&&avTiming&&
   codecExperiment?.codec==='vp9'&&videoFloor,'Decoded marker observation requires nominal private VP9 owned timing')
@@ -451,6 +455,7 @@ try {
       (${installEncodedLeaseObserver.toString()})();
       ${absoluteCapture ? `(${installAbsoluteCaptureExperiment.toString()})();` : ''}
       ${senderCadence ? `(${installSenderCadenceExperiment.toString()})();` : ''}
+      ${senderTemporal ? `(${installSenderTemporalExperiment.toString()})();` : ''}
       ${equalSourcePriority ? `(${installSenderPriorityExperiment.toString()})();` : ''}
       window.__partyClocks=[]; window.__partyPlaybacks=[]; window.__phaseEvidence=[];
       window.__receivedPermits=[];
@@ -822,6 +827,15 @@ try {
           evaluate(audience,`(${collectAvMediaStats.toString()})()`),
         ])
         avTimingSamples.push({phase,source,receiver})
+        if(videoMarkerProbe)assert.ok(hasBoundedMarkerProbe(source.sourceMarkerProbe)&&
+          hasBoundedMarkerProbe(receiver.nativeReceiverMarkerProbe),'Actual capture/native marker diagnostics remain live and bounded')
+        if(senderTemporal){
+          const videos=source.senderParameters.filter(row=>row.kind==='video')
+          assert.ok(source.sourceTemporal?.configured>=1&&videos.length===1&&videos[0].contentHint==='motion'&&
+            videos[0].encodings.length===1&&videos[0].encodings[0].scalabilityMode==='L1T1'&&
+            videos[0].encodings[0].maxFramerate===25&&videos[0].encodings[0].maxBitrate===350000,
+            'Current native VP9 sender retains only the private temporal change with nominal caps')
+        }
         if(videoFloor){
           const floor=source.videoFloor
           assert.ok(floor?.verified>=1&&!floor.error&&!floor.closed,'Current native publisher retains the verified private codec floor')
