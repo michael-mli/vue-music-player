@@ -5772,8 +5772,54 @@ no default/deployed recovery policy changes.
 (`/tmp/ktv-pcm-group2-recovery1000-fixtures-20261004.log`). Full journey parameters
 are preserved in owner-only
 `/tmp/ktv-owned-l1t1-group2-target800-recovery1000-full-udp-20261004.env`.
-The original UDP impairment, 40-pair timing, quality and handover journey is
-running in
-`/tmp/ktv-owned-av-vp9-l1t1-group2-target800-recovery1000-full-udp-20261004.log`.
-Source remains 1280-by-720 / 25 fps / max 350 kbps with Opus 64 kbps and RED;
-no clock, source quality, unmatched-edge or lateness criterion changes.
+The full comparison in
+`/tmp/ktv-owned-av-vp9-l1t1-group2-target800-recovery1000-full-udp-20261004.log`
+is terminal **exit 1**, stopping at impaired unmatched-edge accounting before
+outage/handover. Source remains 1280-by-720 / 25 fps / max 350 kbps with Opus
+64 kbps and RED; all original criteria remain in force.
+
+- Clean baseline: six pairs, no unmatched edges, maximum skew **26.44 ms**;
+  source/native/owned decode/presentation all meet 20–30 fps.
+- Impaired: 40 pairs, **four unmatched audio / three unmatched video** edges
+  (one per kind allowed), matched p95 **423.85 ms** / maximum **723.32 ms**
+  (150/250 ms required). Source/native decoding **24.81/22.42 fps** pass;
+  owned decode/presentation **15.14/14.78 fps** fail.
+- Owned video stays alive but rejects **787** missing-reference frames, with
+  28 late frames, 31 pressure drains, at most 20 held packets, and 27 fulfilled
+  native keyframe requests. Source/native/owned marker identities never reverse.
+- Grouped PCM stays alive: at most **26 credits**, six held packets and
+  **368,640 reserved bytes**, including copies; 2,438 grouped transfers.
+  Unrepaired gaps total **39,360 samples / 820 ms**. The secondary context's
+  measured wall-clock lag reaches **326.67 ms**; grouping does not fix it.
+
+This closes the observed PCM saturation in this comparison, not impaired
+qualification. Random independent loss prevents attributing a numerical change
+between runs to the faster request cooldown. Dependency recovery, source/render
+clock stability, loss concealment, outage/handover and product/release gates
+remain open.
+
+
+### Independent keyframe ends older reference repair wait — 2026-10-04
+
+The owned VP9 dependency queue previously waited up to 700 ms for an older
+missing-reference chain even after an independent newer keyframe arrived.
+The queue now treats a retained newer keyframe as the end of that older wait:
+it visits older packets in RTP order, decodes only inputs whose declared
+references are available, releases unsafe payloads without decoding them, and
+then admits the keyframe. The four-output reservation still parks decoding;
+20 held packets, 512 KiB encoded input, RTP/capture checks and the original
+presentation/expiry limits remain unchanged. A scalar `keyframeDrains` counter
+separates early recovery drains from queue pressure; no identities/payloads
+are exposed. Keyframe independence follows the
+[WebCodecs definition](https://www.w3.org/TR/webcodecs/#key-frame).
+
+**204/204 A/V fixtures pass**
+(`/tmp/ktv-video-keyframe-repair-all-fixtures-20261004.log`), including early
+recovery across RTP wrap, safe independent deltas behind a broken chain,
+missing-reference rejection, native-output congestion, stop and timer cleanup.
+A full comparison runs with the same grouped/800-ms/L1T1/floor/one-second
+feedback/continuous-RTX UDP profile in
+`/tmp/ktv-owned-av-vp9-l1t1-group2-keyframe-drain-full-udp-20261004.log`;
+owner-only parameters are in
+`/tmp/ktv-owned-l1t1-group2-keyframe-drain-full-udp-20261004.env`.
+Native impaired acceptance remains pending; no deployed/default codec changes.

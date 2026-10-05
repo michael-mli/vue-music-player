@@ -227,6 +227,41 @@ test('missing declared references expire at the fixed bound without decoding an 
   for(const packet of f.delivered)packet.frame.close();f.stream.close()
 })
 
+test('a new independent keyframe drains the older broken chain without waiting or decoding missing references',async()=>{
+  const f=await fixture({codec:'vp9',gapAware:true,dependencyAware:true,reorderMs:700}),start=0xfffffe00
+  f.send(start,0,'key',{frameId:1,dependencies:[]})
+  f.send((start+7200)>>>0,80,'delta',{frameId:3,dependencies:[2]})
+  f.send((start+10800)>>>0,120,'delta',{frameId:4,dependencies:[3]})
+  // An independent older delta remains safe, even behind the broken chain.
+  f.send((start+14400)>>>0,160,'delta',{frameId:5,dependencies:[1]})
+  f.advance(1140);assert.equal(f.stream.snapshot().decoded,1)
+  f.send((start+18000)>>>0,200,'key',{frameId:6,dependencies:[]})
+  assert.deepEqual(f.delivered.map(packet=>packet.rtpTimestamp),[start,(start+14400)>>>0,(start+18000)>>>0])
+  assert.equal(f.stream.snapshot().referenceMisses,2)
+  assert.equal(f.stream.snapshot().keyframeDrains,2)
+  assert.equal(f.stream.snapshot().pressureDrains,0)
+  assert.equal(f.stream.snapshot().encodedBytes,0);assert.equal(f.timers.size,0)
+  f.send((start+21600)>>>0,240,'delta',{frameId:7,dependencies:[6]})
+  assert.equal(f.stream.snapshot().decoded,4)
+  for(const packet of f.delivered)packet.frame.close();f.stream.close()
+})
+
+test('keyframe repair cannot bypass output reservations or revive a stopped queue',async()=>{
+  const f=await fixture({codec:'vp9',gapAware:true,dependencyAware:true,reorderMs:700,accept:'wait'})
+  f.send(0,0,'key',{frameId:1,dependencies:[]})
+  for(let i=1;i<4;i++)f.send(i*3600,i*40,'delta',{frameId:i+1,dependencies:[i]})
+  f.send(18000,200,'delta',{frameId:6,dependencies:[5]})
+  f.send(21600,240,'key',{frameId:7,dependencies:[]})
+  assert.equal(f.stream.snapshot().pending,4);assert.equal(f.stream.snapshot().heldPackets,2)
+  assert.equal(f.stream.snapshot().keyframeDrains,0)
+  f.setAccept(true);f.stream.resume()
+  assert.deepEqual(f.delivered.map(packet=>packet.rtpTimestamp),[0,3600,7200,10800,21600])
+  assert.equal(f.stream.snapshot().maximumPending,4);assert.equal(f.stream.snapshot().referenceMisses,1)
+  assert.equal(f.stream.snapshot().keyframeDrains,1);assert.equal(f.stream.snapshot().encodedBytes,0)
+  for(const packet of f.delivered)packet.frame.close();f.stream.close();f.advance(1700);f.stream.resume()
+  assert.equal(f.delivered.length,5);assert.equal(f.timers.size,0)
+})
+
 test('explicit reference mode closes permanently on absent or malformed native declarations',async()=>{
   for(const metadata of [{},{frameId:2,dependencies:[]},{frameId:2,dependencies:['private']},
     {frameId:2,dependencies:Array(9).fill(1)},{frameId:-1,dependencies:[1]}]){

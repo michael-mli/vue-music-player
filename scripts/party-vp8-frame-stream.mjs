@@ -10,7 +10,7 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAwar
   const expected=new Map(),pending=[]
   const held=new Map(),seen=new Set()
   const references=new Set()
-  let referenceKey=null,dependencyPackets=0,referenceMisses=0
+  let referenceKey=null,dependencyPackets=0,referenceMisses=0,keyframeDrains=0
   const dependencies=metadata=>Number.isSafeInteger(metadata?.frameId)&&metadata.frameId>=0&&
     Array.isArray(metadata.dependencies)&&metadata.dependencies.length<=8&&
     metadata.dependencies.every(id=>Number.isSafeInteger(id)&&id>=0)
@@ -23,7 +23,7 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAwar
   const delta=(value,anchor)=>((value-anchor+0x80000000)>>>0)-0x80000000
   function snapshot(){return {closed,configured,decoded,decodedKeyFrames,discarded,encodedBytes,pending:expected.size,
     maximumBytes,maximumPending,maximumReady,maximumResidualMs,heldPackets:held.size,maximumHeld,heldLimit,duplicates,lateFrames,reordered,pressureDrains,reorderMs,
-    codec,gapAware,dependencyAware,dependencyPackets,referenceMisses,committedGaps,contiguousDrains,transferWaits,outputDiagnostic,normalizedOutputs,maximumCopyBytes,
+    codec,gapAware,dependencyAware,dependencyPackets,referenceMisses,keyframeDrains,committedGaps,contiguousDrains,transferWaits,outputDiagnostic,normalizedOutputs,maximumCopyBytes,
     ...(markerProbe?{markerProbe:{reads:markerReads,invalid:markerInvalid,transitions:markerTransitions,regressions:markerRegressions}}:{})}}
   function close(reason=null){
     if(closed)return
@@ -163,8 +163,14 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAwar
         const contiguous=dependencyAware&&packet.dependencies?
           packet.type==='key'||packet.dependencies.every(id=>references.has(id)):
           gapAware&&lastRtp!==null&&delta(packet.rtp,lastRtp)<=54*90
-        if(remaining>0&&!forceOne&&!contiguous){reorderTimer=setTimeout(flush,Math.max(1,remaining));break}
-        if(remaining>0&&!contiguous)pressureDrains++
+        // An independently decodable keyframe ends the older repair wait.
+        // Still visit every older packet in RTP order: safe inputs decode;
+        // missing-reference inputs release their payload without decoding.
+        // A full native-output reservation continues to park the queue.
+        const recovered=dependencyAware&&!contiguous&&[...held.values()].some(item=>
+          item.type==='key'&&delta(item.rtp,packet.rtp)>0)
+        if(remaining>0&&!forceOne&&!contiguous&&!recovered){reorderTimer=setTimeout(flush,Math.max(1,remaining));break}
+        if(remaining>0&&!contiguous){if(recovered)keyframeDrains++;else pressureDrains++}
         if(contiguous&&held.size>1)contiguousDrains++
         forceOne=false
         held.delete(packet.rtp);accept(packet)

@@ -1460,6 +1460,15 @@ native both-context and source-task expiry fixtures pass 51/51 and 46/46;
 physical output, audible continuity during revalidation and impaired timing
 remain unverified. The behavior remains private.
 
+The private VP9 dependency queue admits an independent new keyframe without
+waiting for older missing references. Older retained packets are visited in RTP
+order: safe inputs decode, missing-reference inputs release their encoded bytes,
+and the keyframe restores reference state. Recovery never bypasses the four
+native output reservations or existing held/byte/expiry limits. A bounded scalar
+`keyframeDrains` diagnostic distinguishes this from pressure-driven admission.
+This uses [WebCodecs keyframe independence](https://www.w3.org/TR/webcodecs/#key-frame);
+impaired timing and product qualification remain required.
+
 Continuously impaired timing and nominal frame rate still fail. Native decoded
 video can arrive too late, while the owned decoder still needs reliable packet
 ordering and codec recovery. Product integration, adaptive recovery,
