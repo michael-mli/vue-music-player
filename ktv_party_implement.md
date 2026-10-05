@@ -49,10 +49,10 @@ is a preview; public online media is still disabled.
 
 | Check | Current evidence | Status |
 | --- | --- | --- |
-| Timing/capability fixtures | 244/244 including explicit codec selection, unavailable-reference rejection and full-queue contiguous RTP repair | Pass |
+| Timing/capability fixtures | 244/244 previous full suite; latest temporal/stream/worker change passes 43/43 focused checks | Pass |
 | Buffered expiry after render/guard clock freeze/resume | 51/51 with shared-context libopus buffers at the 500-ms target, including 524.23-ms retained PCM | Pass for tested digital topology |
 | Buffered expiry while source and listener pages stall | 46/46, latest reader/revalidation | Pass for digital fixture |
-| Latest qualified clean 40-pair A/V regression | VP8 floor / supported RTP ordering / shared-context libopus / 500-ms target: 55/55, p95 86.40 ms / max 206.45 ms, no unmatched edges | Pass for tested digital topology |
+| Latest qualified clean 40-pair A/V regression | Explicit VP8 L1T1 / floor / supported RTP ordering / shared-context libopus / 500-ms target: 55/55, p95 54.78 ms / max 62.91 ms, no unmatched edges | Pass for tested digital topology |
 | Continuous impaired-network A/V and nominal frame rate | VP8 floor/shared buffers reaches 40 pairs and nominal cadence; four audio/three video edges unmatched, maximum skew 344.70 ms | Fail |
 | Product integration and physical/mobile/capacity acceptance | Required work remains | Open |
 
@@ -6471,6 +6471,24 @@ only the temporal mode changes. Added regression cases rejecting an unexpected
 VP8 hint or original mode. Focused fixtures pass **43/43** in
 `/tmp/ktv-vp8-l1t1-native-policy-ordering-fixtures-20261005.log`.
 
-The corrected native clean comparison runs with the same profile in
+The corrected native clean comparison is terminal **exit 0, 55/55** with the same profile in
 `/tmp/ktv-owned-av-vp8-l1t1-opus-plc-shared-buffers-floor-gap-native-policy-clean40-target500-20261005.log`.
 No timing or native capability claim is inferred from the rejected trials.
+
+It measures **40 pairs**, zero unmatched audio/video, p95 **54.78 ms**, maximum
+**62.91 ms**. Source/native/owned decode/presentation rates are **25.00 / 24.98 /
+25.01 / 24.79 fps**, without nominal quality errors. All 75 timing samples read
+back the unchanged empty hint and actual **L1T1** sender mode. Source/owned
+markers have zero backward transitions. PCM peaks at **691,200 bytes / 21
+credits**, with no concealment, backpressure or copy fallback. Live-context wall
+lag spans **18.19–270.08 ms**; sustained device-clock acceptance remains open.
+
+The full native UDP impairment/recovery/handover comparison is now running in
+`/tmp/ktv-owned-av-vp8-l1t1-opus-plc-shared-buffers-floor-gap-full-udp-target800-20261005.log`.
+Its owner-only immutable profile is
+`/tmp/ktv-owned-vp8-l1t1-opus-plc-shared-buffers-floor-gap-full-udp-target800-20261005.env`.
+It retains the original 800-ms output target, 700-ms bounded input ordering,
+one-second native recovery cooldown, continuous RTX, nominal source and original
+150-ms-plus-jitter/5%-loss impairment per direction/leg. Actual recovery response,
+complete impaired/post-handover matching and all original skew/cadence/resource
+gates remain required. The public preview remains unchanged with media disabled.
