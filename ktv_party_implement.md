@@ -49,22 +49,22 @@ is a preview; public online media is still disabled.
 
 | Check | Current evidence | Status |
 | --- | --- | --- |
-| Timing/capability fixtures | 244/244 previous full suite; source-reference runtime/decoder/observer checks 78/78 and stop/clock/controller checks 29/29 | Pass for tested contracts |
+| Timing/capability fixtures | 244/244 previous full suite; source-reference runtime/decoder/observer checks 78/78, stop/clock/controller checks 29/29 and current clock/envelope-overhead checks 39/39 | Pass for tested contracts |
 | Buffered expiry after render/guard clock freeze/resume | 51/51 with shared-context libopus buffers at the 500-ms target, including 524.23-ms retained PCM | Pass for tested digital topology |
 | Buffered expiry while source and listener pages stall | 46/46, latest reader/revalidation | Pass for digital fixture |
 | Latest qualified clean 40-pair A/V regression | Explicit VP8 L1T1 / floor / supported RTP ordering / shared-context libopus and generated-video clock / 500-ms target: 55/55, p95 80.58 ms / max 82.33 ms, no unmatched edges | Pass for tested digital topology |
 | Continuous impaired-network A/V and nominal frame rate | Latest context-video run reaches 39 impaired pairs, 5 audio/5 video unmatched; p95 100.24 / max 140.45 ms and nominal cadence do not establish complete matching | Fail |
 | Product integration and physical/mobile/capacity acceptance | Required work remains | Open |
 
-These scripts are private. The deployed preview remains `acb583b`, with public
+These scripts are private. The deployed preview is frontend `ee520f2` / backend `acb583b`, with public
 online media disabled. The original video cadence and timing requirements are
 unchanged; the optional adaptive-video preference question has no answer yet.
 
 Recording/export, reactions, themes and remote duets remain optional P09 work.
 
 Current status: The receiver-safe encoded activation preview is deployed at
-`https://music.micstec.com/party` with frontend/backend **`acb583b`**
-(`main-iUMKk7ov.js`, `main-DnE6rWx5.css`,
+`https://music.micstec.com/party` with frontend **`ee520f2`** / backend **`acb583b`**
+(`main-BlIjhFmY.js`, `main-DnE6rWx5.css`,
 `partyLeaseGuard.worklet-BWdT3O5D.js`, `partyEncodedLease.worker-BxVsrNxp.js`).
 The coupled update includes media protocol 2, durable issued-output reservations,
 the receiver post-buffer deadline guard and Chrome stream reservation before
@@ -854,7 +854,7 @@ prototype result is not automatically a release result.
 
 ### Current next action
 
-Public preview remains frontend/backend `acb583b`, with rooms/private guide
+Public preview is frontend `ee520f2` / backend `acb583b`, with rooms/private guide
 enabled and online media disabled. The receiver guard and encoded activation
 fix are deployed; private decoder/controller experiments remain unpublished.
 Current timing/capability fixtures pass 95 checks. Direct receiver-worker/PCM
@@ -6714,12 +6714,97 @@ pass. Fixtures verify exact wire round trips, native-versus-transmitted metadata
 fail-closed pipelines, repaired dependency ordering, unchanged limits and native
 VP8 rejection without the explicit new mode.
 
-The actual clean 40-pair native comparison is running in
+The first actual clean 40-pair native comparison completed with **exit 1** in
 `/tmp/ktv-owned-av-vp8-l1t1-source-reference-envelope-context-video-clean40-target500-20261005.log`,
 using immutable owner-only profile
 `/tmp/ktv-owned-vp8-l1t1-source-reference-envelope-context-video-clean40-target500-20261005.env`.
-Publisher readiness, actual SFU publication/synchronization and native lyric
-decoding have passed initial checks. Complete matching, exact transport readback,
-overhead, subsequent impairment/hybrid/expiry/sustained qualification and product/
-physical/mobile/capacity/release acceptance remain required. Public media stays
-disabled.
+Actual publication/synchronization, native decoding and **40 pairs / zero unmatched
+edges** passed, with p95 **53.59 ms** and maximum **54.86 ms**. Source/native/owned
+decode/presentation cadence was **24.99/24.98/25.01/24.89 fps**. All measured baseline
+source/receiver envelope readbacks passed. Final history validation failed: the
+baseline output closed with `PLAYOUT_VIDEO_OUTPUT_CLOCK`, and a replacement owned
+decoder closed with `VIDEO_REFERENCE`. Neither error is waived; this is not a
+qualified clean/handover result. Baseline reference misses were zero and PCM peak
+was 875,520 bytes; those counters do not explain or excuse the failures.
+
+### 2026-10-05 — Source-reference clock diagnosis and overhead evidence
+
+Added fixed output-clock failure categories to receiver snapshots without changing
+clock admission: not running, invalid, unchanged and reversed. A diagnostic repeat
+in `/tmp/ktv-owned-av-vp8-l1t1-source-reference-envelope-diagnostic-clean40-target500-20261005.log`
+reached 40 pairs, p95 **56.90 ms** / maximum **83.66 ms**, with an alive receiver and
+no clock/PCM/video decoder error. It failed the independent monitor's original
+capture queue bound: one pair reached **157.126 ms** against the existing <100-ms
+limit. Capture-call maximum was 0.030 ms. It did not reach handover and cannot
+qualify the earlier failures or justify relaxing the measurement bound.
+
+Envelope publication now records the parent observation's actual clock. A new
+phase analysis separates codec payload, metadata and total envelope bytes and
+reports bits/second using those counter publication times, rather than later
+cached A/V sample times. It rejects ambiguous workers, resets, malformed totals,
+backwards counters, missing timing and insufficient intervals. These totals
+exclude RTP/UDP headers, encryption, retransmission and SFU allocation, which
+remain separate native evidence. No encoder bitrate cap is changed.
+
+Clock/controller/envelope-overhead/observer fixtures pass **38/38** in
+`/tmp/ktv-source-reference-clock-overhead-fixtures-20261005.log`. The observer test
+also verifies 5,000 actual envelope mutations/strips and owned admissions continue
+after the bounded timing records stop at 4,000 frames; audio is untouched.
+
+The third native diagnostic completed with **exit 1**, after **48 checks**, in
+`/tmp/ktv-owned-av-vp8-l1t1-source-reference-envelope-overhead-diagnostic-clean40-target500-20261005.log`
+with the same immutable profile and original gates. It reached the final encoded
+observer check with receiver `VIDEO_ENVELOPE_FORMAT` errors through teardown/
+handover; baseline history also retains `PCM_BOUND`. Fixed clock diagnostics did
+not report an output-clock failure in that run. This run started before the new
+overhead analysis was loaded, so it does not establish native bandwidth evidence.
+The final focused fixtures pass **39/39**, including parent observation time and
+IPC allowlisting, in `/tmp/ktv-source-reference-clock-overhead-final-fixtures-20261005.log`.
+Whole clean/handover acceptance,
+impaired/hybrid/expiry/sustained qualification and product/physical/mobile/capacity/
+release acceptance remain required. Public media stays disabled.
+
+### 2026-10-05 — Private guide startup and output retry fix deployed
+
+User reported that enabling `私人原唱指导` played briefly and stopped. The frozen
+deployed frontend reproduced `guide.drift` when the browser journey was extended
+to observe five seconds of actual guide playback, rather than just its first
+source start. Baseline log: `/tmp/ktv-private-guide-baseline-browser-20261005.log`.
+
+The production engine now keeps one constant source at exactly zero during
+enablement/preparation, so output is active before mapping the song start. Startup
+readiness checks actual native output timestamp movement as well as render-clock
+movement. The driver contains no song data and is stopped/disconnected on disable,
+output replacement, suspension and close; repeated enablement reuses the one
+driver. Instrumental and original sources still require their original current
+lease, generation, asset and clock checks. Drift, output-change and expiry gates
+retain their thresholds. An explicit retry now re-enables invalidated output
+readiness before preparation, fixing a second recovery defect exposed by this
+journey. Tests can serve an isolated candidate directory and enable a five-second
+sustained guide check without replacing the frozen original `dist`.
+
+Validation: **33/33** audio/lease fixtures; **60/60** complete Chrome 154 stage/
+singer browser checks, including sustained guide, pause/resume/seek, repeated
+enablement, output confirmation/retry and injected genuine drift recovery.
+Earlier Chrome 146 full journeys passed sustained guidance but failed later stage
+drift/output recovery; they remain failed evidence. Physical/other-browser
+acceptance remains open. Exact committed frontend `ee520f2` build/type checks,
+UI **45/45**, PWA upgrade **10/10** and public release **23/23** pass. Logs:
+`/tmp/ktv-guide-output-clock-unit-final-20261005.log`,
+`/tmp/ktv-guide-recovery-cft-browser-20261005.log`,
+`/tmp/ktv-guide-release-build-20261005.log`,
+`/tmp/ktv-guide-release-exact-ui-20261005.log`,
+`/tmp/ktv-guide-release-exact-pwa-20261005.log`,
+`/tmp/ktv-private-guide-fix-public-20261005.log`.
+
+Published frontend `ee520f2` at `https://music.micstec.com/party`; main bundle
+`main-BlIjhFmY.js`, index SHA-256
+`d2a02eff0c35d848dc4fcfb27392619330e4132795ef929da7ce7f5792dfbc34`.
+Backend remains `acb583b`; public online media is disabled. Assets were published
+before atomic index/service-worker replacement; previous hashed assets remain
+available to open pages. Protected rollback archive:
+`/home/mli/ktv-private-guide-predeploy.6f44e5at` (0700, files 0600).
+Temporary public release room was closed and no account was added. The main
+baseline rollback tag is unchanged. Users need to refresh/accept the PWA update
+to run the new frontend. This fix does not qualify the private receiver envelope
+or complete the remaining streaming/physical/mobile/capacity release work.

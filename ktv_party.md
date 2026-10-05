@@ -626,6 +626,14 @@ does not automatically produce audio. Starting audio requires a user gesture;
 provide `Enable stage audio` and `Enable private guide` actions and handle rejected
 playback. [Browser autoplay guidance](https://developer.mozilla.org/en-US/docs/Web/Media/Guides/Autoplay)
 
+Keep one zero-valued constant source active while the local output is enabled,
+including asset preparation and gaps between song sources. This warms the output
+without playing original/instrumental audio. Readiness verifies actual output
+timestamp movement as well as the context render clock before scheduling. The
+silent driver is stopped and disconnected on disable, suspension, output change
+or close. A confirmed retry must re-enable invalidated output readiness before
+preparing assets; clearing an error alone does not restore the output clock.
+
 Output leases renewed by heartbeat arrive independently of room snapshots.
 Publishing and the singer's private original use the playback controller's latest
 validated lease, matched to device, clock, performance and generation. The publish
@@ -1502,6 +1510,13 @@ dependency mode requires the explicit source-reference path; ordinary native
 VP8 metadata still cannot authorize it. Timing evidence keeps native capability
 and transmitted declarations separate. All peers in the private profile opt in;
 public client/room negotiation remains required before deploying this format.
+Private bandwidth evidence records the actual publication times of envelope byte
+counters and reports codec payload, metadata and total envelope rates separately.
+It rejects counter resets and ambiguous workers. These measurements exclude RTP
+headers, encryption and retransmissions; native transport/SFU evidence must report
+those separately. Clock failure snapshots retain fixed diagnostic categories,
+without changing admission or treating successful marker matching as proof that
+handover and clock stability passed.
 
 The gap-only path also preserves an arriving contiguous RTP repair at a full
 input queue: it must precede the oldest held input, satisfy the existing 54-ms
