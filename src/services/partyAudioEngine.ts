@@ -25,17 +25,32 @@ export async function waitForPartyAudioClock(context: AudioContext, current: () 
   sleep = () => new Promise<void>(resolve => window.setTimeout(resolve, 100))) {
   const started = performance.now()
   let wall = started, audio = context.currentTime, stable = 0, windowWall = wall, windowAudio = audio
+  let outputPrevious: number | null = null, outputAnchor: number | null = null
   while (performance.now() - started < 8000) {
     await sleep()
     if (!current() || context.state !== 'running') throw new Error('AUDIO_ENABLE_CANCELLED')
     const now = performance.now(), rendered = context.currentTime
     const interval = now - wall, elapsed = (rendered - audio) * 1000
-    if (interval >= 50 && interval <= 250 && Math.abs(elapsed - interval) <= 35) stable++
-    else { stable = 0; windowWall = now; windowAudio = rendered }
+    let output: number | null = null, outputStable = true
+    if (typeof context.getOutputTimestamp === 'function') {
+      const timestamp = context.getOutputTimestamp()
+      if (typeof timestamp.performanceTime === 'number' && Number.isFinite(timestamp.performanceTime) && timestamp.performanceTime > 0 &&
+        typeof timestamp.contextTime === 'number' && Number.isFinite(timestamp.contextTime) && timestamp.contextTime >= 0 &&
+        Math.abs(now - timestamp.performanceTime) <= 200) {
+        output = timestamp.contextTime + (now - timestamp.performanceTime) / 1000
+      }
+      outputStable = output !== null && output <= rendered + .02 && outputPrevious !== null &&
+        Math.abs((output - outputPrevious) * 1000 - interval) <= 35
+    }
+    if (interval >= 50 && interval <= 250 && Math.abs(elapsed - interval) <= 35 && outputStable) stable++
+    else { stable = 0; windowWall = now; windowAudio = rendered; outputAnchor = output }
     wall = now; audio = rendered
+    outputPrevious = output
     if (stable >= 3) {
-      if (Math.abs((rendered - windowAudio) * 1000 - (now - windowWall)) <= 25) return
-      stable = 0; windowWall = now; windowAudio = rendered
+      if (Math.abs((rendered - windowAudio) * 1000 - (now - windowWall)) <= 25 &&
+        (typeof context.getOutputTimestamp !== 'function' || output !== null && outputAnchor !== null &&
+          Math.abs((output - outputAnchor) * 1000 - (now - windowWall)) <= 25)) return
+      stable = 0; windowWall = now; windowAudio = rendered; outputAnchor = output
     }
   }
   throw new Error('AUDIO_OUTPUT_NOT_READY')
@@ -45,6 +60,7 @@ export class PartyAudioEngine {
   private context: AudioContext | null = null
   private outputReady = false
   private enableId = 0
+  private outputWarmup: ConstantSourceNode | null = null
   private buffer: AudioBuffer | null = null
   private assetHash = ''
   private assetRole: 'instrumental' | 'original' = 'instrumental'
@@ -86,7 +102,7 @@ export class PartyAudioEngine {
   async enable() {
     if (!this.context) {
       this.context = new AudioContext({ latencyHint: 'interactive', sampleRate: 44100 })
-      this.context.onstatechange = () => { if (this.context?.state !== 'running') { this.outputReady = false; this.stop(); this.onSuspended?.() } }
+      this.context.onstatechange = () => { if (this.context?.state !== 'running') { this.cancelEnable(); this.stop(); this.onSuspended?.() } }
       this.context.addEventListener?.('sinkchange', this.outputChanged)
     }
     // Never resume a context with a source left over from before suspension.
@@ -97,6 +113,15 @@ export class PartyAudioEngine {
     try {
       await context.resume()
       if (context.state !== 'running') throw new Error('AUDIO_GESTURE_REQUIRED')
+      // Keep the device output active while preparing and between scheduled
+      // sources. An empty context can report a moving render clock before its
+      // real output path has settled, producing a false guide drift on startup.
+      if (!this.outputWarmup) {
+        const silent = context.createConstantSource()
+        silent.offset.value = 0
+        silent.connect(context.destination); silent.start()
+        this.outputWarmup = silent
+      }
       await waitForPartyAudioClock(context, () => this.context === context && attempt === this.enableId)
       await installPartyLeaseGuard(context)
       if (this.context !== context || attempt !== this.enableId || context.state !== 'running') throw new Error('AUDIO_ENABLE_CANCELLED')
@@ -106,7 +131,13 @@ export class PartyAudioEngine {
       throw error
     }
   }
-  cancelEnable() { this.enableId++; this.outputReady = false }
+  cancelEnable() {
+    this.enableId++; this.outputReady = false
+    if (this.outputWarmup) {
+      try { this.outputWarmup.stop() } catch { /* Already stopped. */ }
+      this.outputWarmup.disconnect(); this.outputWarmup = null
+    }
+  }
   resetRecovery() {
     this.blocked = false; this.badSamples = 0; this.lastMeasureMs = -Infinity; this.outputLatencyMs = null
     this.stats = { ...this.stats, phaseErrorMs: null, maxAbsPhaseErrorMs: 0, sampleCount: 0, timingMode: 'unavailable', outputLatencyMs: null, recovery: null }

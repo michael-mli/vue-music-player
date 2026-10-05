@@ -41,6 +41,17 @@ test('output readiness rejects a stalled, suspended or cancelled clock', async t
   context.state = 'suspended'
   await assert.rejects(waitForPartyAudioClock(context, () => true, sleep), /AUDIO_ENABLE_CANCELLED/)
 })
+test('guide readiness waits for actual output movement even while the empty render clock advances',async t=>{
+  const original=globalThis.performance
+  let wall=1000,polls=0,output=0
+  globalThis.performance={now:()=>wall};t.after(()=>{globalThis.performance=original})
+  const context={state:'running',currentTime:0,getOutputTimestamp:()=>({performanceTime:wall,contextTime:output})}
+  await waitForPartyAudioClock(context,()=>true,async()=>{
+    polls++;wall+=100;context.currentTime+=.1
+    if(polls>20)output+=.1
+  })
+  assert.equal(polls,23)
+})
 
 test('output readiness restarts its stable window after a render clock jump', async t => {
   const original = globalThis.performance
@@ -87,7 +98,7 @@ function fixture(t) {
   const originalWorklet = globalThis.AudioWorkletNode
   let nowMs = 1000, context
   globalThis.performance = { now: () => nowMs }
-  const nodes = [], gains = [], guards = []
+  const nodes = [], gains = [], guards = [], warmups = []
   globalThis.AudioWorkletNode = class {
     constructor(context, name, options) {
       this.context = context; this.outputs = new Set(); this.messages = []; this.closed = false
@@ -111,6 +122,11 @@ function fixture(t) {
         cancelScheduledValues() {}, setTargetAtTime(value) { this.value = value } }
       const node = { context: this, gain, outputs, connect(target) { outputs.add(target) }, disconnect(target) { if (target) outputs.delete(target); else outputs.clear() } }
       gains.push(node); return node
+    }
+    createConstantSource() {
+      const node={offset:{value:1},outputs:new Set(),starts:0,stops:0,
+        connect(target){this.outputs.add(target)},start(){this.starts++},stop(){this.stops++},disconnect(){this.outputs.clear()}}
+      warmups.push(node);return node
     }
     createBufferSource() {
       const outputs = new Set()
@@ -138,9 +154,21 @@ function fixture(t) {
     positionMs: 0, anchorServerMs: now + 2000, durationMs: 60000, pendingTransition: null, assets: { instrumental: asset, original: asset } }
   const lease = { id: 'lease', generation: 1, clockId: 'clock', performanceId: 'performance', expiresServerMs: now + 8000, sequence: 1 }
   t.after(async () => { await engine.close(); globalThis.AudioContext = originalContext; globalThis.window = originalWindow; globalThis.fetch = originalFetch; globalThis.performance = originalPerformance; globalThis.AudioWorkletNode = originalWorklet })
-  return { engine, nodes, gains, guards, asset, playback, clock, lease, get context() { return context },
+  return { engine, nodes, gains, guards, warmups, asset, playback, clock, lease, get context() { return context },
     advance: ms => { nowMs += ms; context.currentTime += ms / 1000 } }
 }
+test('silent output warmup is bounded, contains no song data, and closes on disable or output replacement',async t=>{
+  const f=fixture(t)
+  await f.engine.enable();await f.engine.prepare(f.asset,'original')
+  assert.equal(f.warmups.length,1);assert.equal(f.warmups[0].offset.value,0)
+  assert.equal(f.warmups[0].starts,1);assert.ok(f.warmups[0].outputs.has(f.context.destination))
+  assert.equal(f.nodes.length,0,'No original or instrumental is started before a current grant')
+  await f.engine.enable();assert.equal(f.warmups.length,1,'Repeated enable reuses one silent driver')
+  f.engine.outputChanged();assert.equal(f.warmups[0].stops,1);assert.equal(f.warmups[0].outputs.size,0)
+  f.engine.resetRecovery();await f.engine.enable();assert.equal(f.warmups.length,2)
+  f.engine.cancelEnable();assert.equal(f.warmups[1].stops,1);assert.equal(f.warmups[1].outputs.size,0)
+  await f.engine.close();assert.equal(f.warmups[1].stops,1)
+})
 
 test('decoded audio is hashed, bounded and remains silent without a current output lease', async t => {
   const f = fixture(t)

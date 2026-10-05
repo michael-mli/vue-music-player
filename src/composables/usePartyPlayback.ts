@@ -211,6 +211,14 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
     if (document.hidden) { engine.stop(); acknowledgeStop(); readyKeys.clear(); status() }
     else { lease.value = null; readyKeys.clear(); status(); void prepare() }
   }
+  function retry() {
+    blocked.value = false; audioIssue.value = null; failure.value = ''; engine.resetRecovery()
+    failedKey = ''; readyKeys.clear()
+    // Output changes invalidate engine readiness. Retrying preparation alone
+    // cannot restore the output clock or its silent warmup path.
+    if (!engine.enabled && purpose.value !== 'viewer') { void enable(purpose.value); return }
+    status(); void prepare()
+  }
   document.addEventListener('visibilitychange', foreground)
   const statusTimer = window.setInterval(() => {
     // rAF can stop in a hidden page. Report that device as unavailable so it
@@ -231,5 +239,5 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
     outputLease: computed(() => lease.value),
     segment, countdown, lines, lyricGuide, canGuide, assignedHere, startSafe, healthy, serverNowMs, blocked, diagnostics,
     calibrationInvalidated, resetOutput: () => engine.outputChanged(), enable, disable, message,
-    retry: () => { blocked.value = false; audioIssue.value = null; failure.value = ''; engine.resetRecovery(); failedKey = ''; readyKeys.clear(); status(); void prepare() } }
+    retry }
 }

@@ -12,6 +12,7 @@ import { registerKtvRoutes } from '../server/ktv-routes.js'
 import { createKtvAssets } from '../server/ktv-assets.js'
 
 const repo = fileURLToPath(new URL('..', import.meta.url))
+const clientDist = process.env.KTV_BROWSER_CLIENT_DIST || path.join(repo, 'dist')
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ktv-browser-'))
 const db = initDb(root)
 const app = express()
@@ -65,8 +66,8 @@ app.get('/data/metadata.json', (req, res) => res.json({ '1': { title: 'Browser t
 app.get('/karaoke/karaoke_manifest.json', (req, res) => res.json({ version: 1, ids: [1] }))
 app.use('/data', express.static(path.join(root, 'data')))
 app.use('/karaoke', express.static(path.join(root, 'karaoke')))
-app.use(express.static(path.join(repo, 'dist')))
-app.get('*', (req, res) => res.sendFile(path.join(repo, 'dist/index.html')))
+app.use(express.static(clientDist))
+app.get('*', (req, res) => res.sendFile(path.join(clientDist, 'index.html')))
 const server = app.listen(0, '127.0.0.1')
 realtime.attach(server)
 await new Promise(resolve => server.once('listening', resolve))
@@ -342,6 +343,11 @@ try {
   await poll(async () => (await api(1, pathRoom)).playback.state === 'playing', 'playing')
   check((await audit(host)).length === 1, 'Designated stage schedules one backing source')
   check((await audit(singer)).length === 1, 'Singer phone schedules its private original source')
+  if(process.env.KTV_BROWSER_GUIDE_SUSTAINED==='1'){
+    await new Promise(resolve=>setTimeout(resolve,5000))
+    check((await audit(singer)).length===1&&!(await audit(singer))[0].ended,
+      'Private guide remains playing through output-clock measurements and lease renewal')
+  }
   await tab(singer, 'queue')
   check(await evaluate(singer, "document.body.innerText.includes('Requested by') && document.body.innerText.includes('Singer')"), 'Queue tab shows singer and requester attribution')
   check(await evaluate(singer, "![...document.querySelectorAll('#party-panel-queue button')].some(button => button.textContent.trim() === 'Remove song')"),
