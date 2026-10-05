@@ -152,7 +152,8 @@ const vp8GapComparison=codecExperiment?.codec==='vp8'&&pcmRenderer==='buffers'&&
   ownedVideo&&gapVideoReorder&&!dependencyVideoReorder&&avTiming
 const senderTemporal=process.env.KTV_ROOM_TEST_SOURCE_TEMPORAL==='L1T1'
 assert.ok(process.env.KTV_ROOM_TEST_SOURCE_TEMPORAL===undefined||senderTemporal&&videoFloor&&
-  ownedVideo&&avTiming&&codecExperiment?.codec==='vp9','Private temporal comparison requires nominal VP9 floor timing')
+  ownedVideo&&avTiming&&(codecExperiment?.codec==='vp9'||vp8GapComparison),
+  'Private temporal comparison requires the explicit nominal VP9 or shared-buffer VP8 floor timing profile')
 const videoMarkerProbe=process.env.KTV_ROOM_TEST_DECODED_MARKER_PROBE==='1'
 assert.ok(process.env.KTV_ROOM_TEST_DECODED_MARKER_PROBE===undefined||videoMarkerProbe&&ownedVideo&&avTiming&&
   (codecExperiment?.codec==='vp9'||vp8GapComparison)&&videoFloor,'Decoded marker observation requires nominal private owned timing')
@@ -494,7 +495,7 @@ try {
       (${installEncodedLeaseObserver.toString()})();
       ${absoluteCapture ? `(${installAbsoluteCaptureExperiment.toString()})();` : ''}
       ${senderCadence ? `(${installSenderCadenceExperiment.toString()})();` : ''}
-      ${senderTemporal ? `(${installSenderTemporalExperiment.toString()})();` : ''}
+      ${senderTemporal ? `(${installSenderTemporalExperiment.toString()})(${JSON.stringify(codecExperiment.codec)});` : ''}
       ${equalSourcePriority ? `(${installSenderPriorityExperiment.toString()})();` : ''}
       window.__partyClocks=[]; window.__partyPlaybacks=[]; window.__phaseEvidence=[];
       window.__receivedPermits=[];
@@ -674,7 +675,7 @@ try {
     const evidence=await evaluate(phone,'__videoFloorExperiment.snapshot()')
     console.log('Private native video bitrate floor:',JSON.stringify(evidence))
     check(evidence.verified>=1&&evidence.verified===evidence.applied&&!evidence.closed&&!evidence.error,
-      'actual publisher answer retains the private 250-kbps VP9 codec floor')
+      `actual publisher answer retains the private 250-kbps ${codecExperiment.codec.toUpperCase()} codec floor`)
   }
   if(audioRedComparison){
     const records=[]
@@ -895,10 +896,11 @@ try {
           hasBoundedMarkerProbe(receiver.nativeReceiverMarkerProbe),'Actual capture/native marker diagnostics remain live and bounded')
         if(senderTemporal){
           const videos=source.senderParameters.filter(row=>row.kind==='video')
-          assert.ok(source.sourceTemporal?.configured>=1&&videos.length===1&&videos[0].contentHint==='motion'&&
+          assert.ok(source.sourceTemporal?.configured>=1&&source.sourceTemporal.codec===codecExperiment.codec&&
+            videos.length===1&&videos[0].contentHint===(codecExperiment.codec==='vp9'?'motion':'')&&
             videos[0].encodings.length===1&&videos[0].encodings[0].scalabilityMode==='L1T1'&&
             videos[0].encodings[0].maxFramerate===25&&videos[0].encodings[0].maxBitrate===350000,
-            'Current native VP9 sender retains only the private temporal change with nominal caps')
+            'Current native sender retains the declared private temporal change with nominal caps')
         }
         if(videoFloor){
           const floor=source.videoFloor
@@ -1347,6 +1349,9 @@ try {
   const known=['AV_VIDEO_EVIDENCE_LIMIT','AV_MARKER_ID_LIMIT','AV_STATS_SENDER_LIMIT','AV_STATS_PEER_LIMIT',
     'TypeError','RangeError','ReferenceError','NetworkError','AbortError','InvalidStateError','OperationError']
   console.error('Runtime error categories:',JSON.stringify(errors.slice(0,8).map(message=>known.find(code=>message.includes(code))||'RuntimeError')))
+  if(senderTemporal)for(const session of sessionSockets.keys())console.error('Native temporal policy on failure:',
+    JSON.stringify(await evaluate(session,`(async()=>({experiment:window.__senderTemporalExperiment?.snapshot(),
+      senders:(await (${collectAvMediaStats.toString()})()).senderParameters}))()`).catch(()=>({unavailable:true}))))
   console.error('Media HTTP status (paths only):', JSON.stringify(mediaHttp))
   for (const session of sessionSockets.keys()) console.error('UI state:', JSON.stringify(await evaluate(session, ` (async () => ({status:document.querySelector('[data-party-media-status]')?.textContent,encodedLeaseEvents:window.__encodedLeaseEvents,publisherFeedback:window.__publisherRembExperiment?.snapshot(),senderKeyframes:window.__avSenderKeyframes?.snapshot(),senderPriority:window.__avSenderPriority?.snapshot(),
     errors:[...document.querySelectorAll('[role=alert]')].map(item=>item.textContent), diagnostics:[...document.querySelectorAll('dl')].map(item=>item.textContent),

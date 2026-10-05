@@ -1468,6 +1468,14 @@ the dependency mode remains restricted to the validated VP9 path. The VP8
 comparison uses the existing bounded RTP-gap ordering and actual late-frame
 recovery instead, without fabricated references or silent codec fallback.
 
+The explicit private single-temporal-layer helper can also select VP8 `L1T1`
+within this shared-buffer/floor/gap-ordering profile. Verify the original policy
+before calling the native API: VP8 has an empty content hint and no explicit
+scalability mode, whereas the VP9 SDK path uses motion/`L1T3`. Preserve the hint,
+25-fps and 350-kbit caps; read back the actual sender's `L1T1` setting on every
+timing sample. This changes no receiver capability claim. It remains an
+unqualified comparison until actual clean and impaired behavior passes all gates.
+
 The gap-only path also preserves an arriving contiguous RTP repair at a full
 input queue: it must precede the oldest held input, satisfy the existing 54-ms
 contiguity criterion and arrive before the fixed deadline. It enters an existing

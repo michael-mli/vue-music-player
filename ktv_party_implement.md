@@ -53,7 +53,7 @@ is a preview; public online media is still disabled.
 | Buffered expiry after render/guard clock freeze/resume | 51/51 with shared-context libopus buffers at the 500-ms target, including 524.23-ms retained PCM | Pass for tested digital topology |
 | Buffered expiry while source and listener pages stall | 46/46, latest reader/revalidation | Pass for digital fixture |
 | Latest qualified clean 40-pair A/V regression | VP8 floor / supported RTP ordering / shared-context libopus / 500-ms target: 55/55, p95 86.40 ms / max 206.45 ms, no unmatched edges | Pass for tested digital topology |
-| Continuous impaired-network A/V and nominal frame rate | Private L1T1 reaches nominal native cadence; owned cadence and 40-pair timing still fail | Fail |
+| Continuous impaired-network A/V and nominal frame rate | VP8 floor/shared buffers reaches 40 pairs and nominal cadence; four audio/three video edges unmatched, maximum skew 344.70 ms | Fail |
 | Product integration and physical/mobile/capacity acceptance | Required work remains | Open |
 
 These scripts are private. The deployed preview remains `acb583b`, with public
@@ -6399,7 +6399,7 @@ without extra held slots or a committed gap, and reject native-slot congestion
 and expired repairs. Full timing/capability fixtures pass **244/244** in
 `/tmp/ktv-vp8-contiguous-pressure-repair-all-fixtures-20261005.log`.
 
-The full VP8-floor/shared-buffer/libopus comparison now runs with the original
+The full VP8-floor/shared-buffer/libopus comparison used the original
 800-ms output target, 700-ms input reorder, one-second bounded late-frame
 recovery, continuous RTX and original per-leg UDP impairment in
 `/tmp/ktv-owned-av-vp8-opus-plc-shared-buffers-floor-gap-contiguous-repair-full-udp-target800-20261005.log`.
@@ -6409,3 +6409,68 @@ Actual keyframe response, complete impaired and post-handover matching, original
 skew/cadence and all resource gates remain required. No native impaired benefit
 is assumed. Public deployment remains unchanged with media disabled; sustained,
 product integration and physical/mobile/capacity/release acceptance remain open.
+
+The full run is terminal **exit 1**. Baseline has six pairs with no unmatched
+edges, p95/max **57.47 ms**. Impaired matching reaches **40 pairs**, with four
+unmatched audio and three unmatched video edges, p95 **145.83 ms**, maximum
+**344.70 ms**. Original matching and maximum-skew gates fail. Source/native/owned
+decode/presentation rates are **25.00 / 21.71 / 24.71 / 23.67 fps**, within nominal
+cadence. Video capture-to-presentation maximum is **1313.50 ms**.
+
+PCM stays below **783,360 bytes / 25 credits**, with **42,240** genuinely concealed
+samples (880 ms), 1014 RED repairs, zero backpressure, zero copy fallback and zero
+late/trimmed native packets. Live shared-context wall lag is **61.31–123.02 ms**
+during impairment. Video has 34 committed gaps, 11 late inputs and eight fulfilled
+keyframe requests, with zero pressure or contiguous-repair drains. The new repair
+branch is therefore fixture verified, not exercised by this native run.
+
+Source and native-receiver pixel probes remain monotonic; the owned decoder
+reports **one backward visual transition**. Thirty-nine matched pairs are within
+150 ms; the remaining pair is late video over 250 ms. This identifies a remaining
+decoder/reference problem without claiming a causal comparison against earlier
+independently randomized runs. The test stops at impaired matching and does not
+qualify network recovery or handover.
+
+### 2026-10-05 — Explicit single-layer VP8 source comparison
+
+Extended the existing private temporal experiment to accept an explicit VP8 or
+VP9 codec, keeping VP9 as its default. The harness admits VP8 only with the
+declared nominal VP8 floor/shared-buffer/libopus/gap-ordering profile. Every
+timing sample must read back the actual native **L1T1** encoding, 25-fps and
+350-kbit caps and unchanged codec-specific hint. It does not supply unavailable receiver
+dependency metadata, relax any queue/deadline or use diagnostic marker IDs to
+trigger recovery. Production source policy is unchanged.
+
+Focused temporal/stream/worker fixtures pass **43/43** in
+`/tmp/ktv-vp8-l1t1-ordering-fixtures-20261005.log`. They cover explicit VP8,
+default VP9, rejected codec names, original caps, wrapped RTP repair and worker
+recovery. The first pure clean 40-pair native comparison is terminal **exit 1** in
+`/tmp/ktv-owned-av-vp8-l1t1-opus-plc-shared-buffers-floor-gap-clean40-target500-20261005.log`,
+with owner-only profile
+`/tmp/ktv-owned-vp8-l1t1-opus-plc-shared-buffers-floor-gap-clean40-target500-20261005.env`.
+It times out before provider-confirmed publisher readiness, with no A/V samples
+or native temporal acceptance established. The publisher reports stage
+unavailability; no unhandled runtime exception occurs. This cannot qualify or
+numerically compare temporal behavior.
+
+Added fixed policy readback on failure (declared codec/configuration count and
+actual sender parameters, without signaling credentials). The next clean
+diagnostic run uses the same immutable owner-only profile in
+`/tmp/ktv-owned-av-vp8-l1t1-opus-plc-shared-buffers-floor-gap-clean40-policy-diagnostics-target500-20261005.log`.
+Actual codec, temporal policy, skew, cadence and resource gates remain required.
+No native benefit is assumed; full impairment and handover remain open.
+
+The diagnostic run is terminal **exit 1 before publisher readiness**. All native
+temporal snapshots show **zero configurations and zero senders**. Inspection of
+the prior successful VP8 timeline shows its actual original policy in all 94
+samples: **empty content hint and no explicit scalability mode**. VP9 instead
+begins with motion/L1T3. The initial VP8 helper incorrectly reused the VP9
+precondition, so it rejected before calling the native API. Corrected the
+codec-specific precondition and readback while retaining the original VP8 hint;
+only the temporal mode changes. Added regression cases rejecting an unexpected
+VP8 hint or original mode. Focused fixtures pass **43/43** in
+`/tmp/ktv-vp8-l1t1-native-policy-ordering-fixtures-20261005.log`.
+
+The corrected native clean comparison runs with the same profile in
+`/tmp/ktv-owned-av-vp8-l1t1-opus-plc-shared-buffers-floor-gap-native-policy-clean40-target500-20261005.log`.
+No timing or native capability claim is inferred from the rejected trials.
