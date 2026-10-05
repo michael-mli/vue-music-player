@@ -52,7 +52,7 @@ is a preview; public online media is still disabled.
 | Timing/capability fixtures | 244/244 previous full suite; latest temporal/stream/worker change passes 43/43 focused checks | Pass |
 | Buffered expiry after render/guard clock freeze/resume | 51/51 with shared-context libopus buffers at the 500-ms target, including 524.23-ms retained PCM | Pass for tested digital topology |
 | Buffered expiry while source and listener pages stall | 46/46, latest reader/revalidation | Pass for digital fixture |
-| Latest qualified clean 40-pair A/V regression | Explicit VP8 L1T1 / floor / supported RTP ordering / shared-context libopus / 500-ms target: 55/55, p95 54.78 ms / max 62.91 ms, no unmatched edges | Pass for tested digital topology |
+| Latest qualified clean 40-pair A/V regression | Explicit VP8 L1T1 / floor / supported RTP ordering / shared-context libopus and generated-video clock / 500-ms target: 55/55, p95 80.58 ms / max 82.33 ms, no unmatched edges | Pass for tested digital topology |
 | Continuous impaired-network A/V and nominal frame rate | VP8 L1T1 full run matches 40 impaired/next-singer pairs, max skew fails; latest scoped repeat reaches 40 impaired pairs with 3 audio/2 video unmatched, max 508.86 ms | Fail |
 | Product integration and physical/mobile/capacity acceptance | Required work remains | Open |
 
@@ -6599,8 +6599,23 @@ capacity, deadline and error acceptance remain unchanged; no stop is waived.
 
 Scheduler/port/context-clock/controller fixtures pass **29/29** in
 `/tmp/ktv-pcm-upstream-stop-reason-fixtures-20261005.log`. The same immutable clean
-context-video profile now runs in
+context-video profile is terminal **exit 0, 55/55** in
 `/tmp/ktv-owned-av-vp8-l1t1-opus-plc-shared-context-video-stop-reason-clean40-target500-20261005.log`
-to resolve the concrete missing terminal evidence. No complete native
-context-video acceptance is claimed. Public preview and media policy remain
-unchanged; all remaining release gates stay open.
+It measures **40 pairs**, zero unmatched audio/video, p95 **80.58 ms**, maximum
+**82.33 ms**. Source/native/owned decode/presentation rates are **24.99 / 24.99 /
+25.06 / 24.65 fps**, without nominal quality errors or backward visual transitions.
+PCM peaks at **998,400 bytes / 32 credits**, with zero backpressure or copy
+fallback. Live-context wall lag remains **159.58–624.75 ms**, so this does not
+establish sustained device-clock stability. This repeat has no unexpected stop;
+the earlier run's missing terminal cause remains unproven, and no failure is
+retroactively waived.
+
+The full original impaired/recovery/hybrid profile now selects the guarded
+context for generated-video timestamps in
+`/tmp/ktv-owned-av-vp8-l1t1-opus-plc-shared-context-video-floor-gap-full-udp-target800-20261005.log`.
+Owner-only profile:
+`/tmp/ktv-owned-vp8-l1t1-opus-plc-shared-context-video-floor-gap-full-udp-target800-20261005.env`.
+All original 40-pair/missing-edge/skew, nominal cadence, actual recovery, memory,
+deadline and complete hybrid gates remain required. Public preview and media
+policy are unchanged; sustained/product/physical/mobile/capacity/release work
+remains open.
