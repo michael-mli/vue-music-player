@@ -1,9 +1,10 @@
 // Private continuous decoder. The caller owns delivered VideoFrames; neither
 // decoding nor capture-clock metadata grants permission to present them.
-export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAware=false,codec='vp8',dependencyAware=false,markerProbe=null}={}) {
+export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAware=false,codec='vp8',dependencyAware=false,markerProbe=null,sourceReferences=false}={}) {
   if(!Number.isInteger(reorderMs)||reorderMs<0||reorderMs>700||typeof gapAware!=='boolean')throw new Error('VIDEO_REORDER_CONFIG')
   if(!['vp8','vp9'].includes(codec))throw new Error('VIDEO_CODEC_CONFIG')
-  if(typeof dependencyAware!=='boolean'||dependencyAware&&(!gapAware||codec!=='vp9'))throw new Error('VIDEO_REORDER_CONFIG')
+  if(typeof sourceReferences!=='boolean'||sourceReferences&&(!dependencyAware||codec!=='vp8'))throw new Error('VIDEO_REFERENCE_CONFIG')
+  if(typeof dependencyAware!=='boolean'||dependencyAware&&(!gapAware||codec!=='vp9'&&!sourceReferences))throw new Error('VIDEO_REORDER_CONFIG')
   if(markerProbe!==null&&typeof markerProbe!=='function')throw new Error('VIDEO_MARKER_CONFIG')
   const decoderCodec=codec==='vp9'?'vp09.00.31.08':'vp8'
   const heldLimit=reorderMs>240?20:8
@@ -29,7 +30,7 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAwar
   }
   function snapshot(){return {closed,configured,decoded,decodedKeyFrames,discarded,encodedBytes,pending:expected.size,
     maximumBytes,maximumPending,maximumReady,maximumResidualMs,heldPackets:held.size,maximumHeld,heldLimit,duplicates,lateFrames,reordered,pressureDrains,reorderMs,
-    codec,gapAware,dependencyAware,dependencyPackets,referenceMisses,keyframeDrains,referenceRepairDrains,contiguousRepairDrains,missingReferenceWaitMs:missingReferenceWaitMs(),committedGaps,contiguousDrains,transferWaits,outputDiagnostic,normalizedOutputs,maximumCopyBytes,
+    codec,gapAware,dependencyAware,sourceReferences,dependencyPackets,referenceMisses,keyframeDrains,referenceRepairDrains,contiguousRepairDrains,missingReferenceWaitMs:missingReferenceWaitMs(),committedGaps,contiguousDrains,transferWaits,outputDiagnostic,normalizedOutputs,maximumCopyBytes,
     ...(markerProbe?{markerProbe:{reads:markerReads,invalid:markerInvalid,transitions:markerTransitions,regressions:markerRegressions}}:{})}}
   function close(reason=null){
     if(closed)return
@@ -206,6 +207,8 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAwar
       const data=frame.data
       if(!(data instanceof ArrayBuffer)||data.byteLength<1||data.byteLength>256*1024)throw new Error('VIDEO_PACKET')
       if(dependencyAware&&(!dependencies(metadata)||frame.type!=='key'&&metadata.dependencies.length===0))throw new Error('VIDEO_REFERENCE')
+      if(sourceReferences&&(metadata.sourceReferences!==true||new Set(metadata.dependencies).size!==metadata.dependencies.length||
+        metadata.dependencies.some(id=>id>=metadata.frameId)||frame.type==='key'&&metadata.dependencies.length!==0))throw new Error('VIDEO_REFERENCE')
       const oldest=gapAware&&held.size>=heldLimit?
         [...held.values()].sort((a,b)=>delta(a.rtp,b.rtp))[0]:null
       // Admit an actual missing parent before a pressure drain advances past

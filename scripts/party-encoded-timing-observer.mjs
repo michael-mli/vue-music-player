@@ -1,10 +1,11 @@
 // Private native timing probe. Forward every frame unchanged and retain only
 // allowlisted timing/codec scalars, never payloads, grants, identities or URLs.
-export function encodedTimingWorker(createAudioProbe = null, primaryPayload = null, packetFrames = null,createVideoProbe=null) {
+export function encodedTimingWorker(createAudioProbe = null, primaryPayload = null, packetFrames = null,createVideoProbe=null,createReferences=null) {
+  if(createReferences!==null&&typeof createReferences!=='function')throw new Error('VIDEO_ENVELOPE_INPUT')
   const Stream = self.TransformStream
   const counts = { audio: 0, video: 0 }, captureSamples = { audio: 0, video: 0 }
-  let audioProbe,videoProbe
-  function observe(frame, kind) {
+  let audioProbe,videoProbe,envelope,referenceClosed=false
+  function observe(frame, kind,sourceReferences=null) {
     if (!['audio','video'].includes(kind)) return
     if(kind==='audio'&&self.__encodedTimingDirection==='receive'&&typeof self.__observeOwnedPcm==='function') {
       let metadata={};try{metadata=frame.getMetadata?.() || {}}catch{}
@@ -16,7 +17,7 @@ export function encodedTimingWorker(createAudioProbe = null, primaryPayload = nu
     }
     if(kind==='video'&&self.__encodedTimingDirection==='receive'&&typeof self.__observeOwnedVideo==='function'){
       let metadata={};try{metadata=frame.getMetadata?.()||{}}catch{}
-      self.__observeOwnedVideo(frame,metadata)
+      self.__observeOwnedVideo(frame,sourceReferences?{...metadata,...sourceReferences}:metadata)
     }
     const count = ++counts[kind]
     if (count > 4000) return
@@ -54,8 +55,26 @@ export function encodedTimingWorker(createAudioProbe = null, primaryPayload = nu
       let firstFrame = true
       self.postMessage({type:'timing-probe-state',state:'stream',kind:['audio','video'].includes(kind)?kind:'missing'})
       super({ ...transformer, transform(frame, controller) {
+        if(referenceClosed)return
         if(firstFrame){firstFrame=false;self.postMessage({type:'timing-probe-state',state:'frame',kind})}
-        try { observe(frame, kind) } catch { self.postMessage({ type: 'timing-probe-error' }) }
+        let references=null
+        if(kind==='video'&&createReferences){
+          try{
+            envelope??=createReferences()
+            if(self.__encodedTimingDirection==='send')envelope.wrap(frame,frame.getMetadata())
+            else if(self.__encodedTimingDirection==='receive')references=envelope.unwrap(frame)
+            else throw new Error('VIDEO_ENVELOPE_INPUT')
+            const state=envelope.snapshot(),count=state.wrapped+state.unwrapped
+            if(count<=8||count%100===0)self.postMessage({type:'video-reference-state',...state})
+          }catch{
+            referenceClosed=true;envelope?.close()
+            self.__failOwnedVideoReference?.()
+            self.postMessage({type:'video-reference-state',...envelope?.snapshot(),closed:true,
+              error:envelope?.snapshot().error||'VIDEO_ENVELOPE_INPUT'})
+            controller.error(new Error('VIDEO_ENVELOPE_INPUT'));return
+          }
+        }
+        try { observe(frame, kind,references) } catch { self.postMessage({ type: 'timing-probe-error' }) }
         return transform ? transform.call(transformer, frame, controller) : controller.enqueue(frame)
       } }, ...args)
     }
@@ -85,7 +104,7 @@ export function installEncodedTimingProbe(workerSource,receiverApi='native') {
     self.onmessage=({data})=>{if(data?.type?.startsWith('pcm-')||data?.type?.startsWith('video-'))return;self.__encodedTimingCodecs=data.codecs;attach(data.readable,data.writable,data.kind)};
   `], { type: 'text/javascript' }))
   const records = [], states=[], audioDecoders=[],videoDecoders=[], workers = new Set(), urls = new Set([receiverUrl]), observedReceivers=new WeakSet()
-  const receiverWorkers=new WeakMap(),workerIds=new WeakMap(),pcmStates=[],videoStates=[]
+  const receiverWorkers=new WeakMap(),workerIds=new WeakMap(),pcmStates=[],videoStates=[],referenceStates=[]
   let errors = 0, sequence = 0, wrappedSenders = 0
   const failures = { worker:0, pipe:0, occupied:0, unsupported:0 }
   function track(worker, direction) {
@@ -93,6 +112,22 @@ export function installEncodedTimingProbe(workerSource,receiverApi='native') {
     workerIds.set(worker,id)
     workers.add(worker)
     worker.addEventListener('message', ({ data }) => {
+      if(data?.type==='video-reference-state'){
+        const known=[null,'VIDEO_ENVELOPE_CLOSED','VIDEO_ENVELOPE_INPUT','VIDEO_ENVELOPE_CODEC',
+          'VIDEO_ENVELOPE_REFERENCE','VIDEO_ENVELOPE_BOUND','VIDEO_ENVELOPE_TRANSFER','VIDEO_ENVELOPE_FORMAT','VIDEO_ENVELOPE_INTEGRITY']
+        const row={worker:id,direction,closed:data.closed===true,error:known.includes(data.error)?data.error:'VIDEO_ENVELOPE_INPUT'}
+        const keys=['version','wrapped','unwrapped','maximumBytes','maximumTrailerBytes','maximumFrameBytes','maximumDependencies',
+          'payloadBytes','wireBytes','overheadBytes']
+        for(const key of keys)if(Number.isSafeInteger(data[key])&&data[key]>=0)row[key]=data[key]
+        if(!row.closed&&(keys.some(key=>row[key]===undefined)||row.version!==1||row.maximumFrameBytes!==256*1024||
+          row.maximumDependencies!==8||row.maximumBytes>256*1024||row.maximumTrailerBytes>94||
+          row.payloadBytes+row.overheadBytes!==row.wireBytes||
+          direction==='send'&&row.unwrapped!==0||direction==='receive'&&row.wrapped!==0))row.error='VIDEO_ENVELOPE_INPUT'
+        if(row.error){errors++;failures.pipe++}
+        const index=referenceStates.findIndex(item=>item.worker===id)
+        if(index>=0)referenceStates[index]=row;else{referenceStates.push(row);if(referenceStates.length>64)referenceStates.shift()}
+        return
+      }
       if(direction==='receive'&&data?.type==='pcm-port-state') {
         const row={worker:id,closed:data.closed===true,configured:data.configured===true,observedAt:performance.now()}
         for(const key of ['decoded','gaps','duplicates','chunks','encodedBytes','pcmBytes','maximumChunks','maximumBytes','recovered','reordered','heldPackets','maximumHeld','pressureDrains','backpressureEvents','batchPackets','groupedChunks','maximumGroupPackets','groupCopyFallbacks','pendingGroupPackets','concealedPackets','concealedSamples','codecBytes','creditScale','copyReservationBytes','pcmLimitBytes'])
@@ -148,6 +183,7 @@ export function installEncodedTimingProbe(workerSource,receiverApi='native') {
         if(Number.isFinite(data.maximumResidualMs))row.maximumResidualMs=data.maximumResidualMs
         row.recovery=data.recovery===true;row.keyframePending=data.keyframePending===true;row.gapAware=data.gapAware===true
         row.dependencyAware=data.dependencyAware===true
+        row.sourceReferences=data.sourceReferences===true
         row.reason=[null,'VIDEO_API','VIDEO_CONFIG','VIDEO_DECODE','VIDEO_PACKET','VIDEO_REFERENCE','VIDEO_CLOCK','VIDEO_BOUND','VIDEO_OUTPUT',
           'VIDEO_PORT_CLOCK','VIDEO_PORT_TRANSFER','VIDEO_PORT_MESSAGE','VIDEO_PORT_CREDIT','VIDEO_RECOVERY_API','VIDEO_RECOVERY_REQUEST'].includes(data.reason)?data.reason:'VIDEO_OUTPUT'
         videoStates.push(row);if(videoStates.length>64)videoStates.shift();return
@@ -215,7 +251,7 @@ export function installEncodedTimingProbe(workerSource,receiverApi='native') {
       }
       // Native import is asynchronous. Hold init/transform events until the
       // original lease handlers exist, then replay their actual objects.
-      const bootstrap = workerSource + `
+      const bootstrap = `self.__encodedTimingDirection='send';\n`+workerSource + `
         self.postMessage({type:'timing-probe-state',state:'boot'});
         const messages=[],transforms=[];
         self.onmessage=event=>messages.push(event);
@@ -231,6 +267,11 @@ export function installEncodedTimingProbe(workerSource,receiverApi='native') {
       const url = URL.createObjectURL(new Blob([bootstrap], { type: 'text/javascript' }))
       super(url, { ...args[1], type: 'module' })
       wrappedSenders++;urls.add(url); track(this, 'send')
+    }
+    terminate(){
+      const id=workerIds.get(this),row=referenceStates.find(item=>item.worker===id)
+      if(row)row.closed=true
+      return super.terminate()
     }
   }
   const Peer = window.RTCPeerConnection
@@ -267,7 +308,7 @@ export function installEncodedTimingProbe(workerSource,receiverApi='native') {
       })
     }
   }
-  window.__encodedTimingProbe = { records,states,audioDecoders,videoDecoders,pcmStates,videoStates,
+  window.__encodedTimingProbe = { records,states,audioDecoders,videoDecoders,pcmStates,videoStates,referenceStates,
     receiverWorker(track){return receiverWorkers.get(track)},workerId(worker){return workerIds.get(worker)}, features:{scriptTransform,
     legacySender:typeof RTCRtpSender.prototype.createEncodedStreams==='function',
     legacyReceiver, receiverApi:legacyReceiver?'legacy':scriptTransform?'standard':'unsupported'},

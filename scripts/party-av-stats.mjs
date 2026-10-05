@@ -63,6 +63,7 @@ export async function collectAvMediaStats() {
     }))
   if (senderParameters.length > 32 || senderParameters.some(item => item.encodings.length > 3)) throw new Error('AV_STATS_SENDER_LIMIT')
   return { time: performance.timeOrigin + performance.now(), reports: reports.flat(), senderParameters,
+    ...(window.__encodedTimingProbe?.referenceStates?{videoReferenceEnvelopes:window.__encodedTimingProbe.referenceStates.map(row=>({...row}))}:{}),
     ...(window.__controlledReceiver ? { controlledReceiver: window.__controlledReceiver.snapshot() } : {}),
     ...(window.__videoFloorExperiment ? { videoFloor: window.__videoFloorExperiment.snapshot() } : {}),
     ...(window.__sourceMarkerProbe ? { sourceMarkerProbe: window.__sourceMarkerProbe.snapshot() } : {}),

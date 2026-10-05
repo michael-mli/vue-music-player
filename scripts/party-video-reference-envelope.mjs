@@ -4,6 +4,7 @@
 export function createVideoReferenceEnvelope(){
   const maximumFrameBytes=256*1024,magic=0x4b545652,version=1
   let closed=false,error=null,wrapped=0,unwrapped=0,maximumBytes=0,maximumTrailerBytes=0,lastWrappedId=-1
+  let payloadBytes=0,wireBytes=0,overheadBytes=0
   const fail=code=>{closed=true;error=code;throw new Error(code)}
   const validId=id=>Number.isSafeInteger(id)&&id>=0
   function payload(frame){
@@ -32,7 +33,8 @@ export function createVideoReferenceEnvelope(){
       new Set(dependencies).size===dependencies.length&&dependencies.every(id=>validId(id)&&id<frameId)&&
       (type==='key'?dependencies.length===0:dependencies.length>0)
   }
-  return {close(){closed=true},snapshot:()=>({closed,error,wrapped,unwrapped,maximumBytes,maximumTrailerBytes,
+  return {close(){closed=true},snapshot:()=>({closed,error,version,wrapped,unwrapped,maximumBytes,maximumTrailerBytes,
+    payloadBytes,wireBytes,overheadBytes,
     maximumFrameBytes,maximumDependencies:8}),
     wrap(frame,metadata){
       const data=payload(frame),bytes=new Uint8Array(data),length=data.byteLength
@@ -52,7 +54,8 @@ export function createVideoReferenceEnvelope(){
       view.setUint32(at+20,checksum(new Uint8Array(output,0,total-6),at+20))
       view.setUint16(total-6,trailerBytes);view.setUint32(total-4,magic)
       try{frame.data=output}catch{fail('VIDEO_ENVELOPE_TRANSFER')}
-      lastWrappedId=frameId;wrapped++;maximumBytes=Math.max(maximumBytes,total)
+      lastWrappedId=frameId;wrapped++;payloadBytes+=length;wireBytes+=total;overheadBytes+=trailerBytes
+      maximumBytes=Math.max(maximumBytes,total)
       maximumTrailerBytes=Math.max(maximumTrailerBytes,trailerBytes)
       return {trailerBytes}
     },
@@ -70,7 +73,8 @@ export function createVideoReferenceEnvelope(){
       const bytes=new Uint8Array(data,0,at);codec(bytes,frame.type)
       if(checksum(new Uint8Array(data,0,total-6),at+20)!==view.getUint32(at+20))fail('VIDEO_ENVELOPE_INTEGRITY')
       try{frame.data=data.transferToFixedLength(at)}catch{fail('VIDEO_ENVELOPE_TRANSFER')}
-      unwrapped++;maximumBytes=Math.max(maximumBytes,total)
+      unwrapped++;payloadBytes+=at;wireBytes+=total;overheadBytes+=trailerBytes
+      maximumBytes=Math.max(maximumBytes,total)
       maximumTrailerBytes=Math.max(maximumTrailerBytes,trailerBytes)
       return {frameId,dependencies,sourceReferences:true}
     }}

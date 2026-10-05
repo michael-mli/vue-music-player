@@ -1,8 +1,9 @@
 // Private receiver worker. Decoding starts at the first received keyframe;
 // binding a port only transfers ownership, never permission to present output.
-export function installVp8FrameWorker(createStream,reorderMs=80,recover=false,recoveryMs=5000,gapAware=false,codec='vp8',dependencyAware=false,markerProbe=null,recoveryWaitMs=350){
+export function installVp8FrameWorker(createStream,reorderMs=80,recover=false,recoveryMs=5000,gapAware=false,codec='vp8',dependencyAware=false,markerProbe=null,recoveryWaitMs=350,sourceReferences=false){
   if(!['vp8','vp9'].includes(codec))throw new Error('VIDEO_CODEC_CONFIG')
-  if(typeof dependencyAware!=='boolean'||dependencyAware&&(!gapAware||codec!=='vp9'))throw new Error('VIDEO_REORDER_CONFIG')
+  if(typeof sourceReferences!=='boolean'||sourceReferences&&(!dependencyAware||codec!=='vp8'))throw new Error('VIDEO_REFERENCE_CONFIG')
+  if(typeof dependencyAware!=='boolean'||dependencyAware&&(!gapAware||codec!=='vp9'&&!sourceReferences))throw new Error('VIDEO_REORDER_CONFIG')
   if(!Number.isInteger(recoveryMs)||recoveryMs<1000||recoveryMs>5000)throw new Error('VIDEO_RECOVERY_CONFIG')
   if(![100,350].includes(recoveryWaitMs)||recoveryWaitMs!==350&&(!recover||!dependencyAware))throw new Error('VIDEO_RECOVERY_CONFIG')
   let stream,port,timer,bound=false,closed=false,reason=null,expiry,lastWall=Date.now(),lastMono=performance.now()
@@ -44,7 +45,7 @@ export function installVp8FrameWorker(createStream,reorderMs=80,recover=false,re
       credits.set(packet.id,packet.bytes)
       try{port.postMessage({type:'video-frame',frame,...packet},[frame]);return true}
       catch{credits.delete(packet.id);close('VIDEO_PORT_TRANSFER');return false}
-    },row=>close(row.reason),{reorderMs,gapAware,codec,dependencyAware,markerProbe})
+    },row=>close(row.reason),{reorderMs,gapAware,codec,dependencyAware,markerProbe,sourceReferences})
     if(closed){stream.close();return}
     timer=setInterval(()=>{
       if(!check())return
@@ -63,6 +64,7 @@ export function installVp8FrameWorker(createStream,reorderMs=80,recover=false,re
     if(frame.type==='key'&&after.lateFrames===before.lateFrames&&after.duplicates===before.duplicates)lastKey=now
     requestRecovery(after)
   }
+  self.__failOwnedVideoReference=()=>close('VIDEO_REFERENCE')
   self.addEventListener('message',({data})=>{
     if(data?.type==='video-stop'){close();return}
     if(data?.type==='video-renew'){

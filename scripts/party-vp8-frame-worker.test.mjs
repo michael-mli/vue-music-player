@@ -4,7 +4,16 @@ import vm from 'node:vm'
 import {setImmediate as tick} from 'node:timers/promises'
 import {installVp8FrameWorker} from './party-vp8-frame-worker.mjs'
 
-function fixture({recover=false,nativeRequest=true,recoveryMs=5000,dependencyAware=false,recoveryWaitMs=350,codec=dependencyAware?'vp9':'vp8'}={}){
+test('explicit VP8 source mode admits its bounded dependency worker and envelope failure permanently stops transfers',()=>{
+  const f=fixture({dependencyAware:true,sourceReferences:true,recover:true});f.bind();f.send(1,false,'key')
+  f.realm.__failOwnedVideoReference()
+  assert.equal(f.reports.at(-1).reason,'VIDEO_REFERENCE');assert.equal(f.port.closed,true)
+  assert.equal(f.send(2),false)
+  assert.throws(()=>fixture({sourceReferences:true}),/VIDEO_REFERENCE_CONFIG/)
+  assert.throws(()=>fixture({codec:'vp9',dependencyAware:true,sourceReferences:true}),/VIDEO_REFERENCE_CONFIG/)
+})
+
+function fixture({recover=false,nativeRequest=true,recoveryMs=5000,dependencyAware=false,recoveryWaitMs=350,sourceReferences=false,codec=sourceReferences?'vp8':dependencyAware?'vp9':'vp8'}={}){
   let wall=1000,mono=0,listener,timer,delivered,decoded=0,lateFrames=0,requests=0,streamClosed=false,committedGaps=0,referenceMisses=0,missingReferenceWaitMs=0
   const reports=[]
   class Port{constructor(){this.messages=[]}postMessage(packet){this.messages.push(packet)}start(){}close(){this.closed=true}}
@@ -15,8 +24,8 @@ function fixture({recover=false,nativeRequest=true,recoveryMs=5000,dependencyAwa
     __encodedTimingDirection:'receive',addEventListener:(name,callback)=>{listener=callback},
     setInterval:callback=>{timer=callback;return 1},clearInterval:()=>{timer=null},postMessage:row=>reports.push(row),createStream}
   if(nativeRequest)realm.__requestOwnedVideoKeyframe=async()=>{requests++}
-  realm.self=realm;realm.recover=recover;realm.recoveryMs=recoveryMs;realm.dependencyAware=dependencyAware;realm.recoveryWaitMs=recoveryWaitMs;realm.codec=codec
-  vm.runInNewContext(`(${installVp8FrameWorker.toString()})(createStream,80,recover,recoveryMs,dependencyAware,codec,dependencyAware,null,recoveryWaitMs)`,realm)
+  realm.self=realm;realm.recover=recover;realm.recoveryMs=recoveryMs;realm.dependencyAware=dependencyAware;realm.recoveryWaitMs=recoveryWaitMs;realm.codec=codec;realm.sourceReferences=sourceReferences
+  vm.runInNewContext(`(${installVp8FrameWorker.toString()})(createStream,80,recover,recoveryMs,dependencyAware,codec,dependencyAware,null,recoveryWaitMs,sourceReferences)`,realm)
   const message=data=>listener({data})
   return {realm,port,reports,message,bind(){message({type:'video-bind',port,expiryUnixMs:10000})},
     send(id,late=false,type='delta',gap=false,missing=false){realm.__observeOwnedVideo({late,type,gap,missing},{});return delivered?.({},{id,bytes:1,captureUnixMs:wall})},

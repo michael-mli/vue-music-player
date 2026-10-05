@@ -1485,7 +1485,7 @@ synthesizes progress, rebases authority or changes the rate. The original wall
 timestamp policy stays the default until native clean/impaired presentation,
 cadence, expiry and resource acceptance establish the alternative.
 
-The next private transport format can preserve actual VP8 sender reference
+The explicit private transport format can preserve actual VP8 sender reference
 declarations in a versioned trailer after the untouched clear codec bytes. The
 receiver must explicitly negotiate and strip it before native/owned decoding;
 it cannot treat missing native metadata as a declaration. The trailer is at most
@@ -1495,7 +1495,13 @@ input; source identities and output authority still come from the existing
 transport and lease guards. Its checksum provides integrity checking, not
 cryptographic authentication. Native wire behavior, reference admission,
 overhead accounting and all original receiver/quality gates must be verified
-before integrating or selecting this currently disconnected format.
+before product integration or release selection. Private fixture workers can now
+explicitly opt into `envelope-v1`: sender declarations are appended before the
+lease transform, then stripped before native/owned receive decoding. Owned VP8
+dependency mode requires the explicit source-reference path; ordinary native
+VP8 metadata still cannot authorize it. Timing evidence keeps native capability
+and transmitted declarations separate. All peers in the private profile opt in;
+public client/room negotiation remains required before deploying this format.
 
 The gap-only path also preserves an arriving contiguous RTP repair at a full
 input queue: it must precede the oldest held input, satisfy the existing 54-ms

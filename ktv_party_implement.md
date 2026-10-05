@@ -49,7 +49,7 @@ is a preview; public online media is still disabled.
 
 | Check | Current evidence | Status |
 | --- | --- | --- |
-| Timing/capability fixtures | 244/244 previous full suite; latest stop/clock/controller checks 29/29 and source-reference format checks 8/8 | Pass for tested contracts |
+| Timing/capability fixtures | 244/244 previous full suite; source-reference runtime/decoder/observer checks 78/78 and stop/clock/controller checks 29/29 | Pass for tested contracts |
 | Buffered expiry after render/guard clock freeze/resume | 51/51 with shared-context libopus buffers at the 500-ms target, including 524.23-ms retained PCM | Pass for tested digital topology |
 | Buffered expiry while source and listener pages stall | 46/46, latest reader/revalidation | Pass for digital fixture |
 | Latest qualified clean 40-pair A/V regression | Explicit VP8 L1T1 / floor / supported RTP ordering / shared-context libopus and generated-video clock / 500-ms target: 55/55, p95 80.58 ms / max 82.33 ms, no unmatched edges | Pass for tested digital topology |
@@ -6675,3 +6675,51 @@ codec reservations and account for wire bitrate overhead; then requalify clean,
 expiry, loss, full hybrid, sustained and remaining release gates. The default
 VP8 native-reference rejection remains intact until that explicit new transport
 path exists and is verified. Public media remains disabled.
+
+### 2026-10-05 — Explicit source-reference worker integration
+
+Connected the envelope to an explicit private
+`KTV_ROOM_TEST_VIDEO_SOURCE_REFERENCES=envelope-v1` profile. It requires nominal
+VP8/L1T1, shared buffers/libopus, guarded-context video timestamps, the codec
+floor, marker observation, exact provider scope and standard receiver transforms.
+All fixture peers deliberately select this format; this does not implement
+public room/client format negotiation or change production transport.
+
+The actual sender worker appends its native reference declarations before the
+existing lease transform. The receiver strips the trailer before both native
+decoding and the owned decoder observation. Owned VP8 dependency admission now
+requires the separate explicit source-reference mode and validated transported
+declarations. Native VP8 dependency mode remains rejected without that mode.
+Original native timing observations still report native metadata only; transmitted
+IDs are never reported as native receiver capability. Invalid envelopes close
+the transform and owned decoder instead of forwarding malformed bytes or falling
+back. No source/output permission is created or extended.
+
+Retained the original 20-input/700-ms dependency wait, four native output slots,
+two transfers, 512-KiB encoded limit, 256-KiB individual frame cap, reference
+history and 64-MiB aggregate reservations. Envelope snapshots retain bounded
+version/counters and separate codec-payload, wire and metadata byte totals.
+Each timing sample requires exactly one live publisher envelope and the exact
+current received-video worker, verifies the declared source-reference mode and
+checks payload+metadata equals wire bytes. Publisher teardown marks its prior
+worker closed so later turns cannot borrow stale evidence. Codec nominal caps
+remain unchanged; explicit wire-overhead measurement is still required.
+
+Pure clean testing need not generate recovery requests; impaired testing requires
+actual bounded native recovery and the existing response evidence. No pair,
+missing-edge, skew, cadence, lease, clock or resource gate is waived.
+Runtime/envelope/stream/worker/observer fixtures pass **78/78** in
+`/tmp/ktv-video-source-reference-runtime-fixtures-20261005.log`; syntax/diff checks
+pass. Fixtures verify exact wire round trips, native-versus-transmitted metadata,
+fail-closed pipelines, repaired dependency ordering, unchanged limits and native
+VP8 rejection without the explicit new mode.
+
+The actual clean 40-pair native comparison is running in
+`/tmp/ktv-owned-av-vp8-l1t1-source-reference-envelope-context-video-clean40-target500-20261005.log`,
+using immutable owner-only profile
+`/tmp/ktv-owned-vp8-l1t1-source-reference-envelope-context-video-clean40-target500-20261005.env`.
+Publisher readiness, actual SFU publication/synchronization and native lyric
+decoding have passed initial checks. Complete matching, exact transport readback,
+overhead, subsequent impairment/hybrid/expiry/sustained qualification and product/
+physical/mobile/capacity/release acceptance remain required. Public media stays
+disabled.

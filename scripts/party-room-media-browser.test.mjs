@@ -44,6 +44,7 @@ import { readDecodedVideoMarker } from './party-decoded-marker-probe.mjs'
 import { installSourceMarkerProbe, hasBoundedMarkerProbe } from './party-source-marker-probe.mjs'
 import { installSenderTemporalExperiment } from './party-sender-temporal-experiment.mjs'
 import { contextVideoOutputTimestamp } from './party-video-output-clock.mjs'
+import { createVideoReferenceEnvelope } from './party-video-reference-envelope.mjs'
 import { RtpCaptureClock, analyseCaptureClocks } from './party-rtp-capture-clock.mjs'
 import { CaptureFrameQueue } from './party-capture-frame-queue.mjs'
 import { installControlledReceiver, analyseControlledReceiverQuality, analyseReceiverKeyframeRecovery, hasSingleAudienceOutput, hasBoundedControlledReceiver } from './party-controlled-receiver.mjs'
@@ -114,6 +115,7 @@ const pcmDeviceClock=process.env.KTV_ROOM_TEST_PCM_DEVICE_CLOCK==='1'
 assert.ok(process.env.KTV_ROOM_TEST_PCM_DEVICE_CLOCK===undefined||pcmDeviceClock&&ownedPcm&&encodedTiming&&avTiming,
   'Private PCM device clock requires native owned-output A/V evidence')
 const ownedVideo=process.env.KTV_ROOM_TEST_OWNED_VIDEO==='1'
+const sourceVideoReferences=process.env.KTV_ROOM_TEST_VIDEO_SOURCE_REFERENCES==='envelope-v1'
 const pcmRenderer=process.env.KTV_ROOM_TEST_PCM_RENDERER||'worklet'
 assert.ok(process.env.KTV_ROOM_TEST_PCM_RENDERER===undefined||pcmRenderer==='buffers'&&pcmPlcBuild&&ownedVideo&&!pcmDeviceClock,
   'Shared-context PCM scheduling requires the explicitly accounted codec receiver and no secondary driver')
@@ -149,11 +151,11 @@ const encodedApi = process.env.KTV_ROOM_TEST_ENCODED_API || 'native'
 assert.ok(['native','legacy'].includes(encodedApi)&&(encodedApi==='native'||encodedTiming),
   'A private encoded API comparison requires timing observation')
 const videoFloor=process.env.KTV_ROOM_TEST_VIDEO_MIN_BITRATE!==undefined
-const vp8GapComparison=codecExperiment?.codec==='vp8'&&pcmRenderer==='buffers'&&pcmPlcBuild&&
-  ownedVideo&&gapVideoReorder&&!dependencyVideoReorder&&avTiming
+const vp8OwnedComparison=codecExperiment?.codec==='vp8'&&pcmRenderer==='buffers'&&pcmPlcBuild&&
+  ownedVideo&&gapVideoReorder&&(!dependencyVideoReorder||sourceVideoReferences)&&avTiming
 const senderTemporal=process.env.KTV_ROOM_TEST_SOURCE_TEMPORAL==='L1T1'
 assert.ok(process.env.KTV_ROOM_TEST_SOURCE_TEMPORAL===undefined||senderTemporal&&videoFloor&&
-  ownedVideo&&avTiming&&(codecExperiment?.codec==='vp9'||vp8GapComparison),
+  ownedVideo&&avTiming&&(codecExperiment?.codec==='vp9'||vp8OwnedComparison),
   'Private temporal comparison requires the explicit nominal VP9 or shared-buffer VP8 floor timing profile')
 const videoMarkerProbe=process.env.KTV_ROOM_TEST_DECODED_MARKER_PROBE==='1'
 const contextVideoOutput=process.env.KTV_ROOM_TEST_VIDEO_OUTPUT_CLOCK==='context'
@@ -161,12 +163,16 @@ assert.ok(process.env.KTV_ROOM_TEST_VIDEO_OUTPUT_CLOCK===undefined||contextVideo
   pcmRenderer==='buffers'&&pcmPlcBuild&&ownedVideo&&ownedPcm&&avTiming&&videoFloor,
   'Context video timestamps require the explicit shared-buffer owned audio/video floor timing comparison')
 assert.ok(process.env.KTV_ROOM_TEST_DECODED_MARKER_PROBE===undefined||videoMarkerProbe&&ownedVideo&&avTiming&&
-  (codecExperiment?.codec==='vp9'||vp8GapComparison)&&videoFloor,'Decoded marker observation requires nominal private owned timing')
+  (codecExperiment?.codec==='vp9'||vp8OwnedComparison)&&videoFloor,'Decoded marker observation requires nominal private owned timing')
 const sfuAllocationEvidence=process.env.KTV_ROOM_TEST_SFU_ALLOCATION_EVIDENCE==='1'
+assert.ok(process.env.KTV_ROOM_TEST_VIDEO_SOURCE_REFERENCES===undefined||sourceVideoReferences&&
+  vp8OwnedComparison&&dependencyVideoReorder&&senderTemporal&&contextVideoOutput&&videoMarkerProbe&&
+  videoFloor&&sfuAllocationEvidence&&receiverEncodedApi==='standard',
+  'Source references require explicit nominal VP8 L1T1/context/floor owned timing and exact provider scope')
 assert.ok(process.env.KTV_ROOM_TEST_SFU_ALLOCATION_EVIDENCE===undefined||sfuAllocationEvidence&&remoteMode&&videoFloor,
   'Private SFU observation requires the declared remote nominal floor comparison')
 assert.ok(!videoFloor||process.env.KTV_ROOM_TEST_VIDEO_MIN_BITRATE==='250000'&&avTiming&&encodedTiming&&ownedPcm&&ownedVideo&&
-  (codecExperiment?.codec==='vp9'||vp8GapComparison)&&codecExperiment.maxBitrate===350000&&codecExperiment.transport==='default'&&
+  (codecExperiment?.codec==='vp9'||vp8OwnedComparison)&&codecExperiment.maxBitrate===350000&&codecExperiment.transport==='default'&&
   codecExperiment.keyframeMs===null&&!audioRedComparison&&!equalSourcePriority&&!senderCadence,
   'Private video floor requires a marked nominal codec/RED profile without another sender comparison')
 const receiverFault = process.env.KTV_ROOM_TEST_RECEIVER_FAULT || 'off'
@@ -196,8 +202,8 @@ assert.ok(!videoFloor||publisherFeedback==='default'&&senderKeyframeMs===null&&!
 assert.ok(Number.isInteger(receiverKeyframeMs)&&receiverKeyframeMs>=1000&&receiverKeyframeMs<=5000&&
   (receiverKeyframes||process.env.KTV_ROOM_TEST_RECEIVER_KEYFRAME_INTERVAL_MS===undefined),
   'Private receiver recovery requires an explicit bounded 1000–5000 ms interval')
-assert.ok(!dependencyVideoReorder||codecExperiment?.codec==='vp9'&&receiverKeyframes,
-  'Reference reorder requires declared VP9 and actual standard receiver recovery')
+assert.ok(!dependencyVideoReorder||codecExperiment?.codec==='vp9'&&receiverKeyframes||sourceVideoReferences,
+  'Reference reorder requires native VP9 declarations/recovery or explicit transmitted VP8 source references')
 assert.ok(!receiverKeyframes||ownedVideo&&avTiming&&receiverEncodedApi==='standard'&&senderKeyframeMs===null&&!demandKeyframes,
   'Receiver keyframe recovery requires standard owned video without a competing sender policy')
 assert.ok(!codecExperiment || codecExperiment.maxBitrate === 350000 || senderKeyframeMs === null && !demandKeyframes,
@@ -215,12 +221,12 @@ const receiverSync = process.env.KTV_ROOM_TEST_RECEIVER_SYNC || 'off'
 const controlledPlayoutMs = process.env.KTV_ROOM_TEST_CONTROLLED_PLAYOUT_MS === undefined ? null : Number(process.env.KTV_ROOM_TEST_CONTROLLED_PLAYOUT_MS)
 const independentVideoReorder=process.env.KTV_ROOM_TEST_VIDEO_REORDER_MS!==undefined
 assert.ok(!independentVideoReorder||process.env.KTV_ROOM_TEST_VIDEO_REORDER_MS==='700'&&
-  controlledPlayoutMs===500&&ownedVideo&&(dependencyVideoReorder&&senderTemporal||vp8GapComparison)&&videoMarkerProbe&&videoFloor,
+  controlledPlayoutMs===500&&ownedVideo&&(dependencyVideoReorder&&senderTemporal||vp8OwnedComparison)&&videoMarkerProbe&&videoFloor,
   'Independent reorder comparison requires a declared nominal floor with a 500-ms output target and the existing 700-ms decoder bound')
 const videoReorderMs=independentVideoReorder?700:
   controlledPlayoutMs>=800?(gapVideoReorder?700:500):controlledPlayoutMs>=500?240:80
 assert.ok(!ownedPcm||controlledPlayoutMs!==null&&controlledPlayoutMs<=800&&
-  (!codecExperiment||ownedVideo&&(codecExperiment.codec==='vp9'||vp8GapComparison)&&codecExperiment.maxBitrate===350000&&
+  (!codecExperiment||ownedVideo&&(codecExperiment.codec==='vp9'||vp8OwnedComparison)&&codecExperiment.maxBitrate===350000&&
     codecExperiment.keyframeMs===null&&codecExperiment.transport==='default'),
   'Owned PCM requires its bounded production layout or explicitly marked nominal codec comparison')
 assert.ok(!absoluteCapture || encodedTiming || controlledPlayoutMs !== null && receiverFault !== 'off',
@@ -247,6 +253,8 @@ assert.ok(!avTiming || remoteMode, 'A/V fixture requires owned source/receiver b
 const impairmentMode = process.env.KTV_ROOM_TEST_MEDIA_IMPAIRMENT || 'off'
 assert.ok(['off', '1', 'tcp', 'udp'].includes(impairmentMode), 'Unknown media impairment mode')
 const mediaImpairment = impairmentMode !== 'off', impairmentProtocol = impairmentMode === 'udp' ? 'udp' : 'tcp'
+assert.ok(!sourceVideoReferences||!mediaImpairment||receiverKeyframes,
+  'Impaired source-reference timing requires actual bounded native receiver recovery')
 assert.ok(!mediaImpairment || remoteMode, 'Media impairment requires the owned remote browser topology')
 const networkRecovery = process.env.KTV_ROOM_TEST_NETWORK_RECOVERY === '1'
 const routeHandover = process.env.KTV_ROOM_TEST_ROUTE_HANDOVER === '1'
@@ -267,10 +275,10 @@ if (remoteMode) {
 
 const continueSfuRtx=process.env.KTV_ROOM_TEST_SFU_RTX_RECOVERY==='continue'
 assert.ok(process.env.KTV_ROOM_TEST_SFU_RTX_RECOVERY===undefined||continueSfuRtx&&sfuAllocationEvidence&&
-  receiverKeyframes&&(receiverKeyframeMs===5000||(senderTemporal||vp8GapComparison)&&videoMarkerProbe&&
+  receiverKeyframes&&(receiverKeyframeMs===5000||(senderTemporal||vp8OwnedComparison)&&videoMarkerProbe&&
     (receiverKeyframeMs===2500||pcmBatchPackets===2&&receiverKeyframeMs===1000&&
       (controlledPlayoutMs===800||controlledPlayoutMs===500&&pcmRenderer==='buffers'&&pcmPlcBuild&&independentVideoReorder)))&&
-  (dependencyVideoReorder||vp8GapComparison)&&impairmentProtocol==='udp'&&
+  (dependencyVideoReorder||vp8OwnedComparison)&&impairmentProtocol==='udp'&&
   continuousImpairment&&handoverAv,'Private SFU RTX comparison requires declared bounded recovery and the full UDP floor/RED journey')
 assert.ok(continueSfuRtx===Boolean(process.env.KTV_ROOM_TEST_SFU_RTX_BUILD),'Private SFU build must explicitly select RTX comparison')
 assert.ok(receiverKeyframeWaitMs===350||continueSfuRtx,'Earlier reference feedback retains continuous RTX during bounded recovery')
@@ -496,7 +504,7 @@ try {
     await cdp(socket, 'Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', 'en');
       ${avTiming ? `(${installAvSourceMarkers.toString()})();` : ''}
       ${encodedApi==='legacy' ? 'window.RTCRtpScriptTransform=undefined;' : ''}
-      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify(pcmPlcBootstrap+'('+encodedTimingWorker.toString()+')('+ (opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : vp8DecodeProbe?'null,null,null,'+createVp8DecodeProbe.toString():'') +');'+(pcmPortProbe||ownedPcm ? '('+installOpusPcmWorker.toString()+')('+bindOpusPcmPort.toString()+','+createOpusPcmStream.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString()+');' : '')+(ownedVideo?'('+installVp8FrameWorker.toString()+')('+createVp8FrameStream.toString()+','+videoReorderMs+','+receiverKeyframes+','+receiverKeyframeMs+','+gapVideoReorder+','+JSON.stringify(codecExperiment?.codec||'vp8')+','+dependencyVideoReorder+','+(videoMarkerProbe?readDecodedVideoMarker.toString():'null')+','+receiverKeyframeWaitMs+');':''))},${JSON.stringify(receiverEncodedApi)});` : ''}
+      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify(pcmPlcBootstrap+'('+encodedTimingWorker.toString()+')('+ (sourceVideoReferences?'null,null,null,null,'+createVideoReferenceEnvelope.toString():opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : vp8DecodeProbe?'null,null,null,'+createVp8DecodeProbe.toString():'') +');'+(pcmPortProbe||ownedPcm ? '('+installOpusPcmWorker.toString()+')('+bindOpusPcmPort.toString()+','+createOpusPcmStream.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString()+');' : '')+(ownedVideo?'('+installVp8FrameWorker.toString()+')('+createVp8FrameStream.toString()+','+videoReorderMs+','+receiverKeyframes+','+receiverKeyframeMs+','+gapVideoReorder+','+JSON.stringify(codecExperiment?.codec||'vp8')+','+dependencyVideoReorder+','+(videoMarkerProbe?readDecodedVideoMarker.toString():'null')+','+receiverKeyframeWaitMs+','+sourceVideoReferences+');':''))},${JSON.stringify(receiverEncodedApi)});` : ''}
       (${installEncodedLeaseObserver.toString()})();
       ${sfuAllocationEvidence ? `(${installSfuGrantScopeProbe.toString()})();` : ''}
       ${absoluteCapture ? `(${installAbsoluteCaptureExperiment.toString()})();` : ''}
@@ -906,6 +914,20 @@ try {
           videoReorderMs,'Current decoder retains the independent reorder bound without changing the output target')
         if(contextVideoOutput)assert.equal(receiver.controlledReceiver?.active?.videoOutputClock,'context',
           'Current video generator timestamps retain the declared guarded context clock')
+        if(sourceVideoReferences){
+          const decoder=receiver.controlledReceiver?.active?.ownedVideo?.decoder
+          assert.equal(decoder?.sourceReferences,true,'Current VP8 decoder uses explicitly transmitted source references')
+          assert.equal(decoder.dependencyAware,true,'Current source references retain bounded dependency admission')
+          const sources=source.videoReferenceEnvelopes.filter(row=>row.direction==='send'&&!row.closed&&row.wrapped>0)
+          const receives=receiver.videoReferenceEnvelopes.filter(row=>row.worker===decoder.worker&&row.direction==='receive')
+          assert.equal(sources.length,1,'Current source envelope belongs to one live publisher worker')
+          assert.equal(receives.length,1,'Current received envelope belongs to the exact owned video worker')
+          assert.ok([...sources,...receives].every(row=>row.version===1&&!row.error&&!row.closed&&
+            row.maximumBytes<=256*1024&&row.maximumTrailerBytes<=94&&row.maximumDependencies===8&&
+            row.wireBytes===row.payloadBytes+row.overheadBytes),
+            'Current source-reference transport preserves exact frame/metadata budgets without ignored errors')
+          assert.ok(receives[0].unwrapped>0,'Current native and owned video receive stripped source reference packets')
+        }
         if(videoMarkerProbe)assert.ok(hasBoundedMarkerProbe(source.sourceMarkerProbe)&&
           hasBoundedMarkerProbe(receiver.nativeReceiverMarkerProbe),'Actual capture/native marker diagnostics remain live and bounded')
         if(senderTemporal){
@@ -1366,6 +1388,8 @@ try {
   if(senderTemporal)for(const session of sessionSockets.keys())console.error('Native temporal policy on failure:',
     JSON.stringify(await evaluate(session,`(async()=>({experiment:window.__senderTemporalExperiment?.snapshot(),
       senders:(await (${collectAvMediaStats.toString()})()).senderParameters}))()`).catch(()=>({unavailable:true}))))
+  if(sourceVideoReferences)for(const session of sessionSockets.keys())console.error('Private video-reference transport on failure:',
+    JSON.stringify(await evaluate(session,'window.__encodedTimingProbe.referenceStates').catch(()=>({unavailable:true}))))
   console.error('Media HTTP status (paths only):', JSON.stringify(mediaHttp))
   for (const session of sessionSockets.keys()) console.error('UI state:', JSON.stringify(await evaluate(session, ` (async () => ({status:document.querySelector('[data-party-media-status]')?.textContent,encodedLeaseEvents:window.__encodedLeaseEvents,publisherFeedback:window.__publisherRembExperiment?.snapshot(),senderKeyframes:window.__avSenderKeyframes?.snapshot(),senderPriority:window.__avSenderPriority?.snapshot(),
     errors:[...document.querySelectorAll('[role=alert]')].map(item=>item.textContent), diagnostics:[...document.querySelectorAll('dl')].map(item=>item.textContent),

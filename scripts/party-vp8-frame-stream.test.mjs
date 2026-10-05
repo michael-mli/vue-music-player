@@ -4,7 +4,31 @@ import vm from 'node:vm'
 import {setImmediate as tick} from 'node:timers/promises'
 import {createVp8FrameStream} from './party-vp8-frame-stream.mjs'
 
-async function fixture({hold=false,accept=true,reorderMs=0,format='I420',gapAware=false,codec='vp8',receivedCodec=codec,padded=false,copyHold=false,dependencyAware=false,markerProbe=null}={}){
+test('explicit VP8 source declarations repair actual dependency order within the unchanged queue limits',async()=>{
+  const f=await fixture({codec:'vp8',gapAware:true,dependencyAware:true,sourceReferences:true,reorderMs:700})
+  const sourceReferences=true
+  f.send(0,0,'key',{frameId:1,dependencies:[],sourceReferences})
+  f.send(7200,80,'delta',{frameId:3,dependencies:[2],sourceReferences})
+  assert.equal(f.stream.snapshot().decoded,1)
+  f.send(3600,40,'delta',{frameId:2,dependencies:[1],sourceReferences})
+  assert.deepEqual(f.delivered.map(packet=>packet.rtpTimestamp),[0,3600,7200])
+  assert.equal(f.stream.snapshot().sourceReferences,true);assert.equal(f.stream.snapshot().referenceMisses,0)
+  assert.ok(f.stream.snapshot().maximumHeld<=20);assert.ok(f.stream.snapshot().maximumPending<=4)
+  for(const packet of f.delivered)packet.frame.close();f.stream.close()
+})
+test('source-reference admission rejects native-only metadata and invalid source-mode tuples',async()=>{
+  for(const metadata of [{frameId:1,dependencies:[]},{frameId:1,dependencies:[],sourceReferences:false},
+    {frameId:1,dependencies:[0],sourceReferences:true}]){
+    const f=await fixture({codec:'vp8',gapAware:true,dependencyAware:true,sourceReferences:true,reorderMs:700})
+    f.send(0,0,'key',metadata);assert.equal(f.stream.snapshot().closed,true)
+    assert.equal(f.reports.at(-1).reason,'VIDEO_REFERENCE')
+  }
+  await assert.rejects(fixture({codec:'vp8',gapAware:true,dependencyAware:true}),/VIDEO_REORDER_CONFIG/)
+  await assert.rejects(fixture({codec:'vp9',gapAware:true,dependencyAware:true,sourceReferences:true}),/VIDEO_REFERENCE_CONFIG/)
+  await assert.rejects(fixture({sourceReferences:true}),/VIDEO_REFERENCE_CONFIG/)
+})
+
+async function fixture({hold=false,accept=true,reorderMs=0,format='I420',gapAware=false,codec='vp8',receivedCodec=codec,padded=false,copyHold=false,dependencyAware=false,markerProbe=null,sourceReferences=false}={}){
   const delivered=[],frames=[],reports=[],waiting=[],copies=[]
   let now=1000,decoder,timerId=0,configUsed
   let acceptance=accept
@@ -25,10 +49,10 @@ async function fixture({hold=false,accept=true,reorderMs=0,format='I420',gapAwar
     EncodedVideoChunk:class{constructor(config){Object.assign(this,config)}},
     VideoFrame:class{constructor(data,config){Object.assign(this,config);this.closes=0;frames.push(this)}
       allocationSize(){return 1382400}close(){this.closes++}},
-    __encodedTimingCodecs:[{payloadType:96,mimeType:`video/${receivedCodec}`}],deliver:(frame,packet)=>{if(acceptance===true)delivered.push({frame,...packet});return acceptance},report:row=>reports.push(row),reorderMs,gapAware,codec,dependencyAware,markerProbe,
+    __encodedTimingCodecs:[{payloadType:96,mimeType:`video/${receivedCodec}`}],deliver:(frame,packet)=>{if(acceptance===true)delivered.push({frame,...packet});return acceptance},report:row=>reports.push(row),reorderMs,gapAware,codec,dependencyAware,markerProbe,sourceReferences,
     setTimeout(callback,delay){const id=++timerId;timers.set(id,{callback,at:now+delay});return id},clearTimeout(id){timers.delete(id)}}
   realm.self=realm
-  const stream=vm.runInNewContext(`(${createVp8FrameStream.toString()})(deliver,report,{reorderMs,gapAware,codec,dependencyAware,markerProbe})`,realm)
+  const stream=vm.runInNewContext(`(${createVp8FrameStream.toString()})(deliver,report,{reorderMs,gapAware,codec,dependencyAware,markerProbe,sourceReferences})`,realm)
   await tick()
   const send=(rtp,captureTime=rtp/90,type=frames.length?'delta':'key',reference={})=>stream.observe(
     {timestamp:rtp>>>0,type,data:new Uint8Array([7]).buffer},{captureTime,payloadType:96,...reference})

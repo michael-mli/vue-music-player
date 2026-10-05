@@ -2,15 +2,43 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
 import { encodedTimingWorker } from './party-encoded-timing-observer.mjs'
+import { createVideoReferenceEnvelope } from './party-video-reference-envelope.mjs'
 
-function fixture(videoProbe=null) {
+function fixture(videoProbe=null,createReferences=null) {
   const allMessages = [], realm = { Number, performance: { timeOrigin: 1000, now: () => 7 },
     TransformStream: class { constructor(transformer) { this.transformer = transformer } },
-    postMessage: message => allMessages.push(message),videoProbe }
+    postMessage: message => allMessages.push(message),videoProbe,createReferences }
   realm.self = realm
-  vm.runInNewContext('('+encodedTimingWorker.toString()+')(null,null,null,videoProbe)', realm)
-  return { realm, get messages(){return allMessages.filter(message=>message.type==='encoded-timing')}, stream: (original,kind='audio') => {realm.__encodedTimingKind=kind;return new realm.TransformStream(original)} }
+  vm.runInNewContext('('+encodedTimingWorker.toString()+')(null,null,null,videoProbe,createReferences)', realm)
+  return { realm, allMessages,get messages(){return allMessages.filter(message=>message.type==='encoded-timing')}, stream: (original,kind='audio') => {realm.__encodedTimingKind=kind;return new realm.TransformStream(original)} }
 }
+test('explicit source envelopes round trip before lease/native delivery without claiming native receiver references',()=>{
+  const send=fixture(null,createVideoReferenceEnvelope),receive=fixture(null,createVideoReferenceEnvelope)
+  send.realm.__encodedTimingDirection='send';receive.realm.__encodedTimingDirection='receive'
+  const body=new Uint8Array([0,0,0,0x9d,1,0x2a,0,5,0xd0,2,5,6])
+  const frame={type:'key',timestamp:1,data:body.slice().buffer,getMetadata:()=>({frameId:1,dependencies:[],captureTime:5})}
+  let encoded,decoded,owned
+  send.stream({},'video').transformer.transform(frame,{enqueue:f=>{encoded=f.data.byteLength}})
+  assert.equal(encoded,body.byteLength+30)
+  frame.getMetadata=()=>({captureTime:6,payloadType:96})
+  receive.realm.__observeOwnedVideo=(f,metadata)=>{owned=metadata;assert.deepEqual(new Uint8Array(f.data),body)}
+  receive.stream({},'video').transformer.transform(frame,{enqueue:f=>{decoded=f.data.byteLength}})
+  assert.equal(decoded,body.byteLength);assert.equal(owned.sourceReferences,true)
+  assert.equal(owned.frameId,1);assert.equal(owned.captureTime,6)
+  assert.equal(receive.messages[0].values.frameIdPresent,0)
+  const state=receive.allMessages.find(row=>row.type==='video-reference-state')
+  assert.equal(state.unwrapped,1);assert.equal(state.wireBytes,state.payloadBytes+state.overheadBytes)
+})
+test('invalid explicit envelopes close the stream and owned decoder without forwarding malformed bytes or secrets',()=>{
+  const f=fixture(null,createVideoReferenceEnvelope);f.realm.__encodedTimingDirection='receive'
+  let forwarded=0,closed=0,error
+  f.realm.__failOwnedVideoReference=()=>closed++
+  const frame={type:'key',data:new Uint8Array(20).buffer,getMetadata:()=>({secret:'secret-token'})}
+  const stream=f.stream({},'video'),controller={enqueue:()=>forwarded++,error:e=>{error=e.message}}
+  stream.transformer.transform(frame,controller);stream.transformer.transform(frame,controller)
+  assert.equal(forwarded,0);assert.equal(closed,1);assert.equal(error,'VIDEO_ENVELOPE_INPUT')
+  assert.equal(JSON.stringify(f.allMessages).includes('secret-token'),false)
+})
 test('timing observation preserves frame identity and delivery without touching encoded payload', () => {
   const f = fixture(), frame = { constructor: { name: 'RTCEncodedVideoFrame' }, timestamp: 1234, type: 'key',
     get data() { throw new Error('Encoded payload must remain unread') },
