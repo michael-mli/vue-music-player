@@ -4,7 +4,7 @@ import vm from 'node:vm'
 import {setImmediate as tick} from 'node:timers/promises'
 import {createOwnedPcmReceiver} from './party-owned-pcm-receiver.mjs'
 
-async function fixture({pendingModule=false,deviceClock=false,driverFailure=false,batchPackets=1}={}){
+async function fixture({pendingModule=false,deviceClock=false,driverFailure=false,batchPackets=1,plc=false}={}){
   let now=1000,interval,finishModule,renderer
   const nodes=[],contexts=[],messages=[],drivers=[],captured={stops:0,stop(){this.stops++}},original={stops:0,stop(){this.stops++}}
   class Node{constructor(){this.connections=[];this.gain={value:0};this.port={postMessage:data=>messages.push(data)}}
@@ -26,11 +26,21 @@ async function fixture({pendingModule=false,deviceClock=false,driverFailure=fals
     URL:{createObjectURL:()=> 'blob:owned',revokeObjectURL(){}},setInterval:callback=>{interval=callback;return 1},clearInterval:()=>{interval=null},
     window:{__encodedTimingProbe:{receiverWorker:track=>track===original?worker:null,workerId:()=>7,pcmStates:states}}}
   const factory=vm.runInNewContext(`(${createOwnedPcmReceiver.toString()})`,realm)
-  const receiver=factory(class{},()=>{},output,original,function(){const node=new Node();nodes.push(node);return node},200,{deviceClock,batchPackets})
+  const receiver=factory(class{},()=>{},output,original,function(){const node=new Node();nodes.push(node);return node},200,{deviceClock,batchPackets,plc})
   await tick()
   return {receiver,contexts,drivers,renderer,output,original,captured,nodes,messages,states,advance(value){now=value;states[0].observedAt=value;states[0].lastCaptureUnixMs=value},
     renew(){interval?.()},moduleReady(){finishModule?.()},queueState(data){renderer.port.onmessage({data:{type:'queue-state',renderFrame:0,...data}})}}
 }
+
+test('codec concealment changes only the private decoder selection and retains the guarded output graph',async()=>{
+  const f=await fixture({plc:true,batchPackets:2})
+  const config=f.messages.find(row=>row.type==='pcm-bind').configuration
+  assert.equal(config.plc,true);assert.equal(config.batchPackets,2);assert.equal(config.delayMs,200)
+  assert.equal(f.output.sampleRate,44100);assert.equal(f.contexts[0].sampleRate,48000)
+  assert.equal(f.drivers.length,0);assert.equal(f.original.stops,0)
+  f.receiver.close();assert.equal(f.captured.stops,1);assert.equal(f.original.stops,0)
+  await assert.rejects(fixture({plc:'yes'}),/PLAYOUT_PCM_PLC_CONFIG/)
+})
 test('owned PCM connects through a captured stream into the caller graph and closes only its resources',async()=>{
   const f=await fixture();assert.equal(f.receiver.snapshot().ready,true)
   assert.equal(f.receiver.snapshot().pcmRate,48000);assert.equal(f.receiver.snapshot().outputRate,44100)

@@ -27,6 +27,8 @@ import { probeDecodedTracks } from './party-decoded-track-probe.mjs'
 import { createOpusDecodeProbe, primaryOpusPayload, opusPacketFrames } from './party-opus-decode-probe.mjs'
 import { probeCaptureEpoch } from './party-capture-epoch-probe.mjs'
 import { createOpusPcmStream } from './party-opus-pcm-stream.mjs'
+import { createLibOpusDecoder, installOpusPlcDecoder } from './party-opus-plc-decoder.mjs'
+import { loadOpusPlcArtifact } from './party-opus-plc-artifact.mjs'
 import { bindOpusPcmPort } from './party-opus-pcm-port.mjs'
 import { installOpusPcmWorker } from './party-opus-pcm-worker.mjs'
 import { CapturePcmQueue, pcmSourceWorklet } from './party-capture-pcm-queue.mjs'
@@ -96,6 +98,12 @@ const opusDecodeProbe = process.env.KTV_ROOM_TEST_OPUS_DECODE === '1'
 const pcmPortProbe = process.env.KTV_ROOM_TEST_PCM_PORT === '1'
 const ownedPcm = process.env.KTV_ROOM_TEST_OWNED_PCM === '1'
 const pcmBatchPackets=Number(process.env.KTV_ROOM_TEST_PCM_BATCH_PACKETS||1)
+const pcmPlcBuild=process.env.KTV_ROOM_TEST_PCM_PLC_BUILD
+assert.ok(pcmPlcBuild===undefined||ownedPcm&&encodedTiming&&absoluteCapture&&pcmBatchPackets===2,
+  'Private Opus PLC requires the owned, capture-clocked grouped PCM receiver')
+const pcmPlcArtifact=pcmPlcBuild?await loadOpusPlcArtifact(pcmPlcBuild):null
+const pcmPlcBootstrap=pcmPlcArtifact?
+  '('+installOpusPlcDecoder.toString()+')('+JSON.stringify(pcmPlcArtifact.wasm.toString('base64'))+','+createLibOpusDecoder.toString()+');':''
 assert.ok(process.env.KTV_ROOM_TEST_PCM_BATCH_PACKETS===undefined||
   process.env.KTV_ROOM_TEST_PCM_BATCH_PACKETS==='2'&&ownedPcm&&encodedTiming,
   'Private PCM grouping requires the existing owned-output bounds and native encoded observation')
@@ -103,6 +111,7 @@ const pcmDeviceClock=process.env.KTV_ROOM_TEST_PCM_DEVICE_CLOCK==='1'
 assert.ok(process.env.KTV_ROOM_TEST_PCM_DEVICE_CLOCK===undefined||pcmDeviceClock&&ownedPcm&&encodedTiming&&avTiming,
   'Private PCM device clock requires native owned-output A/V evidence')
 const ownedVideo=process.env.KTV_ROOM_TEST_OWNED_VIDEO==='1'
+assert.ok(!pcmPlcBuild||ownedVideo,'Private Opus PLC requires explicit codec accounting in the owned-video reservation')
 const audioRedComparison=codecExperiment?.audioRed===false
 assert.ok(!audioRedComparison||avTiming&&encodedTiming&&ownedPcm&&ownedVideo&&
   codecExperiment.codec==='vp9'&&codecExperiment.transport==='default'&&codecExperiment.keyframeMs===null&&
@@ -467,7 +476,7 @@ try {
     await cdp(socket, 'Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', 'en');
       ${avTiming ? `(${installAvSourceMarkers.toString()})();` : ''}
       ${encodedApi==='legacy' ? 'window.RTCRtpScriptTransform=undefined;' : ''}
-      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify('('+encodedTimingWorker.toString()+')('+ (opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : vp8DecodeProbe?'null,null,null,'+createVp8DecodeProbe.toString():'') +');'+(pcmPortProbe||ownedPcm ? '('+installOpusPcmWorker.toString()+')('+bindOpusPcmPort.toString()+','+createOpusPcmStream.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString()+');' : '')+(ownedVideo?'('+installVp8FrameWorker.toString()+')('+createVp8FrameStream.toString()+','+videoReorderMs+','+receiverKeyframes+','+receiverKeyframeMs+','+gapVideoReorder+','+JSON.stringify(codecExperiment?.codec||'vp8')+','+dependencyVideoReorder+','+(videoMarkerProbe?readDecodedVideoMarker.toString():'null')+');':''))},${JSON.stringify(receiverEncodedApi)});` : ''}
+      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify(pcmPlcBootstrap+'('+encodedTimingWorker.toString()+')('+ (opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : vp8DecodeProbe?'null,null,null,'+createVp8DecodeProbe.toString():'') +');'+(pcmPortProbe||ownedPcm ? '('+installOpusPcmWorker.toString()+')('+bindOpusPcmPort.toString()+','+createOpusPcmStream.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString()+');' : '')+(ownedVideo?'('+installVp8FrameWorker.toString()+')('+createVp8FrameStream.toString()+','+videoReorderMs+','+receiverKeyframes+','+receiverKeyframeMs+','+gapVideoReorder+','+JSON.stringify(codecExperiment?.codec||'vp8')+','+dependencyVideoReorder+','+(videoMarkerProbe?readDecodedVideoMarker.toString():'null')+');':''))},${JSON.stringify(receiverEncodedApi)});` : ''}
       (${installEncodedLeaseObserver.toString()})();
       ${absoluteCapture ? `(${installAbsoluteCaptureExperiment.toString()})();` : ''}
       ${senderCadence ? `(${installSenderCadenceExperiment.toString()})();` : ''}
@@ -570,7 +579,7 @@ try {
           frequency: length ? Math.round(crossings * item.buffer.sampleRate / length) : null}); return start(...args);
       }; window.__bufferSources.push(item); return item; };
       window.confirm = () => true;
-      ${controlledPlayoutMs === null ? '' : `(${installControlledReceiver.toString()})(${RtpCaptureClock.toString()},${CaptureFrameQueue.toString()},${controlledPlayoutMs}${ownedPcm?`,(context,track,nativeSource,delay)=>(${createOwnedPcmReceiver.toString()})(${CapturePcmQueue.toString()},${pcmSourceWorklet.toString()},context,track,nativeSource,delay,{deviceClock:${pcmDeviceClock},batchPackets:${pcmBatchPackets}}),${probeCaptureEpoch.toString()}${ownedVideo?','+createOwnedVideoReceiver.toString():''}`:''});`}` }, sessionId)
+      ${controlledPlayoutMs === null ? '' : `(${installControlledReceiver.toString()})(${RtpCaptureClock.toString()},${CaptureFrameQueue.toString()},${controlledPlayoutMs}${ownedPcm?`,(context,track,nativeSource,delay)=>(${createOwnedPcmReceiver.toString()})(${CapturePcmQueue.toString()},${pcmSourceWorklet.toString()},context,track,nativeSource,delay,{deviceClock:${pcmDeviceClock},batchPackets:${pcmBatchPackets},plc:${!!pcmPlcBuild}}),${probeCaptureEpoch.toString()}${ownedVideo?','+createOwnedVideoReceiver.toString():''}${pcmPlcBuild?',524288':''}`:''});`}` }, sessionId)
     await cdp(socket, 'Page.navigate', { url: origin + (legacy ? `/__ktv_legacy_app?room=${room.room.id}` : `/party/${room.room.id}${stage ? '/stage' : ''}`) }, sessionId)
     await poll(() => evaluate(sessionId, "document.body?.innerText.includes('Live room updates connected')"), 'room page connected')
     if (!stage) await evaluate(sessionId, "document.getElementById('party-tab-sing').click()")
@@ -847,6 +856,15 @@ try {
           receiverKeyframeMs,'Current native receiver retains the declared bounded recovery cooldown')
         if(pcmBatchPackets===2)assert.equal(receiver.controlledReceiver?.active?.pcm?.decoder?.batchPackets,
           2,'Current PCM receiver retains the exact bounded grouping policy')
+        if(pcmPlcBuild){
+          const pcm=receiver.controlledReceiver?.active?.pcm?.decoder
+          assert.equal(pcm?.decoderBackend,'libopus','Current PCM uses the declared codec concealment backend')
+          assert.equal(pcm?.codecBytes,524288,'Current PCM codec has its fixed independent memory reservation')
+          assert.equal(receiver.controlledReceiver.active.codecReservationBytes,524288,
+            'Current receiver reserves codec working memory within the original aggregate limit')
+          assert.equal(receiver.controlledReceiver.active.queueReservationBytes,42*1024*1024,
+            'Current receiver reduces presentation bytes to preserve the original aggregate limit')
+        }
         if(independentVideoReorder)assert.equal(receiver.controlledReceiver?.active?.ownedVideo?.decoder?.reorderMs,
           videoReorderMs,'Current decoder retains the independent reorder bound without changing the output target')
         if(videoMarkerProbe)assert.ok(hasBoundedMarkerProbe(source.sourceMarkerProbe)&&

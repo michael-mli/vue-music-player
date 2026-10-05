@@ -31,6 +31,14 @@ test('worker channel schedules capture time into render frames and transfers own
   assert.deepEqual(f.credits,[{type:'consumed',id:1,bytes:4}]);f.adapter.close()
   assert.equal(f.port.closed,true);assert.equal(f.closes.length,1)
 })
+
+test('explicit concealment reaches the decoder without changing scheduling or allowing unsupported configuration',()=>{
+  const f=fixture({plc:true,batchPackets:2});assert.equal(f.options.plc,true)
+  assert.equal(f.options.batchPackets,2)
+  f.packets.push({id:1,captureUnixMs:1010,planes:[new Float32Array([.5])]});f.adapter.observe({}, {})
+  assert.equal(f.messages[0].data.startFrame,86880);f.adapter.close()
+  assert.throws(()=>fixture({plc:'yes'}),/PCM_PORT_CONFIG/)
+})
 test('expired or discontinuous worker clocks close the renderer port and cannot renew it',()=>{
   for(const values of [[2000,1000],[999,1],[1400,1]]){
     const f=fixture();f.advance(...values)

@@ -1,13 +1,14 @@
 // Private streaming decoder. PCM ownership transfers to a bounded renderer;
 // this module never connects an output or grants permission to play it.
-export function createOpusPcmStream(primaryPayload, packetFrames, deliver, report = () => {}, {reorderMs=80,batchPackets=1}={}) {
+export function createOpusPcmStream(primaryPayload, packetFrames, deliver, report = () => {}, {reorderMs=80,batchPackets=1,plc=false}={}) {
   if(!Number.isInteger(reorderMs)||reorderMs<0||reorderMs>80)throw new Error('PCM_REORDER_CONFIG')
   if(![1,2].includes(batchPackets))throw new Error('PCM_BATCH_CONFIG')
+  if(typeof plc!=='boolean')throw new Error('PCM_PLC_CONFIG')
   const pending = [], expected = [], credits = new Map()
   const held=new Map()
   let decoder, configured = false, closed = false, sequence = 0
   let encodedBytes = 0, pcmBytes = 0, anchor = null, lastEnd = null
-  let decoded = 0, gaps = 0, duplicates = 0, maximumChunks = 0, maximumBytes = 0
+  let decoded = 0, gaps = 0, duplicates = 0, maximumChunks = 0, maximumBytes = 0,concealedPackets=0,concealedSamples=0
   let lastCaptureUnixMs=null,maximumResidualMs=0,captureAnchor=null
   let scheduledCaptureUnixMs=null,captureOffsetMs=0,maximumOffsetMs=0
   let recovered=0,closeReason=null,flushing=false,backpressureEvents=0
@@ -15,10 +16,12 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
   const batch=[]
   let batchTimer=null,groupedChunks=0,maximumGroupPackets=0
   const delta = (value, previous) => ((value-previous+0x80000000)>>>0)-0x80000000
-  function snapshot() { return { closed, configured, decoded, gaps, duplicates, chunks:credits.size,
+  function snapshot() { const codec=plc?decoder?.snapshot():null;return { closed, configured, decoded, gaps, duplicates, chunks:credits.size,
     encodedBytes, pcmBytes, maximumChunks, maximumBytes,lastCaptureUnixMs,maximumResidualMs,recovered,
     scheduledCaptureUnixMs,captureOffsetMs,maximumOffsetMs,reordered,heldPackets:held.size,maximumHeld,pressureDrains,reason:closeReason,backpressureEvents,
-    batchPackets,groupedChunks,maximumGroupPackets,pendingGroupPackets:batch.length } }
+    batchPackets,groupedChunks,maximumGroupPackets,pendingGroupPackets:batch.length,
+    decoderBackend:plc?'libopus':'webcodecs',concealedPackets,concealedSamples,codecBytes:codec?.codecBytes??0,
+    ...(plc?{codecInitMs:codec?.initMs??null,codecTotalDecodeMs:codec?.totalDecodeMs??null,codecMaximumDecodeMs:codec?.maximumDecodeMs??null}:{}) } }
   function close(reason = null) {
     if (closed) return
     closed = true;closeReason=reason;clearTimeout(reorderTimer);clearTimeout(batchTimer);held.clear();batch.length=0
@@ -85,13 +88,33 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
       // Held group members cannot be consumed before their combined transfer.
       credits.set(packet.id,{bytes,delivered:false})
       decoded++
+      if(packet.loss){concealedPackets++;concealedSamples+=packet.frames}
       queueOutput(packet,planes,bytes)
     } catch(error) { close(error.message==='PCM_BOUND'?'PCM_BOUND':'PCM_OUTPUT') }
     finally { frame.close() }
   }
   function decode(packet) {
     expected.push(packet)
-    decoder.decode(new EncodedAudioChunk({type:'key',timestamp:packet.timestamp,data:packet.data}))
+    if(packet.loss)decoder.decodeLoss(packet.timestamp,packet.frames)
+    else decoder.decode(new EncodedAudioChunk({type:'key',timestamp:packet.timestamp,data:packet.data}))
+  }
+  function concealGap(rtp,capture){
+    if(!plc||lastEnd===null)return true
+    let gap=delta(rtp,lastEnd)
+    if(gap<0||gap>240000||gap%120)throw new Error('PCM_CLOCK')
+    while(gap>0&&!closed){
+      const frames=Math.min(gap,960),reservedBytes=frames*8
+      if(credits.size>=48||pcmBytes+reservedBytes>1024*1024){backpressureEvents++;return false}
+      const captureUnixMs=anchor.capture+delta(lastEnd,anchor.rtp)/48
+      const packet={id:++sequence,rtpTimestamp:lastEnd,frames,reservedBytes,captureUnixMs,
+        observedCaptureUnixMs:capture-gap/48,timestamp:Math.round((captureUnixMs-performance.timeOrigin)*1000),
+        data:new Uint8Array(),loss:true}
+      credits.set(packet.id,{bytes:reservedBytes,delivered:false});pcmBytes+=reservedBytes
+      maximumChunks=Math.max(maximumChunks,credits.size);maximumBytes=Math.max(maximumBytes,pcmBytes)
+      lastEnd=(lastEnd+frames)>>>0;gaps+=frames;gap-=frames
+      if(configured)decode(packet);else pending.push(packet)
+    }
+    return !closed
   }
   function accept(data,rtp,capture,isRecovery=false){
     if(closed)return
@@ -131,6 +154,7 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
             if(delta(rtp,lastEnd)<0)continue
             if(packetFrames(block.data)>block.timestampOffset)throw new Error('PCM_PACKET')
             if(delta(rtp,lastEnd)>0&&!expired)break
+            if(!concealGap(rtp,packet.capture-block.timestampOffset/48))return
             if(credits.size>=48||pcmBytes+packetFrames(block.data)*8>1024*1024){backpressureEvents++;return}
             if(forceOne&&!aged&&!pressureCommitted&&delta(rtp,lastEnd)>0){pressureDrains++;pressureCommitted=true}
             accept(block.data,rtp,packet.capture-block.timestampOffset/48,true)
@@ -141,6 +165,7 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
           reorderTimer=setTimeout(flush,Math.max(1,reorderMs-(performance.now()-firstArrival)))
           return
         }
+        if(!concealGap(packet.rtp,packet.capture))return
         if(credits.size>=48||pcmBytes+packetFrames(packet.data)*8>1024*1024){backpressureEvents++;return}
         if(forceOne&&!aged&&!pressureCommitted&&lastEnd!==null&&delta(packet.rtp,lastEnd)>0)pressureDrains++
         discard(packet);accept(packet.data,packet.rtp,packet.capture);forceOne=false
@@ -148,11 +173,12 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
     }catch(error){fail(error)}
     finally{flushing=false}
   }
-  if (typeof AudioDecoder !== 'function' || typeof EncodedAudioChunk !== 'function') close('PCM_API')
-  else void AudioDecoder.isConfigSupported({codec:'opus',sampleRate:48000,numberOfChannels:2}).then(result=>{
+  const Decoder=plc?self.__ownedOpusDecoder:(typeof AudioDecoder==='function'?AudioDecoder:null)
+  if (typeof Decoder !== 'function' || typeof EncodedAudioChunk !== 'function') close('PCM_API')
+  else void Decoder.isConfigSupported({codec:'opus',sampleRate:48000,numberOfChannels:2}).then(result=>{
     if (closed) return
     if (!result.supported) { close('PCM_CONFIG'); return }
-    decoder = new AudioDecoder({output,error:()=>close('PCM_DECODE')})
+    decoder = new Decoder({output,error:()=>close('PCM_DECODE')})
     decoder.configure(result.config); configured = true
     while (!closed && pending.length) decode(pending.shift())
   }).catch(()=>close('PCM_CONFIG'))

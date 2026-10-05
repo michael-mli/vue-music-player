@@ -6,7 +6,7 @@ import { createOpusPcmStream } from './party-opus-pcm-stream.mjs'
 import { primaryOpusPayload, opusPacketFrames } from './party-opus-decode-probe.mjs'
 import { CapturePcmQueue } from './party-capture-pcm-queue.mjs'
 
-function fixture({delayed=false,invalid=false,reorderMs=0,batchPackets=1,frames=960,values=null}={}) {
+function fixture({delayed=false,invalid=false,reorderMs=0,batchPackets=1,frames=960,values=null,plc=false,hasPlc=true}={}) {
   const messages=[],packets=[],outputs=[],waiting=[]
   let now=0,timerId=0
   const timers=new Map()
@@ -16,9 +16,14 @@ function fixture({delayed=false,invalid=false,reorderMs=0,batchPackets=1,frames=
     constructor(callbacks) {this.callbacks=callbacks;this.state='configured';decoder=this}
     configure() {}
     decode(chunk) {
+      this.emit(chunk.timestamp,frames)
+    }
+    decodeLoss(timestamp,count){this.emit(timestamp,count)}
+    snapshot(){return {codecBytes:this.state==='closed'?0:524288}}
+    emit(timestamp,count){
       const value=values?.[outputs.length]??.25
-      const frame={sampleRate:48000,timestamp:chunk.timestamp,numberOfFrames:frames,numberOfChannels:2,
-        duration:frames/48000*1000000,closes:0,close(){this.closes++},copyTo(plane,{planeIndex,format}) {
+      const frame={sampleRate:48000,timestamp,numberOfFrames:count,numberOfChannels:2,
+        duration:count/48000*1000000,closes:0,close(){this.closes++},copyTo(plane,{planeIndex,format}) {
           assert.equal(format,'f32-planar');plane.fill(invalid?NaN:planeIndex?-value:value)
         }}
       outputs.push(frame)
@@ -28,12 +33,13 @@ function fixture({delayed=false,invalid=false,reorderMs=0,batchPackets=1,frames=
   }
   const realm={Number,ArrayBuffer,Float32Array,Uint8Array,Map,Array,performance:{timeOrigin:1000,now:()=>now},
     setTimeout(callback,delay){const id=++timerId;timers.set(id,{callback,at:now+delay});return id},
-    clearTimeout(id){timers.delete(id)},reorderMs,batchPackets,
+    clearTimeout(id){timers.delete(id)},reorderMs,batchPackets,plc,
     AudioDecoder:Decoder,EncodedAudioChunk:class{constructor(config){Object.assign(this,config)}},
     __encodedTimingCodecs:[{payloadType:111,mimeType:'audio/opus'},{payloadType:63,mimeType:'audio/red'}],deliver:packet=>packets.push(packet),report:row=>messages.push(row)}
   realm.self=realm
+  if(hasPlc)realm.__ownedOpusDecoder=Decoder
   const frameParser=frames===960?opusPacketFrames.toString():`()=>${frames}`
-  const stream=vm.runInNewContext(`(${createOpusPcmStream.toString()})(${primaryOpusPayload.toString()},${frameParser},deliver,report,{reorderMs,batchPackets})`,realm)
+  const stream=vm.runInNewContext(`(${createOpusPcmStream.toString()})(${primaryOpusPayload.toString()},${frameParser},deliver,report,{reorderMs,batchPackets,plc})`,realm)
   const send=(rtp,captureTime=rtp/48)=>stream.observe({timestamp:rtp>>>0,data:new Uint8Array([1]).buffer},{captureTime,payloadType:111})
   return {stream,send,packets,messages,outputs,waiting,timers,
     advance(value){now=value;for(const [id,timer] of [...timers])if(timer.at<=now){timers.delete(id);timer.callback()}},
@@ -42,6 +48,53 @@ function fixture({delayed=false,invalid=false,reorderMs=0,batchPackets=1,frames=
 
 function red(offsets){return new Uint8Array([...offsets.flatMap(offset=>[239,offset>>6,(offset&63)<<2,1]),111,
   ...offsets.map(()=>1),1])}
+
+test('explicit codec concealment reserves missing samples at the original capture clock and preserves grouping across RTP wrap',async()=>{
+  const f=fixture({plc:true,batchPackets:2,reorderMs:80});await tick();const start=0xfffffe00
+  f.send(start,0);f.send((start+1920)>>>0,40);f.advance(79)
+  assert.equal(f.stream.snapshot().concealedSamples,0)
+  f.advance(80);assert.equal(f.stream.snapshot().concealedSamples,960)
+  assert.equal(f.stream.snapshot().gaps,960);f.advance(120)
+  assert.deepEqual(f.packets.map(packet=>[packet.rtpTimestamp,packet.frames,packet.captureUnixMs]),
+    [[start,960,1000],[(start+960)>>>0,1920,1020]])
+  assert.equal(f.stream.snapshot().decoderBackend,'libopus');assert.equal(f.stream.snapshot().codecBytes,524288)
+  const queue=new CapturePcmQueue(48000,credit=>f.stream.consumed(credit))
+  for(const packet of f.packets)queue.push({...packet,startFrame:Math.round((packet.captureUnixMs-1000)*48)})
+  const planes=[new Float32Array(2880),new Float32Array(2880)];queue.render(0,planes)
+  assert.ok(planes[0].every(value=>value===.25));assert.equal(f.stream.snapshot().chunks,0)
+  f.stream.close();assert.equal(f.stream.snapshot().codecBytes,0)
+})
+test('native RED and late original repairs precede concealment and cannot be counted twice',async()=>{
+  const f=fixture({plc:true,reorderMs:80});await tick();f.send(0)
+  f.stream.observe({timestamp:1920,data:red([960]).buffer},{captureTime:40,payloadType:63})
+  assert.equal(f.stream.snapshot().recovered,1);assert.equal(f.stream.snapshot().concealedSamples,0)
+  f.send(960,20);assert.equal(f.stream.snapshot().duplicates,1)
+  f.send(3840,80);f.advance(60);f.send(2880,60)
+  assert.equal(f.stream.snapshot().concealedSamples,0);assert.equal(f.stream.snapshot().decoded,5)
+  f.stream.close()
+})
+test('concealment obeys credits during a larger loss and resumes only after actual renderer consumption',async()=>{
+  const f=fixture({plc:true});await tick();f.send(0);f.send(60*960,1200)
+  assert.equal(f.stream.snapshot().chunks,48);assert.equal(f.stream.snapshot().heldPackets,1)
+  assert.equal(f.stream.snapshot().closed,false);assert.equal(f.stream.snapshot().maximumChunks,48)
+  const consumed=new Set()
+  while(f.stream.snapshot().heldPackets){
+    for(const packet of [...f.packets])if(!consumed.has(packet.id)){
+      consumed.add(packet.id);f.stream.consumed({id:packet.id,bytes:packet.planes.reduce((sum,p)=>sum+p.byteLength,0)})
+    }
+  }
+  assert.equal(f.stream.snapshot().concealedSamples,59*960)
+  assert.equal(f.stream.snapshot().gaps,59*960);assert.equal(f.stream.snapshot().decoded,61)
+  assert.ok(f.stream.snapshot().maximumBytes<=1024*1024);f.stream.close();f.advance(2000)
+  assert.equal(f.stream.snapshot().chunks,0);assert.equal(f.stream.snapshot().pcmBytes,0)
+})
+test('concealment rejects unsupported capability and sub-frame clock gaps without falling back or reviving output',async()=>{
+  const unavailable=fixture({plc:true,hasPlc:false});await tick()
+  assert.equal(unavailable.messages[0].reason,'PCM_API');assert.equal(unavailable.packets.length,0)
+  const gap=fixture({plc:true});await tick();gap.send(0);gap.send(961,961/48)
+  assert.equal(gap.messages[0].reason,'PCM_CLOCK');assert.equal(gap.packets.length,1)
+  gap.send(1920,40);assert.equal(gap.packets.length,1)
+})
 test('two-packet transfer preserves every channel sample and the first capture clock across RTP wrap',async()=>{
   const f=fixture({batchPackets:2,values:[.125,.5]});await tick();const start=0xfffffe00
   f.send(start,0);assert.equal(f.packets.length,0);assert.equal(f.stream.snapshot().pendingGroupPackets,1)

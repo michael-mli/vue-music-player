@@ -205,6 +205,23 @@ test('PCM group diagnostics exclude payloads and reject impossible group bounds 
   assert.equal(probe.errors,6);probe.close()
 })
 
+test('codec concealment diagnostics expose scalar bounds and reject impossible backend or gap accounting',()=>{
+  const f=browserFixture(true),peer=new f.realm.window.RTCPeerConnection(),receiver=f.receiver();f.track(peer,receiver)
+  const emit=data=>f.workers[0].dispatchEvent(new MessageEvent('message',{data}))
+  const valid={type:'pcm-port-state',configured:true,closed:false,decoderBackend:'libopus',decoded:20,gaps:1920,
+    concealedPackets:2,concealedSamples:1920,codecBytes:524288,privatePcm:'excluded'}
+  emit(valid)
+  const probe=f.realm.window.__encodedTimingProbe,row=probe.pcmStates[0]
+  assert.equal(row.decoderBackend,'libopus');assert.equal(row.concealedSamples,1920)
+  assert.equal(row.codecBytes,524288);assert.equal(row.concealmentError,undefined)
+  for(const change of [{decoderBackend:'credential-url'},{codecBytes:1048576},{codecBytes:0},
+    {concealedPackets:21},{concealedSamples:1921},{decoderBackend:'webcodecs'}])emit({...valid,...change})
+  assert.equal(probe.pcmStates.filter(row=>row.concealmentError==='PCM_PLC_DIAGNOSTIC').length,6)
+  assert.equal(JSON.stringify(probe.pcmStates).includes('excluded'),false)
+  emit({...valid,closed:true,codecBytes:0});assert.equal(probe.pcmStates.at(-1).concealmentError,undefined)
+  probe.close()
+})
+
 test('declared VP9 receiver codec parameters reach the worker without fmtp or unknown codec fields',()=>{
   for(const api of ['native','standard']){
     const f=browserFixture(true,api),peer=new f.realm.window.RTCPeerConnection(),receiver=f.receiver()

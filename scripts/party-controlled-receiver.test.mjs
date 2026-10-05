@@ -64,6 +64,25 @@ test('the YUV presentation reservation retains 32 actual-size frames within the 
   assert.equal(frames[32].closes,1);queue.close();assert.ok(frames.every(frame=>frame.closes===1))
 })
 
+test('a fixed codec reservation fits with the existing audio/output bounds by reducing video bytes',()=>{
+  const bytes=1280*720*3/2,queue=new CaptureFrameQueue(32,42*1024*1024),frames=[]
+  for(let i=0;i<32;i++)frames.push({codedWidth:1280,codedHeight:720,closes:0,allocationSize:()=>bytes,close(){this.closes++}})
+  for(let i=0;i<31;i++)queue.push(frames[i],i*40)
+  assert.equal(queue.snapshot().queued,31);assert.throws(()=>queue.push(frames[31],1240),/PLAYOUT_QUEUE_BOUND/)
+  const reservation=42*1024*1024+4*1280*720*4+4*bytes+2*1024*1024+524288
+  assert.ok(reservation<64*1024*1024)
+  queue.close();assert.ok(frames.every(frame=>frame.closes===1))
+  const owned=(count,time)=>sample(count,time,{drawn:count,maximumQueued:31,maximumBytes:42*1024*1024,
+    codecReservationBytes:524288,queueReservationBytes:42*1024*1024,
+    pcm:{decoder:{decoderBackend:'libopus',codecBytes:524288}},
+    ownedVideo:{closed:false,maximumInFlight:2,decoder:{worker:1,configured:true,closed:false,
+      decoded:count,observedAt:time,maximumPending:4,maximumBytes:512*1024,heldLimit:20,maximumHeld:20}}})
+  const first=owned(10,1000),last=owned(260,11000)
+  assert.deepEqual(analyseControlledReceiverQuality([first,last],'impaired').errors,[])
+  last.receiver.controlledReceiver.active.codecReservationBytes=0
+  assert.ok(analyseControlledReceiverQuality([first,last],'impaired').errors.includes('PLAYOUT_OWNED_VIDEO_EVIDENCE'))
+})
+
 test('the private decoder/player pair must have exactly one visible current stream with no raw audible path or stale players', () => {
   const element = controlled => ({ controlled, display: controlled ? 'block' : 'none', paused: false, muted: true,
     videoWidth: 1280, videoHeight: 720, hasAttribute: () => controlled,

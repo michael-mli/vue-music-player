@@ -1,9 +1,10 @@
 // Owned browser experiment only. The app's source/gain/deadline worklet remain
 // the sole audible path. Delay is inserted before that existing output guard.
-export function installControlledReceiver(Clock, FrameQueue, delayMs = 800, createPcm = null, verifyEpoch = null,createVideo=null) {
+export function installControlledReceiver(Clock, FrameQueue, delayMs = 800, createPcm = null, verifyEpoch = null,createVideo=null,codecBytes=0) {
   if (!Number.isInteger(delayMs) || delayMs < 200 || delayMs > 1000) throw new Error('PLAYOUT_DELAY')
   const ownedPcm=typeof createPcm==='function'
   const ownedVideo=typeof createVideo==='function'
+  if(![0,524288].includes(codecBytes)||codecBytes&&(!ownedPcm||!ownedVideo))throw new Error('PLAYOUT_CODEC_BOUND')
   if(ownedVideo&&!ownedPcm)throw new Error('PLAYOUT_VIDEO_CONFIG')
   if(ownedPcm&&(delayMs>800||typeof verifyEpoch!=='function'))throw new Error('PLAYOUT_PCM_CONFIG')
   const Context = window.AudioContext, nativeSource = Context.prototype.createMediaStreamSource
@@ -41,7 +42,11 @@ export function installControlledReceiver(Clock, FrameQueue, delayMs = 800, crea
     // strictly admit I420/NV12 at <= 1.5 bytes/pixel, including two transfers,
     // writer and generator. 42.5 MiB + 4 RGBA + 4 YUV + 2 MiB PCM/encoded
     // is 63.83 MiB; 32 queued + eight reserved frames remains <= 40.
-    const queue = new FrameQueue(ownedVideo?32:34, (ownedVideo?42.5:ownedPcm?41:42) * 1024 * 1024), videoClock = new Clock(90000), audioClock = new Clock(48000)
+    // Reserve a new codec's fixed working memory inside the existing 64-MiB
+    // total. At 512 KiB, the video byte reservation becomes 42 MiB: at most
+    // 31 largest nominal frames fit, while the count limit remains 32.
+    const queueReservationBytes=(ownedVideo?(codecBytes?42:42.5):ownedPcm?41:42)*1024*1024
+    const queue = new FrameQueue(ownedVideo?32:34, queueReservationBytes), videoClock = new Clock(90000), audioClock = new Clock(48000)
     let epochOffset=null
     function pcmClock(){const data=state.pcm.snapshot(),decoder=data.decoder;return {status:data.closed?'lost':decoder?.decoded>=2?'ready':'waiting',
       anchors:decoder?.decoded||0,ageMs:decoder?Date.now()-decoder.lastCaptureUnixMs:null,maximumResidualMs:decoder?.maximumResidualMs||0}}
@@ -51,7 +56,7 @@ export function installControlledReceiver(Clock, FrameQueue, delayMs = 800, crea
     const videoArrival={count:0,totalMs:0,maximumMs:0,afterHold:0}
     const videoRelease={count:0,totalLateMs:0,maximumLateMs:0,over150:0,over250:0}
     const item = { original, state, snapshot() { return { session, ready, closed, closedAtUnixMs, error,
-      delayMs, audioDelayMs: ownedPcm?delayMs:state.delay.delayTime.value * 1000,
+      delayMs, audioDelayMs: ownedPcm?delayMs:state.delay.delayTime.value * 1000,codecReservationBytes:codecBytes,queueReservationBytes,
       ...(ownedPcm?{pcm:state.pcm.snapshot(),epochOffset}:{}),
       ...(ownedVideo?{ownedVideo:video.snapshot()}:{}),
       drawn, presented, missing, decodedAudio, maximumBytes, maximumQueued,presentationBackpressure,waitingReadFrame:waitingReadFrame?1:0,
@@ -270,6 +275,9 @@ export function analyseControlledReceiverQuality(samples, phase) {
       ![8,20].includes(item.ownedVideo.decoder.heldLimit)||!Number.isSafeInteger(item.ownedVideo.decoder.maximumHeld)||
       item.ownedVideo.decoder.maximumHeld<0||item.ownedVideo.decoder.maximumHeld>item.ownedVideo.decoder.heldLimit||
       item.ownedVideo.decoder.maximumBytes>512*1024||item.maximumQueued>32||item.maximumBytes>42.5*1024*1024||
+      ![0,524288].includes(item.codecReservationBytes??0)||
+      item.pcm?.decoder?.decoderBackend==='libopus'&&(item.codecReservationBytes!==524288||
+        item.queueReservationBytes!==42*1024*1024||item.maximumBytes>42*1024*1024||item.pcm.decoder.codecBytes>524288)||
       item.ownedVideo.decoder.worker!==decoderFirst?.worker))errors.push('PLAYOUT_OWNED_VIDEO_EVIDENCE')
     const decoderDuration=decoderLast?.observedAt-decoderFirst?.observedAt
     decodedFps=decoderDuration>0?(decoderLast.decoded-decoderFirst.decoded)/decoderDuration*1000:null

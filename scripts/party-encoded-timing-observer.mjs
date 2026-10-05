@@ -95,8 +95,17 @@ export function installEncodedTimingProbe(workerSource,receiverApi='native') {
     worker.addEventListener('message', ({ data }) => {
       if(direction==='receive'&&data?.type==='pcm-port-state') {
         const row={worker:id,closed:data.closed===true,configured:data.configured===true,observedAt:performance.now()}
-        for(const key of ['decoded','gaps','duplicates','chunks','encodedBytes','pcmBytes','maximumChunks','maximumBytes','recovered','reordered','heldPackets','maximumHeld','pressureDrains','backpressureEvents','batchPackets','groupedChunks','maximumGroupPackets','pendingGroupPackets'])
+        for(const key of ['decoded','gaps','duplicates','chunks','encodedBytes','pcmBytes','maximumChunks','maximumBytes','recovered','reordered','heldPackets','maximumHeld','pressureDrains','backpressureEvents','batchPackets','groupedChunks','maximumGroupPackets','pendingGroupPackets','concealedPackets','concealedSamples','codecBytes'])
           if(Number.isSafeInteger(data[key])&&data[key]>=0)row[key]=data[key]
+        if(['webcodecs','libopus'].includes(data.decoderBackend))row.decoderBackend=data.decoderBackend
+        for(const key of ['codecInitMs','codecTotalDecodeMs','codecMaximumDecodeMs'])if(Number.isFinite(data[key])&&data[key]>=0)row[key]=data[key]
+        if(data.decoderBackend!==undefined&&(!row.decoderBackend||![0,524288].includes(row.codecBytes)||
+          row.decoderBackend==='webcodecs'&&(row.codecBytes!==0||row.concealedPackets!==0||row.concealedSamples!==0)||
+          row.decoderBackend==='libopus'&&row.configured&&!row.closed&&row.codecBytes!==524288||
+          !Number.isSafeInteger(row.concealedPackets)||!Number.isSafeInteger(row.concealedSamples)||
+          row.concealedPackets>row.decoded||row.concealedSamples>row.gaps||row.concealedSamples>row.concealedPackets*960)){
+          row.concealmentError='PCM_PLC_DIAGNOSTIC';errors++;failures.pipe++
+        }
         if(data.batchPackets!==undefined&&(![1,2].includes(row.batchPackets)||
           !Number.isSafeInteger(row.decoded)||!Number.isSafeInteger(row.groupedChunks)||
           !Number.isSafeInteger(row.maximumGroupPackets)||!Number.isSafeInteger(row.pendingGroupPackets)||

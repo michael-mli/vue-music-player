@@ -1,8 +1,9 @@
 // Private receiver adapter. The only audible connection is into the caller's
 // existing gain/lease graph on its default-rate context. No permit is created.
-export function createOwnedPcmReceiver(Queue,worklet,context,track,nativeSource,delayMs,{deviceClock=false,batchPackets=1}={}) {
+export function createOwnedPcmReceiver(Queue,worklet,context,track,nativeSource,delayMs,{deviceClock=false,batchPackets=1,plc=false}={}) {
   if(typeof deviceClock!=='boolean')throw new Error('PLAYOUT_PCM_CLOCK_CONFIG')
   if(![1,2].includes(batchPackets))throw new Error('PLAYOUT_PCM_BATCH_CONFIG')
+  if(typeof plc!=='boolean')throw new Error('PLAYOUT_PCM_PLC_CONFIG')
   const worker=window.__encodedTimingProbe?.receiverWorker(track)
   const workerId=window.__encodedTimingProbe?.workerId(worker)
   if(!worker||!Number.isSafeInteger(workerId)||delayMs<200||delayMs>800)throw new Error('PLAYOUT_PCM_RECEIVER')
@@ -65,7 +66,7 @@ export function createOwnedPcmReceiver(Queue,worklet,context,track,nativeSource,
       pcmNode.port.postMessage({type:'bind',port:channel.port1},[channel.port1])
       anchor={wall:Date.now(),frame:Math.round(pcmContext.currentTime*48000)}
       worker.postMessage({type:'pcm-bind',configuration:{port:channel.port2,renderFrame:anchor.frame,
-        wallUnixMs:anchor.wall,delayMs,batchPackets,expiryUnixMs:Date.now()+9000}},[channel.port2])
+        wallUnixMs:anchor.wall,delayMs,batchPackets,plc,expiryUnixMs:Date.now()+9000}},[channel.port2])
       ready=true;node.gain.value=1
       timer=setInterval(()=>{
         if(closed)return

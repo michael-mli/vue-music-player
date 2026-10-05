@@ -5891,3 +5891,104 @@ prevents causal numerical comparisons. Earlier requests alone do not establish
 reliable dependency recovery; loss concealment, clock stability, sustained /
 outage / handover, product integration and physical/mobile/capacity/release
 requirements remain open. Public online media remains disabled.
+
+### Fixed-memory codec loss concealment — 2026-10-04
+
+Added an optional private libopus backend and explicit `plc` selection through
+worker port and owned PCM adapter. Defaults retain native WebCodecs. The pinned
+Opus 1.6.1 source SHA256 is
+`6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1`;
+the Emscripten 4.0.23 image is pinned by digest
+`sha256:86537645c51e44899812d29820ee3b64b96c321ebb2aba4416a04ceeb1bcde62`.
+The successful owner-only build directory is
+`/tmp/ktv-opus-plc-bounded-artifact-v3-20261004`; WASM hash
+`4ec4e6f62ecc0ea6ae976b90e43bedbe0b75e44adc4765ed14c28a5fb6805b02`,
+139,352 binary bytes, fixed **524,288 codec bytes**. No memory growth, native
+API replacement, audible connection or media permission exists in the decoder.
+The codec imports only inert WASI descriptor stubs; malformed input shuts it down.
+Optional neural PLC/DRED/OSCE are disabled; standard Opus PLC remains active.
+The build retains `COPYING.opus` and hashes its wrapper/artifact in `build.json`.
+Initial build attempts failed on container ownership; the successful build runs
+with the caller's UID/GID and an isolated compiler cache.
+
+Real original/RED repair runs before concealment. Committed missing samples are
+concealed by the codec in at most 960-frame chunks at the existing capture/RTP
+schedule. Each output uses the same 48-credit / 1-MiB payload budget and group
+transfer policy. Credit exhaustion retains the original input and resumes on
+actual consumption; there is no ninth reorder entry, new output authority,
+clock relaxation or byte-cap increase. The fixed codec memory is accounted
+separately from PCM payloads and the encoded 512-KiB budget. Borrowed WASM
+scratch is usable only inside the synchronous callback; close wipes it and drops
+instance references. Closure cannot revive decoding or leave usable borrowed
+output buffers. Browser artifact injection occurs only with the explicit
+`KTV_ROOM_TEST_PCM_PLC_BUILD` selection and validates pinned source/compiler,
+wrapper and WASM hashes before exposing the private factory.
+
+Evidence:
+
+- **214/214 A/V fixtures** pass in
+  `/tmp/ktv-opus-plc-all-fixtures-20261004.log`: timeline/grouping across RTP wrap,
+  original/RED repair priority, credit backpressure/resume, invalid sub-frame gaps,
+  unsupported capability, guarded graph/port selection and scalar privacy/bounds.
+- **5/5 actual-codec tests** pass in
+  `/tmp/ktv-opus-plc-actual-codec-fixtures-20261004.log`, using real ffmpeg Opus
+  packets: full stereo decode, finite/non-silent codec-generated loss output,
+  next-original recovery, fixed memory through long concealment, malformed/loss
+  shutdown and borrowed-output lifetime. These test the codec, not room authority.
+- Native clean production-VP8/original-SFU / group2 / 800-ms / 40-pair
+  qualification runs in
+  `/tmp/ktv-owned-av-opus-plc-clean40-production-vp8-20261004.log`; immutable
+  owner-only parameters are `/tmp/ktv-owned-opus-plc-clean40-800-20261004.env`.
+  Native expiry and impaired qualification follow only after clean acceptance.
+
+Reproduce the separate codec build/test:
+
+```sh
+node scripts/party-opus-plc-build.mjs /absolute/new/private-build-directory
+KTV_OPUS_PLC_BUILD=/absolute/new/private-build-directory npm run test:party:opus-plc
+```
+
+Native/product/physical listening and all original streaming/release gates remain
+open; codec tests do not qualify impaired room A/V or authorize public enablement.
+
+The first native PLC run is terminal **exit 1** before initial presentation:
+`PLAYOUT_PCM_OUTPUT_AGE` rejects a **262.5-ms** old sample, exceeding the unchanged
+200-ms maximum; after the existing bounded recheck it closes. At closure the
+codec had decoded 127–128 real packets, no input gaps/concealment, 45–46 maximum
+credits and 691,200–706,560 reserved payload bytes. This is an initial
+clock/receiver failure, not clean or impaired acceptance. No clock bound changes.
+
+Explicit codec accounting now reduces the owned-video queue to **42 MiB**
+(at most 31 largest nominal frames within its existing 32-entry count cap).
+512-KiB fixed codec memory plus all other existing reservations remain below
+**64 MiB / 40 frames**; no total or individual payload cap increases. Both native
+phase readback and quality analysis enforce this selection. Scalar codec
+initialisation/total/worst decode costs are added to distinguish codec work from
+output-clock failures without retaining sample data or per-packet timelines.
+**215/215 A/V fixtures** and **5/5 actual-codec tests** pass in
+`/tmp/ktv-opus-plc-accounted-fixtures-20261004.log` and
+`/tmp/ktv-opus-plc-accounted-codec-fixtures-20261004.log`.
+The current native clean comparison, with the corrected aggregate reservation
+and cost diagnostics, runs in
+`/tmp/ktv-owned-av-opus-plc-accounted-clock-clean40-production-vp8-20261004.log`.
+All timing/expiry criteria and source quality stay unchanged.
+
+The corrected-accounting native clean run is terminal **exit 0, 50/50**:
+`/tmp/ktv-owned-av-opus-plc-accounted-clock-clean40-production-vp8-20261004.log`.
+It matches **40 pairs with no unmatched edges**, p95 **67.38 ms** / maximum
+**73.11 ms**. Source/native/owned decode/presentation are
+**24.99 / 24.98 / 24.99 / 24.67 fps**, all nominal. All 76 samples verify the
+libopus backend, fixed **524,288 codec bytes** and **44,040,192 presentation
+reservation bytes**. Codec initialisation is **0.70 ms**, total decode work
+**624.20 ms** and largest decode call **7.80 ms**; no source loss occurs in this
+clean run, so actual impaired concealment remains to be qualified. PCM reaches
+36 credits and 552,960 maximum reserved payload bytes. This establishes clean
+qualification for this comparison without explaining the preceding initial
+clock failure or establishing startup/sustained reliability.
+
+The independent both-context buffered expiry journey now runs with this backend
+in `/tmp/ktv-owned-av-opus-plc-both-context-expiry-20261004.log`, selecting
+`KTV_ROOM_TEST_AV_TIMING=0` and
+`KTV_ROOM_TEST_RECEIVER_FAULT=suspend-task-stall` over the same immutable clean
+profile. It must retain all existing buffered-residence, silence/deadline and
+replacement separation proofs before the full impaired comparison.

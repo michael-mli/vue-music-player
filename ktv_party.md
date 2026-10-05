@@ -1082,7 +1082,8 @@ Private streaming PCM primitives now enforce 48 chunks / 1 MiB of outstanding
 PCM and 512 KiB of encoded packets, with renderer consumption returning credits.
 An AudioWorklet schedules exact 48-kHz sample positions; missing packets produce
 silence, while clock discontinuities or malformed/overflowing input close the
-stream. Recovery and concealment remain unimplemented. Native synthetic Opus
+stream. This default initially had no recovery/concealment; the later private
+RED repair and optional codec PLC implementation are described below. Native synthetic Opus
 decode/render passes page-task-stall expiry behind the existing lease guard.
 Suspension/resume fails: an independently detected brief audible burst follows
 resume after expiry, despite the guard clearing its output. Every output edge
@@ -1475,6 +1476,37 @@ it does not discard the retained repair candidate or admit unsafe deltas.
 Existing 1,000–5,000-ms request cooldown, recent-key suppression, one pending
 request and expiry closure still apply. Scalar wait/early-request counters
 provide evidence; native qualification remains required.
+
+An explicit private libopus 1.6.1 backend adds codec-level packet loss
+concealment to the owned PCM path. The build pins the official source SHA256
+and Emscripten image digest; retained artifacts include the Opus license.
+Its WebAssembly memory is fixed at **512 KiB**, including decoder state,
+128-KiB stack and bounded input/output scratch, and cannot grow. This is a
+separate codec working-memory reservation; the **1-MiB PCM payload**, 512-KiB
+encoded input, 48 credits and eight reorder entries retain their original caps.
+The controlled receiver reduces its video queue byte reservation from 42.5 to
+**42 MiB** for this backend, fitting 31 largest nominal frames within the existing
+32-entry limit. Codec, PCM/encoded, four native outputs and remaining owned
+video reservations together still stay below **64 MiB / 40 frames**. Every A/V
+sample verifies the actual codec and queue reservation; quality analysis rejects
+missing or larger reservations.
+The backend supports full-band 48-kHz stereo; optional neural PLC/DRED/OSCE
+are disabled in this comparison. No native RTC or global WebCodecs API changes.
+
+Original and RED repairs get the existing 80-ms wait first. After an unrepaired
+gap is committed, the codec produces its own concealment for exactly the missing
+sample duration in chunks of at most 960 frames. These samples retain the RTP /
+first-capture-anchor schedule, participate in the same payload reservations and
+two-packet transfers, and enter the existing final guarded graph. Exhausted
+credits retain the original packet and resume only on actual consumption;
+clock discontinuity, overflow, malformed input, stop and expiry remain terminal.
+Concealment requires decoded history and a received advancing packet: it never
+starts a new performance or independently extends permission. Default decoding
+still uses WebCodecs and leaves unrepaired gaps silent. Private backend, reserved
+bytes and concealment counters are scalar-only diagnostics. Native clean,
+buffered-expiry, impaired, physical and product integration acceptance are
+required before selecting the new backend for release. The mechanism follows
+[the Opus decoder loss API](https://opus-codec.org/docs/html_api/group__opusdecoder.html).
 
 Continuously impaired timing and nominal frame rate still fail. Native decoded
 video can arrive too late, while the owned decoder still needs reliable packet
