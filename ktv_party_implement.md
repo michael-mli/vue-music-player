@@ -49,7 +49,7 @@ is a preview; public online media is still disabled.
 
 | Check | Current evidence | Status |
 | --- | --- | --- |
-| Timing/capability fixtures | 190/190 | Pass |
+| Timing/capability fixtures | 192/192 | Pass |
 | Buffered expiry after both render contexts freeze/resume | 51/51, latest PCM admission and first-arrival deadline | Pass for digital fixture |
 | Buffered expiry while source and listener pages stall | 46/46, latest reader/revalidation | Pass for digital fixture |
 | Latest clean 40-pair A/V regression | Times out after PCM reaches 48 credits; earlier 50/50 pass is historical | Fail |
@@ -5570,3 +5570,47 @@ are terminal. Public preview remains `acb583b`, media disabled; no private codec
 SFU or controlled-output experiment is deployed. The active implementation work
 continues with the secondary PCM render clock, then impaired recovery, product
 integration and the remaining physical/mobile/capacity/release gates.
+
+
+### Private PCM hardware-clock comparison — 2026-10-04
+
+Testing `KTV_ROOM_TEST_PCM_DEVICE_CLOCK=1` against the measured secondary-context
+wall lag. The comparison connects a constant source with **exact offset zero**
+to the secondary 48-kHz context's hardware destination before resume. The PCM
+worklet has no connection to this destination or constant source; its captured
+stream still enters the caller's original default-rate gain/deadline graph.
+This tests device-clock scheduling without creating a performance-audio bypass.
+It does not grant output permission, change the target, increase any buffer cap,
+or alter clock/expiry/acceptance thresholds. Default behavior remains unchanged.
+
+Clock-source startup failures and close during asynchronous module loading stop
+and disconnect the private driver, keep output muted and cannot bind PCM late.
+Graph tests verify that only the constant zero source reaches the secondary
+hardware destination, original tracks/context remain intact, and cleanup is
+idempotent. **192/192** fixtures pass in
+`/tmp/ktv-pcm-device-clock-fixtures-20261004.log`.
+The production-VP8/original-SFU 40-pair comparison is running in
+`/tmp/ktv-owned-av-pcm-device-clock-clean40-production-vp8-20261004.log`.
+Clock stability, full clean accounting and impaired acceptance remain unproved.
+
+
+### Silent hardware sink does not resolve PCM saturation — 2026-10-04
+
+`/tmp/ktv-owned-av-pcm-device-clock-clean40-production-vp8-20261004.log`
+exits 1 at the original clean 40-pair timeout. Actual driver readback is enabled
+and running, but PCM context lag is already about **137–148 ms** at baseline,
+queued residence about **913–921 ms**, and PCM closes `PCM_BOUND` after roughly
+41 seconds. Maximum credits / held packets remain **48 / eight**, with 32
+backpressure events and capture offset below 15 ms. The controller closes
+`PLAYOUT_AUDIO_CLOCK`; a running zero sink does not establish a stable enough
+schedule. Source/native video remains nominal (**25.00 / 24.99 fps**) before
+closure. The experiment stays optional/private, never the default. This failed
+result is retained; it provides no expiry or release qualification for the driver.
+
+The next comparison uses the already supported **500-ms** target with the
+original production VP8 build, original SFU and default secondary clock (no
+hardware driver). It tests lower latency and credit headroom without increasing
+retention, changing source quality or relaxing any timing/cadence/clock/expiry
+gate. A lower hold alone cannot establish sustained clock recovery or impaired
+acceptance; those remain required. The clean 40-pair journey is running in
+`/tmp/ktv-owned-av-pcm-target500-clock-clean40-production-vp8-20261004.log`.

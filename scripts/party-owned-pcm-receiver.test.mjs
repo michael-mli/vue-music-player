@@ -4,14 +4,18 @@ import vm from 'node:vm'
 import {setImmediate as tick} from 'node:timers/promises'
 import {createOwnedPcmReceiver} from './party-owned-pcm-receiver.mjs'
 
-async function fixture({pendingModule=false}={}){
+async function fixture({pendingModule=false,deviceClock=false,driverFailure=false}={}){
   let now=1000,interval,finishModule,renderer
-  const nodes=[],contexts=[],messages=[],captured={stops:0,stop(){this.stops++}},original={stops:0,stop(){this.stops++}}
+  const nodes=[],contexts=[],messages=[],drivers=[],captured={stops:0,stop(){this.stops++}},original={stops:0,stop(){this.stops++}}
   class Node{constructor(){this.connections=[];this.gain={value:0};this.port={postMessage:data=>messages.push(data)}}
     connect(node){this.connections.push(node);return node}disconnect(){this.connections=[]}}
   class Context{constructor(){this.currentTime=.2;this.sampleRate=48000;this.closes=0;contexts.push(this)
+    this.destination=new Node()
     this.audioWorklet={addModule:()=>pendingModule?new Promise(resolve=>{finishModule=resolve}):Promise.resolve()}}
     async resume(){} async close(){this.closes++}
+    createConstantSource(){const node=new Node();node.offset={value:1};node.starts=0;node.stops=0
+      node.start=()=>{if(driverFailure)throw new Error('private-device-detail');node.starts++}
+      node.stop=()=>{node.stops++};drivers.push(node);return node}
     createMediaStreamDestination(){const node=new Node();node.stream={getTracks:()=>[captured]};return node}}
   const output={currentTime:1,sampleRate:44100,closes:0,createGain(){const node=new Node();nodes.push(node);return node},
     getOutputTimestamp(){return {contextTime:.95,performanceTime:now-10}}}
@@ -22,9 +26,9 @@ async function fixture({pendingModule=false}={}){
     URL:{createObjectURL:()=> 'blob:owned',revokeObjectURL(){}},setInterval:callback=>{interval=callback;return 1},clearInterval:()=>{interval=null},
     window:{__encodedTimingProbe:{receiverWorker:track=>track===original?worker:null,workerId:()=>7,pcmStates:states}}}
   const factory=vm.runInNewContext(`(${createOwnedPcmReceiver.toString()})`,realm)
-  const receiver=factory(class{},()=>{},output,original,function(){const node=new Node();nodes.push(node);return node},200)
+  const receiver=factory(class{},()=>{},output,original,function(){const node=new Node();nodes.push(node);return node},200,{deviceClock})
   await tick()
-  return {receiver,contexts,output,original,captured,nodes,messages,states,advance(value){now=value;states[0].observedAt=value;states[0].lastCaptureUnixMs=value},
+  return {receiver,contexts,drivers,renderer,output,original,captured,nodes,messages,states,advance(value){now=value;states[0].observedAt=value;states[0].lastCaptureUnixMs=value},
     renew(){interval?.()},moduleReady(){finishModule?.()},queueState(data){renderer.port.onmessage({data:{type:'queue-state',renderFrame:0,...data}})}}
 }
 test('owned PCM connects through a captured stream into the caller graph and closes only its resources',async()=>{
@@ -35,6 +39,32 @@ test('owned PCM connects through a captured stream into the caller graph and clo
   f.receiver.close();f.receiver.close()
   assert.equal(f.receiver.node.gain.value,0);assert.equal(f.captured.stops,1);assert.equal(f.original.stops,0)
   assert.equal(f.contexts[0].closes,1);assert.equal(f.output.closes,0)
+})
+test('private device clock connects only constant zero to hardware while PCM keeps its sole guarded route',async()=>{
+  const f=await fixture({deviceClock:true}),driver=f.drivers[0]
+  assert.equal(driver.offset.value,0);assert.equal(driver.starts,1)
+  assert.equal(driver.connections.length,1);assert.equal(driver.connections[0],f.contexts[0].destination)
+  assert.equal(f.renderer.connections.length,1)
+  assert.notEqual(f.renderer.connections[0],f.contexts[0].destination)
+  assert.notEqual(f.renderer.connections[0],driver)
+  assert.equal(f.renderer.connections[0].stream.getTracks()[0],f.captured)
+  assert.equal(f.receiver.snapshot().deviceClock.running,true)
+  f.receiver.close();f.receiver.close()
+  assert.equal(driver.stops,1);assert.equal(driver.connections.length,0)
+  assert.equal(f.receiver.snapshot().deviceClock.running,false)
+  assert.equal(f.original.stops,0);assert.equal(f.output.closes,0)
+})
+test('private device clock startup failure and close during module load cannot create PCM output',async()=>{
+  const failed=await fixture({deviceClock:true,driverFailure:true})
+  assert.equal(failed.receiver.snapshot().error,'PLAYOUT_PCM_CREATE')
+  assert.equal(failed.drivers[0].connections.length,0)
+  assert.equal(failed.messages.filter(row=>row.type==='pcm-bind').length,0)
+  assert.equal(failed.receiver.node.gain.value,0)
+  const pending=await fixture({deviceClock:true,pendingModule:true})
+  pending.receiver.close();pending.moduleReady();await tick()
+  assert.equal(pending.drivers[0].stops,1)
+  assert.equal(pending.receiver.snapshot().closed,true)
+  assert.equal(pending.messages.filter(row=>row.type==='pcm-bind').length,0)
 })
 test('capture cursor uses output position and accepts the established 20-ms forward timestamp tolerance',async()=>{
   const f=await fixture();assert.ok(Math.abs(f.receiver.captureCursor()-750)<.00001)

@@ -1,11 +1,12 @@
 // Private receiver adapter. The only audible connection is into the caller's
 // existing gain/lease graph on its default-rate context. No permit is created.
-export function createOwnedPcmReceiver(Queue,worklet,context,track,nativeSource,delayMs) {
+export function createOwnedPcmReceiver(Queue,worklet,context,track,nativeSource,delayMs,{deviceClock=false}={}) {
+  if(typeof deviceClock!=='boolean')throw new Error('PLAYOUT_PCM_CLOCK_CONFIG')
   const worker=window.__encodedTimingProbe?.receiverWorker(track)
   const workerId=window.__encodedTimingProbe?.workerId(worker)
   if(!worker||!Number.isSafeInteger(workerId)||delayMs<200||delayMs>800)throw new Error('PLAYOUT_PCM_RECEIVER')
   const node=context.createGain();node.gain.value=0
-  let pcmContext,pcmNode,capture,input,url,timer,closed=false,ready=false,error=null,anchor
+  let pcmContext,pcmNode,capture,input,url,timer,closed=false,ready=false,error=null,anchor,clockDriver,clockDriverRunning=false
   let lastCursor=-Infinity
   let clock=null
   let queue=null
@@ -16,6 +17,7 @@ export function createOwnedPcmReceiver(Queue,worklet,context,track,nativeSource,
     if(closed)return
     closed=true;ready=false;queue=null;clearInterval(timer);node.gain.value=0;node.disconnect()
     worker.postMessage({type:'pcm-stop'});pcmNode?.port.postMessage({type:'stop'});pcmNode?.disconnect();input?.disconnect()
+    try{clockDriver?.stop()}catch{}clockDriver?.disconnect();clockDriverRunning=false
     capture?.stream.getTracks().forEach(value=>value.stop());if(url)URL.revokeObjectURL(url);void pcmContext?.close()
   }
   function fail(code){error=code;close()}
@@ -30,7 +32,15 @@ export function createOwnedPcmReceiver(Queue,worklet,context,track,nativeSource,
   }
   void(async()=>{
     try{
-      pcmContext=new AudioContext({sampleRate:48000});await pcmContext.resume()
+      pcmContext=new AudioContext({sampleRate:48000})
+      if(deviceClock){
+        // Only constant zero reaches this hardware sink. Performance PCM has
+        // no connection to it and still traverses the caller's final guard.
+        clockDriver=pcmContext.createConstantSource();clockDriver.offset.value=0
+        if(clockDriver.offset.value!==0)throw new Error('PLAYOUT_PCM_CLOCK_CONFIG')
+        clockDriver.connect(pcmContext.destination);clockDriver.start();clockDriverRunning=true
+      }
+      await pcmContext.resume()
       if(closed){await pcmContext.close();return}
       url=URL.createObjectURL(new Blob([`(${worklet.toString()})(${Queue.toString()});`],{type:'text/javascript'}))
       await pcmContext.audioWorklet.addModule(url)
@@ -68,6 +78,7 @@ export function createOwnedPcmReceiver(Queue,worklet,context,track,nativeSource,
   })()
   return {node,close,snapshot(){const state=row();return {ready,closed,error,delayMs,
     pcmRate:pcmContext?.sampleRate||null,outputRate:context.sampleRate,decoder:state||null,clock,queue,validatingOutput:badOutputSince!==null,
+    deviceClock:{enabled:deviceClock,running:clockDriverRunning},
     renderClock:anchor?{wallUnixMs:Date.now(),now:performance.now(),anchorWallUnixMs:anchor.wall,anchorFrame:anchor.frame,
       contextFrame:Math.round(pcmContext.currentTime*48000),reportedFrame:queue?.renderFrame??null,reportedAt:queue?.observedAt??null}:null}},
     captureCursor(){
