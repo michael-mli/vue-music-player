@@ -1385,6 +1385,16 @@ uses phase history at the audible position. Renderer telemetry counts future
 queued samples and excludes silence gaps, so expiry tests measure the owned
 buffer directly. Clock failures and deadlines permanently close owned resources.
 
+Private renderer traces also measure the actual worklet quantum, the secondary
+48-kHz context frame and its wall anchor. The secondary context can lose wall
+progress while capture phase remains within its bound, increasing queued
+residence and exhausting the existing 48-credit limit. An optional constant-zero
+hardware sink comparison leaves performance PCM on the final guarded path but
+does not resolve this saturation; it is not the default. A 500-ms target passes
+a fresh clean 40-pair journey within the existing limits, while sustained clock
+recovery and impaired timing remain required. No retained-sample limit is raised
+to conceal the clock problem.
+
 The next private layout copies received VP8 into a continuous owned decoder and
 releases its frames against the same audible PCM capture position. It retains
 at most four pending decode/ready outputs, two transferred frames and a 32-frame /
@@ -1413,6 +1423,13 @@ VP9 dependency mode uses native reference declarations to bypass unnecessary
 RTP-gap waits, keeps required references within a fixed 700-ms bound, discards
 inputs whose required references never arrive, and requests bounded recovery
 only for such misses. Incomplete declarations close this mode permanently.
+
+The private nominal VP9 `L1T1` comparison can select its existing 700-ms input
+reorder bound independently of a 500-ms PCM/output target. This isolates late
+reference repair from output residence: native readback must retain the declared
+policy, all input/output reservations remain unchanged, and late presentation
+still must pass the original skew, pairing, capture-age and frame-rate gates.
+It is an unaccepted comparison, not an output-lateness allowance.
 
 A marked private audio comparison can disable RED while keeping the primary
 Opus 64-kbps target, DTX policy and nominal video settings. Both sent and received

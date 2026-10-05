@@ -52,7 +52,7 @@ is a preview; public online media is still disabled.
 | Timing/capability fixtures | 192/192 | Pass |
 | Buffered expiry after both render contexts freeze/resume | 51/51, latest PCM admission and first-arrival deadline | Pass for digital fixture |
 | Buffered expiry while source and listener pages stall | 46/46, latest reader/revalidation | Pass for digital fixture |
-| Latest clean 40-pair A/V regression | Times out after PCM reaches 48 credits; earlier 50/50 pass is historical | Fail |
+| Latest clean 40-pair A/V regression | 500-ms target: 50/50, p95 75.58 ms / max 92.95 ms, no unmatched edges | Pass for digital fixture |
 | Continuous impaired-network A/V and nominal frame rate | Private L1T1 reaches nominal native cadence; owned cadence and 40-pair timing still fail | Fail |
 | Product integration and physical/mobile/capacity acceptance | Required work remains | Open |
 
@@ -5614,3 +5614,45 @@ retention, changing source quality or relaxing any timing/cadence/clock/expiry
 gate. A lower hold alone cannot establish sustained clock recovery or impaired
 acceptance; those remain required. The clean 40-pair journey is running in
 `/tmp/ktv-owned-av-pcm-target500-clock-clean40-production-vp8-20261004.log`.
+
+
+### Lower target passes clean timing but exposes premature reference commitment — 2026-10-04
+
+`/tmp/ktv-owned-av-pcm-target500-clock-clean40-production-vp8-20261004.log`
+passes **50/50** production-VP8/original-SFU streaming checks. Forty matched pairs
+have zero unmatched edges, p95 / maximum skew **75.58 / 92.95 ms**. Source / native /
+owned decode / presentation rates are **25.00 / 24.98 / 24.99 / 24.80 fps**.
+PCM context still loses up to **222.67 ms** against its original wall anchor;
+lower residence keeps observed credits at most **37**, held packets zero and
+queued samples at most **711.77 ms**. This establishes a lower-latency clean
+operating point, not a sustained render-clock solution.
+
+`/tmp/ktv-owned-av-vp9-l1t1-target500-recovery2500-full-udp-20261004.log`
+exits 1 at the original impaired 40-pair timeout. Its six-pair baseline passes
+with maximum **52.52 ms** and zero unmatched edges. Impaired source / native
+rates are **24.95 / 20.62 fps**, while owned decode / presentation is only
+**1.41 / 1.42 fps**. The decoder's hold-derived reorder wait shrank from 700 to
+240 ms; it records **1,858 missing-reference rejections**, 242 late frames,
+34 fulfilled recovery requests and 40 decoded keyframes. All observed marker
+identities remain ordered. PCM stays alive within **27** maximum credits / six
+held packets, with 41,280 measured missing samples (0.86 seconds). Lower PCM
+residence has not closed video recovery or alignment.
+
+The next private comparison independently retains the existing **700-ms**
+decoder reorder bound at the **500-ms** output target. Explicit
+`KTV_ROOM_TEST_VIDEO_REORDER_MS=700` is permitted only for the nominal,
+marker-probed `L1T1`/floor/dependency profile; actual readback is required on every
+sample. Existing 20-held-packet / 512-KiB input, four pending outputs,
+32-frame/42.5-MiB presentation bounds and the 40-frame/64-MiB reservation remain
+intact. No missing reference is submitted; delayed output still must pass the
+original matching, skew, capture-to-presentation, clock and cadence gates.
+This separates input repair from output residence rather than changing either
+acceptance window. Longer recovery, expiry and physical acceptance remain open.
+
+
+**192/192** fixtures pass after independently selecting the existing decoder
+bound (`/tmp/ktv-independent-reorder-fixtures-20261004.log`). Full UDP comparison
+parameters are preserved in owner-only
+`/tmp/ktv-owned-l1t1-target500-reorder700-full-udp-20261004.env`.
+The unchanged full timing/quality/handover journey is running in
+`/tmp/ktv-owned-av-vp9-l1t1-target500-reorder700-full-udp-20261004.log`.
