@@ -1,9 +1,11 @@
 // Private streaming decoder. PCM ownership transfers to a bounded renderer;
 // this module never connects an output or grants permission to play it.
-export function createOpusPcmStream(primaryPayload, packetFrames, deliver, report = () => {}, {reorderMs=80,batchPackets=1,plc=false}={}) {
+export function createOpusPcmStream(primaryPayload, packetFrames, deliver, report = () => {}, {reorderMs=80,batchPackets=1,plc=false,creditScale=1}={}) {
   if(!Number.isInteger(reorderMs)||reorderMs<0||reorderMs>80)throw new Error('PCM_REORDER_CONFIG')
   if(![1,2].includes(batchPackets))throw new Error('PCM_BATCH_CONFIG')
   if(typeof plc!=='boolean')throw new Error('PCM_PLC_CONFIG')
+  if(![1,2].includes(creditScale))throw new Error('PCM_CREDIT_CONFIG')
+  const copyReservationBytes=creditScale===2?46080:0,pcmLimitBytes=1024*1024-copyReservationBytes
   const pending = [], expected = [], credits = new Map()
   const held=new Map()
   let decoder, configured = false, closed = false, sequence = 0
@@ -14,12 +16,12 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
   let recovered=0,closeReason=null,flushing=false,backpressureEvents=0
   let reorderTimer=null,reordered=0,maximumHeld=0,pressureDrains=0
   const batch=[]
-  let batchTimer=null,groupedChunks=0,maximumGroupPackets=0
+  let batchTimer=null,groupedChunks=0,maximumGroupPackets=0,groupCopyFallbacks=0
   const delta = (value, previous) => ((value-previous+0x80000000)>>>0)-0x80000000
   function snapshot() { const codec=plc?decoder?.snapshot():null;return { closed, configured, decoded, gaps, duplicates, chunks:credits.size,
     encodedBytes, pcmBytes, maximumChunks, maximumBytes,lastCaptureUnixMs,maximumResidualMs,recovered,
     scheduledCaptureUnixMs,captureOffsetMs,maximumOffsetMs,reordered,heldPackets:held.size,maximumHeld,pressureDrains,reason:closeReason,backpressureEvents,
-    batchPackets,groupedChunks,maximumGroupPackets,pendingGroupPackets:batch.length,
+    batchPackets,groupedChunks,maximumGroupPackets,groupCopyFallbacks,pendingGroupPackets:batch.length,creditScale,copyReservationBytes,pcmLimitBytes,
     decoderBackend:plc?'libopus':'webcodecs',concealedPackets,concealedSamples,codecBytes:codec?.codecBytes??0,
     ...(plc?{codecInitMs:codec?.initMs??null,codecTotalDecodeMs:codec?.totalDecodeMs??null,codecMaximumDecodeMs:codec?.maximumDecodeMs??null}:{}) } }
   function close(reason = null) {
@@ -37,11 +39,25 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
     if(entries.length>1){
       frames=entries.reduce((sum,item)=>sum+item.frames,0)
       const channels=Math.max(...entries.map(item=>item.planes.length))
-      bytes=frames*channels*4
-      if(frames>5760||pcmBytes+bytes>1024*1024)throw new Error('PCM_BOUND')
+      bytes=frames*channels*4*creditScale
+      if(frames>5760)throw new Error('PCM_BOUND')
+      if(pcmBytes+bytes>pcmLimitBytes){
+        // Grouping is optional. These original planes already have reservations;
+        // transfer them separately without allocating a combined copy or changing
+        // their sample/capture schedule. Actual renderer consumption returns each
+        // credit, exactly as for ordinary single-packet output.
+        groupCopyFallbacks++;maximumGroupPackets=Math.max(maximumGroupPackets,1)
+        for(const item of entries){
+          if(closed)return
+          credits.set(item.id,{bytes:item.bytes,delivered:true})
+          deliver({id:item.id,rtpTimestamp:item.rtpTimestamp,captureUnixMs:item.captureUnixMs,
+            observedCaptureUnixMs:item.observedCaptureUnixMs,frames:item.frames,planes:item.planes,creditBytes:item.bytes})
+        }
+        return
+      }
       // Reserve the temporary combined copy before allocation. Release every
       // original plane reference before removing its reservation or transferring.
-      pcmBytes+=bytes;maximumBytes=Math.max(maximumBytes,pcmBytes)
+      pcmBytes+=bytes;maximumBytes=Math.max(maximumBytes,pcmBytes+copyReservationBytes)
       planes=Array.from({length:channels},()=>new Float32Array(frames))
       let offset=0
       for(const item of entries){
@@ -54,7 +70,7 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
     maximumGroupPackets=Math.max(maximumGroupPackets,entries.length)
     credits.set(last.id,{bytes,delivered:true})
     deliver({id:last.id,rtpTimestamp:first.rtpTimestamp,captureUnixMs:first.captureUnixMs,
-      observedCaptureUnixMs:first.observedCaptureUnixMs,frames,planes})
+      observedCaptureUnixMs:first.observedCaptureUnixMs,frames,planes,creditBytes:bytes})
   }
   function queueOutput(packet,planes,bytes){
     const previous=batch.at(-1)
@@ -83,7 +99,7 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
         if (plane.some(value=>!Number.isFinite(value))) throw new Error('PCM_OUTPUT')
         return plane
       })
-      const bytes = planes.reduce((sum,plane)=>sum+plane.byteLength,0)
+      const bytes = planes.reduce((sum,plane)=>sum+plane.byteLength,0)*creditScale
       pcmBytes -= packet.reservedBytes-bytes
       // Held group members cannot be consumed before their combined transfer.
       credits.set(packet.id,{bytes,delivered:false})
@@ -103,14 +119,14 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
     let gap=delta(rtp,lastEnd)
     if(gap<0||gap>240000||gap%120)throw new Error('PCM_CLOCK')
     while(gap>0&&!closed){
-      const frames=Math.min(gap,960),reservedBytes=frames*8
-      if(credits.size>=48||pcmBytes+reservedBytes>1024*1024){backpressureEvents++;return false}
+      const frames=Math.min(gap,960),reservedBytes=frames*8*creditScale
+      if(credits.size>=48||pcmBytes+reservedBytes>pcmLimitBytes){backpressureEvents++;return false}
       const captureUnixMs=anchor.capture+delta(lastEnd,anchor.rtp)/48
       const packet={id:++sequence,rtpTimestamp:lastEnd,frames,reservedBytes,captureUnixMs,
         observedCaptureUnixMs:capture-gap/48,timestamp:Math.round((captureUnixMs-performance.timeOrigin)*1000),
         data:new Uint8Array(),loss:true}
       credits.set(packet.id,{bytes:reservedBytes,delivered:false});pcmBytes+=reservedBytes
-      maximumChunks=Math.max(maximumChunks,credits.size);maximumBytes=Math.max(maximumBytes,pcmBytes)
+      maximumChunks=Math.max(maximumChunks,credits.size);maximumBytes=Math.max(maximumBytes,pcmBytes+copyReservationBytes)
       lastEnd=(lastEnd+frames)>>>0;gaps+=frames;gap-=frames
       if(configured)decode(packet);else pending.push(packet)
     }
@@ -118,8 +134,8 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
   }
   function accept(data,rtp,capture,isRecovery=false){
     if(closed)return
-    const frames=packetFrames(data),reservedBytes=frames*2*4
-    if(credits.size>=48||pcmBytes+reservedBytes>1024*1024||encodedBytes+data.byteLength>512*1024)throw new Error('PCM_BOUND')
+    const frames=packetFrames(data),reservedBytes=frames*2*4*creditScale
+    if(credits.size>=48||pcmBytes+reservedBytes>pcmLimitBytes||encodedBytes+data.byteLength>512*1024)throw new Error('PCM_BOUND')
     anchor??={rtp,capture}
     const captureUnixMs=anchor.capture+delta(rtp,anchor.rtp)/48
     if(lastEnd!==null&&delta(rtp,lastEnd)>240000)throw new Error('PCM_CLOCK')
@@ -128,7 +144,7 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
     const packet={id:++sequence,rtpTimestamp:rtp,frames,reservedBytes,captureUnixMs,observedCaptureUnixMs:capture,
       timestamp:Math.round((capture-performance.timeOrigin)*1000),data:data.slice()}
     credits.set(packet.id,{bytes:reservedBytes,delivered:false});pcmBytes+=reservedBytes;encodedBytes+=packet.data.byteLength
-    maximumChunks=Math.max(maximumChunks,credits.size);maximumBytes=Math.max(maximumBytes,pcmBytes)
+    maximumChunks=Math.max(maximumChunks,credits.size);maximumBytes=Math.max(maximumBytes,pcmBytes+copyReservationBytes)
     if(isRecovery)recovered++
     if(configured)decode(packet);else pending.push(packet)
   }
@@ -155,7 +171,7 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
             if(packetFrames(block.data)>block.timestampOffset)throw new Error('PCM_PACKET')
             if(delta(rtp,lastEnd)>0&&!expired)break
             if(!concealGap(rtp,packet.capture-block.timestampOffset/48))return
-            if(credits.size>=48||pcmBytes+packetFrames(block.data)*8>1024*1024){backpressureEvents++;return}
+            if(credits.size>=48||pcmBytes+packetFrames(block.data)*8*creditScale>pcmLimitBytes){backpressureEvents++;return}
             if(forceOne&&!aged&&!pressureCommitted&&delta(rtp,lastEnd)>0){pressureDrains++;pressureCommitted=true}
             accept(block.data,rtp,packet.capture-block.timestampOffset/48,true)
             if(closed)return
@@ -166,7 +182,7 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
           return
         }
         if(!concealGap(packet.rtp,packet.capture))return
-        if(credits.size>=48||pcmBytes+packetFrames(packet.data)*8>1024*1024){backpressureEvents++;return}
+        if(credits.size>=48||pcmBytes+packetFrames(packet.data)*8*creditScale>pcmLimitBytes){backpressureEvents++;return}
         if(forceOne&&!aged&&!pressureCommitted&&lastEnd!==null&&delta(packet.rtp,lastEnd)>0)pressureDrains++
         discard(packet);accept(packet.data,packet.rtp,packet.capture);forceOne=false
       }

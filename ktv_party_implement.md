@@ -2,7 +2,7 @@
 
 Created: 2026-09-29
 
-Last updated: 2026-10-04
+Last updated: 2026-10-05
 
 Design reference: [ktv_party.md](ktv_party.md)
 
@@ -49,10 +49,10 @@ is a preview; public online media is still disabled.
 
 | Check | Current evidence | Status |
 | --- | --- | --- |
-| Timing/capability fixtures | 202/202 | Pass |
-| Buffered expiry after both render contexts freeze/resume | 51/51 with grouped PCM at the 800-ms target | Pass for digital fixture |
+| Timing/capability fixtures | 235/235 including shared-context memory accounting, copy fallback and startup clock readiness | Pass |
+| Buffered expiry after both render contexts freeze/resume | 51/51 with grouped libopus PCM at the 800-ms target; shared-context renderer still pending | Pass for tested digital topology |
 | Buffered expiry while source and listener pages stall | 46/46, latest reader/revalidation | Pass for digital fixture |
-| Latest clean 40-pair A/V regression | Grouped PCM / 800-ms target: 50/50, p95 86.31 ms / max 93.25 ms, no unmatched edges | Pass for digital fixture |
+| Latest qualified clean 40-pair A/V regression | Grouped libopus / 800-ms target: 50/50, p95 67.38 ms / max 73.11 ms, no unmatched edges; shared-context renderer still pending | Pass for tested digital topology |
 | Continuous impaired-network A/V and nominal frame rate | Private L1T1 reaches nominal native cadence; owned cadence and 40-pair timing still fail | Fail |
 | Product integration and physical/mobile/capacity acceptance | Required work remains | Open |
 
@@ -6049,5 +6049,104 @@ existing default-rate guarded AudioContext. It must use the browser's native
 resampling, preserve the RTP/capture schedule, reserve both transfer and buffer
 copies within the unchanged PCM/aggregate budgets, and prove clean/buffered-
 expiry/impaired output before any product integration. This alternative is not
-implemented or accepted yet. Current public deployment remains unchanged with
+accepted yet. The shared-context comparison is now implemented as recorded below.
+Current public deployment remains unchanged with
 online media disabled; physical/mobile/capacity and all release gates stay open.
+
+### 2026-10-05 — Shared render context and bounded grouping fallback
+
+Implemented the explicit private `KTV_ROOM_TEST_PCM_RENDERER=buffers` comparison
+in `party-pcm-buffer-scheduler.mjs`, the owned-PCM adapter, port/worker accounting,
+browser harness and actual receiver-fault topology. It requires the pinned
+libopus backend and owned video. Default worklet and deployed playback remain
+unchanged. Native 48-kHz buffers use the caller's existing guarded context;
+source completion returns credits, and close releases every source without
+closing the caller's context. No secondary render context is created. The fault
+fixture must therefore suspend/resume the actual shared context once, while
+retaining all independent residence/silence/deadline/replacement assertions.
+
+Two copies per live sample buffer plus one fixed 46,080-byte copy window fit
+inside the original 1-MiB PCM limit; live quota is 1,002,496 bytes. Input, credit,
+video and total memory bounds remain unchanged. Fixture graph evidence checks
+the actual recorded connections and context; a PCM marker alone cannot hide a
+backing source or bypass the final guard. Elapsed samples are skipped at the
+original offset, never replayed under a shifted capture schedule.
+
+Initial fixture regression: **227/227** in
+`/tmp/ktv-pcm-shared-buffer-all-fixtures-20261005.log`.
+The first native production-VP8/original-SFU clean comparison is terminal
+**exit 1** in
+`/tmp/ktv-owned-av-opus-plc-shared-buffers-clean40-production-vp8-20261005.log`:
+**21 pairs, zero unmatched**, p95 **59.17 ms**, maximum **65.66 ms**.
+This does not qualify the 40-pair gate. Actual decoder closure is `PCM_BOUND`;
+the sampler detects its released codec reservation. Peak reserved PCM is
+**1,044,480 bytes**, at most 35 credits. The grouping copy can exhaust byte
+headroom before the 48-credit limit; this identifies a concrete allocation
+failure and does not establish long-term shared-clock stability.
+
+The grouping fix transfers already reserved originals separately whenever a
+combined temporary copy would exceed the quota. It retains every sample,
+capture time, packet duration and credit, performs no additional allocation,
+and requires actual native consumption before returning credits. A scalar
+`groupCopyFallbacks` counter records this path. Focused checks pass **71/71**;
+full timing/capability regression passes **227/227** in
+`/tmp/ktv-pcm-shared-buffer-copy-fallback-all-20261005.log`.
+The fixture reproduces copy pressure under both worklet and doubled native-
+buffer accounting, checks exact original samples/schedules, and verifies that
+grouping can resume only after enough actual credits return.
+
+The native copy-fallback comparison is terminal **exit 1** in
+`/tmp/ktv-owned-av-opus-plc-shared-buffers-copy-fallback-clean40-20261005.log`,
+using the owner-only parameters
+`/tmp/ktv-owned-opus-plc-shared-buffers-clean40-20261005.env`.
+It records **four pairs, zero unmatched**, p95/max **20.92 ms**. Actual decoder
+closure is still `PCM_BOUND`, after 583 decoded packets, 48 credits/eight held
+inputs, 62 backpressure events and **69 measured grouping-copy fallbacks**.
+PCM peak stays at 1,044,480 bytes. The adapter also reports terminal native
+output-age validation failure. Pre-closure snapshots show the shared context
+already about **435.52–451.06 ms behind its initial wall anchor**; the first
+sample is about 443.33 ms behind. The original shared-context attempt was about
+225 ms behind at its first sample. These runs show startup anchoring needs its
+own readiness validation; they do not prove a cause for every clock stall or
+that removing the secondary context establishes stability.
+
+Added `party-pcm-startup-clock.mjs`: keep gain zero and defer worker binding until
+three consecutive 100-ms native intervals agree with wall time (35-ms interval
+and 25-ms cumulative startup tolerances, matching local playback). Native output
+timestamps must satisfy the existing age and latency limits. The startup wait
+is bounded at eight seconds; cancellation/suspension, reversed clocks, inconsistent
+wall time and timeout fail before binding. The returned wall/render anchor stays
+fixed afterward; no later sample schedule is rebased. Closing during this wait
+prevents a late result from binding or creating sources. Fixtures cover startup
+stalls, accumulated drift, invalid output timestamps, clock reversal and closure.
+Full timing/capability regression is **234/234** in
+`/tmp/ktv-pcm-shared-buffer-startup-clock-all-20261005.log`.
+
+Native clean qualification with the startup gate is terminal **exit 1** in
+`/tmp/ktv-owned-av-opus-plc-shared-buffers-startup-clock-clean40-20261005.log`,
+using the same unchanged 800-ms/production-VP8/original-SFU profile.
+It reaches **23 pairs, zero unmatched**, p95 **59.73 ms**, maximum **75.43 ms**.
+At the first sample, shared-context wall lag is 124.06 ms; later live samples
+rise to **408.46–495.42 ms**. `PCM_BOUND` closes after 2,498 decoded packets,
+48 credits/eight held inputs, 207 backpressure events and 42 grouping fallbacks.
+Peak PCM stays at 1,044,480 bytes. Startup validation does not solve this later
+clock loss, and this remains a failed clean 40-pair qualification.
+
+Hardened startup validation to reject nonfinite initial clocks before waiting,
+so an invalid initial observation cannot escape the eight-second bound. Latest
+full fixtures pass **235/235** in
+`/tmp/ktv-pcm-shared-buffer-startup-clock-final-all-20261005.log`.
+
+A native comparison at the existing supported **500-ms target** is running in
+`/tmp/ktv-owned-av-opus-plc-shared-buffers-startup-clean40-target500-20261005.log`,
+with owner-only parameters
+`/tmp/ktv-owned-opus-plc-shared-buffers-startup-clean40-target500-20261005.env`.
+Only the explicit playout target differs from the previous native profile;
+codec, nominal source, original SFU, memory, clock, marker and cadence bounds
+remain unchanged. This tests shorter buffering/headroom, while sustained clock
+stability remains a separate required gate. The full L1T1/floor/impairment
+shared-context profile is prepared at
+`/tmp/ktv-owned-l1t1-opus-plc-shared-buffers-startup-full-udp-20261005.env`;
+it has not been launched or accepted.
+Shared-context buffered expiry and full impaired qualification remain required;
+no new native acceptance is claimed yet.

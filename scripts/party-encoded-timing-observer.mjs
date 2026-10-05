@@ -95,8 +95,12 @@ export function installEncodedTimingProbe(workerSource,receiverApi='native') {
     worker.addEventListener('message', ({ data }) => {
       if(direction==='receive'&&data?.type==='pcm-port-state') {
         const row={worker:id,closed:data.closed===true,configured:data.configured===true,observedAt:performance.now()}
-        for(const key of ['decoded','gaps','duplicates','chunks','encodedBytes','pcmBytes','maximumChunks','maximumBytes','recovered','reordered','heldPackets','maximumHeld','pressureDrains','backpressureEvents','batchPackets','groupedChunks','maximumGroupPackets','pendingGroupPackets','concealedPackets','concealedSamples','codecBytes'])
+        for(const key of ['decoded','gaps','duplicates','chunks','encodedBytes','pcmBytes','maximumChunks','maximumBytes','recovered','reordered','heldPackets','maximumHeld','pressureDrains','backpressureEvents','batchPackets','groupedChunks','maximumGroupPackets','groupCopyFallbacks','pendingGroupPackets','concealedPackets','concealedSamples','codecBytes','creditScale','copyReservationBytes','pcmLimitBytes'])
           if(Number.isSafeInteger(data[key])&&data[key]>=0)row[key]=data[key]
+        if(data.creditScale!==undefined&&(![1,2].includes(row.creditScale)||row.copyReservationBytes!==(row.creditScale===2?46080:0)||
+          row.pcmLimitBytes!==1024*1024-row.copyReservationBytes||row.pcmBytes>row.pcmLimitBytes||row.maximumBytes>1024*1024)){
+          row.copyReservationError='PCM_COPY_DIAGNOSTIC';errors++;failures.pipe++
+        }
         if(['webcodecs','libopus'].includes(data.decoderBackend))row.decoderBackend=data.decoderBackend
         for(const key of ['codecInitMs','codecTotalDecodeMs','codecMaximumDecodeMs'])if(Number.isFinite(data[key])&&data[key]>=0)row[key]=data[key]
         if(data.decoderBackend!==undefined&&(!row.decoderBackend||![0,524288].includes(row.codecBytes)||

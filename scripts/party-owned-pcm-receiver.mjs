@@ -1,24 +1,29 @@
 // Private receiver adapter. The only audible connection is into the caller's
 // existing gain/lease graph on its default-rate context. No permit is created.
-export function createOwnedPcmReceiver(Queue,worklet,context,track,nativeSource,delayMs,{deviceClock=false,batchPackets=1,plc=false}={}) {
+export function createOwnedPcmReceiver(Queue,worklet,context,track,nativeSource,delayMs,{deviceClock=false,batchPackets=1,plc=false,renderer='worklet',createBuffers=null,waitClock=null}={}) {
   if(typeof deviceClock!=='boolean')throw new Error('PLAYOUT_PCM_CLOCK_CONFIG')
   if(![1,2].includes(batchPackets))throw new Error('PLAYOUT_PCM_BATCH_CONFIG')
   if(typeof plc!=='boolean')throw new Error('PLAYOUT_PCM_PLC_CONFIG')
+  if(!['worklet','buffers'].includes(renderer)||renderer==='buffers'&&(deviceClock||typeof createBuffers!=='function'||typeof waitClock!=='function'))throw new Error('PLAYOUT_PCM_RENDER_CONFIG')
   const worker=window.__encodedTimingProbe?.receiverWorker(track)
   const workerId=window.__encodedTimingProbe?.workerId(worker)
   if(!worker||!Number.isSafeInteger(workerId)||delayMs<200||delayMs>800)throw new Error('PLAYOUT_PCM_RECEIVER')
   const node=context.createGain();node.gain.value=0
+  if(renderer==='buffers')Object.defineProperty(node,'__partyOwnedPcmSink',{value:true})
   let pcmContext,pcmNode,capture,input,url,timer,closed=false,ready=false,error=null,anchor,clockDriver,clockDriverRunning=false
   let lastCursor=-Infinity
   let clock=null
   let queue=null
   let badOutputSince=null
   let badOutputCode=null
+  let bufferScheduler
+  const renderContext=()=>renderer==='buffers'?context:pcmContext
   function row(){return window.__encodedTimingProbe.pcmStates.findLast(item=>item.worker===workerId)}
   function close(){
     if(closed)return
     closed=true;ready=false;queue=null;clearInterval(timer);node.gain.value=0;node.disconnect()
     worker.postMessage({type:'pcm-stop'});pcmNode?.port.postMessage({type:'stop'});pcmNode?.disconnect();input?.disconnect()
+    bufferScheduler?.close()
     try{clockDriver?.stop()}catch{}clockDriver?.disconnect();clockDriverRunning=false
     capture?.stream.getTracks().forEach(value=>value.stop());if(url)URL.revokeObjectURL(url);void pcmContext?.close()
   }
@@ -34,6 +39,18 @@ export function createOwnedPcmReceiver(Queue,worklet,context,track,nativeSource,
   }
   void(async()=>{
     try{
+      if(renderer==='buffers'){
+        await context.resume()
+        if(closed)return
+        anchor=await waitClock(context,()=>!closed)
+        if(closed)return
+        if(!Number.isFinite(anchor?.wall)||Math.abs(Date.now()-anchor.wall)>250||
+          !Number.isSafeInteger(anchor.frame)||anchor.frame<0)throw new Error('PLAYOUT_PCM_CLOCK')
+        const channel=new MessageChannel()
+        bufferScheduler=createBuffers(context,node,channel.port1)
+        worker.postMessage({type:'pcm-bind',configuration:{port:channel.port2,renderFrame:anchor.frame,
+          wallUnixMs:anchor.wall,delayMs,batchPackets,plc,renderer,expiryUnixMs:Date.now()+9000}},[channel.port2])
+      }else{
       pcmContext=new AudioContext({sampleRate:48000})
       if(deviceClock){
         // Only constant zero reaches this hardware sink. Performance PCM has
@@ -66,7 +83,8 @@ export function createOwnedPcmReceiver(Queue,worklet,context,track,nativeSource,
       pcmNode.port.postMessage({type:'bind',port:channel.port1},[channel.port1])
       anchor={wall:Date.now(),frame:Math.round(pcmContext.currentTime*48000)}
       worker.postMessage({type:'pcm-bind',configuration:{port:channel.port2,renderFrame:anchor.frame,
-        wallUnixMs:anchor.wall,delayMs,batchPackets,plc,expiryUnixMs:Date.now()+9000}},[channel.port2])
+        wallUnixMs:anchor.wall,delayMs,batchPackets,plc,renderer,expiryUnixMs:Date.now()+9000}},[channel.port2])
+      }
       ready=true;node.gain.value=1
       timer=setInterval(()=>{
         if(closed)return
@@ -76,16 +94,18 @@ export function createOwnedPcmReceiver(Queue,worklet,context,track,nativeSource,
         // existing source-bound receive permit and final deadline guard.
         worker.postMessage({type:'pcm-renew',expiryUnixMs:Date.now()+9000})
       },1000)
-    }catch{fail('PLAYOUT_PCM_CREATE')}
+    }catch(exception){fail(['PLAYOUT_PCM_CLOCK','PLAYOUT_PCM_STARTUP_CANCELLED','PLAYOUT_PCM_STARTUP_TIMEOUT'].includes(exception.message)?exception.message:'PLAYOUT_PCM_CREATE')}
   })()
-  return {node,close,snapshot(){const state=row();return {ready,closed,error,delayMs,
-    pcmRate:pcmContext?.sampleRate||null,outputRate:context.sampleRate,decoder:state||null,clock,queue,validatingOutput:badOutputSince!==null,
+  return {node,close,snapshot(){const state=row(),render=renderContext();return {ready,closed,error,delayMs,renderer,
+    pcmRate:renderer==='buffers'?48000:pcmContext?.sampleRate||null,outputRate:context.sampleRate,decoder:state||null,clock,
+    queue:bufferScheduler?.snapshot()||queue,validatingOutput:badOutputSince!==null,
     deviceClock:{enabled:deviceClock,running:clockDriverRunning},
     renderClock:anchor?{wallUnixMs:Date.now(),now:performance.now(),anchorWallUnixMs:anchor.wall,anchorFrame:anchor.frame,
-      contextFrame:Math.round(pcmContext.currentTime*48000),reportedFrame:queue?.renderFrame??null,reportedAt:queue?.observedAt??null}:null}},
+      contextFrame:Math.round(render.currentTime*48000),reportedFrame:queue?.renderFrame??null,reportedAt:queue?.observedAt??null}:null}},
     captureCursor(){
       const state=row(),now=performance.now()
       if(closed||!ready||!state?.configured||state.closed||state.decoded<2)return null
+      if(bufferScheduler?.snapshot().closed){fail('PLAYOUT_PCM_RENDER');return null}
       if(now-state.observedAt>5000||!Number.isFinite(state.lastCaptureUnixMs)||Date.now()-state.lastCaptureUnixMs>5000){fail('PLAYOUT_PCM_CLOCK');return null}
       const output=context.getOutputTimestamp(),age=now-output.performanceTime
       clock={ageMs:age,latencyMs:(context.currentTime-output.contextTime)*1000}
@@ -97,7 +117,7 @@ export function createOwnedPcmReceiver(Queue,worklet,context,track,nativeSource,
       if(badOutputSince!==null){
         if(now<badOutputSince||now-badOutputSince>=50){fail(badOutputCode);return null}
       }
-      const scheduledCursor=anchor.wall+(pcmContext.currentTime*48000-anchor.frame)/48-delayMs-latency
+      const scheduledCursor=anchor.wall+(renderContext().currentTime*48000-anchor.frame)/48-delayMs-latency
       // Use a phase observation at or before the audible sample position,
       // rather than a newer packet still waiting in the PCM hold queue.
       const phase=window.__encodedTimingProbe.pcmStates.findLast(item=>item.worker===workerId&&

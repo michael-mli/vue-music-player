@@ -1392,7 +1392,11 @@ capture time, never bridges a gap, stays within the existing 5,760-frame packet
 limit, and flushes partial groups within 40 ms. Pending members remain credited
 as decoder-owned until their combined transfer. Copy allocation and originals
 share the unchanged 1-MiB PCM budget; individual and grouped chunks share the
-unchanged 48-credit limit. The final guard, playout target, clock checks and
+unchanged 48-credit limit. If a temporary combined copy would exceed the budget,
+transfer the already reserved originals separately, preserving their exact
+samples, capture times and independently returned credits. Grouping never
+justifies closing an otherwise admissible packet solely to allocate that copy.
+The final guard, playout target, clock checks and
 expiry rules remain intact. This tests credit headroom without adding output
 authority; native clean/expiry/impaired qualification is still required.
 
@@ -1507,6 +1511,34 @@ bytes and concealment counters are scalar-only diagnostics. Native clean,
 buffered-expiry, impaired, physical and product integration acceptance are
 required before selecting the new backend for release. The mechanism follows
 [the Opus decoder loss API](https://opus-codec.org/docs/html_api/group__opusdecoder.html).
+
+An additional explicit private renderer schedules native 48-kHz AudioBuffers
+on the caller's existing default-rate AudioContext. It creates no secondary
+context; the browser performs resampling. Every source connects only to the
+owned gain feeding the existing final deadline guard. Start times retain the
+RTP/first-capture-anchor mapping; late samples are skipped at their original
+offset rather than replayed with a new schedule. Normal credits return only on
+native source completion; terminal closure stops, disconnects and releases all
+sources without renewing authority. Scheduling follows the
+[Web Audio buffer-source contract](https://www.w3.org/TR/webaudio/#AudioBufferSourceNode).
+
+The renderer reserves two copies of every live buffer plus a shared 46,080-byte
+maximum-packet copy window inside the unchanged 1-MiB PCM cap. The worker uses
+the same doubled reservations and exact returned byte counts, leaving 1,002,496
+bytes for live samples. Source count stays at 48. Cursor validation uses the
+actual shared context's output timestamp with the existing age, latency, phase
+and freshness limits. Before binding the worker or fixing its schedule, keep
+the owned gain muted and require three consecutive native render intervals
+that agree with wall time, including the same cumulative startup drift check
+as local playback. Native output age and latency must be valid. Startup has an
+eight-second bound; cancellation, reversal, inconsistent wall time or timeout
+cannot create a source or revive a closed receiver. The resulting anchor stays
+fixed for the session; this is not continuous schedule rebasing or rate control.
+Telemetry measures future sample residence from that
+context; it does not invent an independent worklet clock. Tests must freeze and
+resume the actual shared render/guard context and verify the same retained
+residence, expiry silence and replacement separation. This renderer is an
+unqualified private comparison until clean, expiry and impaired gates pass.
 
 Continuously impaired timing and nominal frame rate still fail. Native decoded
 video can arrive too late, while the owned decoder still needs reliable packet

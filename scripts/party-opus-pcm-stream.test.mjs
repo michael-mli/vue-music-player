@@ -6,7 +6,7 @@ import { createOpusPcmStream } from './party-opus-pcm-stream.mjs'
 import { primaryOpusPayload, opusPacketFrames } from './party-opus-decode-probe.mjs'
 import { CapturePcmQueue } from './party-capture-pcm-queue.mjs'
 
-function fixture({delayed=false,invalid=false,reorderMs=0,batchPackets=1,frames=960,values=null,plc=false,hasPlc=true}={}) {
+function fixture({delayed=false,invalid=false,reorderMs=0,batchPackets=1,frames=960,values=null,plc=false,hasPlc=true,creditScale=1}={}) {
   const messages=[],packets=[],outputs=[],waiting=[]
   let now=0,timerId=0
   const timers=new Map()
@@ -33,13 +33,13 @@ function fixture({delayed=false,invalid=false,reorderMs=0,batchPackets=1,frames=
   }
   const realm={Number,ArrayBuffer,Float32Array,Uint8Array,Map,Array,performance:{timeOrigin:1000,now:()=>now},
     setTimeout(callback,delay){const id=++timerId;timers.set(id,{callback,at:now+delay});return id},
-    clearTimeout(id){timers.delete(id)},reorderMs,batchPackets,plc,
+    clearTimeout(id){timers.delete(id)},reorderMs,batchPackets,plc,creditScale,
     AudioDecoder:Decoder,EncodedAudioChunk:class{constructor(config){Object.assign(this,config)}},
     __encodedTimingCodecs:[{payloadType:111,mimeType:'audio/opus'},{payloadType:63,mimeType:'audio/red'}],deliver:packet=>packets.push(packet),report:row=>messages.push(row)}
   realm.self=realm
   if(hasPlc)realm.__ownedOpusDecoder=Decoder
   const frameParser=frames===960?opusPacketFrames.toString():`()=>${frames}`
-  const stream=vm.runInNewContext(`(${createOpusPcmStream.toString()})(${primaryOpusPayload.toString()},${frameParser},deliver,report,{reorderMs,batchPackets,plc})`,realm)
+  const stream=vm.runInNewContext(`(${createOpusPcmStream.toString()})(${primaryOpusPayload.toString()},${frameParser},deliver,report,{reorderMs,batchPackets,plc,creditScale})`,realm)
   const send=(rtp,captureTime=rtp/48)=>stream.observe({timestamp:rtp>>>0,data:new Uint8Array([1]).buffer},{captureTime,payloadType:111})
   return {stream,send,packets,messages,outputs,waiting,timers,
     advance(value){now=value;for(const [id,timer] of [...timers])if(timer.at<=now){timers.delete(id);timer.callback()}},
@@ -48,6 +48,21 @@ function fixture({delayed=false,invalid=false,reorderMs=0,batchPackets=1,frames=
 
 function red(offsets){return new Uint8Array([...offsets.flatMap(offset=>[239,offset>>6,(offset&63)<<2,1]),111,
   ...offsets.map(()=>1),1])}
+
+test('native-buffer credits reserve both copies and one maximum copy window inside the original payload cap',async()=>{
+  const f=fixture({creditScale:2,batchPackets:2});await tick();f.send(0);f.send(960)
+  assert.equal(f.packets[0].creditBytes,30720);assert.equal(f.stream.snapshot().pcmBytes,30720)
+  assert.equal(f.stream.snapshot().maximumBytes,107520);assert.equal(f.stream.snapshot().copyReservationBytes,46080)
+  assert.equal(f.stream.snapshot().pcmLimitBytes,1002496)
+  f.stream.consumed({id:2,bytes:30720});assert.equal(f.stream.snapshot().pcmBytes,0)
+  f.stream.close()
+  const wrong=fixture({creditScale:2});await tick();wrong.send(0);wrong.stream.consumed({id:1,bytes:7680})
+  assert.equal(wrong.messages[0].reason,'PCM_CREDIT')
+  const saturated=fixture({creditScale:2,batchPackets:2,frames:2880});await tick()
+  for(let i=0;i<40&&!saturated.stream.snapshot().closed;i++)saturated.send(i*2880,i*60)
+  assert.equal(saturated.messages[0].reason,'PCM_BOUND');assert.ok(saturated.stream.snapshot().maximumBytes<=1024*1024)
+  assert.ok(saturated.stream.snapshot().maximumChunks<=48)
+})
 
 test('explicit codec concealment reserves missing samples at the original capture clock and preserves grouping across RTP wrap',async()=>{
   const f=fixture({plc:true,batchPackets:2,reorderMs:80});await tick();const start=0xfffffe00
@@ -156,13 +171,23 @@ test('grouped rendering and stalled native decoding keep the original credit, by
     assert.equal(f.stream.snapshot().pcmBytes,0);assert.equal(f.stream.snapshot().encodedBytes,0)
   }
 })
-test('combined-copy reservation rejects transient PCM overflow before allocating or transferring',async()=>{
-  const f=fixture({batchPackets:2,frames:2880});await tick()
-  for(let i=0;i<44;i++)f.send(i*2880)
-  assert.equal(f.stream.snapshot().reason,'PCM_BOUND')
-  assert.equal(f.packets.length,21);assert.ok(f.packets.every(packet=>packet.frames===5760))
-  assert.ok(f.stream.snapshot().maximumBytes<=1024*1024)
-  assert.equal(f.stream.snapshot().pcmBytes,0);assert.ok(f.outputs.every(frame=>frame.closes===1))
+test('a pressured combined-copy reservation transfers original samples without reclaiming unconsumed credits',async()=>{
+  for(const [creditScale,count] of [[1,44],[2,20]]){
+    const f=fixture({batchPackets:2,frames:2880,creditScale});await tick()
+    for(let i=0;i<count;i++)f.send(i*2880)
+    assert.equal(f.stream.snapshot().closed,false);assert.equal(f.stream.snapshot().groupCopyFallbacks,1)
+    assert.equal(f.stream.snapshot().pcmBytes,count*2880*8*creditScale)
+    assert.deepEqual(f.packets.slice(-2).map(p=>[p.id,p.rtpTimestamp,p.captureUnixMs,p.frames,p.creditBytes]),
+      [count-1,count].map(id=>[id,(id-1)*2880,1000+(id-1)*60,2880,23040*creditScale]))
+    assert.ok(f.packets.every(p=>p.planes[0].every(v=>v===.25)&&p.planes[1].every(v=>v===-.25)))
+    assert.ok(f.stream.snapshot().maximumBytes<=1024*1024)
+    for(const packet of f.packets.slice(0,2))f.stream.consumed({id:packet.id,bytes:packet.creditBytes})
+    f.send(count*2880);f.send((count+1)*2880)
+    assert.equal(f.stream.snapshot().closed,false);assert.equal(f.packets.at(-1).frames,5760)
+    for(const packet of f.packets.slice(2))f.stream.consumed({id:packet.id,bytes:packet.creditBytes})
+    assert.equal(f.stream.snapshot().pcmBytes,0);assert.equal(f.stream.snapshot().chunks,0)
+    assert.ok(f.outputs.every(frame=>frame.closes===1));f.stream.close()
+  }
 })
 test('grouping preserves the existing maximum renderer packet duration',async()=>{
   const f=fixture({batchPackets:2,frames:3840});await tick();f.send(0);f.send(3840);f.advance(40)

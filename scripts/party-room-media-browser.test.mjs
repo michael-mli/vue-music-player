@@ -34,6 +34,8 @@ import { installOpusPcmWorker } from './party-opus-pcm-worker.mjs'
 import { CapturePcmQueue, pcmSourceWorklet } from './party-capture-pcm-queue.mjs'
 import { probeReceivedPcm } from './party-received-pcm-probe.mjs'
 import { createOwnedPcmReceiver } from './party-owned-pcm-receiver.mjs'
+import { waitForOwnedPcmClock } from './party-pcm-startup-clock.mjs'
+import { createPcmBufferScheduler, isOwnedPcmBufferSource } from './party-pcm-buffer-scheduler.mjs'
 import { createVp8DecodeProbe } from './party-vp8-decode-probe.mjs'
 import { createVp8FrameStream } from './party-vp8-frame-stream.mjs'
 import { installVp8FrameWorker } from './party-vp8-frame-worker.mjs'
@@ -111,6 +113,9 @@ const pcmDeviceClock=process.env.KTV_ROOM_TEST_PCM_DEVICE_CLOCK==='1'
 assert.ok(process.env.KTV_ROOM_TEST_PCM_DEVICE_CLOCK===undefined||pcmDeviceClock&&ownedPcm&&encodedTiming&&avTiming,
   'Private PCM device clock requires native owned-output A/V evidence')
 const ownedVideo=process.env.KTV_ROOM_TEST_OWNED_VIDEO==='1'
+const pcmRenderer=process.env.KTV_ROOM_TEST_PCM_RENDERER||'worklet'
+assert.ok(process.env.KTV_ROOM_TEST_PCM_RENDERER===undefined||pcmRenderer==='buffers'&&pcmPlcBuild&&ownedVideo&&!pcmDeviceClock,
+  'Shared-context PCM scheduling requires the explicitly accounted codec receiver and no secondary driver')
 assert.ok(!pcmPlcBuild||ownedVideo,'Private Opus PLC requires explicit codec accounting in the owned-video reservation')
 const audioRedComparison=codecExperiment?.audioRed===false
 assert.ok(!audioRedComparison||avTiming&&encodedTiming&&ownedPcm&&ownedVideo&&
@@ -569,17 +574,23 @@ try {
       navigator.mediaDevices.getUserMedia = async (...args) => { const stream = await getMedia(...args); window.__micStreams.push(stream); return stream; };
       const source = AudioContext.prototype.createBufferSource;
       AudioContext.prototype.createBufferSource = function() { const item = source.call(this), start = item.start.bind(item), stop = item.stop.bind(item);
-        item.__state = { started: false, ended: false, stopAt: null, stopCalls: 0, context: this };
+        const connect=item.connect.bind(item),disconnect=item.disconnect.bind(item);
+        item.__state = { started: false, ended: false, stopAt: null, stopCalls: 0, context: this,connections:[] };
+        item.connect=(target,...args)=>{const result=connect(target,...args);item.__state.connections.push(target);return result};
+        item.disconnect=(...args)=>{const result=disconnect(...args);item.__state.connections=[];return result};
         item.addEventListener('ended', () => { item.__state.ended = true; });
         item.stop = (...args) => { const result = stop(...args); item.__state.stopCalls++; item.__state.stopAt = args[0] ?? this.currentTime; return result; };
         item.start = (...args) => {
+        if(item.__partyOwnedPcmSource===true){item.__state.started=true;return start(...args)}
         const samples = item.buffer?.getChannelData(0), length = Math.min(samples?.length || 0, 4096); let crossings = 0;
         for (let index = 1; index < length; index++) if (samples[index-1] <= 0 && samples[index] > 0) crossings++;
         item.__state.started = true; window.__sourceEvidence.push({when:args[0],offset:args[1],now:performance.now(),render:this.currentTime,output:this.getOutputTimestamp(),
           frequency: length ? Math.round(crossings * item.buffer.sampleRate / length) : null}); return start(...args);
-      }; window.__bufferSources.push(item); return item; };
+      }; window.__bufferSources=window.__bufferSources.filter(value=>!value.__partyOwnedPcmSource||!value.__state.ended);
+      window.__bufferSources.push(item); return item; };
+      window.__isOwnedPcmSource=${isOwnedPcmBufferSource.toString()};
       window.confirm = () => true;
-      ${controlledPlayoutMs === null ? '' : `(${installControlledReceiver.toString()})(${RtpCaptureClock.toString()},${CaptureFrameQueue.toString()},${controlledPlayoutMs}${ownedPcm?`,(context,track,nativeSource,delay)=>(${createOwnedPcmReceiver.toString()})(${CapturePcmQueue.toString()},${pcmSourceWorklet.toString()},context,track,nativeSource,delay,{deviceClock:${pcmDeviceClock},batchPackets:${pcmBatchPackets},plc:${!!pcmPlcBuild}}),${probeCaptureEpoch.toString()}${ownedVideo?','+createOwnedVideoReceiver.toString():''}${pcmPlcBuild?',524288':''}`:''});`}` }, sessionId)
+      ${controlledPlayoutMs === null ? '' : `(${installControlledReceiver.toString()})(${RtpCaptureClock.toString()},${CaptureFrameQueue.toString()},${controlledPlayoutMs}${ownedPcm?`,(context,track,nativeSource,delay)=>(${createOwnedPcmReceiver.toString()})(${CapturePcmQueue.toString()},${pcmSourceWorklet.toString()},context,track,nativeSource,delay,{deviceClock:${pcmDeviceClock},batchPackets:${pcmBatchPackets},plc:${!!pcmPlcBuild},renderer:${JSON.stringify(pcmRenderer)},createBuffers:${pcmRenderer==='buffers'?createPcmBufferScheduler.toString():'null'},waitClock:${pcmRenderer==='buffers'?waitForOwnedPcmClock.toString():'null'}}),${probeCaptureEpoch.toString()}${ownedVideo?','+createOwnedVideoReceiver.toString():''}${pcmPlcBuild?',524288':''}`:''});`}` }, sessionId)
     await cdp(socket, 'Page.navigate', { url: origin + (legacy ? `/__ktv_legacy_app?room=${room.room.id}` : `/party/${room.room.id}${stage ? '/stage' : ''}`) }, sessionId)
     await poll(() => evaluate(sessionId, "document.body?.innerText.includes('Live room updates connected')"), 'room page connected')
     if (!stage) await evaluate(sessionId, "document.getElementById('party-tab-sing').click()")
@@ -774,7 +785,7 @@ try {
   if(receiverFault!=='off') {
     receiverFaultEvidence=await runRoomReceiverFault({mode:receiverFault,phone,audience,host,origin,pathRoom,firstPublisher,
       api,evaluate,click,poll,check,db,provider,replacementBrowser:hostBrowser,receiverBrowser:avBrowser,
-      controlledDelayMs: controlledPlayoutMs,ownedPcm})
+      controlledDelayMs: controlledPlayoutMs,ownedPcm,pcmRenderer})
   } else {
   const installSpectrum = () => evaluate(audience, `(() => { const element = document.querySelector('[data-party-media-screen] video'); window.__receiveContext = new AudioContext(); __receiveContext.resume();
     const source = __receiveContext.createMediaStreamSource(element.srcObject); window.__analyser = __receiveContext.createAnalyser(); __analyser.fftSize = 8192; __analyser.smoothingTimeConstant = 0;
@@ -860,6 +871,8 @@ try {
           const pcm=receiver.controlledReceiver?.active?.pcm?.decoder
           assert.equal(pcm?.decoderBackend,'libopus','Current PCM uses the declared codec concealment backend')
           assert.equal(pcm?.codecBytes,524288,'Current PCM codec has its fixed independent memory reservation')
+          assert.equal(receiver.controlledReceiver.active.pcm.renderer,pcmRenderer,'Current PCM retains its declared renderer')
+          if(pcmRenderer==='buffers')assert.equal(pcm.creditScale,2,'Current PCM reserves transferred and native acquired copies')
           assert.equal(receiver.controlledReceiver.active.codecReservationBytes,524288,
             'Current receiver reserves codec working memory within the original aggregate limit')
           assert.equal(receiver.controlledReceiver.active.queueReservationBytes,42*1024*1024,
@@ -1027,7 +1040,7 @@ try {
   check(await evaluate(phone, 'window.__sourceEvidence.some(item => item.frequency > 1600 && item.frequency < 1850) && window.__outputEvidence.some(item => item.contextTime > 0 && item.performanceTime > 0)'), 'private original tone is scheduled against native Web Audio output timestamps')
   peaks = await poll(async () => { const value = await spectrum(); return value[0] > -55 && value[1] > -55 ? value : false }, 'private guide keeps public backing intact')
   check(peaks[2] < Math.min(peaks[0], peaks[1]) - 25, `enabling the original guide in the built app keeps it outside the public mix (${peaks.map(value => value.toFixed(1)).join(', ')} dB)`)
-  check(await evaluate(audience, 'window.__bufferSources.length === 0'), 'remote common screen creates no independent instrumental player')
+  check(await evaluate(audience, 'window.__bufferSources.every(item=>__isOwnedPcmSource(item))'), 'remote common screen creates no independent instrumental player')
   // Continuous mode retains the profile through recovery and all fresh performers.
   if(mediaProxy&&!continuousImpairment) mediaProxy.profile({delayMs:0,jitterMs:0,lossRate:0})
   if (networkRecovery) {
@@ -1061,7 +1074,7 @@ try {
     const recoveredPeaks=await poll(async()=>{const value=await spectrum();return value[0]>-55&&value[1]>-55?value:false}, 'new audience receives actual backing and microphone audio')
     check(recoveredPeaks[2]<Math.min(recoveredPeaks[0],recoveredPeaks[1])-25, 'recovered audience hears backing and microphone while private original remains excluded')
     check((await api(1, pathRoom)).playback.state === 'playing' && db.prepare('SELECT state FROM ktv_media_grants WHERE identity = ?').get(firstPublisher.identity).state === 'active', 'audience recovery does not replace or interrupt the current singer')
-    check(await evaluate(audience, 'window.__bufferSources.length===0'), 'audience recovery never starts competing digital backing')
+    check(await evaluate(audience, 'window.__bufferSources.every(item=>__isOwnedPcmSource(item))'), 'audience recovery never starts competing digital backing')
     await verifyImpairedRoute(audience)
   }
   const oldPublisherGrant = await api(2, `${pathRoom}/media/${firstPublisher.identity}/renew`, { deviceId: device.id })
@@ -1191,7 +1204,7 @@ try {
     await click(audience, 'Watch and listen')
     const remotePublisher = await startTurn(nextPhone, 'Stage · Next singer', venuePublisher, nextSinger.self.id)
     await received(audience, false)
-    check(await evaluate(audience, 'window.__bufferSources.every(item => !item.__state.started || item.__state.ended || (item.__state.stopAt !== null && item.__state.stopAt <= item.__state.context.currentTime))'), 'all previous venue backing sources have stopped before remote media plays')
+    check(await evaluate(audience, 'window.__bufferSources.filter(item=>!__isOwnedPcmSource(item)).every(item => !item.__state.started || item.__state.ended || (item.__state.stopAt !== null && item.__state.stopAt <= item.__state.context.currentTime))'), 'all previous venue backing sources have stopped before remote media plays')
     check(await evaluate(audience, 'window.__sourceEvidence.length') === previousStageSources, 'venue common screen switches to received remote media without restarting local backing')
     if (handoverAv) {
       await installVideoObserver(audience)

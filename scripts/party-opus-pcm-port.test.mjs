@@ -39,6 +39,15 @@ test('explicit concealment reaches the decoder without changing scheduling or al
   assert.equal(f.messages[0].data.startFrame,86880);f.adapter.close()
   assert.throws(()=>fixture({plc:'yes'}),/PCM_PORT_CONFIG/)
 })
+
+test('shared-context scheduling retains the capture mapping and transfers doubled consumption credits',()=>{
+  const f=fixture({renderer:'buffers'}),planes=[new Float32Array([.5])]
+  assert.equal(f.options.creditScale,2)
+  f.packets.push({id:1,captureUnixMs:1010,planes,creditBytes:8});f.adapter.observe({}, {})
+  assert.equal(f.messages[0].data.startFrame,86880);assert.equal(f.messages[0].data.creditBytes,8)
+  f.port.onmessage({data:{type:'consumed',id:1,bytes:8}});assert.equal(f.credits[0].bytes,8)
+  f.adapter.close();assert.throws(()=>fixture({renderer:'unknown'}),/PCM_PORT_CONFIG/)
+})
 test('expired or discontinuous worker clocks close the renderer port and cannot renew it',()=>{
   for(const values of [[2000,1000],[999,1],[1400,1]]){
     const f=fixture();f.advance(...values)

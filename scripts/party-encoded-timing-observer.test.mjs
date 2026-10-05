@@ -222,6 +222,20 @@ test('codec concealment diagnostics expose scalar bounds and reject impossible b
   probe.close()
 })
 
+test('native-buffer copy diagnostics retain only the fixed scale/window/quota and reject invented reservations',()=>{
+  const f=browserFixture(true),peer=new f.realm.window.RTCPeerConnection(),receiver=f.receiver();f.track(peer,receiver)
+  const emit=data=>f.workers[0].dispatchEvent(new MessageEvent('message',{data}))
+  const valid={type:'pcm-port-state',creditScale:2,copyReservationBytes:46080,pcmLimitBytes:1002496,groupCopyFallbacks:3,
+    pcmBytes:300000,maximumBytes:400000,privateBuffer:'excluded'}
+  emit(valid);const probe=f.realm.window.__encodedTimingProbe
+  assert.equal(probe.pcmStates[0].creditScale,2);assert.equal(probe.pcmStates[0].copyReservationError,undefined)
+  assert.equal(probe.pcmStates[0].groupCopyFallbacks,3)
+  for(const change of [{creditScale:3},{copyReservationBytes:0},{pcmLimitBytes:1048576},
+    {pcmBytes:1002497},{maximumBytes:1048577}])emit({...valid,...change})
+  assert.equal(probe.pcmStates.filter(row=>row.copyReservationError==='PCM_COPY_DIAGNOSTIC').length,5)
+  assert.equal(JSON.stringify(probe.pcmStates).includes('excluded'),false);probe.close()
+})
+
 test('declared VP9 receiver codec parameters reach the worker without fmtp or unknown codec fields',()=>{
   for(const api of ['native','standard']){
     const f=browserFixture(true,api),peer=new f.realm.window.RTCPeerConnection(),receiver=f.receiver()
