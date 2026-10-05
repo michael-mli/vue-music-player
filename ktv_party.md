@@ -1476,6 +1476,15 @@ scalability mode, whereas the VP9 SDK path uses motion/`L1T3`. Preserve the hint
 timing sample. This changes no receiver capability claim. It remains an
 unqualified comparison until actual clean and impaired behavior passes all gates.
 
+An explicit private shared-context video timestamp comparison assigns generated
+output frames the existing guarded AudioContext's native time, instead of a
+separately advancing wall/performance timestamp. PCM capture scheduling and
+video selection continue using the same original capture cursor and bounds.
+Suspended, stalled, reversed or invalid context time closes the output; it never
+synthesizes progress, rebases authority or changes the rate. The original wall
+timestamp policy stays the default until native clean/impaired presentation,
+cadence, expiry and resource acceptance establish the alternative.
+
 The gap-only path also preserves an arriving contiguous RTP repair at a full
 input queue: it must precede the oldest held input, satisfy the existing 54-ms
 contiguity criterion and arrive before the fixed deadline. It enters an existing

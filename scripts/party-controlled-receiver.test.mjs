@@ -4,6 +4,14 @@ import vm from 'node:vm'
 import { installControlledReceiver, analyseControlledReceiverQuality, analyseReceiverKeyframeRecovery, hasSingleAudienceOutput, hasBoundedControlledReceiver } from './party-controlled-receiver.mjs'
 import { CaptureFrameQueue } from './party-capture-frame-queue.mjs'
 
+test('context output timestamp policy rejects a missing owned media path or invalid factory before creating outputs',()=>{
+  for(const argumentsText of ["null,null,800,null,null,null,0,()=>0",
+    "null,null,800,()=>{},()=>[],null,0,()=>0",
+    "null,null,800,()=>{},()=>[],()=>{},0,{}"])
+    assert.throws(()=>vm.runInNewContext(`(${installControlledReceiver.toString()})(${argumentsText})`,{}),
+      /PLAYOUT_VIDEO_OUTPUT_CONFIG/)
+})
+
 function sample(presented, lastPresentation, extra = {}) {
   return { phase: 'impaired', receiver: { controlledReceiver: { active: {
     session: 1, ready: true, closed: false, error: null, width: 1280, height: 720,

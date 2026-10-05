@@ -53,7 +53,7 @@ is a preview; public online media is still disabled.
 | Buffered expiry after render/guard clock freeze/resume | 51/51 with shared-context libopus buffers at the 500-ms target, including 524.23-ms retained PCM | Pass for tested digital topology |
 | Buffered expiry while source and listener pages stall | 46/46, latest reader/revalidation | Pass for digital fixture |
 | Latest qualified clean 40-pair A/V regression | Explicit VP8 L1T1 / floor / supported RTP ordering / shared-context libopus / 500-ms target: 55/55, p95 54.78 ms / max 62.91 ms, no unmatched edges | Pass for tested digital topology |
-| Continuous impaired-network A/V and nominal frame rate | Explicit VP8 L1T1 matches 40 impaired and 40 next-singer pairs with no missing edges and nominal cadence; maximum skew 427.44 / 250.63 ms fails | Fail |
+| Continuous impaired-network A/V and nominal frame rate | VP8 L1T1 full run matches 40 impaired/next-singer pairs, max skew fails; latest scoped repeat reaches 40 impaired pairs with 3 audio/2 video unmatched, max 508.86 ms | Fail |
 | Product integration and physical/mobile/capacity acceptance | Required work remains | Open |
 
 These scripts are private. The deployed preview remains `acb583b`, with public
@@ -6530,9 +6530,46 @@ role replacements update it. Allocation logs remain read only after timing.
 
 Scope/parser/temporal fixtures pass **8/8** in
 `/tmp/ktv-sfu-current-browser-scope-fixtures-20261005.log`; harness syntax passes.
-The full original L1T1 impairment/handover profile runs again with this corrected
+The full original L1T1 impairment/handover profile ran again with this corrected
 collector in
 `/tmp/ktv-owned-av-vp8-l1t1-opus-plc-shared-buffers-floor-gap-scoped-hybrid-full-udp-target800-20261005.log`.
 It reuses the immutable full owner-only profile above. No quality, pairing, skew,
 memory, authority, outage or full hybrid acceptance gate is waived. Public media
 remains disabled; sustained/product/physical/mobile/capacity/release work is open.
+
+The scoped repeat is terminal **exit 1** at impaired matching: **40 pairs**,
+three audio/two video unmatched, p95 **148.43 ms**, maximum **508.86 ms**.
+Source/native/owned decode/presentation are **24.92 / 24.00 / 24.42 / 23.64 fps**
+with no nominal quality errors. Exact scoped allocation parsing succeeds for
+baseline and impaired phases with no errors. The test does not reach hybrid
+timing, so the multiple-audience branch remains fixture verified rather than
+native exercised. Randomized loss and this failed repeat preclude claiming that
+L1T1 establishes robust impairment acceptance.
+
+### 2026-10-05 — Guarded-context video timestamp comparison
+
+The earlier full L1T1 run's independent video presentation metadata shows its
+`expectedDisplayTime - mediaTime` offset increasing by **317.40 ms** relative to
+the impaired phase's first observation. Callback lateness does not account for
+that growth. Its generated output frames currently use wall/performance time,
+while PCM runs on the guarded native context; that context's wall lag also grows.
+This suggests an additional output-clock/presentation component, not proof of
+its cause or permission to subtract timing errors.
+
+Added an explicit private `KTV_ROOM_TEST_VIDEO_OUTPUT_CLOCK=context` comparison.
+Generated video timestamps sample the same existing guarded AudioContext used
+by shared PCM. The helper never advances/rebases the context, changes PCM rate,
+creates an output context or increases a queue. A suspended, unchanged, reversed,
+non-finite or unrepresentable clock closes the output instead of synthesizing a
+timestamp. Wall/performance timestamps remain the default; product is unchanged.
+The harness admits this only for declared shared buffers/libopus/owned A/V/floor
+timing, and every sample verifies the current output clock mode. Original native
+cadence, matching, skew, deadline and memory gates remain intact.
+
+Clock/controller/scope/temporal fixtures pass **22/22** in
+`/tmp/ktv-native-context-video-output-clock-fixtures-20261005.log`; harness syntax
+and diff checks pass. The pure clean comparison runs in
+`/tmp/ktv-owned-av-vp8-l1t1-opus-plc-shared-context-video-floor-gap-clean40-target500-20261005.log`,
+using owner-only profile
+`/tmp/ktv-owned-vp8-l1t1-opus-plc-shared-context-video-floor-gap-clean40-target500-20261005.env`.
+No measured benefit or native acceptance is assumed.

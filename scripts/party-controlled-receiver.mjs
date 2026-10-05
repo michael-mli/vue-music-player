@@ -1,11 +1,12 @@
 // Owned browser experiment only. The app's source/gain/deadline worklet remain
 // the sole audible path. Delay is inserted before that existing output guard.
-export function installControlledReceiver(Clock, FrameQueue, delayMs = 800, createPcm = null, verifyEpoch = null,createVideo=null,codecBytes=0) {
+export function installControlledReceiver(Clock, FrameQueue, delayMs = 800, createPcm = null, verifyEpoch = null,createVideo=null,codecBytes=0,timestampForOutput=null) {
   if (!Number.isInteger(delayMs) || delayMs < 200 || delayMs > 1000) throw new Error('PLAYOUT_DELAY')
   const ownedPcm=typeof createPcm==='function'
   const ownedVideo=typeof createVideo==='function'
   if(![0,524288].includes(codecBytes)||codecBytes&&(!ownedPcm||!ownedVideo))throw new Error('PLAYOUT_CODEC_BOUND')
   if(ownedVideo&&!ownedPcm)throw new Error('PLAYOUT_VIDEO_CONFIG')
+  if(timestampForOutput!==null&&(typeof timestampForOutput!=='function'||!ownedPcm||!ownedVideo))throw new Error('PLAYOUT_VIDEO_OUTPUT_CONFIG')
   if(ownedPcm&&(delayMs>800||typeof verifyEpoch!=='function'))throw new Error('PLAYOUT_PCM_CONFIG')
   const Context = window.AudioContext, nativeSource = Context.prototype.createMediaStreamSource
   const sources = new WeakMap(), activeSources = new Set(), history = []
@@ -57,6 +58,7 @@ export function installControlledReceiver(Clock, FrameQueue, delayMs = 800, crea
     const videoRelease={count:0,totalLateMs:0,maximumLateMs:0,over150:0,over250:0}
     const item = { original, state, snapshot() { return { session, ready, closed, closedAtUnixMs, error,
       delayMs, audioDelayMs: ownedPcm?delayMs:state.delay.delayTime.value * 1000,codecReservationBytes:codecBytes,queueReservationBytes,
+      videoOutputClock:timestampForOutput?'context':'wall',
       ...(ownedPcm?{pcm:state.pcm.snapshot(),epochOffset}:{}),
       ...(ownedVideo?{ownedVideo:video.snapshot()}:{}),
       drawn, presented, missing, decodedAudio, maximumBytes, maximumQueued,presentationBackpressure,waitingReadFrame:waitingReadFrame?1:0,
@@ -173,7 +175,8 @@ export function installControlledReceiver(Clock, FrameQueue, delayMs = 800, crea
             }
             let frame
             try {
-              lastOutputTimestamp = Math.max(lastOutputTimestamp + 1, Math.round(performance.now() * 1000))
+              lastOutputTimestamp = timestampForOutput?timestampForOutput(state.context,lastOutputTimestamp):
+                Math.max(lastOutputTimestamp + 1, Math.round(performance.now() * 1000))
               frame = new VideoFrame(selected.frame, { timestamp: lastOutputTimestamp })
               writing = true
               void writer.write(frame).then(() => { frame.close(); writing = false; drawn++; ready = true },

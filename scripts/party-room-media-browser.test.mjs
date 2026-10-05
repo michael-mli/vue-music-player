@@ -43,6 +43,7 @@ import { createOwnedVideoReceiver } from './party-owned-video-receiver.mjs'
 import { readDecodedVideoMarker } from './party-decoded-marker-probe.mjs'
 import { installSourceMarkerProbe, hasBoundedMarkerProbe } from './party-source-marker-probe.mjs'
 import { installSenderTemporalExperiment } from './party-sender-temporal-experiment.mjs'
+import { contextVideoOutputTimestamp } from './party-video-output-clock.mjs'
 import { RtpCaptureClock, analyseCaptureClocks } from './party-rtp-capture-clock.mjs'
 import { CaptureFrameQueue } from './party-capture-frame-queue.mjs'
 import { installControlledReceiver, analyseControlledReceiverQuality, analyseReceiverKeyframeRecovery, hasSingleAudienceOutput, hasBoundedControlledReceiver } from './party-controlled-receiver.mjs'
@@ -155,6 +156,10 @@ assert.ok(process.env.KTV_ROOM_TEST_SOURCE_TEMPORAL===undefined||senderTemporal&
   ownedVideo&&avTiming&&(codecExperiment?.codec==='vp9'||vp8GapComparison),
   'Private temporal comparison requires the explicit nominal VP9 or shared-buffer VP8 floor timing profile')
 const videoMarkerProbe=process.env.KTV_ROOM_TEST_DECODED_MARKER_PROBE==='1'
+const contextVideoOutput=process.env.KTV_ROOM_TEST_VIDEO_OUTPUT_CLOCK==='context'
+assert.ok(process.env.KTV_ROOM_TEST_VIDEO_OUTPUT_CLOCK===undefined||contextVideoOutput&&
+  pcmRenderer==='buffers'&&pcmPlcBuild&&ownedVideo&&ownedPcm&&avTiming&&videoFloor,
+  'Context video timestamps require the explicit shared-buffer owned audio/video floor timing comparison')
 assert.ok(process.env.KTV_ROOM_TEST_DECODED_MARKER_PROBE===undefined||videoMarkerProbe&&ownedVideo&&avTiming&&
   (codecExperiment?.codec==='vp9'||vp8GapComparison)&&videoFloor,'Decoded marker observation requires nominal private owned timing')
 const sfuAllocationEvidence=process.env.KTV_ROOM_TEST_SFU_ALLOCATION_EVIDENCE==='1'
@@ -601,7 +606,7 @@ try {
       window.__bufferSources.push(item); return item; };
       window.__isOwnedPcmSource=${isOwnedPcmBufferSource.toString()};
       window.confirm = () => true;
-      ${controlledPlayoutMs === null ? '' : `(${installControlledReceiver.toString()})(${RtpCaptureClock.toString()},${CaptureFrameQueue.toString()},${controlledPlayoutMs}${ownedPcm?`,(context,track,nativeSource,delay)=>(${createOwnedPcmReceiver.toString()})(${CapturePcmQueue.toString()},${pcmSourceWorklet.toString()},context,track,nativeSource,delay,{deviceClock:${pcmDeviceClock},batchPackets:${pcmBatchPackets},plc:${!!pcmPlcBuild},renderer:${JSON.stringify(pcmRenderer)},createBuffers:${pcmRenderer==='buffers'?createPcmBufferScheduler.toString():'null'},waitClock:${pcmRenderer==='buffers'?waitForOwnedPcmClock.toString():'null'}}),${probeCaptureEpoch.toString()}${ownedVideo?','+createOwnedVideoReceiver.toString():''}${pcmPlcBuild?',524288':''}`:''});`}` }, sessionId)
+      ${controlledPlayoutMs === null ? '' : `(${installControlledReceiver.toString()})(${RtpCaptureClock.toString()},${CaptureFrameQueue.toString()},${controlledPlayoutMs}${ownedPcm?`,(context,track,nativeSource,delay)=>(${createOwnedPcmReceiver.toString()})(${CapturePcmQueue.toString()},${pcmSourceWorklet.toString()},context,track,nativeSource,delay,{deviceClock:${pcmDeviceClock},batchPackets:${pcmBatchPackets},plc:${!!pcmPlcBuild},renderer:${JSON.stringify(pcmRenderer)},createBuffers:${pcmRenderer==='buffers'?createPcmBufferScheduler.toString():'null'},waitClock:${pcmRenderer==='buffers'?waitForOwnedPcmClock.toString():'null'}}),${probeCaptureEpoch.toString()}${ownedVideo?','+createOwnedVideoReceiver.toString():''}${pcmPlcBuild?',524288'+(contextVideoOutput?','+contextVideoOutputTimestamp.toString():''):''}`:''});`}` }, sessionId)
     await cdp(socket, 'Page.navigate', { url: origin + (legacy ? `/__ktv_legacy_app?room=${room.room.id}` : `/party/${room.room.id}${stage ? '/stage' : ''}`) }, sessionId)
     await poll(() => evaluate(sessionId, "document.body?.innerText.includes('Live room updates connected')"), 'room page connected')
     if (!stage) await evaluate(sessionId, "document.getElementById('party-tab-sing').click()")
@@ -899,6 +904,8 @@ try {
         }
         if(independentVideoReorder)assert.equal(receiver.controlledReceiver?.active?.ownedVideo?.decoder?.reorderMs,
           videoReorderMs,'Current decoder retains the independent reorder bound without changing the output target')
+        if(contextVideoOutput)assert.equal(receiver.controlledReceiver?.active?.videoOutputClock,'context',
+          'Current video generator timestamps retain the declared guarded context clock')
         if(videoMarkerProbe)assert.ok(hasBoundedMarkerProbe(source.sourceMarkerProbe)&&
           hasBoundedMarkerProbe(receiver.nativeReceiverMarkerProbe),'Actual capture/native marker diagnostics remain live and bounded')
         if(senderTemporal){
