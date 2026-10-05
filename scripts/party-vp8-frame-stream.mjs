@@ -1,9 +1,10 @@
 // Private continuous decoder. The caller owns delivered VideoFrames; neither
 // decoding nor capture-clock metadata grants permission to present them.
-export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAware=false,codec='vp8',dependencyAware=false}={}) {
+export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAware=false,codec='vp8',dependencyAware=false,markerProbe=null}={}) {
   if(!Number.isInteger(reorderMs)||reorderMs<0||reorderMs>700||typeof gapAware!=='boolean')throw new Error('VIDEO_REORDER_CONFIG')
   if(!['vp8','vp9'].includes(codec))throw new Error('VIDEO_CODEC_CONFIG')
   if(typeof dependencyAware!=='boolean'||dependencyAware&&(!gapAware||codec!=='vp9'))throw new Error('VIDEO_REORDER_CONFIG')
+  if(markerProbe!==null&&typeof markerProbe!=='function')throw new Error('VIDEO_MARKER_CONFIG')
   const decoderCodec=codec==='vp9'?'vp09.00.31.08':'vp8'
   const heldLimit=reorderMs>240?20:8
   const expected=new Map(),pending=[]
@@ -17,11 +18,13 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAwar
   let decoder,configured=false,closed=false,sequence=0,encodedBytes=0
   let pumping=false,maximumReady=0,committedGaps=0,contiguousDrains=0,transferWaits=0
   let outputDiagnostic=null,normalizedOutputs=0,maximumCopyBytes=0
+  let markerReads=0,markerInvalid=0,markerTransitions=0,markerRegressions=0,lastMarker=null
   let lastRtp=null,lastTimestamp=0,captureAnchor=null,decoded=0,decodedKeyFrames=0,discarded=0,maximumBytes=0,maximumPending=0,maximumResidualMs=0
   const delta=(value,anchor)=>((value-anchor+0x80000000)>>>0)-0x80000000
   function snapshot(){return {closed,configured,decoded,decodedKeyFrames,discarded,encodedBytes,pending:expected.size,
     maximumBytes,maximumPending,maximumReady,maximumResidualMs,heldPackets:held.size,maximumHeld,heldLimit,duplicates,lateFrames,reordered,pressureDrains,reorderMs,
-    codec,gapAware,dependencyAware,dependencyPackets,referenceMisses,committedGaps,contiguousDrains,transferWaits,outputDiagnostic,normalizedOutputs,maximumCopyBytes}}
+    codec,gapAware,dependencyAware,dependencyPackets,referenceMisses,committedGaps,contiguousDrains,transferWaits,outputDiagnostic,normalizedOutputs,maximumCopyBytes,
+    ...(markerProbe?{markerProbe:{reads:markerReads,invalid:markerInvalid,transitions:markerTransitions,regressions:markerRegressions}}:{})}}
   function close(reason=null){
     if(closed)return
     closed=true;clearTimeout(reorderTimer);held.clear();seen.clear();references.clear();pending.length=0
@@ -47,6 +50,15 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAwar
         }
         if(closed)return
         if(result==='wait'){transferWaits++;break}
+        if(result===true&&markerProbe){
+          markerReads++
+          if(!packet.marker.valid)markerInvalid++
+          else {
+            if(lastMarker!==null&&packet.marker.id!==lastMarker)markerTransitions++
+            if(lastMarker!==null&&packet.marker.id<lastMarker)markerRegressions++
+            lastMarker=packet.marker.id
+          }
+        }
         expected.delete(packet.timestamp);packet.frame=null
         if(result!==true){discarded++;frame.close()}
       }
@@ -90,6 +102,16 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAwar
         if(frame.codedWidth!==1280||frame.codedHeight!==720||frame.displayWidth!==1280||frame.displayHeight!==720||
           frame.format!==format||frame.allocationSize()!==bytes)throw new Error('VIDEO_OUTPUT')
         normalizedOutputs++
+      }
+      if(markerProbe){
+        // The small YUV region fits in the same full-RGBA pending reservation.
+        // Keep the borrowed frame reachable by terminal cleanup while reading.
+        packet.copyFrame=frame;owned=true
+        packet.marker=await markerProbe(frame)
+        if(closed)return
+        if(typeof packet.marker?.valid!=='boolean'||packet.marker.valid&&
+          (!Number.isInteger(packet.marker.id)||packet.marker.id<0||packet.marker.id>255))throw new Error('VIDEO_OUTPUT')
+        packet.copyFrame=null;owned=false
       }
       decoded++
       if(packet.type==='key')decodedKeyFrames++

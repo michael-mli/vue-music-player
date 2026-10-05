@@ -95,7 +95,7 @@ export function installEncodedTimingProbe(workerSource,receiverApi='native') {
     worker.addEventListener('message', ({ data }) => {
       if(direction==='receive'&&data?.type==='pcm-port-state') {
         const row={worker:id,closed:data.closed===true,configured:data.configured===true,observedAt:performance.now()}
-        for(const key of ['decoded','gaps','duplicates','chunks','encodedBytes','pcmBytes','maximumChunks','maximumBytes','recovered','reordered','heldPackets','maximumHeld','backpressureEvents'])
+        for(const key of ['decoded','gaps','duplicates','chunks','encodedBytes','pcmBytes','maximumChunks','maximumBytes','recovered','reordered','heldPackets','maximumHeld','pressureDrains','backpressureEvents'])
           if(Number.isSafeInteger(data[key])&&data[key]>=0)row[key]=data[key]
         for(const key of ['lastCaptureUnixMs','maximumResidualMs','scheduledCaptureUnixMs','captureOffsetMs','maximumOffsetMs'])if(Number.isFinite(data[key]))row[key]=data[key]
         row.reason=[null,'PCM_CLOCK','PCM_BOUND','PCM_PACKET','PCM_OUTPUT','PCM_API','PCM_CONFIG','PCM_DECODE','PCM_CREDIT',
@@ -107,6 +107,13 @@ export function installEncodedTimingProbe(workerSource,receiverApi='native') {
       if(direction==='receive'&&data?.type==='video-port-state'){
         const row={worker:id,closed:data.closed===true,configured:data.configured===true,observedAt:performance.now()}
         if(['vp8','vp9'].includes(data.codec))row.codec=data.codec
+        if(data.markerProbe!==undefined){
+          const input=data.markerProbe,keys=['reads','invalid','transitions','regressions']
+          if(!input||keys.some(key=>!Number.isSafeInteger(input[key])||input[key]<0)||
+            input.invalid>input.reads||input.transitions>input.reads||input.regressions>input.transitions){
+            row.markerProbeError='VIDEO_MARKER_DIAGNOSTIC';errors++;failures.pipe++
+          }else row.markerProbe=Object.fromEntries(keys.map(key=>[key,input[key]]))
+        }
         if(data.outputDiagnostic){
           const input=data.outputDiagnostic,value={associated:input.associated===true}
           for(const key of ['codedWidth','codedHeight','displayWidth','displayHeight'])

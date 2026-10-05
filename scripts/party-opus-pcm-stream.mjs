@@ -10,11 +10,11 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
   let lastCaptureUnixMs=null,maximumResidualMs=0,captureAnchor=null
   let scheduledCaptureUnixMs=null,captureOffsetMs=0,maximumOffsetMs=0
   let recovered=0,closeReason=null,flushing=false,backpressureEvents=0
-  let reorderTimer=null,reordered=0,maximumHeld=0
+  let reorderTimer=null,reordered=0,maximumHeld=0,pressureDrains=0
   const delta = (value, previous) => ((value-previous+0x80000000)>>>0)-0x80000000
   function snapshot() { return { closed, configured, decoded, gaps, duplicates, chunks:credits.size,
     encodedBytes, pcmBytes, maximumChunks, maximumBytes,lastCaptureUnixMs,maximumResidualMs,recovered,
-    scheduledCaptureUnixMs,captureOffsetMs,maximumOffsetMs,reordered,heldPackets:held.size,maximumHeld,reason:closeReason,backpressureEvents } }
+    scheduledCaptureUnixMs,captureOffsetMs,maximumOffsetMs,reordered,heldPackets:held.size,maximumHeld,pressureDrains,reason:closeReason,backpressureEvents } }
   function close(reason = null) {
     if (closed) return
     closed = true;closeReason=reason;clearTimeout(reorderTimer);held.clear()
@@ -68,7 +68,7 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
   }
   function discard(packet){held.delete(packet.rtp);encodedBytes-=packet.bytes}
   function fail(error){close(['PCM_CLOCK','PCM_BOUND','PCM_PACKET'].includes(error.message)?error.message:'PCM_PACKET')}
-  function flush(){
+  function flush(forceOne=false){
     if(closed||flushing)return
     flushing=true
     clearTimeout(reorderTimer);reorderTimer=null
@@ -76,7 +76,9 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
       while(!closed&&held.size){
         const packet=[...held.values()].sort((a,b)=>delta(a.rtp,b.rtp))[0]
         if(lastEnd!==null&&delta(packet.rtp,lastEnd)<0){discard(packet);duplicates++;continue}
-        const expired=performance.now()-packet.arrivedAt>=reorderMs
+        const firstArrival=Math.min(...[...held.values()].map(item=>item.arrivedAt))
+        const aged=performance.now()-firstArrival>=reorderMs,expired=aged||forceOne
+        let pressureCommitted=false
         // Repair contiguous history immediately. Wait for an earlier primary
         // before committing an unrecoverable gap, for at most 80 ms.
         if(lastEnd!==null&&delta(packet.rtp,lastEnd)>0){
@@ -87,16 +89,18 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
             if(packetFrames(block.data)>block.timestampOffset)throw new Error('PCM_PACKET')
             if(delta(rtp,lastEnd)>0&&!expired)break
             if(credits.size>=48||pcmBytes+packetFrames(block.data)*8>1024*1024){backpressureEvents++;return}
+            if(forceOne&&!aged&&!pressureCommitted&&delta(rtp,lastEnd)>0){pressureDrains++;pressureCommitted=true}
             accept(block.data,rtp,packet.capture-block.timestampOffset/48,true)
             if(closed)return
           }
         }
         if(lastEnd!==null&&delta(packet.rtp,lastEnd)>0&&!expired){
-          reorderTimer=setTimeout(flush,Math.max(1,reorderMs-(performance.now()-packet.arrivedAt)))
+          reorderTimer=setTimeout(flush,Math.max(1,reorderMs-(performance.now()-firstArrival)))
           return
         }
         if(credits.size>=48||pcmBytes+packetFrames(packet.data)*8>1024*1024){backpressureEvents++;return}
-        discard(packet);accept(packet.data,packet.rtp,packet.capture)
+        if(forceOne&&!aged&&!pressureCommitted&&lastEnd!==null&&delta(packet.rtp,lastEnd)>0)pressureDrains++
+        discard(packet);accept(packet.data,packet.rtp,packet.capture);forceOne=false
       }
     }catch(error){fail(error)}
     finally{flushing=false}
@@ -139,6 +143,19 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
         const payload = primaryPayload(new Uint8Array(data),metadata.payloadType,self.__encodedTimingCodecs || [])
         const redundant=[...(payload.redundant||[])].sort((a,b)=>b.timestampOffset-a.timestampOffset)
         const bytes=payload.data.byteLength+redundant.reduce((sum,block)=>sum+block.data.byteLength,0)
+        if(held.size>=8){
+          // A contiguous repair is more useful than prematurely committing the
+          // oldest gap. Decode it without retaining a ninth reorder packet.
+          if(lastEnd!==null&&delta(rtp,lastEnd)===0){
+            accept(payload.data,rtp,capture);flush();return
+          }
+          // A burst may exhaust packet slots before the 80-ms wait expires.
+          // Commit only the oldest gap early, with the existing PCM credits and
+          // byte limits. A genuinely stalled decoder/renderer still fails closed.
+          flush(true)
+          if(closed)return
+          if(lastEnd!==null&&delta(rtp,lastEnd)<0){duplicates++;return}
+        }
         if(held.size>=8||encodedBytes+bytes>512*1024)throw new Error('PCM_BOUND')
         // Copy only after reserving the same shared encoded-byte budget used by
         // pending decoding. RTC-owned payloads continue downstream unchanged.

@@ -4,7 +4,7 @@ import vm from 'node:vm'
 import {setImmediate as tick} from 'node:timers/promises'
 import {createVp8FrameStream} from './party-vp8-frame-stream.mjs'
 
-async function fixture({hold=false,accept=true,reorderMs=0,format='I420',gapAware=false,codec='vp8',receivedCodec=codec,padded=false,copyHold=false,dependencyAware=false}={}){
+async function fixture({hold=false,accept=true,reorderMs=0,format='I420',gapAware=false,codec='vp8',receivedCodec=codec,padded=false,copyHold=false,dependencyAware=false,markerProbe=null}={}){
   const delivered=[],frames=[],reports=[],waiting=[],copies=[]
   let now=1000,decoder,timerId=0,configUsed
   let acceptance=accept
@@ -25,16 +25,40 @@ async function fixture({hold=false,accept=true,reorderMs=0,format='I420',gapAwar
     EncodedVideoChunk:class{constructor(config){Object.assign(this,config)}},
     VideoFrame:class{constructor(data,config){Object.assign(this,config);this.closes=0;frames.push(this)}
       allocationSize(){return 1382400}close(){this.closes++}},
-    __encodedTimingCodecs:[{payloadType:96,mimeType:`video/${receivedCodec}`}],deliver:(frame,packet)=>{if(acceptance===true)delivered.push({frame,...packet});return acceptance},report:row=>reports.push(row),reorderMs,gapAware,codec,dependencyAware,
+    __encodedTimingCodecs:[{payloadType:96,mimeType:`video/${receivedCodec}`}],deliver:(frame,packet)=>{if(acceptance===true)delivered.push({frame,...packet});return acceptance},report:row=>reports.push(row),reorderMs,gapAware,codec,dependencyAware,markerProbe,
     setTimeout(callback,delay){const id=++timerId;timers.set(id,{callback,at:now+delay});return id},clearTimeout(id){timers.delete(id)}}
   realm.self=realm
-  const stream=vm.runInNewContext(`(${createVp8FrameStream.toString()})(deliver,report,{reorderMs,gapAware,codec,dependencyAware})`,realm)
+  const stream=vm.runInNewContext(`(${createVp8FrameStream.toString()})(deliver,report,{reorderMs,gapAware,codec,dependencyAware,markerProbe})`,realm)
   await tick()
   const send=(rtp,captureTime=rtp/90,type=frames.length?'delta':'key',reference={})=>stream.observe(
     {timestamp:rtp>>>0,type,data:new Uint8Array([7]).buffer},{captureTime,payloadType:96,...reference})
   return {get config(){return configUsed},finishCopies(){while(copies.length)copies.shift()()},stream,send,delivered,frames,reports,waiting,timers,setAccept(value){acceptance=value},advance(value){now=value;for(const [id,timer]of[...timers])if(timer.at<=now){timers.delete(id);timer.callback()}},
     flush(){while(waiting.length)decoder.callbacks.output(waiting.shift())}}
 }
+test('asynchronous marker reads count decoded regressions in transfer order without changing media delivery',async()=>{
+  const reads=[]
+  const f=await fixture({markerProbe:frame=>new Promise(resolve=>reads.push({frame,resolve}))})
+  for(let i=0;i<4;i++)f.send(i*3600)
+  reads[3].resolve({valid:true,id:1});reads[2].resolve({valid:true,id:0});reads[1].resolve({valid:true,id:1})
+  await tick();assert.equal(f.delivered.length,0)
+  reads[0].resolve({valid:true,id:0});await tick()
+  assert.deepEqual(f.delivered.map(packet=>packet.rtpTimestamp),[0,3600,7200,10800])
+  assert.deepEqual({...f.stream.snapshot().markerProbe},{reads:4,invalid:0,transitions:3,regressions:1})
+  assert.equal(f.stream.snapshot().maximumPending,4);f.stream.close()
+})
+test('marker backpressure and terminal closure cannot duplicate counts or leak borrowed native frames',async()=>{
+  const f=await fixture({accept:'wait',markerProbe:async()=>({valid:false})});f.send(0);await tick()
+  assert.equal(f.stream.snapshot().markerProbe.reads,0)
+  f.setAccept(true);f.stream.resume();f.stream.resume()
+  assert.deepEqual({...f.stream.snapshot().markerProbe},{reads:1,invalid:1,transitions:0,regressions:0});f.stream.close()
+  let complete
+  const pending=await fixture({markerProbe:()=>new Promise(resolve=>{complete=resolve})});pending.send(0)
+  pending.stream.close();assert.equal(pending.frames[0].closes,1)
+  complete({valid:true,id:0});await tick();assert.equal(pending.delivered.length,0)
+  assert.equal(pending.frames[0].closes,1)
+  const rejected=await fixture({markerProbe:async()=>({valid:true,id:256})});rejected.send(0);await tick()
+  assert.equal(rejected.stream.snapshot().closed,true);assert.equal(rejected.frames[0].closes,1)
+})
 test('gap-only repair decodes contiguous RTP immediately and drains repaired history before its fixed deadline',async()=>{
   const f=await fixture({gapAware:true,reorderMs:700,accept:false}),start=0xfffffe00
   f.send(start,0);f.send((start+3600)>>>0,40);assert.equal(f.stream.snapshot().decoded,2)

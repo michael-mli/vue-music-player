@@ -49,8 +49,8 @@ is a preview; public online media is still disabled.
 
 | Check | Current evidence | Status |
 | --- | --- | --- |
-| Timing/capability fixtures | 166/166 | Pass |
-| Buffered expiry after both render contexts freeze/resume | 51/51, latest reader/revalidation | Pass for digital fixture |
+| Timing/capability fixtures | 186/186 | Pass |
+| Buffered expiry after both render contexts freeze/resume | 51/51, latest PCM pressure handling | Pass for digital fixture |
 | Buffered expiry while source and listener pages stall | 46/46, latest reader/revalidation | Pass for digital fixture |
 | Fresh clean 40-pair A/V regression | 50/50; p95 52.44 ms / max 54.11 ms; nominal cadence | Pass for digital fixture |
 | Continuous impaired-network A/V and nominal frame rate | RED-on and RED-off VP9 comparisons time out; required cadence fails | Fail |
@@ -5177,3 +5177,205 @@ repair failure yet. Receiver repair and reordering remain the next investigation
 no SFU minimum-channel-capacity override is justified by this evidence.
 The candidate is not selected for deployment. Fixture resources and the scoped
 local ICE guard are cleaned up after the failed journey.
+
+### Isolated continuous-RTX SFU comparison — 2026-10-04
+
+Pinned LiveKit v1.13.7 source shows downstream PLI handling sets
+`isNACKThrottled` until a keyframe is forwarded; `retransmitPackets` returns
+early while that flag is set because `FlagStopRTXOnPLI` is true. A private
+comparison changes only that constant to false, keeping native retransmission
+available while keyframe recovery is pending. This is a hypothesis about repair
+availability, not evidence that it restores receiver cadence. Packet caches,
+request queues, layer selection, pacing, codecs, authorization and source caps
+remain unchanged.
+
+The builder downloads immutable upstream commit
+`8d11efdfcd4220092b6ac7b8a21af28526da5a6b`, verifies the original downtrack file
+SHA-256 and the upstream pinned Go image, then builds on the existing pinned
+SFU runtime image. It records the resulting immutable image ID, binary hash,
+archive hash and comparison policy in a private marker. The runner rejects a
+mutable/mismatched image, marker or binary and requires the original full UDP
+VP9/RED/floor journey, passive allocation evidence, dependency reordering,
+continuous impairment/handover and five-second receiver recovery. There is no
+production image or media-policy override. The build's focused upstream SFU
+RTX/NACK/retransmission tests and server binary build pass in
+`/tmp/ktv-sfu-rtx-continue-build-20261004.log`. The verified private image is
+`sha256:b6e2f4febf41a8e6976fa2237fb1ccf4f408ec2d9e477a0a613f5ec5f20864fd`,
+with binary SHA-256
+`7a681205c45eb422688bf0ade4b1be7d31b2dec3beba9ed848bec0f3e04aca73`.
+The build is stored at `/tmp/ktv-sfu-rtx-continue-build-20261004`; no production
+artifact is replaced. **171/171** timing/capability fixtures pass in
+`/tmp/ktv-sfu-rtx-continue-fixtures-20261004.log`, including rejection of unpinned
+source, unexpected policy, toolchain/runtime changes, mutable images and marker
+mismatches. Runner/builder syntax and whitespace checks pass. The original full
+UDP journey is running in
+`/tmp/ktv-owned-av-vp9-floor250-sfu-continue-rtx-full-udp-20261004.log`;
+native results remain pending.
+
+### Continuous-RTX first native run stops at clean marker accounting — 2026-10-04
+
+`/tmp/ktv-owned-av-vp9-floor250-sfu-continue-rtx-full-udp-20261004.log`
+exits 1 before impairment: six baseline pairs match, but two unmatched video
+edges exceed the unchanged allowance of one. Source / native receiver / owned
+receiver / presentation remain **24.95 / 24.99 / 25.00 / 24.15 fps**; the matched
+baseline skew maximum is **45.06 ms**. SFU allocation evidence is valid and stays
+at target temporal 2 throughout the 11.419-second baseline.
+
+The presented pixel marker briefly goes backward while presentation counters,
+media timestamps and source marker hook identities remain monotonic. Two extra
+video edges occur 66.7 ms apart around a marker transition; those hook records do
+not show the reversal. Actual captured pixels were not yet sampled. This is not an impaired-network recovery result and is not excused
+by matching only the six aligned edges. Whether the reversal originates in
+decoding, frame copying, presentation or pixel observation remains unproved.
+One identical full-journey replication is used to check reproducibility and reach
+the impairment comparison if its original baseline gates pass. The first failure
+remains recorded; no cadence, matching window or unmatched-edge gate is relaxed.
+
+### Continuous-RTX replication exposes PCM reorder admission overflow — 2026-10-04
+
+`/tmp/ktv-owned-av-vp9-floor250-sfu-continue-rtx-full-udp-repeat2-20261004.log`
+exits 1 after the original impaired matching window times out. Its six-pair
+baseline has no unmatched edges and maximum skew **46.46 ms**. Across 85 impaired
+samples / 89.13 seconds, source encoding is **24.99 fps**, native decoding
+**18.86 fps**, still below the required 20 fps. Independent random loss schedules
+prevent attributing a numerical improvement over earlier runs to the SFU change.
+SFU target temporal 2 remains unchanged throughout the valid 90.007-second
+allocation window, with no deficiency or bandwidth pause.
+
+The owned PCM decoder closes at `PCM_BOUND` before the first impaired sample,
+followed by controller `PLAYOUT_AUDIO_CLOCK`. Evidence shows eight held reorder
+packets, maximum **44** decoded PCM credits and **337,920** reserved PCM bytes:
+the reorder packet admission limit, rather than exhausted 48-credit / 1-MiB PCM
+capacity, is the concrete closure. The impaired native stream continues while
+the controlled output is terminal; this does not establish owned repair quality.
+
+The private PCM stream now resolves a full eight-packet reorder queue without
+retaining a ninth packet: an incoming contiguous primary repairs it immediately;
+otherwise, available decoded credits may commit only the oldest waiting gap
+before its 80-ms deadline. `pressureDrains` records early gap commitments,
+including RED history. Remaining gaps are still measured; no synthetic waveform
+or authority is created. Renderer/decoder stalls, forged credits, invalid clocks,
+encoded/PCM byte overflow and the 48-credit bound still fail closed. Tests cover
+wraparound, a late contiguous repair, ordered RED recovery with actual missing
+samples, late duplicates and terminal stalls. **174/174** fixtures pass in
+`/tmp/ktv-sfu-rtx-pcm-pressure-fixtures-20261004.log`.
+
+The full comparison with this fix,
+`/tmp/ktv-owned-av-vp9-floor250-sfu-continue-rtx-pcm-pressure-full-udp-20261004.log`,
+exits 1 at clean baseline marker accounting: six matched pairs, maximum skew
+**48.31 ms**, zero unmatched audio but two unmatched video edges. All measured
+cadence remains nominal; impairment is not reached. This second baseline anomaly
+must be investigated, not bypassed by changing matching or release criteria.
+New PCM admission has unit evidence but still lacks native impaired burst proof.
+Its independent buffered-expiry regression is running in
+`/tmp/ktv-owned-av-pcm-pressure-both-context-expiry-20261004.log` using the unchanged
+production VP8 build and original SFU. No comparison is deployed.
+
+### PCM pressure expiry proof and decoded-marker diagnostics — 2026-10-04
+
+The first buffered-expiry regression passes independently measured silence,
+replacement separation and actual context freeze/resume, then rejects an old
+controller's `PLAYOUT_VIDEO_AGE` closure in final accounting. That controller
+closes **20.76 seconds after** the captured expiry deadline, with zero queued
+bytes and both PCM/video decoders closed. The existing strict classifier only
+received a verified expiry certificate from the source-page-stall variant.
+Frozen-context/page faults now return the same exact-session certificate after
+all their existing silence, deadline, timing and replacement proofs pass. The
+classifier, output permissions, deadlines, silence margins and negative checks
+for early/current/unrelated closures remain intact.
+
+`/tmp/ktv-owned-av-pcm-pressure-verified-both-context-expiry-20261004.log`
+passes **51/51** actual built-app streaming checks on the production VP8 build
+and original SFU with the new PCM admission logic. This closes that digital
+buffered-expiry regression; native impaired burst handling remains unverified.
+
+Added private `KTV_ROOM_TEST_DECODED_MARKER_PROBE=1` for nominal VP9 owned timing.
+It reads a bounded 416-by-32 YUV region before frames enter presentation, counting
+valid/invalid fixture markers, transitions and backward identities in actual
+transfer order. Each read is limited to **32 KiB** and fits inside the existing
+full-RGBA decoder reservation. The probe changes neither frame bytes, ordering,
+admission nor output authority. Async reads retain the borrowed frame in terminal
+cleanup; closure and transfer backpressure cannot leak frames or double-count
+markers. Unsupported formats/geometry, oversized regions, invalid layouts and
+invalid probe results fail explicitly. No raw pixels or marker IDs are returned
+in diagnostics.
+
+**178/178** timing/capability fixtures pass in
+`/tmp/ktv-decoded-marker-pcm-pressure-fixtures-20261004.log`. The instrumented
+original full UDP journey is running in
+`/tmp/ktv-owned-av-vp9-sfu-continue-rtx-pcm-pressure-decoded-markers-full-udp-20261004.log`.
+Its six-pair baseline passes the unchanged allowances with maximum skew
+**72.19 ms**, zero unmatched audio and one unmatched video edge. This comparison
+is intended to locate the recurrent pixel reversal and validate the PCM fix;
+it is not a release qualification or deployment approval.
+
+
+### Recorded decoder markers and the original PCM deadline — 2026-10-04
+
+The first instrumented UDP run,
+`/tmp/ktv-owned-av-vp9-sfu-continue-rtx-pcm-pressure-decoded-markers-full-udp-20261004.log`,
+exits 1: source / native / owned / presentation cadence is **24.97 / 19.11 /
+20.55 / 18.74 fps** during impairment and the original 40-pair window times out.
+Both owned decoders remain alive, but the main diagnostic allowlist had dropped
+worker marker counters and the new PCM `pressureDrains` count. It therefore gives
+no evidence of decoded marker ordering or native pressure-path execution.
+
+The observer now carries only the four bounded marker counters and PCM pressure
+count. Invalid counter relationships fail explicitly; unknown properties remain
+excluded. Separately, reordered earlier RTP packets no longer restart the PCM
+80-ms wait: its deadline uses the earliest retained arrival, with a regression
+for an earlier packet arriving midway through the wait. Packet/byte/credit caps,
+clock checks and terminal output rules remain unchanged.
+
+`/tmp/ktv-owned-av-vp9-rtx-pcm-deadline-recorded-markers-full-udp-20261004.log`
+exits 1. Clean baseline passes its six-pair accounting (maximum skew **64.16 ms**,
+zero unmatched edges), while the decoded probe records **260 reads, zero invalid
+markers, 12 transitions and four backward identities** between its first and
+last baseline samples. The pixel anomaly therefore exists before presentation;
+this alone does not distinguish source capture from encoding/decoding. During
+impairment, source / native / owned / presentation cadence is **24.86 / 16.62 /
+16.41 / 16.04 fps**, below the original requirement. Both owned decoders remain
+alive; measured missing PCM is 34,560 samples (0.72 seconds), and `pressureDrains`
+is zero. The new pressure branch still has no native execution proof.
+
+Added a private publisher probe that clones the exact existing video track,
+reads one frame at a time with processor buffer size one, and samples the same
+bounded marker region. Actual YUV/RGB allocation is recorded with a **64-KiB**
+ceiling; original tracks are never stopped, altered or republished. Closing during
+a copy cannot emit late diagnostics or leak a frame. Only aggregate counts and
+fixed error codes are exposed. Five tests cover actual pixel order, exact-track
+reuse/replacement, close during copy, allocation accounting and constructor
+failure cleanup. **185/185** fixtures pass in
+`/tmp/ktv-source-decoded-marker-pcm-deadline-fixtures-20261004.log`.
+The unchanged full UDP journey with both probes is running in
+`/tmp/ktv-owned-av-vp9-source-decoded-markers-pcm-deadline-full-udp-20261004.log`.
+No failed private candidate is deployed, and no timing/cadence gate is relaxed.
+
+
+### Capture stays ordered; native-versus-owned decoding comparison — 2026-10-04
+
+`/tmp/ktv-owned-av-vp9-source-decoded-markers-pcm-deadline-full-udp-20261004.log`
+exits 1 at the unchanged impaired 40-pair timeout. Across the clean baseline,
+actual source pixels have **264 additional reads, zero invalid markers and zero
+backward identities**. The owned decoder has **262 additional reads, zero new
+invalid markers and two backward identities**. Source / native cadence is
+**24.99 / 24.91 fps** before impairment. This localizes the clean anomaly after
+capture and before presentation; encoding, transport, decoding and normalized
+copying have not yet been distinguished.
+
+During impairment, source / native cadence is **24.91 / 17.29 fps**, below the
+required native range. The publisher probe still records zero backward identities;
+owned decoded counters reach 61 backward identities. Both owned decoders stay
+alive; PCM missing samples total **39,360** (0.82 seconds), maximum held packets
+is six and `pressureDrains` remains zero. Native pressure handling is still not
+exercised. Independent random loss prevents a causal numerical comparison.
+
+The bounded read-only track probe now also supports the exact current native
+received video track. Its separate clone and aggregate counters do not modify
+or republish either original track. A sixth probe test verifies scope, reuse,
+independent cleanup and rejection of unknown roles. **186/186** fixtures pass in
+`/tmp/ktv-native-marker-probe-fixtures-20261004.log`. The unchanged full UDP journey
+comparing captured, Chrome-native decoded and owned-decoded markers is running
+in `/tmp/ktv-owned-av-vp9-source-native-owned-markers-full-udp-20261004.log`.
+This comparison cannot qualify a release while the original timing/cadence gates
+remain unmet.

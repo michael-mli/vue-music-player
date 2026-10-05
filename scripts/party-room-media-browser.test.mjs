@@ -36,6 +36,8 @@ import { createVp8DecodeProbe } from './party-vp8-decode-probe.mjs'
 import { createVp8FrameStream } from './party-vp8-frame-stream.mjs'
 import { installVp8FrameWorker } from './party-vp8-frame-worker.mjs'
 import { createOwnedVideoReceiver } from './party-owned-video-receiver.mjs'
+import { readDecodedVideoMarker } from './party-decoded-marker-probe.mjs'
+import { installSourceMarkerProbe } from './party-source-marker-probe.mjs'
 import { RtpCaptureClock, analyseCaptureClocks } from './party-rtp-capture-clock.mjs'
 import { CaptureFrameQueue } from './party-capture-frame-queue.mjs'
 import { installControlledReceiver, analyseControlledReceiverQuality, analyseReceiverKeyframeRecovery, hasSingleAudienceOutput, hasBoundedControlledReceiver } from './party-controlled-receiver.mjs'
@@ -46,6 +48,7 @@ import { analyseCodecQuality, analyseCaptureCadence, analyseSourceAllocation } f
 import { analyseAudioRedEvidence } from './party-audio-red-experiment.mjs'
 import { publisherVideoFloorSdp, installVideoFloorExperiment } from './party-video-floor-experiment.mjs'
 import { analyseSfuAllocationLogs, sfuLogByteLimit } from './party-sfu-allocation-evidence.mjs'
+import { validateSfuRtxImage, sfuBaseImage } from './party-sfu-rtx-experiment.mjs'
 import { installEncodedLeaseObserver } from './party-encoded-lease-observer.mjs'
 import { installSenderKeyframeExperiment } from './party-sender-keyframes.mjs'
 import { installSenderCadenceExperiment } from './party-sender-cadence-experiment.mjs'
@@ -123,6 +126,9 @@ const encodedApi = process.env.KTV_ROOM_TEST_ENCODED_API || 'native'
 assert.ok(['native','legacy'].includes(encodedApi)&&(encodedApi==='native'||encodedTiming),
   'A private encoded API comparison requires timing observation')
 const videoFloor=process.env.KTV_ROOM_TEST_VIDEO_MIN_BITRATE!==undefined
+const videoMarkerProbe=process.env.KTV_ROOM_TEST_DECODED_MARKER_PROBE==='1'
+assert.ok(process.env.KTV_ROOM_TEST_DECODED_MARKER_PROBE===undefined||videoMarkerProbe&&ownedVideo&&avTiming&&
+  codecExperiment?.codec==='vp9'&&videoFloor,'Decoded marker observation requires nominal private VP9 owned timing')
 const sfuAllocationEvidence=process.env.KTV_ROOM_TEST_SFU_ALLOCATION_EVIDENCE==='1'
 assert.ok(process.env.KTV_ROOM_TEST_SFU_ALLOCATION_EVIDENCE===undefined||sfuAllocationEvidence&&remoteMode&&videoFloor,
   'Private SFU observation requires the unchanged remote VP9 floor comparison')
@@ -214,10 +220,28 @@ if (remoteMode) {
   assert.match(process.env.KTV_ROOM_TEST_INTERFACE || '', /^[A-Za-z0-9_-]+$/, 'Remote fixture requires its network interface')
 }
 
-const exec = promisify(execFile), root = await fs.mkdtemp(path.join(os.tmpdir(), 'ktv-room-stream-'))
+const continueSfuRtx=process.env.KTV_ROOM_TEST_SFU_RTX_RECOVERY==='continue'
+assert.ok(process.env.KTV_ROOM_TEST_SFU_RTX_RECOVERY===undefined||continueSfuRtx&&sfuAllocationEvidence&&
+  receiverKeyframes&&receiverKeyframeMs===5000&&dependencyVideoReorder&&impairmentProtocol==='udp'&&
+  continuousImpairment&&handoverAv,'Private SFU RTX comparison requires the unchanged full UDP floor/RED journey')
+assert.ok(continueSfuRtx===Boolean(process.env.KTV_ROOM_TEST_SFU_RTX_BUILD),'Private SFU build must explicitly select RTX comparison')
+const exec = promisify(execFile)
+let image=sfuBaseImage
+if(continueSfuRtx){
+  const marker=JSON.parse(await fs.readFile(path.join(path.resolve(process.env.KTV_ROOM_TEST_SFU_RTX_BUILD),'sfu-rtx-experiment.json'),'utf8'))
+  assert.match(marker.imageId||'',/^sha256:[a-f0-9]{64}$/,'Private SFU image identity must be immutable')
+  const inspected=JSON.parse((await exec('docker',['image','inspect',marker.imageId],{maxBuffer:1024*1024})).stdout)
+  assert.equal(inspected.length,1,'Private SFU comparison needs one exact image')
+  image=validateSfuRtxImage(marker,inspected[0])
+  const actual=(await exec('docker',['run','--rm','--read-only','--network=none','--cap-drop=ALL',
+    '--security-opt=no-new-privileges','--entrypoint=sha256sum',image,'/livekit-server'])).stdout.split(/\s/)[0]
+  assert.equal(actual,marker.binaryHash,'Private SFU binary must match the recorded artifact')
+  console.log('Private SFU RTX policy:',JSON.stringify({continueRtxOnPli:true,source:marker.source,imageId:image,binaryHash:actual}))
+}
+const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ktv-room-stream-'))
 const container = `ktv-room-stream-${randomUUID().slice(0, 8)}`
 const apiKey = 'room-browser', apiSecret = randomBytes(32).toString('hex'), controlSecret = randomBytes(32).toString('hex')
-const upstreamUrl = 'http://127.0.0.1:17900', image = 'livekit/livekit-server:v1.13.7@sha256:6fd3b7088874c4d119160dd688798dfec852bc014786d392caad15f6f63912a3'
+const upstreamUrl = 'http://127.0.0.1:17900'
 const provider = new RoomServiceClient(upstreamUrl, apiKey, apiSecret, { requestTimeout: 2, failover: false })
 const db = initDb(root), contexts = [], debuggerSockets = [], pending = new Map(), sessionSockets = new Map(), sessionTargets = new Map(), errors = [], mediaHttp = []
 const ownedTcp = new Set()
@@ -423,7 +447,7 @@ try {
     await cdp(socket, 'Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', 'en');
       ${avTiming ? `(${installAvSourceMarkers.toString()})();` : ''}
       ${encodedApi==='legacy' ? 'window.RTCRtpScriptTransform=undefined;' : ''}
-      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify('('+encodedTimingWorker.toString()+')('+ (opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : vp8DecodeProbe?'null,null,null,'+createVp8DecodeProbe.toString():'') +');'+(pcmPortProbe||ownedPcm ? '('+installOpusPcmWorker.toString()+')('+bindOpusPcmPort.toString()+','+createOpusPcmStream.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString()+');' : '')+(ownedVideo?'('+installVp8FrameWorker.toString()+')('+createVp8FrameStream.toString()+','+(controlledPlayoutMs>=800?(gapVideoReorder?700:500):controlledPlayoutMs>=500?240:80)+','+receiverKeyframes+','+receiverKeyframeMs+','+gapVideoReorder+','+JSON.stringify(codecExperiment?.codec||'vp8')+','+dependencyVideoReorder+');':''))},${JSON.stringify(receiverEncodedApi)});` : ''}
+      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify('('+encodedTimingWorker.toString()+')('+ (opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : vp8DecodeProbe?'null,null,null,'+createVp8DecodeProbe.toString():'') +');'+(pcmPortProbe||ownedPcm ? '('+installOpusPcmWorker.toString()+')('+bindOpusPcmPort.toString()+','+createOpusPcmStream.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString()+');' : '')+(ownedVideo?'('+installVp8FrameWorker.toString()+')('+createVp8FrameStream.toString()+','+(controlledPlayoutMs>=800?(gapVideoReorder?700:500):controlledPlayoutMs>=500?240:80)+','+receiverKeyframes+','+receiverKeyframeMs+','+gapVideoReorder+','+JSON.stringify(codecExperiment?.codec||'vp8')+','+dependencyVideoReorder+','+(videoMarkerProbe?readDecodedVideoMarker.toString():'null')+');':''))},${JSON.stringify(receiverEncodedApi)});` : ''}
       (${installEncodedLeaseObserver.toString()})();
       ${absoluteCapture ? `(${installAbsoluteCaptureExperiment.toString()})();` : ''}
       ${senderCadence ? `(${installSenderCadenceExperiment.toString()})();` : ''}
@@ -768,6 +792,8 @@ try {
   }
   let recoveryLastRequest = null, recoveryPending, recoveryEncoded = 0
   async function measureAv(phase, sourcePage = phone) {
+    if(videoMarkerProbe)await evaluate(sourcePage,`(${installSourceMarkerProbe.toString()})(${readDecodedVideoMarker.toString()})`)
+    if(videoMarkerProbe)await evaluate(audience,`(${installSourceMarkerProbe.toString()})(${readDecodedVideoMarker.toString()},'native-receiver')`)
     let allocationWindow
     if(sfuAllocationEvidence){
       const grants=db.prepare("SELECT identity FROM ktv_media_grants WHERE scope = 'audience' AND state = 'active'").all()
@@ -1250,6 +1276,7 @@ try {
   }))()` ).catch(() => ({}))))
   throw error
 } finally {
+  if(videoMarkerProbe)for(const session of sessionSockets.keys())await evaluate(session,'__sourceMarkerProbe?.close();__nativeReceiverMarkerProbe?.close()').catch(()=>{})
   if(sfuAllocationEvidence&&running){
     // Docker stores bounded private logs; read only after timing has stopped.
     // execFile errors can include raw output, so emit a fixed failure code only.

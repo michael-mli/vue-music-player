@@ -172,6 +172,23 @@ test('owned decoder state retains only declared codec enums and bounded numeric 
   assert.equal(rows[0].decoded,25);assert.ok(!/excluded|credential/.test(JSON.stringify(rows)))
   f.realm.window.__encodedTimingProbe.close()
 })
+test('owned marker and PCM pressure diagnostics retain only validated scalar counters',()=>{
+  const f=browserFixture(true),peer=new f.realm.window.RTCPeerConnection(),receiver=f.receiver()
+  f.track(peer,receiver)
+  f.workers[0].dispatchEvent(new MessageEvent('message',{data:{type:'video-port-state',markerProbe:{
+    reads:100,invalid:2,transitions:5,regressions:1,privatePixels:'excluded'},privatePayload:'excluded'}}))
+  f.workers[0].dispatchEvent(new MessageEvent('message',{data:{type:'pcm-port-state',pressureDrains:3,privatePayload:'excluded'}}))
+  const probe=f.realm.window.__encodedTimingProbe
+  assert.deepEqual({...probe.videoStates[0].markerProbe},{reads:100,invalid:2,transitions:5,regressions:1})
+  assert.equal(probe.pcmStates[0].pressureDrains,3)
+  assert.equal(JSON.stringify([...probe.videoStates,...probe.pcmStates]).includes('excluded'),false)
+  for(const markerProbe of [null,{}, {reads:3,invalid:4,transitions:0,regressions:0},
+    {reads:3,invalid:0,transitions:4,regressions:0},{reads:3,invalid:0,transitions:2,regressions:3},
+    {reads:3.5,invalid:0,transitions:0,regressions:0}])
+    f.workers[0].dispatchEvent(new MessageEvent('message',{data:{type:'video-port-state',markerProbe}}))
+  assert.equal(probe.videoStates.filter(row=>row.markerProbeError==='VIDEO_MARKER_DIAGNOSTIC').length,6)
+  assert.equal(probe.errors,6);f.realm.window.__encodedTimingProbe.close()
+})
 
 test('declared VP9 receiver codec parameters reach the worker without fmtp or unknown codec fields',()=>{
   for(const api of ['native','standard']){

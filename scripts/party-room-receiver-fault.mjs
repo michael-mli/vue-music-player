@@ -258,7 +258,11 @@ export async function runRoomReceiverFault({ mode, phone, audience, host, origin
     await click(phone,'Stop streaming on this device')
     await poll(async()=>db.prepare('SELECT state FROM ktv_media_grants WHERE identity = ?').get(replacement.identity)?.state==='revoked',
       'replacement publisher is revoked during fixture cleanup')
-    return mode==='source-task-stall'&&ownedPcm?{
+    // Every owned-PCM fault above has independently proved old-output silence,
+    // deadline bounds and replacement separation. Frozen-context/page stalls
+    // can also deliver stale reader callbacks after that exact session expires.
+    // The final classifier still rejects early, current or unrelated closures.
+    return ownedPcm?{
       expiredSession,expiredAfterUnixMs:deadline,silenceVerified:true
     }:null
   } finally {
