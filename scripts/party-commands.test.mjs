@@ -10,6 +10,12 @@ const reload = () => import(`data:text/javascript;base64,${Buffer.from(compiled 
 const errorSource = await fs.readFile(new URL('../src/services/partyErrorMessage.ts', import.meta.url), 'utf8')
 const errorCode = ts.transpileModule(errorSource, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText
 const { partyErrorMessage } = await import(`data:text/javascript;base64,${Buffer.from(errorCode).toString('base64')}`)
+test('readiness failures identify the stage, guide or stream instead of one ambiguous recovery message',()=>{
+  const translate=key=>key
+  assert.equal(partyErrorMessage({code:'DEVICE_NOT_READY'},translate),'party.errorDeviceReady')
+  assert.equal(partyErrorMessage({code:'GUIDE_NOT_READY'},translate),'party.errorGuideReady')
+  assert.equal(partyErrorMessage({code:'MEDIA_NOT_READY'},translate),'party.errorMediaReady')
+})
 
 test('room conflict and identity failures have English and Chinese recovery text without exposing unknown request details', async () => {
   for (const language of ['en', 'zh']) {

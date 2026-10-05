@@ -330,6 +330,16 @@ try {
   view = await api(1, `${pathRoom}/readiness/offer`, { commandId: crypto.randomUUID(), entryId: view.queue[0].id, clockId: view.clock.clockId, baseRevision: view.room.revision })
   await click(singer, "I'm ready to sing")
   await poll(async () => (await api(1, pathRoom)).readiness.state === 'ready', 'human ready')
+  if(process.env.KTV_BROWSER_STAGE_RELOAD==='1'){
+    await cdp('Page.reload',{},host)
+    await poll(()=>evaluate(host,"document.body.innerText.includes('Live room updates connected')"),'stage reconnected after refresh')
+    await poll(()=>evaluate(host,"document.body.innerText.includes('The selected stage is disconnected') && [...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Prepare selected song'&&button.disabled)"),'stale stage selection explained and preparation disabled')
+    check(true,'Refreshing the selected stage blocks stale preparation and explains reselection')
+    await click(host,'Enable stage audio')
+    await poll(()=>evaluate(host,"(() => { const button=[...document.querySelectorAll('button')].find(item=>item.textContent.includes('Stage · Host')&&!item.disabled); if(!button)return false;button.click();return true })()"),'select refreshed stage')
+    await poll(()=>evaluate(host,"[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Prepare selected song'&&!button.disabled)"),'fresh stage permits preparation')
+    check(true,'Explicit refreshed stage selection restores preparation without changing singer readiness')
+  }
   await click(host, 'Prepare selected song')
   await poll(async () => { const latest = await api(1, pathRoom); return latest.presence.devices.some(device => device.id === latest.playback.stageDeviceId && device.ready) }, 'stage decoded')
   check((await audit(host)).length === 0, 'Preparation does not start backing before a countdown')

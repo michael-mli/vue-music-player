@@ -60,6 +60,7 @@
     </p>
     <div v-if="canManage" class="mt-6 border-t border-white/10 pt-5">
       <h3 class="font-semibold">{{ $t('party.selectStage') }}</h3>
+      <p v-if="playback?.stageDeviceId && !stageAvailable" class="mt-2 text-sm text-amber-200" role="status">{{ $t('party.stageSelectionUnavailable') }}</p>
       <p v-if="!stageDevices.length" class="mt-2 text-sm text-gray-400">{{ $t('party.noStageDevices') }}</p>
       <ul v-else class="mt-3 flex flex-wrap gap-2">
         <li v-for="device in stageDevices" :key="device.id">
@@ -71,7 +72,7 @@
         </li>
       </ul>
       <div class="mt-4 flex flex-wrap gap-3">
-        <button v-if="party.readiness?.state === 'ready' && (!playback || ['idle', 'preparing'].includes(playback.state))" type="button" :disabled="busy || !playback?.stageDeviceId"
+        <button v-if="party.readiness?.state === 'ready' && (!playback || ['idle', 'preparing'].includes(playback.state))" type="button" :disabled="busy || !stageAvailable"
           class="min-h-[44px] rounded-full border border-spotify-green px-5 py-2 text-sm text-spotify-green disabled:opacity-40" @click="$emit('prepare')">{{ $t('party.prepareSong') }}</button>
         <button v-if="playback && ['preparing', 'paused', 'recovering'].includes(playback.state)" type="button" :disabled="busy || !stagePrepared || !startSafe || party.readiness?.state !== 'ready' || (playback.guideRequired && !playback.guidePrepared) || !party.presence?.host.controlAvailable"
           class="min-h-[44px] rounded-full bg-spotify-green px-5 py-2 text-sm font-semibold text-black disabled:opacity-40" @click="$emit('action', 'start', {})">{{ $t(playback.state === 'preparing' ? 'party.startSong' : 'party.resumeSong') }}</button>
@@ -118,8 +119,9 @@ const { t } = useI18n()
 const { enabled, enabling, purpose, preparing, prepared, failure, volume, guideAdvanceMs, canGuide, assignedHere,
   positionMs, segment, countdown, lines, lyricGuide, startSafe, serverNowMs, blocked, diagnostics, calibrationInvalidated } = props.audio
 const playback = computed(() => props.party.playback)
-const stageDevices = computed(() => props.party.presence?.devices.filter(device => device.purpose === 'stage' && device.audioEnabled && device.clockHealthy) || [])
-const stagePrepared = computed(() => props.party.presence?.devices.some(device => device.id === playback.value?.stageDeviceId &&
+const stageDevices = computed(() => props.party.presence?.devices.filter(device => device.connected && device.purpose === 'stage' && device.audioEnabled && device.clockHealthy) || [])
+const stageAvailable = computed(() => stageDevices.value.some(device => device.id === playback.value?.stageDeviceId))
+const stagePrepared = computed(() => stageAvailable.value && props.party.presence?.devices.some(device => device.id === playback.value?.stageDeviceId &&
   device.ready && device.readyGeneration === playback.value.generation && device.audioEnabled && device.clockHealthy))
 const currentLyric = computed(() => lyricGuide.value.singing ? lines.value[lyricGuide.value.index]?.text : lyricGuide.value.upcoming[0]?.line.text)
 const hostGraceSeconds = computed(() => Math.max(0, Math.ceil(((props.party.presence?.host.graceDeadlineMs || serverNowMs.value) - serverNowMs.value) / 1000)))
