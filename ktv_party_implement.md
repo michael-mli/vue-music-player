@@ -57,27 +57,27 @@ is a preview; public online media is still disabled.
 | Continuous impaired-network A/V and nominal frame rate | Latest context-video run reaches 39 impaired pairs, 5 audio/5 video unmatched; p95 100.24 / max 140.45 ms and nominal cadence do not establish complete matching | Fail |
 | Product integration and physical/mobile/capacity acceptance | Required work remains | Open |
 
-These scripts are private. The deployed preview is frontend `a295ef8` / backend `acb583b`, with public
+These scripts are private. The deployed preview is frontend `47fa5d1` / backend `acb583b`, with public
 online media disabled. The original video cadence and timing requirements are
 unchanged; the optional adaptive-video preference question has no answer yet.
 
 Recording/export, reactions, themes and remote duets remain optional P09 work.
 
 Current status: The receiver-safe encoded activation preview is deployed at
-`https://music.micstec.com/party` with frontend **`a295ef8`** / backend **`acb583b`**
-(`main-ntKMzv2c.js`, `main-DnE6rWx5.css`,
+`https://music.micstec.com/party` with frontend **`47fa5d1`** / backend **`acb583b`**
+(`main-BXjM9ylL.js`, `main-BTEuAcOR.css`,
 `partyLeaseGuard.worklet-BWdT3O5D.js`, `partyEncodedLease.worker-BxVsrNxp.js`).
 The coupled update includes media protocol 2, durable issued-output reservations,
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
-Exact UI **45/45**, PWA **10/10**, backend **143/143** and public release **23/23**
+Exact UI **53/53**, PWA **10/10**, backend **143/143** and public release **23/23**
 checks pass; party units **125/125** and timing/capability fixtures **166/166** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
 **39/39** checks, but continuous impaired A/V still fails. Those experiments are
 not enabled by the deployed build. Physical/sustained output acceptance is open.
-Latest frontend rollback backup: `/home/mli/ktv-guide-background-predeploy.3xfe1rxp`.
+Latest frontend rollback backup: `/home/mli/ktv-party-awake-predeploy.3h539kht`.
 
 The PWA activation fix is deployed: failed updates retain the current page and
 allow retry; empty catalogs no longer trigger phantom song downloads. Exact-build
@@ -209,12 +209,18 @@ Party units pass 49/49 and the built-app UI checker passes 29/29. Protocol and
 reference contracts now live in `ktv_party_protocol.md`. This checkpoint is
 deployed; it does not resolve streaming/device acceptance.
 
-Latest background-guide hotfix: focused audio/lease/controller/session fixtures
+Prior background-guide hotfix (`a295ef8`): focused audio/lease/controller/session fixtures
 **40/40**, exact native browser journey **65/65** (simulated hidden page/no rAF,
 real Web Audio/sockets), UI **45/45**, PWA **10/10**, public release **23/23**.
 Earlier combined longer browser runs failed genuine stage drift/lease recovery;
 those failures remain recorded below. Physical/mobile and sustained acceptance
 are open.
+
+Latest screen-awake release (`47fa5d1`): lifecycle fixtures **10/10**, exact UI
+**53/53** including native Chrome wake-lock acquisition/release, PWA **10/10**,
+public release **23/23**. All admitted room screens default to awake; a header
+control remembers each device’s off choice. Physical device/power-mode acceptance
+remains open.
 
 ## 1. How to use this tracker
 
@@ -6914,3 +6920,47 @@ main baseline tag is unchanged. Refresh/accept the PWA update on the singer
 phone, enable private guidance and test dimming/locking the physical device.
 Device/browser identification was requested; no answer has arrived yet.
 Remaining streaming/physical/mobile/capacity release work stays open.
+
+
+### 2026-10-05 — Default KTV room screens to awake with a user control
+
+User requested prevention of automatic dimming/sleep in KTV, default on, while
+allowing users to turn it off. Every admitted participant, including singer phones
+and shared screens, now has “Keep screen awake” / “保持屏幕常亮” in the room header.
+The device requests a native Screen Wake Lock as soon as an admitted room loads,
+including while waiting or paused. Turning the control off releases it; the off
+choice is remembered in `party-keep-screen-awake`, separately from solo playback.
+Manual hardware screen lock remains available under the browser API’s rules.
+
+The room composable releases locks on hide/pagehide, room/access loss and exit,
+and reacquires on visibility/pageshow only if still enabled and in a room. Late
+request results release their handles after disable/exit; old release events
+cannot clear a new handle. Unsupported/denied/platform-released requests do not
+claim an active lock. They show translated feedback and an explicit retry where
+supported, with no retry loop that overrides power-saving revocation. Existing
+private-guide background playback behavior is preserved.
+
+Validation: **10/10** meaningful wake-lock lifecycle fixtures; exact committed
+build/type checks; **53/53** built-app UI checks, including real Chrome 154
+Screen Wake Lock acquisition without playing a song, explicit disable/release,
+remembered off after reload, re-enable, release on route exit, room return and
+default-on shared-screen behavior. The singer has a translated control. Native
+sentinels are instrumented for observation; wake-lock requests are not mocked
+in that browser journey. Physical display/battery-mode acceptance is still open.
+PWA **10/10**, public release **23/23** pass. Logs:
+`/tmp/ktv-party-wake-lock-unit-20261005.log`,
+`/tmp/ktv-party-awake-release-build-20261005.log`,
+`/tmp/ktv-party-awake-exact-ui-20261005.log`,
+`/tmp/ktv-party-awake-exact-pwa-20261005.log`,
+`/tmp/ktv-party-awake-public-20261005.log`.
+
+Published frontend **`47fa5d1`**, bundle `main-BXjM9ylL.js` /
+`main-BTEuAcOR.css`, index SHA-256
+`0685176657b1de8b3893ff12290fd53e2e91ffdec1f11857098b9dd33aa03597`.
+Backend remains `acb583b`, online media disabled; no backend restart. Assets
+preceded atomic index/service-worker publication and previous hashed assets
+remain available. Protected rollback archive:
+`/home/mli/ktv-party-awake-predeploy.3h539kht` (0700/files 0600).
+The public probe room was closed and no account was added. Refresh/accept the
+PWA update to see the default-on header control. The main stable tag is unchanged;
+remaining streaming, physical/mobile and capacity release work stays open.
