@@ -253,6 +253,33 @@ test('a pressured reference repair cannot bypass full native output slots, unkno
     for(const p of f.delivered)p.frame.close();f.stream.close()
   }
 })
+
+test('gap-only ordering admits a full-queue contiguous repair without fabricating references or crossing RTP order',async()=>{
+  for(const start of [0,0xfffffe00]){
+    const f=await fixture({codec:'vp8',gapAware:true,reorderMs:700})
+    f.send(start,0,'key');for(let i=2;i<=21;i++)f.send((start+i*3600)>>>0,i*40,'delta')
+    assert.equal(f.stream.snapshot().heldPackets,20);f.advance(1400);f.send((start+3600)>>>0,40,'delta')
+    assert.deepEqual(f.delivered.map(p=>p.rtpTimestamp),Array.from({length:22},(_,i)=>(start+i*3600)>>>0))
+    assert.equal(f.stream.snapshot().contiguousRepairDrains,1);assert.equal(f.stream.snapshot().referenceRepairDrains,0)
+    assert.equal(f.stream.snapshot().dependencyPackets,0);assert.equal(f.stream.snapshot().pressureDrains,0)
+    assert.equal(f.stream.snapshot().committedGaps,0);assert.equal(f.stream.snapshot().maximumHeld,20)
+    assert.ok(f.stream.snapshot().maximumPending<=4);assert.equal(f.stream.snapshot().encodedBytes,0)
+    for(const p of f.delivered)p.frame.close();f.stream.close()
+  }
+})
+test('gap-only repair cannot exceed native slots or extend an expired wait',async()=>{
+  const full=await fixture({gapAware:true,reorderMs:700,accept:'wait'})
+  for(let i=0;i<4;i++)full.send(i*3600)
+  for(let i=5;i<=24;i++)full.send(i*3600)
+  full.send(14400);assert.equal(full.reports[0].reason,'VIDEO_BOUND')
+  assert.equal(full.stream.snapshot().contiguousRepairDrains,0);assert.equal(full.stream.snapshot().maximumPending,4)
+  assert.ok(full.frames.every(f=>f.closes===1))
+  const late=await fixture({gapAware:true,reorderMs:700});late.send(0)
+  for(let i=2;i<=21;i++)late.send(i*3600)
+  late.advance(1700);late.send(3600)
+  assert.equal(late.stream.snapshot().contiguousRepairDrains,0);assert.equal(late.stream.snapshot().lateFrames,1)
+  for(const p of late.delivered)p.frame.close();late.stream.close()
+})
 test('missing declared references expire at the fixed bound without decoding an unsafe input or retaining its payload',async()=>{
   const f=await fixture({codec:'vp9',gapAware:true,dependencyAware:true,reorderMs:700})
   f.send(0,0,'key',{frameId:1,dependencies:[]})

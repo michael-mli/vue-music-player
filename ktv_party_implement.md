@@ -49,10 +49,10 @@ is a preview; public online media is still disabled.
 
 | Check | Current evidence | Status |
 | --- | --- | --- |
-| Timing/capability fixtures | 242/242 including bounded earlier feedback, explicit codec floor selection and rejection of unavailable VP8 receiver references | Pass |
+| Timing/capability fixtures | 244/244 including explicit codec selection, unavailable-reference rejection and full-queue contiguous RTP repair | Pass |
 | Buffered expiry after render/guard clock freeze/resume | 51/51 with shared-context libopus buffers at the 500-ms target, including 524.23-ms retained PCM | Pass for tested digital topology |
 | Buffered expiry while source and listener pages stall | 46/46, latest reader/revalidation | Pass for digital fixture |
-| Latest qualified clean 40-pair A/V regression | Shared-context libopus buffers / 500-ms target: 50/50, p95 61.55 ms / max 79.17 ms, no unmatched edges | Pass for tested digital topology |
+| Latest qualified clean 40-pair A/V regression | VP8 floor / supported RTP ordering / shared-context libopus / 500-ms target: 55/55, p95 86.40 ms / max 206.45 ms, no unmatched edges | Pass for tested digital topology |
 | Continuous impaired-network A/V and nominal frame rate | Private L1T1 reaches nominal native cadence; owned cadence and 40-pair timing still fail | Fail |
 | Product integration and physical/mobile/capacity acceptance | Required work remains | Open |
 
@@ -6366,7 +6366,7 @@ This is not a complete accepted native journey.
 
 The pure clean VP8 profile now omits receiver recovery and its interval flag,
 retaining every clock, codec, source, marker, memory, cadence and skew gate.
-It runs in
+It is terminal **exit 0, 55/55** in
 `/tmp/ktv-owned-av-vp8-opus-plc-shared-buffers-floor-gap-clean40-no-recovery-target500-20261005.log`,
 with owner-only parameters
 `/tmp/ktv-owned-vp8-opus-plc-shared-buffers-floor-gap-clean40-no-recovery-target500-20261005.env`.
@@ -6374,3 +6374,38 @@ Full impaired qualification still enables actual bounded native recovery and
 requires real response evidence. No recovery gate is waived. No new VP8-floor
 release acceptance is assumed; public deployment remains unchanged and all
 remaining release gates stay open.
+
+The pure clean run records **40 pairs**, zero unmatched audio/video, p95
+**86.40 ms**, maximum **206.45 ms**, within the original 150/250-ms gates.
+Source/native/owned decode/presentation rates are **24.99 / 24.97 / 25.04 /
+24.74 fps** with no nominal-quality errors. Live-context wall lag spans
+**49.90–589.04 ms**; PCM peaks at **936,960 bytes / 30 credits**. This is a clean
+digital qualification, not proof of sustained device-clock stability or impaired
+operation. The source retains its production temporal policy.
+
+### 2026-10-05 — Preserve a full-queue contiguous RTP repair
+
+Extended the previously verified pressure-order fix to the existing gap-only
+decoder path. A delta that fills the next contiguous RTP position, precedes the
+oldest held input and arrives before its original deadline can enter an existing
+native decoder slot before a forced discard. This uses the gap mode's existing
+54-ms contiguity criterion; it supplies no reference IDs or dependency claims.
+The 20-held-input, four-output and 512-KiB encoded limits remain intact. Full
+native slots or an expired wait retain the original rejection behavior.
+
+`contiguousRepairDrains` reports this separately from actual declared-reference
+repairs. Fixtures verify all 22 original frames under ordinary/wrapped RTP,
+without extra held slots or a committed gap, and reject native-slot congestion
+and expired repairs. Full timing/capability fixtures pass **244/244** in
+`/tmp/ktv-vp8-contiguous-pressure-repair-all-fixtures-20261005.log`.
+
+The full VP8-floor/shared-buffer/libopus comparison now runs with the original
+800-ms output target, 700-ms input reorder, one-second bounded late-frame
+recovery, continuous RTX and original per-leg UDP impairment in
+`/tmp/ktv-owned-av-vp8-opus-plc-shared-buffers-floor-gap-contiguous-repair-full-udp-target800-20261005.log`.
+Owner-only parameters:
+`/tmp/ktv-owned-vp8-opus-plc-shared-buffers-floor-gap-full-udp-target800-20261005.env`.
+Actual keyframe response, complete impaired and post-handover matching, original
+skew/cadence and all resource gates remain required. No native impaired benefit
+is assumed. Public deployment remains unchanged with media disabled; sustained,
+product integration and physical/mobile/capacity/release acceptance remain open.

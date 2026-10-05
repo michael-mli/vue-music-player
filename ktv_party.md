@@ -1468,6 +1468,15 @@ the dependency mode remains restricted to the validated VP9 path. The VP8
 comparison uses the existing bounded RTP-gap ordering and actual late-frame
 recovery instead, without fabricated references or silent codec fallback.
 
+The gap-only path also preserves an arriving contiguous RTP repair at a full
+input queue: it must precede the oldest held input, satisfy the existing 54-ms
+contiguity criterion and arrive before the fixed deadline. It enters an existing
+native output slot; no extra retained input or encoded-byte quota is created.
+This path reports a separate scalar count and never asserts unavailable codec
+reference metadata. Native-slot congestion and expired waits remain terminal or
+late under the existing policy. Full impaired timing and cadence are still
+required before selecting this comparison for release.
+
 The private nominal VP9 `L1T1` comparison can select its existing 700-ms input
 reorder bound independently of a 500-ms PCM/output target. This isolates late
 reference repair from output residence: native readback must retain the declared
