@@ -262,6 +262,24 @@ test('keyframe repair cannot bypass output reservations or revive a stopped queu
   assert.equal(f.delivered.length,5);assert.equal(f.timers.size,0)
 })
 
+test('reference wait age preserves the first arrival and clears on original repair, independent keys and stop',async()=>{
+  const f=await fixture({codec:'vp9',gapAware:true,dependencyAware:true,reorderMs:700})
+  f.send(0,0,'key',{frameId:1,dependencies:[]})
+  f.send(7200,80,'delta',{frameId:3,dependencies:[2]});f.advance(1350)
+  assert.equal(f.stream.snapshot().missingReferenceWaitMs,350)
+  f.send(10800,120,'delta',{frameId:4,dependencies:[3]})
+  assert.equal(f.stream.snapshot().missingReferenceWaitMs,350)
+  f.send(3600,40,'delta',{frameId:2,dependencies:[1]})
+  assert.equal(f.stream.snapshot().missingReferenceWaitMs,0)
+  assert.equal(f.stream.snapshot().referenceMisses,0);assert.equal(f.stream.snapshot().decoded,4)
+  f.send(18000,200,'delta',{frameId:6,dependencies:[5]});f.advance(1400)
+  assert.equal(f.stream.snapshot().missingReferenceWaitMs,50)
+  f.send(21600,240,'key',{frameId:7,dependencies:[]})
+  assert.equal(f.stream.snapshot().missingReferenceWaitMs,0)
+  for(const packet of f.delivered)packet.frame.close();f.stream.close();f.advance(2400)
+  assert.equal(f.stream.snapshot().missingReferenceWaitMs,0)
+})
+
 test('explicit reference mode closes permanently on absent or malformed native declarations',async()=>{
   for(const metadata of [{},{frameId:2,dependencies:[]},{frameId:2,dependencies:['private']},
     {frameId:2,dependencies:Array(9).fill(1)},{frameId:-1,dependencies:[1]}]){

@@ -1468,6 +1468,13 @@ native output reservations or existing held/byte/expiry limits. A bounded scalar
 `keyframeDrains` diagnostic distinguishes this from pressure-driven admission.
 This uses [WebCodecs keyframe independence](https://www.w3.org/TR/webcodecs/#key-frame);
 impaired timing and product qualification remain required.
+In that same private reference-aware recovery mode, a reference wait persisting
+for 350 ms can request a native keyframe before the 700-ms input deadline.
+The 100-ms worker check detects the wait even without another incoming frame;
+it does not discard the retained repair candidate or admit unsafe deltas.
+Existing 1,000–5,000-ms request cooldown, recent-key suppression, one pending
+request and expiry closure still apply. Scalar wait/early-request counters
+provide evidence; native qualification remains required.
 
 Continuously impaired timing and nominal frame rate still fail. Native decoded
 video can arrive too late, while the owned decoder still needs reliable packet

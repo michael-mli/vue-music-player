@@ -5,11 +5,11 @@ import {setImmediate as tick} from 'node:timers/promises'
 import {installVp8FrameWorker} from './party-vp8-frame-worker.mjs'
 
 function fixture({recover=false,nativeRequest=true,recoveryMs=5000,dependencyAware=false}={}){
-  let wall=1000,mono=0,listener,timer,delivered,decoded=0,lateFrames=0,requests=0,streamClosed=false,committedGaps=0,referenceMisses=0
+  let wall=1000,mono=0,listener,timer,delivered,decoded=0,lateFrames=0,requests=0,streamClosed=false,committedGaps=0,referenceMisses=0,missingReferenceWaitMs=0
   const reports=[]
   class Port{constructor(){this.messages=[]}postMessage(packet){this.messages.push(packet)}start(){}close(){this.closed=true}}
   const port=new Port()
-  const createStream=(deliver,report)=>{delivered=deliver;return {observe(frame){decoded++;if(frame.late)lateFrames++;if(frame.gap)committedGaps++;if(frame.missing)referenceMisses++},snapshot:()=>({closed:streamClosed,decoded,lateFrames,committedGaps,referenceMisses,duplicates:0}),
+  const createStream=(deliver,report)=>{delivered=deliver;return {observe(frame){decoded++;if(frame.late)lateFrames++;if(frame.gap)committedGaps++;if(frame.missing)referenceMisses++},snapshot:()=>({closed:streamClosed,decoded,lateFrames,committedGaps,referenceMisses,missingReferenceWaitMs,duplicates:0}),
     close(reason){if(streamClosed)return;streamClosed=true;report({reason})}}}
   const realm={MessagePort:Port,Date:{now:()=>wall},performance:{now:()=>mono},
     __encodedTimingDirection:'receive',addEventListener:(name,callback)=>{listener=callback},
@@ -20,7 +20,7 @@ function fixture({recover=false,nativeRequest=true,recoveryMs=5000,dependencyAwa
   const message=data=>listener({data})
   return {realm,port,reports,message,bind(){message({type:'video-bind',port,expiryUnixMs:10000})},
     send(id,late=false,type='delta',gap=false,missing=false){realm.__observeOwnedVideo({late,type,gap,missing},{});return delivered?.({},{id,bytes:1,captureUnixMs:wall})},
-    advance(ms){wall+=ms;mono+=ms;timer?.()},get decoded(){return decoded},get requests(){return requests}}
+    advance(ms){wall+=ms;mono+=ms;timer?.()},waiting(ms){missingReferenceWaitMs=ms},get decoded(){return decoded},get requests(){return requests}}
 }
 test('native receiver recovery requests only new late references outside cooldown and stops permanently with the worker',async()=>{
   const f=fixture({recover:true});f.bind();f.send(1,false,'key');f.advance(500);f.send(2,true);await tick()
@@ -73,4 +73,20 @@ test('reference-aware native recovery ignores late unneeded frames and requests 
   f.send(2,true);await tick();assert.equal(f.requests,0)
   f.send(3,false,'delta',false,true);await tick();assert.equal(f.requests,1)
   f.advance(5000);f.send(4,true);await tick();assert.equal(f.requests,1)
+})
+
+test('persistent declared-reference waits request bounded native recovery before discard without needing new input',async()=>{
+  const f=fixture({recover:true,dependencyAware:true,recoveryMs:1000});f.bind();f.send(1,false,'key')
+  f.advance(1500);f.waiting(349);f.advance(100);await tick();assert.equal(f.requests,0)
+  f.waiting(350);f.advance(100);await tick();assert.equal(f.requests,1)
+  f.advance(500);await tick();assert.equal(f.requests,1)
+  f.waiting(0);f.advance(500);await tick();assert.equal(f.requests,1)
+  f.waiting(400);f.advance(100);await tick();assert.equal(f.requests,2)
+  f.advance(100);assert.equal(f.reports.at(-1).keyframeEarlyRequests,2)
+  f.send(2,false,'key');f.advance(500);await tick();assert.equal(f.requests,2)
+  f.message({type:'video-stop'});f.advance(1000);await tick();assert.equal(f.requests,2)
+  const disabled=fixture({dependencyAware:true});disabled.bind();disabled.waiting(700);disabled.advance(1500)
+  await tick();assert.equal(disabled.requests,0)
+  const spacing=fixture({recover:true});spacing.bind();spacing.waiting(700);spacing.advance(1500)
+  await tick();assert.equal(spacing.requests,0)
 })

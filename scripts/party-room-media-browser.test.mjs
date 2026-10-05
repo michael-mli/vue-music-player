@@ -43,7 +43,7 @@ import { RtpCaptureClock, analyseCaptureClocks } from './party-rtp-capture-clock
 import { CaptureFrameQueue } from './party-capture-frame-queue.mjs'
 import { installControlledReceiver, analyseControlledReceiverQuality, analyseReceiverKeyframeRecovery, hasSingleAudienceOutput, hasBoundedControlledReceiver } from './party-controlled-receiver.mjs'
 import { encodedTimingWorker, installEncodedTimingProbe } from './party-encoded-timing-observer.mjs'
-import { installAvSourceMarkers, installAvObserver, analyseAvObservations } from './party-av-observer.mjs'
+import { installAvSourceMarkers, installAvObserver, analyseAvObservations, summariseAvObservations } from './party-av-observer.mjs'
 import { collectAvMediaStats } from './party-av-stats.mjs'
 import { analyseCodecQuality, analyseCaptureCadence, analyseSourceAllocation } from './party-av-codec-quality.mjs'
 import { analyseAudioRedEvidence } from './party-audio-red-experiment.mjs'
@@ -209,6 +209,7 @@ const avTransitions = Number(process.env.KTV_ROOM_TEST_AV_TRANSITIONS || 40)
 assert.ok(Number.isInteger(avTransitions)&&avTransitions>=6&&avTransitions<=60, 'A/V transitions must be 6–60')
 const fixtureSeconds = avTiming ? Math.max(60, (avTransitions + 6) * 2 + 40) : 60
 const avMeasurements = []
+const avMatchingProgress = new Map()
 const avTimingSamples = []
 const playoutHints = process.env.KTV_ROOM_TEST_PLAYOUT_HINTS || 'adaptive'
 assert.ok(['adaptive','off'].includes(playoutHints),'Unknown SFU playout hint mode')
@@ -916,6 +917,7 @@ try {
       const observed=await evaluate(audience,'__avObserver.evidence'), sources=await evaluate(sourcePage,'__avSources')
       const audio=(await avBrowser.audioEvidence()).filter(item=>typeof item.on==='boolean'&&!item.initial&&item.time>=begin).map(item=>({...item,phase}))
       const measured=analyseAvObservations({...observed,audio,sources},phase)
+      avMatchingProgress.set(phase,summariseAvObservations(measured))
       return measured.count>=transitions?measured:false
     },`${transitions} matched ${phase} audio/video marker transitions`,(transitions+5)*2000)
     console.log('A/V receiver buffer diagnostics:',JSON.stringify({phase,before:inboundBefore,after:await inboundTiming()}))
@@ -1277,6 +1279,7 @@ try {
   console.log(`${passed} built-app streaming checks passed. Client: ${clientLocation}; synthetic microphone, foreground Chrome, isolated policy/SFU. Remote HTTP/CDP use loopback SSH forwards; physical and distinct access-network acceptance remains open.`)
 } catch (error) {
   console.error('Journey failure:', error.message)
+  for(const progress of avMatchingProgress.values())console.error('A/V matching progress on failure:',JSON.stringify(progress))
   if(avTimingSamples.length) console.error('A/V timing timeline on failure:',JSON.stringify(avTimingSamples))
   for(const phase of new Set(avTimingSamples.map(item=>item.phase)))
     console.error('Native capture versus encoding on failure:',JSON.stringify(analyseCaptureCadence(avTimingSamples,phase)))

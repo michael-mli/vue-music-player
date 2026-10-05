@@ -2,8 +2,20 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { test } from 'node:test'
-import { analyseAvObservations, installAvSourceMarkers, installAvObserver } from './party-av-observer.mjs'
+import { analyseAvObservations, summariseAvObservations, installAvSourceMarkers, installAvObserver } from './party-av-observer.mjs'
 import { collectAvMediaStats } from './party-av-stats.mjs'
+
+test('incomplete matching failure summaries preserve totals and bounds while excluding raw evidence',()=>{
+  const result={phase:'impaired',count:39,unmatchedAudio:4,unmatchedVideo:[1,3,5],
+    absoluteSkewMs:{p50:50,p95:300,max:600,raw:'secret'},videoDelayMs:{p50:1200,p95:1700,max:Infinity},
+    audioObservationDelayMs:{p50:1100,p95:1600,max:1800},pairs:[{id:7,time:123,token:'secret'}],privateUrl:'secret'}
+  const summary=summariseAvObservations(result)
+  assert.deepEqual(summary,{phase:'impaired',count:39,unmatchedAudio:4,unmatchedVideo:3,
+    absoluteSkewMs:{p50:50,p95:300,max:600},videoDelayMs:{p50:1200,p95:1700,max:null},
+    audioObservationDelayMs:{p50:1100,p95:1600,max:1800}})
+  assert.equal(JSON.stringify(summary).includes('secret'),false)
+  assert.equal(summariseAvObservations({...result,phase:'secret'}).phase,'unknown')
+})
 
 test('fixture RTC timeline retains encoder/buffer evidence without signaling credentials or missing counter inventions',async t=>{
   const previous=globalThis.window;t.after(()=>{globalThis.window=previous})

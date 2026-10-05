@@ -21,9 +21,15 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAwar
   let markerReads=0,markerInvalid=0,markerTransitions=0,markerRegressions=0,lastMarker=null
   let lastRtp=null,lastTimestamp=0,captureAnchor=null,decoded=0,decodedKeyFrames=0,discarded=0,maximumBytes=0,maximumPending=0,maximumResidualMs=0
   const delta=(value,anchor)=>((value-anchor+0x80000000)>>>0)-0x80000000
+  function missingReferenceWaitMs(){
+    if(!dependencyAware||closed||!held.size||[...held.values()].some(packet=>packet.type==='key'))return 0
+    const packet=[...held.values()].sort((a,b)=>delta(a.rtp,b.rtp))[0]
+    if(packet.dependencies.every(id=>references.has(id)))return 0
+    return Math.max(0,Math.floor(performance.now()-Math.min(...[...held.values()].map(item=>item.arrivedAt))))
+  }
   function snapshot(){return {closed,configured,decoded,decodedKeyFrames,discarded,encodedBytes,pending:expected.size,
     maximumBytes,maximumPending,maximumReady,maximumResidualMs,heldPackets:held.size,maximumHeld,heldLimit,duplicates,lateFrames,reordered,pressureDrains,reorderMs,
-    codec,gapAware,dependencyAware,dependencyPackets,referenceMisses,keyframeDrains,committedGaps,contiguousDrains,transferWaits,outputDiagnostic,normalizedOutputs,maximumCopyBytes,
+    codec,gapAware,dependencyAware,dependencyPackets,referenceMisses,keyframeDrains,missingReferenceWaitMs:missingReferenceWaitMs(),committedGaps,contiguousDrains,transferWaits,outputDiagnostic,normalizedOutputs,maximumCopyBytes,
     ...(markerProbe?{markerProbe:{reads:markerReads,invalid:markerInvalid,transitions:markerTransitions,regressions:markerRegressions}}:{})}}
   function close(reason=null){
     if(closed)return

@@ -5822,4 +5822,47 @@ feedback/continuous-RTX UDP profile in
 `/tmp/ktv-owned-av-vp9-l1t1-group2-keyframe-drain-full-udp-20261004.log`;
 owner-only parameters are in
 `/tmp/ktv-owned-l1t1-group2-keyframe-drain-full-udp-20261004.env`.
-Native impaired acceptance remains pending; no deployed/default codec changes.
+The native comparison is terminal **exit 1**, timing out before 40 matched
+impaired transitions and before outage/handover. Baseline six-pair maximum skew
+is **27.23 ms**, with all four cadence stages nominal. Impaired source/native
+rates remain **24.76/22.96 fps**; owned decode/presentation **17.29/16.98 fps**
+fail the unchanged 20–30 fps gate. The stream remains alive with **573** rejected
+missing-reference inputs, **163 keyframe drains**, 34 pressure drains, 24 late
+frames, at most 20 held packets, 18 fulfilled requests and 26 decoded keys.
+Captured/native/owned marker identities never reverse. PCM remains alive at
+26 maximum credits, seven held packets and 368,640 maximum reserved bytes;
+unrepaired gaps total **54,720 samples / 1,140 ms** and measured context lag
+reaches **102.33 ms**. Timeout diagnostics currently omit the final incomplete
+pairing summary; pair/skew acceptance cannot be inferred from decoder counters.
+The early drain executes on actual traffic, but impaired qualification still
+fails. Independent random loss prevents a causal comparison of these numerical
+rates with earlier runs. No deployed/default codec changes.
+
+
+### Request recovery during persistent required-reference wait — 2026-10-04
+
+The next private change requests native recovery after a **350-ms** persistent
+missing-dependency wait, before discarding at the unchanged **700-ms** deadline.
+The stream exposes only a scalar wait age from its earliest retained arrival;
+valid original repair, a retained independent keyframe, or stop clears it.
+The existing 100-ms worker check can initiate recovery without a new incoming
+frame. Reference admission, four-output reservations and all input/authority
+bounds remain intact. The same request cooldown/recent-key suppression and
+one pending request apply; defaults still disable private native recovery.
+`keyframeEarlyRequests` measures actual early requests without exposing IDs.
+
+The harness now retains one aggregate pairing-progress summary per fixed phase
+and emits it on failure, including incomplete pair/unmatched counts and skew/delay
+quantiles. Individual IDs, edge timelines and unknown properties are excluded;
+matching and acceptance rules are unchanged.
+
+**207/207 A/V fixtures pass**
+(`/tmp/ktv-video-reference-early-recovery-all-fixtures-20261004.log`), including
+349/350-ms threshold, no-new-input recovery, repaired-wait cancellation, cooldown,
+recent keys, disabled/unrelated modes, terminal stop and privacy of incomplete
+matching summaries. The full native comparison is running at
+`/tmp/ktv-owned-av-vp9-l1t1-group2-early-reference-recovery-full-udp-20261004.log`;
+owner-only parameters are in
+`/tmp/ktv-owned-l1t1-group2-early-reference-recovery-full-udp-20261004.env`.
+Source, impairment, output target, grouping, continuous RTX and every acceptance
+criterion are unchanged from the prior keyframe-drain comparison.

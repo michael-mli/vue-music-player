@@ -58,6 +58,17 @@ export function installAvObserver() {
     close() { this.stopRecording() } }
 }
 
+// Failure progress carries only aggregate measurements, including incomplete
+// matching. Exclude individual marker IDs, clocks, events and unknown fields.
+export function summariseAvObservations(result) {
+  const quantiles=value=>Object.fromEntries(['p50','p95','max'].map(key=>
+    [key,Number.isFinite(value?.[key])?value[key]:null]))
+  return {phase:['baseline','impaired','next-singer','venue-to-remote'].includes(result.phase)?result.phase:'unknown',
+    count:result.count,unmatchedAudio:result.unmatchedAudio,unmatchedVideo:result.unmatchedVideo.length,
+    absoluteSkewMs:quantiles(result.absoluteSkewMs),videoDelayMs:quantiles(result.videoDelayMs),
+    audioObservationDelayMs:quantiles(result.audioObservationDelayMs)}
+}
+
 export function analyseAvObservations({ audio, video, sources }, phase) {
   const edges = audio.filter(item => item.phase === phase && Number.isFinite(item.time))
   const used = new Set(), pairs = [], unmatchedVideo = []

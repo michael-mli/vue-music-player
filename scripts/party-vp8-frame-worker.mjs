@@ -5,10 +5,20 @@ export function installVp8FrameWorker(createStream,reorderMs=80,recover=false,re
   if(typeof dependencyAware!=='boolean'||dependencyAware&&(!gapAware||codec!=='vp9'))throw new Error('VIDEO_REORDER_CONFIG')
   if(!Number.isInteger(recoveryMs)||recoveryMs<1000||recoveryMs>5000)throw new Error('VIDEO_RECOVERY_CONFIG')
   let stream,port,timer,bound=false,closed=false,reason=null,expiry,lastWall=Date.now(),lastMono=performance.now()
-  let lastKey=-Infinity,lastRequest=-Infinity,keyframePending=false,keyframeRequests=0,keyframeFulfilled=0
+  let lastKey=-Infinity,lastRequest=-Infinity,keyframePending=false,keyframeRequests=0,keyframeFulfilled=0,keyframeEarlyRequests=0
   let seenDamage=0
   const credits=new Map()
-  const recovery=()=>({recovery:recover,recoveryMs,keyframeRequests,keyframeFulfilled,keyframePending})
+  const recovery=()=>({recovery:recover,recoveryMs,keyframeRequests,keyframeFulfilled,keyframePending,keyframeEarlyRequests})
+  function requestRecovery(after){
+    const damage=dependencyAware?(after.referenceMisses||0):(after.lateFrames||0),newDamage=damage>seenDamage
+    seenDamage=damage
+    const waiting=dependencyAware&&after.missingReferenceWaitMs>=350,now=performance.now()
+    if(closed||after.closed||!recover||!newDamage&&!waiting||keyframePending||now-lastRequest<recoveryMs||now-lastKey<1000)return
+    keyframePending=true;keyframeRequests++;if(waiting&&!newDamage)keyframeEarlyRequests++;lastRequest=now
+    void Promise.resolve().then(()=>{if(!check())return;return self.__requestOwnedVideoKeyframe()})
+      .then(()=>{if(!closed)keyframeFulfilled++})
+      .catch(()=>close('VIDEO_RECOVERY_REQUEST')).finally(()=>{keyframePending=false})
+  }
   function close(code=null){
     if(closed)return
     closed=true;reason=code;clearInterval(timer);stream?.close(code);credits.clear()
@@ -36,7 +46,8 @@ export function installVp8FrameWorker(createStream,reorderMs=80,recover=false,re
     },row=>close(row.reason),{reorderMs,gapAware,codec,dependencyAware,markerProbe})
     if(closed){stream.close();return}
     timer=setInterval(()=>{
-      check()
+      if(!check())return
+      requestRecovery(stream.snapshot())
       self.postMessage({type:'video-port-state',...stream.snapshot(),...recovery(),closed,reason,inFlight:credits.size})
     },100)
   }
@@ -47,15 +58,9 @@ export function installVp8FrameWorker(createStream,reorderMs=80,recover=false,re
     const after=stream.snapshot(),now=performance.now()
     // RTP spacing also grows when the encoder intentionally omits frames.
     // Request recovery only for an actual received reference discarded as late.
-    const damage=dependencyAware?(after.referenceMisses||0):(after.lateFrames||0),newDamage=damage>seenDamage
-    seenDamage=damage
     if(closed||after.closed)return
     if(frame.type==='key'&&after.lateFrames===before.lateFrames&&after.duplicates===before.duplicates)lastKey=now
-    if(!recover||!newDamage||keyframePending||now-lastRequest<recoveryMs||now-lastKey<1000)return
-    keyframePending=true;keyframeRequests++;lastRequest=now
-    void Promise.resolve().then(()=>{if(!check())return;return self.__requestOwnedVideoKeyframe()})
-      .then(()=>{if(!closed)keyframeFulfilled++})
-      .catch(()=>close('VIDEO_RECOVERY_REQUEST')).finally(()=>{keyframePending=false})
+    requestRecovery(after)
   }
   self.addEventListener('message',({data})=>{
     if(data?.type==='video-stop'){close();return}
