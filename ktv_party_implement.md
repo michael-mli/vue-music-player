@@ -49,10 +49,10 @@ is a preview; public online media is still disabled.
 
 | Check | Current evidence | Status |
 | --- | --- | --- |
-| Timing/capability fixtures | 192/192 | Pass |
-| Buffered expiry after both render contexts freeze/resume | 51/51, latest PCM admission and first-arrival deadline | Pass for digital fixture |
+| Timing/capability fixtures | 202/202 | Pass |
+| Buffered expiry after both render contexts freeze/resume | 51/51 with grouped PCM at the 800-ms target | Pass for digital fixture |
 | Buffered expiry while source and listener pages stall | 46/46, latest reader/revalidation | Pass for digital fixture |
-| Latest clean 40-pair A/V regression | 500-ms target: 50/50, p95 75.58 ms / max 92.95 ms, no unmatched edges | Pass for digital fixture |
+| Latest clean 40-pair A/V regression | Grouped PCM / 800-ms target: 50/50, p95 86.31 ms / max 93.25 ms, no unmatched edges | Pass for digital fixture |
 | Continuous impaired-network A/V and nominal frame rate | Private L1T1 reaches nominal native cadence; owned cadence and 40-pair timing still fail | Fail |
 | Product integration and physical/mobile/capacity acceptance | Required work remains | Open |
 
@@ -5685,3 +5685,95 @@ clock recovery, missing-audio concealment and nominal owned video recovery remai
 open. All native jobs from this update are terminal; public preview and media
 policy are unchanged. No timing, unmatched-edge, source-quality, clock, output
 permission or buffer-bound criterion is relaxed.
+
+
+### Bounded two-packet PCM transfers — 2026-10-04
+
+Added explicit private `KTV_ROOM_TEST_PCM_BATCH_PACKETS=2`. Two consecutive
+48-kHz PCM outputs may transfer as one chunk, preserving all samples, channels,
+first RTP/capture time and the original schedule. Individual members cannot be
+credited before transfer; the combined chunk uses the final member's unique ID
+and exact combined bytes. Default single-packet behavior is retained. Groups
+never cross an unrepaired RTP gap, exceed the existing 5,760-frame renderer
+packet limit, or wait beyond a 40-ms partial-group timer. Gaps remain measured;
+no synthetic PCM or loss concealment is introduced.
+
+The temporary combined copy is reserved before allocation, inside the existing
+**1-MiB PCM** limit. Original plane references are cleared before releasing their
+reservations; all pending decoder/group/transferred credits still share the
+unchanged **48-credit** cap. Encoded input remains 512 KiB and reorder admission
+eight packets / 80 ms. Close cancels group timers and cannot emit a late chunk.
+A real decoder or renderer stall still closes at the original limits. Grouping
+creates no output permission and changes no 800-ms target, capture/phase checks,
+source-quality setting or expiry rule.
+
+Tests verify exact sample concatenation across RTP wrap, partial flush/terminal
+stop, silence across an actual gap, forged/duplicate credits, stalled decode and
+rendering, transient-copy overflow, maximum packet duration, decoder configuration
+and unchanged port expiry. The main observer carries only bounded scalar group
+counters; impossible group/accounting diagnostics fail and payloads are excluded.
+**202/202** fixtures pass in
+`/tmp/ktv-pcm-bounded-two-packet-group-fixtures-20261004.log`.
+
+The production-VP8/original-SFU clean 40-pair journey at the original 800-ms
+target is running in
+`/tmp/ktv-owned-av-pcm-group2-clean40-production-vp8-20261004.log`, with owner-only
+parameters `/tmp/ktv-owned-pcm-group2-clean40-800-20261004.env`.
+Native grouping, long residence, full clean accounting and digital expiry remain
+unproved until their actual output checks finish. The experiment is not deployed.
+
+
+### Grouped PCM passes native clean timing with bounded headroom — 2026-10-04
+
+`/tmp/ktv-owned-av-pcm-group2-clean40-production-vp8-20261004.log`
+passes **50/50** native production-VP8/original-SFU streaming checks at the
+unchanged **800-ms** target. Forty matched pairs have zero unmatched edges,
+p95 / maximum skew **86.31 / 93.25 ms**, source / native / owned decode /
+presentation rates **25.00 / 24.99 / 24.99 / 24.65 fps**. Native readback confirms
+two-packet grouping; 1,959 additional groups transfer during baseline samples.
+
+The secondary context still loses up to **235.33 ms** against its original wall
+anchor, and observed buffered samples reach **1,030.44 ms**. Grouping retains
+headroom: observed credits reach at most **27**, held packets zero, and maximum
+reserved PCM including temporary combined copies is **430,080 bytes**, within
+the original 48-credit / 1-MiB bounds. This establishes bounded clean headroom
+and actual grouping without claiming that the render clock is fixed. Sustained
+behavior, impaired timing/quality and physical output remain required.
+
+The production-VP8/original-SFU independent both-context buffered-expiry
+regression is running in
+`/tmp/ktv-owned-av-pcm-group2-both-context-expiry-20261004.log` with the same group
+policy and 800-ms target. No private controlled receiver is deployed.
+
+
+### Grouped PCM preserves independent buffered-expiry acceptance — 2026-10-04
+
+`/tmp/ktv-owned-av-pcm-group2-both-context-expiry-20261004.log`
+passes **51/51** native production-VP8/original-SFU checks with two-packet
+transfers and the unchanged 800-ms target. Independently recorded old-output
+silence, actual both-context freeze/resume, measured buffered residence above
+500 ms and replacement separation pass. The exact-session expiry certificate is
+still issued only after its existing proofs; unrelated or early closures remain
+rejected. This closes that digital grouped-output regression, not physical or
+impaired qualification.
+
+The next full impaired comparison keeps the original 800-ms target and 700-ms
+input reorder bound, with grouped PCM and the nominal `L1T1` source. It selects
+the worker's already supported **1,000-ms** native keyframe-request cooldown,
+motivated by missing-reference losses despite nominal native decoding. The
+selector permits this interval only for that exact grouped/800-ms marked profile.
+Actual receiver readback is required on every sample; the existing recent-key
+suppression, one pending request, reference admission, caps, source quality and
+all timing/expiry/cadence gates remain intact. No damaged input is decoded and
+no default/deployed recovery policy changes.
+
+
+**202/202** fixtures pass with the declared one-second native recovery selection
+(`/tmp/ktv-pcm-group2-recovery1000-fixtures-20261004.log`). Full journey parameters
+are preserved in owner-only
+`/tmp/ktv-owned-l1t1-group2-target800-recovery1000-full-udp-20261004.env`.
+The original UDP impairment, 40-pair timing, quality and handover journey is
+running in
+`/tmp/ktv-owned-av-vp9-l1t1-group2-target800-recovery1000-full-udp-20261004.log`.
+Source remains 1280-by-720 / 25 fps / max 350 kbps with Opus 64 kbps and RED;
+no clock, source quality, unmatched-edge or lateness criterion changes.

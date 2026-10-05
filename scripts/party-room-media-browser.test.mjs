@@ -95,6 +95,10 @@ const absoluteCapture = process.env.KTV_ROOM_TEST_ABSOLUTE_CAPTURE === '1'
 const opusDecodeProbe = process.env.KTV_ROOM_TEST_OPUS_DECODE === '1'
 const pcmPortProbe = process.env.KTV_ROOM_TEST_PCM_PORT === '1'
 const ownedPcm = process.env.KTV_ROOM_TEST_OWNED_PCM === '1'
+const pcmBatchPackets=Number(process.env.KTV_ROOM_TEST_PCM_BATCH_PACKETS||1)
+assert.ok(process.env.KTV_ROOM_TEST_PCM_BATCH_PACKETS===undefined||
+  process.env.KTV_ROOM_TEST_PCM_BATCH_PACKETS==='2'&&ownedPcm&&encodedTiming,
+  'Private PCM grouping requires the existing owned-output bounds and native encoded observation')
 const pcmDeviceClock=process.env.KTV_ROOM_TEST_PCM_DEVICE_CLOCK==='1'
 assert.ok(process.env.KTV_ROOM_TEST_PCM_DEVICE_CLOCK===undefined||pcmDeviceClock&&ownedPcm&&encodedTiming&&avTiming,
   'Private PCM device clock requires native owned-output A/V evidence')
@@ -235,7 +239,8 @@ if (remoteMode) {
 
 const continueSfuRtx=process.env.KTV_ROOM_TEST_SFU_RTX_RECOVERY==='continue'
 assert.ok(process.env.KTV_ROOM_TEST_SFU_RTX_RECOVERY===undefined||continueSfuRtx&&sfuAllocationEvidence&&
-  receiverKeyframes&&(receiverKeyframeMs===5000||senderTemporal&&videoMarkerProbe&&receiverKeyframeMs===2500)&&
+  receiverKeyframes&&(receiverKeyframeMs===5000||senderTemporal&&videoMarkerProbe&&
+    (receiverKeyframeMs===2500||pcmBatchPackets===2&&controlledPlayoutMs===800&&receiverKeyframeMs===1000))&&
   dependencyVideoReorder&&impairmentProtocol==='udp'&&
   continuousImpairment&&handoverAv,'Private SFU RTX comparison requires declared bounded recovery and the full UDP floor/RED journey')
 assert.ok(continueSfuRtx===Boolean(process.env.KTV_ROOM_TEST_SFU_RTX_BUILD),'Private SFU build must explicitly select RTX comparison')
@@ -564,7 +569,7 @@ try {
           frequency: length ? Math.round(crossings * item.buffer.sampleRate / length) : null}); return start(...args);
       }; window.__bufferSources.push(item); return item; };
       window.confirm = () => true;
-      ${controlledPlayoutMs === null ? '' : `(${installControlledReceiver.toString()})(${RtpCaptureClock.toString()},${CaptureFrameQueue.toString()},${controlledPlayoutMs}${ownedPcm?`,(context,track,nativeSource,delay)=>(${createOwnedPcmReceiver.toString()})(${CapturePcmQueue.toString()},${pcmSourceWorklet.toString()},context,track,nativeSource,delay,{deviceClock:${pcmDeviceClock}}),${probeCaptureEpoch.toString()}${ownedVideo?','+createOwnedVideoReceiver.toString():''}`:''});`}` }, sessionId)
+      ${controlledPlayoutMs === null ? '' : `(${installControlledReceiver.toString()})(${RtpCaptureClock.toString()},${CaptureFrameQueue.toString()},${controlledPlayoutMs}${ownedPcm?`,(context,track,nativeSource,delay)=>(${createOwnedPcmReceiver.toString()})(${CapturePcmQueue.toString()},${pcmSourceWorklet.toString()},context,track,nativeSource,delay,{deviceClock:${pcmDeviceClock},batchPackets:${pcmBatchPackets}}),${probeCaptureEpoch.toString()}${ownedVideo?','+createOwnedVideoReceiver.toString():''}`:''});`}` }, sessionId)
     await cdp(socket, 'Page.navigate', { url: origin + (legacy ? `/__ktv_legacy_app?room=${room.room.id}` : `/party/${room.room.id}${stage ? '/stage' : ''}`) }, sessionId)
     await poll(() => evaluate(sessionId, "document.body?.innerText.includes('Live room updates connected')"), 'room page connected')
     if (!stage) await evaluate(sessionId, "document.getElementById('party-tab-sing').click()")
@@ -837,6 +842,10 @@ try {
           evaluate(audience,`(${collectAvMediaStats.toString()})()`),
         ])
         avTimingSamples.push({phase,source,receiver})
+        if(receiverKeyframes)assert.equal(receiver.controlledReceiver?.active?.ownedVideo?.decoder?.recoveryMs,
+          receiverKeyframeMs,'Current native receiver retains the declared bounded recovery cooldown')
+        if(pcmBatchPackets===2)assert.equal(receiver.controlledReceiver?.active?.pcm?.decoder?.batchPackets,
+          2,'Current PCM receiver retains the exact bounded grouping policy')
         if(independentVideoReorder)assert.equal(receiver.controlledReceiver?.active?.ownedVideo?.decoder?.reorderMs,
           videoReorderMs,'Current decoder retains the independent reorder bound without changing the output target')
         if(videoMarkerProbe)assert.ok(hasBoundedMarkerProbe(source.sourceMarkerProbe)&&

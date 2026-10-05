@@ -95,8 +95,15 @@ export function installEncodedTimingProbe(workerSource,receiverApi='native') {
     worker.addEventListener('message', ({ data }) => {
       if(direction==='receive'&&data?.type==='pcm-port-state') {
         const row={worker:id,closed:data.closed===true,configured:data.configured===true,observedAt:performance.now()}
-        for(const key of ['decoded','gaps','duplicates','chunks','encodedBytes','pcmBytes','maximumChunks','maximumBytes','recovered','reordered','heldPackets','maximumHeld','pressureDrains','backpressureEvents'])
+        for(const key of ['decoded','gaps','duplicates','chunks','encodedBytes','pcmBytes','maximumChunks','maximumBytes','recovered','reordered','heldPackets','maximumHeld','pressureDrains','backpressureEvents','batchPackets','groupedChunks','maximumGroupPackets','pendingGroupPackets'])
           if(Number.isSafeInteger(data[key])&&data[key]>=0)row[key]=data[key]
+        if(data.batchPackets!==undefined&&(![1,2].includes(row.batchPackets)||
+          !Number.isSafeInteger(row.decoded)||!Number.isSafeInteger(row.groupedChunks)||
+          !Number.isSafeInteger(row.maximumGroupPackets)||!Number.isSafeInteger(row.pendingGroupPackets)||
+          row.maximumGroupPackets>row.batchPackets||row.pendingGroupPackets>=row.batchPackets||
+          row.groupedChunks>Math.floor(row.decoded/2)||row.batchPackets===1&&row.groupedChunks!==0)){
+          row.groupingError='PCM_GROUP_DIAGNOSTIC';errors++;failures.pipe++
+        }
         for(const key of ['lastCaptureUnixMs','maximumResidualMs','scheduledCaptureUnixMs','captureOffsetMs','maximumOffsetMs'])if(Number.isFinite(data[key]))row[key]=data[key]
         row.reason=[null,'PCM_CLOCK','PCM_BOUND','PCM_PACKET','PCM_OUTPUT','PCM_API','PCM_CONFIG','PCM_DECODE','PCM_CREDIT',
           'PCM_PORT_CLOCK','PCM_PORT_SCHEDULE','PCM_PORT_MESSAGE','PCM_PORT_DECODER'].includes(data.reason)?data.reason:'PCM_PORT_DECODER'

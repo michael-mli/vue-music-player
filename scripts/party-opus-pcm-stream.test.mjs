@@ -6,7 +6,7 @@ import { createOpusPcmStream } from './party-opus-pcm-stream.mjs'
 import { primaryOpusPayload, opusPacketFrames } from './party-opus-decode-probe.mjs'
 import { CapturePcmQueue } from './party-capture-pcm-queue.mjs'
 
-function fixture({delayed=false,invalid=false,reorderMs=0}={}) {
+function fixture({delayed=false,invalid=false,reorderMs=0,batchPackets=1,frames=960,values=null}={}) {
   const messages=[],packets=[],outputs=[],waiting=[]
   let now=0,timerId=0
   const timers=new Map()
@@ -16,9 +16,10 @@ function fixture({delayed=false,invalid=false,reorderMs=0}={}) {
     constructor(callbacks) {this.callbacks=callbacks;this.state='configured';decoder=this}
     configure() {}
     decode(chunk) {
-      const frame={sampleRate:48000,timestamp:chunk.timestamp,numberOfFrames:960,numberOfChannels:2,
-        duration:20000,closes:0,close(){this.closes++},copyTo(plane,{planeIndex,format}) {
-          assert.equal(format,'f32-planar');plane.fill(invalid?NaN:planeIndex?-.25:.25)
+      const value=values?.[outputs.length]??.25
+      const frame={sampleRate:48000,timestamp:chunk.timestamp,numberOfFrames:frames,numberOfChannels:2,
+        duration:frames/48000*1000000,closes:0,close(){this.closes++},copyTo(plane,{planeIndex,format}) {
+          assert.equal(format,'f32-planar');plane.fill(invalid?NaN:planeIndex?-value:value)
         }}
       outputs.push(frame)
       if(delayed)waiting.push(frame);else this.callbacks.output(frame)
@@ -27,11 +28,12 @@ function fixture({delayed=false,invalid=false,reorderMs=0}={}) {
   }
   const realm={Number,ArrayBuffer,Float32Array,Uint8Array,Map,Array,performance:{timeOrigin:1000,now:()=>now},
     setTimeout(callback,delay){const id=++timerId;timers.set(id,{callback,at:now+delay});return id},
-    clearTimeout(id){timers.delete(id)},reorderMs,
+    clearTimeout(id){timers.delete(id)},reorderMs,batchPackets,
     AudioDecoder:Decoder,EncodedAudioChunk:class{constructor(config){Object.assign(this,config)}},
     __encodedTimingCodecs:[{payloadType:111,mimeType:'audio/opus'},{payloadType:63,mimeType:'audio/red'}],deliver:packet=>packets.push(packet),report:row=>messages.push(row)}
   realm.self=realm
-  const stream=vm.runInNewContext(`(${createOpusPcmStream.toString()})(${primaryOpusPayload.toString()},${opusPacketFrames.toString()},deliver,report,{reorderMs})`,realm)
+  const frameParser=frames===960?opusPacketFrames.toString():`()=>${frames}`
+  const stream=vm.runInNewContext(`(${createOpusPcmStream.toString()})(${primaryOpusPayload.toString()},${frameParser},deliver,report,{reorderMs,batchPackets})`,realm)
   const send=(rtp,captureTime=rtp/48)=>stream.observe({timestamp:rtp>>>0,data:new Uint8Array([1]).buffer},{captureTime,payloadType:111})
   return {stream,send,packets,messages,outputs,waiting,timers,
     advance(value){now=value;for(const [id,timer] of [...timers])if(timer.at<=now){timers.delete(id);timer.callback()}},
@@ -40,6 +42,81 @@ function fixture({delayed=false,invalid=false,reorderMs=0}={}) {
 
 function red(offsets){return new Uint8Array([...offsets.flatMap(offset=>[239,offset>>6,(offset&63)<<2,1]),111,
   ...offsets.map(()=>1),1])}
+test('two-packet transfer preserves every channel sample and the first capture clock across RTP wrap',async()=>{
+  const f=fixture({batchPackets:2,values:[.125,.5]});await tick();const start=0xfffffe00
+  f.send(start,0);assert.equal(f.packets.length,0);assert.equal(f.stream.snapshot().pendingGroupPackets,1)
+  f.send((start+960)>>>0,26)
+  assert.equal(f.packets.length,1)
+  const packet=f.packets[0]
+  assert.equal(packet.id,2);assert.equal(packet.rtpTimestamp,start)
+  assert.equal(packet.captureUnixMs,1000);assert.equal(packet.observedCaptureUnixMs,1000)
+  assert.equal(packet.frames,1920)
+  for(const [channel,sign] of [[0,1],[1,-1]]){
+    assert.ok(packet.planes[channel].slice(0,960).every(value=>value===sign*.125))
+    assert.ok(packet.planes[channel].slice(960).every(value=>value===sign*.5))
+  }
+  assert.equal(f.stream.snapshot().chunks,1);assert.equal(f.stream.snapshot().pcmBytes,15360)
+  assert.equal(f.stream.snapshot().maximumBytes,30720)
+  assert.equal(f.stream.snapshot().groupedChunks,1);assert.equal(f.stream.snapshot().maximumGroupPackets,2)
+  assert.ok(f.outputs.every(frame=>frame.closes===1));assert.equal(f.timers.size,0)
+  f.stream.consumed({id:2,bytes:15360});assert.equal(f.stream.snapshot().pcmBytes,0);f.stream.close()
+})
+test('partial groups flush within forty milliseconds and terminal stop prevents a late transfer',async()=>{
+  const f=fixture({batchPackets:2});await tick();f.send(0)
+  f.advance(39);assert.equal(f.packets.length,0)
+  f.advance(40);assert.equal(f.packets.length,1);assert.equal(f.packets[0].frames,960)
+  f.stream.close()
+  const stopped=fixture({batchPackets:2});await tick();stopped.send(0);stopped.stream.close();stopped.advance(100)
+  assert.equal(stopped.packets.length,0);assert.equal(stopped.timers.size,0)
+  assert.equal(stopped.stream.snapshot().pcmBytes,0);assert.equal(stopped.stream.snapshot().pendingGroupPackets,0)
+})
+test('grouping never crosses an unrepaired gap or fills it with synthetic PCM',async()=>{
+  const f=fixture({batchPackets:2});await tick();f.send(0);f.send(1920);f.send(2880)
+  assert.deepEqual(f.packets.map(packet=>[packet.rtpTimestamp,packet.frames]),[[0,960],[1920,1920]])
+  assert.equal(f.stream.snapshot().gaps,960);assert.equal(f.stream.snapshot().groupedChunks,1)
+  const queue=new CapturePcmQueue(48000,credit=>f.stream.consumed(credit))
+  for(const packet of f.packets)queue.push({...packet,startFrame:packet.rtpTimestamp})
+  const planes=[new Float32Array(3840),new Float32Array(3840)];queue.render(0,planes)
+  assert.ok(planes[0].slice(960,1920).every(value=>value===0))
+  assert.equal(f.stream.snapshot().chunks,0);f.stream.close()
+})
+test('group members, wrong byte counts and duplicate returns cannot forge renderer credits',async()=>{
+  const held=fixture({batchPackets:2});await tick();held.send(0)
+  held.stream.consumed({id:1,bytes:7680});assert.equal(held.stream.snapshot().reason,'PCM_CREDIT')
+  held.advance(40);assert.equal(held.packets.length,0)
+  for(const credit of [{id:1,bytes:7680},{id:2,bytes:15359}]){
+    const f=fixture({batchPackets:2});await tick();f.send(0);f.send(960);f.stream.consumed(credit)
+    assert.equal(f.stream.snapshot().reason,'PCM_CREDIT');assert.equal(f.stream.snapshot().pcmBytes,0)
+  }
+  const duplicate=fixture({batchPackets:2});await tick();duplicate.send(0);duplicate.send(960)
+  duplicate.stream.consumed({id:2,bytes:15360});duplicate.stream.consumed({id:2,bytes:15360})
+  assert.equal(duplicate.stream.snapshot().reason,'PCM_CREDIT')
+})
+test('grouped rendering and stalled native decoding keep the original credit, byte and reorder caps',async()=>{
+  for(const delayed of [false,true]){
+    const f=fixture({batchPackets:2,delayed});await tick()
+    for(let i=0;i<110;i++)f.send(i*960)
+    assert.equal(f.stream.snapshot().reason,'PCM_BOUND');assert.equal(f.stream.snapshot().maximumChunks,48)
+    assert.ok(f.stream.snapshot().maximumBytes<=1024*1024);assert.equal(f.stream.snapshot().maximumHeld,8)
+    const count=f.packets.length;f.flush();f.advance(100)
+    assert.equal(f.packets.length,count);assert.ok(f.outputs.every(frame=>frame.closes===1))
+    assert.equal(f.stream.snapshot().pcmBytes,0);assert.equal(f.stream.snapshot().encodedBytes,0)
+  }
+})
+test('combined-copy reservation rejects transient PCM overflow before allocating or transferring',async()=>{
+  const f=fixture({batchPackets:2,frames:2880});await tick()
+  for(let i=0;i<44;i++)f.send(i*2880)
+  assert.equal(f.stream.snapshot().reason,'PCM_BOUND')
+  assert.equal(f.packets.length,21);assert.ok(f.packets.every(packet=>packet.frames===5760))
+  assert.ok(f.stream.snapshot().maximumBytes<=1024*1024)
+  assert.equal(f.stream.snapshot().pcmBytes,0);assert.ok(f.outputs.every(frame=>frame.closes===1))
+})
+test('grouping preserves the existing maximum renderer packet duration',async()=>{
+  const f=fixture({batchPackets:2,frames:3840});await tick();f.send(0);f.send(3840);f.advance(40)
+  assert.deepEqual(f.packets.map(packet=>packet.frames),[3840,3840])
+  assert.equal(f.stream.snapshot().groupedChunks,0);assert.equal(f.stream.snapshot().maximumGroupPackets,1)
+  f.stream.close()
+})
 test('RED recovers two missing primary packets in RTP order and excludes pre-start or duplicate history',async()=>{
   const f=fixture();await tick();f.send(0)
   f.stream.observe({timestamp:2880,data:red([960,1920]).buffer},{captureTime:60,payloadType:63})

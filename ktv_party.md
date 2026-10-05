@@ -1385,6 +1385,16 @@ uses phase history at the audible position. Renderer telemetry counts future
 queued samples and excludes silence gaps, so expiry tests measure the owned
 buffer directly. Clock failures and deadlines permanently close owned resources.
 
+An explicit private PCM grouping comparison joins two consecutive decoded
+packets into one renderer transfer. It keeps every sample and the first packet's
+capture time, never bridges a gap, stays within the existing 5,760-frame packet
+limit, and flushes partial groups within 40 ms. Pending members remain credited
+as decoder-owned until their combined transfer. Copy allocation and originals
+share the unchanged 1-MiB PCM budget; individual and grouped chunks share the
+unchanged 48-credit limit. The final guard, playout target, clock checks and
+expiry rules remain intact. This tests credit headroom without adding output
+authority; native clean/expiry/impaired qualification is still required.
+
 Private renderer traces also measure the actual worklet quantum, the secondary
 48-kHz context frame and its wall anchor. The secondary context can lose wall
 progress while capture phase remains within its bound, increasing queued

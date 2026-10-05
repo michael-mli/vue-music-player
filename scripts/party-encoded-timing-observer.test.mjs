@@ -189,6 +189,21 @@ test('owned marker and PCM pressure diagnostics retain only validated scalar cou
   assert.equal(probe.videoStates.filter(row=>row.markerProbeError==='VIDEO_MARKER_DIAGNOSTIC').length,6)
   assert.equal(probe.errors,6);f.realm.window.__encodedTimingProbe.close()
 })
+test('PCM group diagnostics exclude payloads and reject impossible group bounds or accounting',()=>{
+  const f=browserFixture(true),peer=new f.realm.window.RTCPeerConnection(),receiver=f.receiver()
+  f.track(peer,receiver)
+  const values={type:'pcm-port-state',decoded:10,batchPackets:2,groupedChunks:4,maximumGroupPackets:2,pendingGroupPackets:1,planes:'excluded'}
+  const emit=data=>f.workers[0].dispatchEvent(new MessageEvent('message',{data}))
+  emit(values)
+  const probe=f.realm.window.__encodedTimingProbe
+  assert.equal(probe.pcmStates[0].groupedChunks,4);assert.equal(probe.pcmStates[0].groupingError,undefined)
+  assert.equal(JSON.stringify(probe.pcmStates).includes('excluded'),false)
+  for(const change of [{batchPackets:3},{groupedChunks:6},{maximumGroupPackets:3},
+    {pendingGroupPackets:2},{decoded:undefined},{batchPackets:1,maximumGroupPackets:1,pendingGroupPackets:0}])
+    emit({...values,...change})
+  assert.equal(probe.pcmStates.filter(row=>row.groupingError==='PCM_GROUP_DIAGNOSTIC').length,6)
+  assert.equal(probe.errors,6);probe.close()
+})
 
 test('declared VP9 receiver codec parameters reach the worker without fmtp or unknown codec fields',()=>{
   for(const api of ['native','standard']){

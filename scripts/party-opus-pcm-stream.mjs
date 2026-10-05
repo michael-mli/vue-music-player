@@ -1,7 +1,8 @@
 // Private streaming decoder. PCM ownership transfers to a bounded renderer;
 // this module never connects an output or grants permission to play it.
-export function createOpusPcmStream(primaryPayload, packetFrames, deliver, report = () => {}, {reorderMs=80}={}) {
+export function createOpusPcmStream(primaryPayload, packetFrames, deliver, report = () => {}, {reorderMs=80,batchPackets=1}={}) {
   if(!Number.isInteger(reorderMs)||reorderMs<0||reorderMs>80)throw new Error('PCM_REORDER_CONFIG')
+  if(![1,2].includes(batchPackets))throw new Error('PCM_BATCH_CONFIG')
   const pending = [], expected = [], credits = new Map()
   const held=new Map()
   let decoder, configured = false, closed = false, sequence = 0
@@ -11,16 +12,58 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
   let scheduledCaptureUnixMs=null,captureOffsetMs=0,maximumOffsetMs=0
   let recovered=0,closeReason=null,flushing=false,backpressureEvents=0
   let reorderTimer=null,reordered=0,maximumHeld=0,pressureDrains=0
+  const batch=[]
+  let batchTimer=null,groupedChunks=0,maximumGroupPackets=0
   const delta = (value, previous) => ((value-previous+0x80000000)>>>0)-0x80000000
   function snapshot() { return { closed, configured, decoded, gaps, duplicates, chunks:credits.size,
     encodedBytes, pcmBytes, maximumChunks, maximumBytes,lastCaptureUnixMs,maximumResidualMs,recovered,
-    scheduledCaptureUnixMs,captureOffsetMs,maximumOffsetMs,reordered,heldPackets:held.size,maximumHeld,pressureDrains,reason:closeReason,backpressureEvents } }
+    scheduledCaptureUnixMs,captureOffsetMs,maximumOffsetMs,reordered,heldPackets:held.size,maximumHeld,pressureDrains,reason:closeReason,backpressureEvents,
+    batchPackets,groupedChunks,maximumGroupPackets,pendingGroupPackets:batch.length } }
   function close(reason = null) {
     if (closed) return
-    closed = true;closeReason=reason;clearTimeout(reorderTimer);held.clear()
+    closed = true;closeReason=reason;clearTimeout(reorderTimer);clearTimeout(batchTimer);held.clear();batch.length=0
     pending.length = 0; expected.length = 0; credits.clear(); encodedBytes = 0; pcmBytes = 0
     try { if (decoder?.state !== 'closed') decoder?.close() } catch {}
     report({ type:'closed', reason, ...snapshot() })
+  }
+  function flushBatch(){
+    if(closed||!batch.length)return
+    clearTimeout(batchTimer);batchTimer=null
+    const entries=batch.splice(0),first=entries[0],last=entries.at(-1)
+    let planes=first.planes,frames=first.frames,bytes=first.bytes
+    if(entries.length>1){
+      frames=entries.reduce((sum,item)=>sum+item.frames,0)
+      const channels=Math.max(...entries.map(item=>item.planes.length))
+      bytes=frames*channels*4
+      if(frames>5760||pcmBytes+bytes>1024*1024)throw new Error('PCM_BOUND')
+      // Reserve the temporary combined copy before allocation. Release every
+      // original plane reference before removing its reservation or transferring.
+      pcmBytes+=bytes;maximumBytes=Math.max(maximumBytes,pcmBytes)
+      planes=Array.from({length:channels},()=>new Float32Array(frames))
+      let offset=0
+      for(const item of entries){
+        for(let channel=0;channel<channels;channel++)planes[channel].set(item.planes[channel]||item.planes[0],offset)
+        offset+=item.frames;item.planes.length=0
+        credits.delete(item.id);pcmBytes-=item.bytes
+      }
+      groupedChunks++
+    }
+    maximumGroupPackets=Math.max(maximumGroupPackets,entries.length)
+    credits.set(last.id,{bytes,delivered:true})
+    deliver({id:last.id,rtpTimestamp:first.rtpTimestamp,captureUnixMs:first.captureUnixMs,
+      observedCaptureUnixMs:first.observedCaptureUnixMs,frames,planes})
+  }
+  function queueOutput(packet,planes,bytes){
+    const previous=batch.at(-1)
+    if(previous&&(delta(packet.rtpTimestamp,(previous.rtpTimestamp+previous.frames)>>>0)!==0||
+      batch.reduce((sum,item)=>sum+item.frames,0)+packet.frames>5760))flushBatch()
+    if(closed)return
+    batch.push({id:packet.id,rtpTimestamp:packet.rtpTimestamp,captureUnixMs:packet.captureUnixMs,
+      observedCaptureUnixMs:packet.observedCaptureUnixMs,frames:packet.frames,planes,bytes})
+    if(batch.length>=batchPackets)flushBatch()
+    else if(batchTimer===null)batchTimer=setTimeout(()=>{
+      try{flushBatch()}catch(error){close(error.message==='PCM_BOUND'?'PCM_BOUND':'PCM_OUTPUT')}
+    },40)
   }
   function output(frame) {
     try {
@@ -39,11 +82,11 @@ export function createOpusPcmStream(primaryPayload, packetFrames, deliver, repor
       })
       const bytes = planes.reduce((sum,plane)=>sum+plane.byteLength,0)
       pcmBytes -= packet.reservedBytes-bytes
-      credits.set(packet.id,{bytes,delivered:true})
+      // Held group members cannot be consumed before their combined transfer.
+      credits.set(packet.id,{bytes,delivered:false})
       decoded++
-      deliver({id:packet.id,rtpTimestamp:packet.rtpTimestamp,captureUnixMs:packet.captureUnixMs,
-        observedCaptureUnixMs:packet.observedCaptureUnixMs,frames:packet.frames,planes})
-    } catch { close('PCM_OUTPUT') }
+      queueOutput(packet,planes,bytes)
+    } catch(error) { close(error.message==='PCM_BOUND'?'PCM_BOUND':'PCM_OUTPUT') }
     finally { frame.close() }
   }
   function decode(packet) {

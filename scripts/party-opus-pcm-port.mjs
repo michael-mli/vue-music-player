@@ -1,11 +1,11 @@
 // Private transport between an encoded receiver worker and the PCM worklet.
 // Its deadline only stops decoding; the downstream app guard owns permission.
 export function bindOpusPcmPort(createStream, primaryPayload, packetFrames, configuration) {
-  const {port,renderFrame,wallUnixMs,delayMs,expiryUnixMs}=configuration || {}
+  const {port,renderFrame,wallUnixMs,delayMs,expiryUnixMs,batchPackets=1}=configuration || {}
   let expiry=expiryUnixMs,lastWall=Date.now(),lastMono=performance.now(),closed=false,stream,timer,closeReason=null
   if (!(port instanceof MessagePort) || !Number.isSafeInteger(renderFrame) || renderFrame<0 ||
     !Number.isFinite(wallUnixMs) || Math.abs(lastWall-wallUnixMs)>250 ||
-    !Number.isInteger(delayMs) || delayMs<200 || delayMs>800 ||
+    !Number.isInteger(delayMs) || delayMs<200 || delayMs>800 || ![1,2].includes(batchPackets) ||
     !Number.isFinite(expiry) || expiry<=lastWall || expiry-lastWall>10000) throw new Error('PCM_PORT_CONFIG')
   function close(reason=null) {
     if(closed)return
@@ -25,7 +25,7 @@ export function bindOpusPcmPort(createStream, primaryPayload, packetFrames, conf
     const startFrame=renderFrame+Math.round((packet.captureUnixMs+delayMs-wallUnixMs)*48)
     if(!Number.isSafeInteger(startFrame)||startFrame<0){close('PCM_PORT_SCHEDULE');return}
     port.postMessage({type:'pcm',id:packet.id,startFrame,planes:packet.planes},packet.planes.map(plane=>plane.buffer))
-  },row=>close(row?.reason||'PCM_PORT_DECODER'))
+  },row=>close(row?.reason||'PCM_PORT_DECODER'),{batchPackets})
   // A synchronous unsupported/configuration failure can precede assignment.
   if(closed)stream.close()
   function renew(value){

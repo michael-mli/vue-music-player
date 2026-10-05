@@ -4,7 +4,7 @@ import vm from 'node:vm'
 import {setImmediate as tick} from 'node:timers/promises'
 import {createOwnedPcmReceiver} from './party-owned-pcm-receiver.mjs'
 
-async function fixture({pendingModule=false,deviceClock=false,driverFailure=false}={}){
+async function fixture({pendingModule=false,deviceClock=false,driverFailure=false,batchPackets=1}={}){
   let now=1000,interval,finishModule,renderer
   const nodes=[],contexts=[],messages=[],drivers=[],captured={stops:0,stop(){this.stops++}},original={stops:0,stop(){this.stops++}}
   class Node{constructor(){this.connections=[];this.gain={value:0};this.port={postMessage:data=>messages.push(data)}}
@@ -26,7 +26,7 @@ async function fixture({pendingModule=false,deviceClock=false,driverFailure=fals
     URL:{createObjectURL:()=> 'blob:owned',revokeObjectURL(){}},setInterval:callback=>{interval=callback;return 1},clearInterval:()=>{interval=null},
     window:{__encodedTimingProbe:{receiverWorker:track=>track===original?worker:null,workerId:()=>7,pcmStates:states}}}
   const factory=vm.runInNewContext(`(${createOwnedPcmReceiver.toString()})`,realm)
-  const receiver=factory(class{},()=>{},output,original,function(){const node=new Node();nodes.push(node);return node},200,{deviceClock})
+  const receiver=factory(class{},()=>{},output,original,function(){const node=new Node();nodes.push(node);return node},200,{deviceClock,batchPackets})
   await tick()
   return {receiver,contexts,drivers,renderer,output,original,captured,nodes,messages,states,advance(value){now=value;states[0].observedAt=value;states[0].lastCaptureUnixMs=value},
     renew(){interval?.()},moduleReady(){finishModule?.()},queueState(data){renderer.port.onmessage({data:{type:'queue-state',renderFrame:0,...data}})}}
@@ -65,6 +65,13 @@ test('private device clock startup failure and close during module load cannot c
   assert.equal(pending.drivers[0].stops,1)
   assert.equal(pending.receiver.snapshot().closed,true)
   assert.equal(pending.messages.filter(row=>row.type==='pcm-bind').length,0)
+})
+test('grouping changes only decoder transfer policy and rejects unsupported group sizes before binding',async()=>{
+  const f=await fixture({batchPackets:2}),config=f.messages.find(row=>row.type==='pcm-bind').configuration
+  assert.equal(config.batchPackets,2);assert.equal(config.delayMs,200);assert.equal(config.expiryUnixMs,10000)
+  assert.equal(f.drivers.length,0);assert.equal(f.renderer.connections.length,1)
+  assert.equal(f.receiver.node.gain.value,1);f.receiver.close()
+  await assert.rejects(fixture({batchPackets:3}),/PLAYOUT_PCM_BATCH_CONFIG/)
 })
 test('capture cursor uses output position and accepts the established 20-ms forward timestamp tolerance',async()=>{
   const f=await fixture();assert.ok(Math.abs(f.receiver.captureCursor()-750)<.00001)
