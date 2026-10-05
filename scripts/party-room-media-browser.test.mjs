@@ -458,7 +458,7 @@ try {
     if(!response.ok) throw Object.assign(new Error(`${route}: ${result.code || response.status}`),{code:result.code,status:response.status})
     return result.data
   }
-  const room = await api(1, '/rooms', { commandId: randomUUID(), name: 'Integrated online room', displayName: 'Host', approvalRequired: false })
+  const room = await api(1, '/rooms', { commandId: randomUUID(), name: 'Integrated online room', displayName: 'Host', approvalRequired: false, automaticPlayback: false })
   pathRoom = `/rooms/${room.room.id}`
   const singer = await api(2, '/join', { commandId: randomUUID(), code: room.invitationCode, displayName: 'Singer' })
   const nextSinger = await api(3, '/join', { commandId: randomUUID(), code: room.invitationCode, displayName: 'Next singer' })

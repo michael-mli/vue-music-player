@@ -98,6 +98,17 @@
     "favorites": "收藏"
   },
   "party": {
+    "automaticPlayback": "自动播放",
+    "automation_off": "手动播放：由房主准备并开始每首歌曲。",
+    "automation_waiting-singer": "自动播放已开启。歌手确认准备就绪后，将自动准备歌曲并开始倒计时。",
+    "automation_waiting-stage": "等待播放设备。请启用音频，并由房主选择该设备一次。",
+    "automation_preparing": "正在自动准备所选歌曲…",
+    "automation_waiting-audio": "等待所选播放设备完成音频准备…",
+    "automation_waiting-guide": "等待歌手必需的私人原唱指导准备就绪…",
+    "automation_waiting-host": "等待房主或共同主持人的控制页面重新连接…",
+    "automation_waiting-output": "等待之前的音频输出停止…",
+    "automation_playing": "自动播放已开启，房间按共同倒计时和歌曲进度播放。",
+    "automation_attention": "自动播放已暂停。请检查音频或歌曲，再使用可用控制准备或继续播放。",
     "keepScreenAwake": "保持屏幕常亮",
     "screenAwakeUnavailable": "浏览器未能保持屏幕常亮。请重试或检查省电设置。",
     "screenAwakeUnsupported": "当前浏览器不支持保持屏幕常亮。",

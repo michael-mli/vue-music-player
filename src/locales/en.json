@@ -98,6 +98,17 @@
     "favorites": "Favorites"
   },
   "party": {
+    "automaticPlayback": "Automatic playback",
+    "automation_off": "Manual playback: the host prepares and starts each song.",
+    "automation_waiting-singer": "Automatic playback is on. Confirm singer readiness to prepare and start the song.",
+    "automation_waiting-stage": "Waiting for a speaker. Enable its audio and have the host select it once.",
+    "automation_preparing": "Automatically preparing the selected song…",
+    "automation_waiting-audio": "Waiting for the selected speaker to finish preparing its audio…",
+    "automation_waiting-guide": "Waiting for the singer’s required private vocal guide…",
+    "automation_waiting-host": "Waiting for a host or co-host controller to reconnect…",
+    "automation_waiting-output": "Waiting for the previous output to become silent…",
+    "automation_playing": "Automatic playback is on. The room follows the shared countdown and song.",
+    "automation_attention": "Automatic playback is held. Check the audio or song, then use the available controls to prepare or resume.",
     "keepScreenAwake": "Keep screen awake",
     "screenAwakeUnavailable": "The browser couldn’t keep the screen awake. Try again or check power-saving settings.",
     "screenAwakeUnsupported": "Your browser does not support keeping the screen awake.",

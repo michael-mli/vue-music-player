@@ -175,7 +175,7 @@ try {
     (await newBrowser.audioEvidence()).some(item => item.ready), 'two private native monitors')
 
   for (const mode of ['task-stall', 'suspend-task-stall']) {
-    let view = await api(1, '/rooms', { name: 'Owned stage replacement ' + mode, displayName: 'Host', approvalRequired: false })
+    let view = await api(1, '/rooms', { name: 'Owned stage replacement ' + mode, displayName: 'Host', approvalRequired: false, automaticPlayback: false })
     roomPath = '/rooms/' + view.room.id
     await api(2, '/join', { code: view.invitationCode, displayName: 'Singer' })
     const oldStage = await page(oldSocket, `/party/${view.room.id}/stage`)

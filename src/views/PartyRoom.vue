@@ -78,7 +78,7 @@
           <PartyMediaPanel v-if="party.room.mediaConfigured" :party="party" :media="roomMedia" :audio="roomAudio" :busy="busy" :connected="liveConnected"
             @mode="changePerformanceMode" />
           <PartyPlaybackPanel :party="party" :audio="roomAudio" :stage="stage" :can-manage="isModerator" :busy="busy" :audience="roomMedia.isAudience.value" :private-original="roomMedia.originalEnabled.value"
-            @prepare="preparePlayback" @action="playbackAction" />
+            @prepare="preparePlayback" @action="playbackAction" @automation="changeSetting({ automaticPlayback: $event })" />
               <section v-if="!stage && party.readiness?.entryId" class="rounded-2xl border border-spotify-green/30 bg-emerald-900/10 p-5">
                 <h2 class="text-lg font-semibold">{{ $t('party.singerInvitation') }}</h2>
                 <p class="mt-3 text-xl font-semibold">{{ party.readiness.title }}</p>
@@ -617,7 +617,7 @@ function reassignSong(entryId: string) {
   const singerId = reassignSingerIds.value[entryId]
   if (party.value && singerId) void act(() => partyApi.reassignSong(roomId.value, entryId, singerId, party.value!.room.revision))
 }
-function changeSetting(changes: { locked?: boolean; approvalRequired?: boolean; stageInviteVisible?: boolean; singerRequests?: number }) {
+function changeSetting(changes: { locked?: boolean; approvalRequired?: boolean; stageInviteVisible?: boolean; singerRequests?: number; automaticPlayback?: boolean }) {
   void act(() => partyApi.settings(roomId.value, changes))
 }
 async function closeRoom() {

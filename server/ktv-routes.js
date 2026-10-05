@@ -5,6 +5,7 @@ import { createKtvClock } from './ktv-clock.js'
 import { RoomError, fail } from './ktv-errors.js'
 import { invalidateReadiness, readinessSnapshot, recoverReadiness } from './ktv-readiness.js'
 import { createKtvPlayback } from './ktv-playback.js'
+import { createKtvAutomation } from './ktv-automation.js'
 import { ktvPolicy } from './ktv-policy.js'
 import { ktvTiming } from './ktv-timing.js'
 import { ktvFeatures, ktvGuideAssets } from './ktv-features.js'
@@ -194,6 +195,7 @@ function snapshot(db, roomId, userId, key, clock, playback, policy) {
       id: room.id, name: room.name, approvalRequired: Boolean(room.approval_required),
       locked: Boolean(room.locked), stageInviteVisible: Boolean(room.stage_invite_visible), revision: room.revision, expiresAt: room.expires_at,
       performanceMode: room.performance_mode || 'local', mediaConfigured: Boolean(playback?.media),
+      automaticPlayback: Boolean(room.automatic_playback),
     },
     self: publicMember(self),
     clock: { clockId: clock.id, serverNowMs: clock.nowMs() },
@@ -220,6 +222,7 @@ function snapshot(db, roomId, userId, key, clock, playback, policy) {
   if (playback) {
     result.playback = playback.snapshot(roomId)
     result.presence = playback.presence(roomId)
+    result.automation = playback.automation?.snapshot(roomId)
   }
   if (self.role === 'host' || room.stage_invite_visible) {
     const invite = db.prepare(`SELECT * FROM ktv_invitations WHERE room_id = ? AND revoked_at IS NULL
@@ -287,6 +290,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
     onDevice: (ws, message, view) => playback.deviceMessage(ws, message, view),
   })
   playback = createKtvPlayback({ db, clock, transaction, bump, event, broadcast: realtime.broadcast, broadcastLease: realtime.broadcastLease, timing, features })
+  playback.automation = createKtvAutomation({ db, clock, playback, resolveAssets, transaction, event, broadcast: realtime.broadcast })
   realtime.features = features
   if (!features.media && db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'ktv_media_grants'").get()) {
     // Leave provider removal pending. A disabled process cannot acknowledge an
@@ -307,7 +311,7 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
     cleanup: cutoff => playback.media?.grants.prune(cutoff),
     occupied: roomId => playback.presence(roomId).devices.some(device => device.connected) })
   const closeRealtime = realtime.close
-  realtime.close = () => { lifecycle.close(); playback.close(); closeRealtime() }
+  realtime.close = () => { lifecycle.close(); playback.automation.close(); playback.close(); closeRealtime() }
   realtime.playback = playback
   realtime.lifecycle = lifecycle
 
@@ -405,14 +409,18 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
     const name = requireText(req.body?.name, 'Room name', 80)
     const personName = displayName(req, actor)
     const approvalRequired = req.body?.approvalRequired !== false
+    const automaticPlayback = req.body?.automaticPlayback
+    if (automaticPlayback !== undefined && typeof automaticPlayback !== 'boolean') fail(400, 'INVALID_INPUT', 'Automatic playback must be a boolean')
     const roomId = randomUUID()
     const memberId = randomUUID()
     const createdAt = new Date().toISOString()
     const expiresAt = new Date(Date.now() + policy.roomLifetimeMs).toISOString()
     return transaction(db, () => {
-      const originalRoomId = identityCommand(db, actor.id, id, ['room.create', name, personName, approvalRequired], () => {
-        db.prepare(`INSERT INTO ktv_rooms (id, name, approval_required, created_at, expires_at, empty_since_at)
-          VALUES (?, ?, ?, ?, ?, ?)`).run(roomId, name, Number(approvalRequired), createdAt, expiresAt, createdAt)
+      const payload = ['room.create', name, personName, approvalRequired]
+      if (automaticPlayback !== undefined) payload.push(['automaticPlayback', automaticPlayback])
+      const originalRoomId = identityCommand(db, actor.id, id, payload, () => {
+        db.prepare(`INSERT INTO ktv_rooms (id, name, approval_required, created_at, expires_at, empty_since_at, automatic_playback)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`).run(roomId, name, Number(approvalRequired), createdAt, expiresAt, createdAt, Number(automaticPlayback !== false))
         db.prepare(`INSERT INTO ktv_members
           (id, room_id, user_id, display_name, role, admission, joined_at, updated_at)
           VALUES (?, ?, ?, ?, 'host', 'admitted', ?, ?)`).run(
@@ -1014,11 +1022,12 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
   app.post('/api/ktv/rooms/:id/settings', roomAccess(true), handler((req) => {
     const actor = user(req)
     const id = memberCommandId(req)
-    const { locked, approvalRequired, stageInviteVisible, singerRequests } = req.body || {}
+    const { locked, approvalRequired, stageInviteVisible, singerRequests, automaticPlayback } = req.body || {}
+    if (automaticPlayback !== undefined && typeof automaticPlayback !== 'boolean') fail(400, 'INVALID_INPUT', 'Automatic playback must be a boolean')
     if (singerRequests !== undefined && (!Number.isSafeInteger(singerRequests) || singerRequests < 1 || singerRequests > 10)) {
       fail(400, 'INVALID_INPUT', 'Pending song limit must be between one and ten')
     }
-    if (typeof locked !== 'boolean' && typeof approvalRequired !== 'boolean' && typeof stageInviteVisible !== 'boolean' && singerRequests === undefined) {
+    if (typeof locked !== 'boolean' && typeof approvalRequired !== 'boolean' && typeof stageInviteVisible !== 'boolean' && singerRequests === undefined && automaticPlayback === undefined) {
       fail(400, 'INVALID_INPUT', 'A room setting is required')
     }
     return transaction(db, () => {
@@ -1026,14 +1035,15 @@ export function registerKtvRoutes(app, { db, authMiddleware, secret, isKaraokeSo
       const member = admittedMember(db, room.id, actor.id)
       const payload = ['room.settings', locked ?? null, approvalRequired ?? null, stageInviteVisible ?? null]
       if (singerRequests !== undefined) payload.push(singerRequests)
+      if (automaticPlayback !== undefined) payload.push(['automaticPlayback', automaticPlayback])
       applyCommand(db, room.id, member.id, id, payload, () => {
         moderatorMember(db, room.id, actor.id)
-        if (typeof stageInviteVisible === 'boolean' || singerRequests !== undefined) hostMember(db, room.id, actor.id)
-        db.prepare('UPDATE ktv_rooms SET locked = ?, approval_required = ?, stage_invite_visible = ?, singer_request_limit = ?, revision = revision + 1 WHERE id = ?')
+        if (typeof stageInviteVisible === 'boolean' || singerRequests !== undefined || automaticPlayback !== undefined) hostMember(db, room.id, actor.id)
+        db.prepare('UPDATE ktv_rooms SET locked = ?, approval_required = ?, stage_invite_visible = ?, singer_request_limit = ?, automatic_playback = ?, revision = revision + 1 WHERE id = ?')
           .run(Number(typeof locked === 'boolean' ? locked : room.locked),
             Number(typeof approvalRequired === 'boolean' ? approvalRequired : room.approval_required),
           Number(typeof stageInviteVisible === 'boolean' ? stageInviteVisible : room.stage_invite_visible),
-          singerRequests ?? room.singer_request_limit, room.id)
+          singerRequests ?? room.singer_request_limit, Number(automaticPlayback ?? Boolean(room.automatic_playback)), room.id)
         event(db, room.id, actor.id, 'room.settings')
       })
       return viewerSnapshot(req)

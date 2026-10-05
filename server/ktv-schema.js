@@ -163,6 +163,9 @@ export function initKtvSchema(db) {
     );
   `)
   const roomColumns = db.prepare('PRAGMA table_info(ktv_rooms)').all().map(column => column.name)
+  if (!roomColumns.includes('automatic_playback')) {
+    db.exec('ALTER TABLE ktv_rooms ADD COLUMN automatic_playback INTEGER NOT NULL DEFAULT 1 CHECK (automatic_playback IN (0, 1))')
+  }
   db.exec(`CREATE INDEX IF NOT EXISTS ktv_receipts_age ON ktv_command_receipts(created_at);
     CREATE INDEX IF NOT EXISTS ktv_identity_receipts_age ON ktv_identity_receipts(created_at);
     CREATE INDEX IF NOT EXISTS ktv_pairing_receipts_age ON ktv_pairing_receipts(created_at);`)

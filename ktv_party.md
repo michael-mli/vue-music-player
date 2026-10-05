@@ -1738,6 +1738,33 @@ measurement. Exclude credentials and raw microphone audio from diagnostics.
 
 ## 12. Decisions to validate
 
+### Automatic ready-to-play flow
+
+Rooms default to server-owned automatic playback (`automatic_playback = 1`, an
+additive, persisted room setting). Only the host can toggle it, from the playback
+panel on the shared screen or phone controls. All participants receive the same
+preference and automation status in room snapshots. Manual rooms retain explicit
+prepare/start controls.
+
+After the nominated singer confirms readiness for the current performance, the
+server resolves the song and prepares it automatically on the explicitly selected,
+enabled speaker. It starts the normal shared countdown only after that speaker
+has decoded the current asset/generation and the existing guide, host-control,
+clock, old-output silence and playback lease checks pass. Audio activation and
+speaker selection remain explicit device setup; a browser cannot authorize those
+gestures on behalf of the user. Online modes retain their capture/publication
+permissions and countdown checks.
+
+One asynchronous asset lookup runs per room. Recheck the current singer/turn,
+generation, selected speaker, admission, room lifetime, host availability and host
+preference after I/O. Cancelling/replacing a turn, manual preparation, changing
+the speaker, disabling automation or closing the service invalidates stale work.
+Asset failures hold the room for attention and do not cause unbounded retries.
+Expose waiting-for-speaker/audio/guide/host/output and attention states with
+translated guidance. Paused/recovering performances require deliberate recovery;
+automation must not restart a deliberately paused or faulted song. Existing
+generation, countdown and output lease rules are unchanged.
+
 | Decision | Working proposal | Validation point |
 | --- | --- | --- |
 | First public mode | Local first; online/hybrid remain planned | Before selecting release scope |

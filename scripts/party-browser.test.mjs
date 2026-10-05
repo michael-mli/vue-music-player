@@ -227,7 +227,8 @@ try {
     'A returning pending guest recovers the approval screen without admitted controls')
   await api(1, `/rooms/${admissionRoom.room.id}/close`, {})
   await cdp('Target.closeTarget', { targetId: (await cdp('Target.getTargetInfo', {}, waitingGuest)).targetInfo.targetId })
-  let view = await api(1, '/rooms', { name: 'Browser playback party', displayName: 'Host', approvalRequired: false })
+  let view = await api(1, '/rooms', { name: 'Browser playback party', displayName: 'Host', approvalRequired: false,
+    ...(process.env.KTV_BROWSER_AUTOMATIC === '1' ? {} : { automaticPlayback: false }) })
   pathRoom = `/rooms/${view.room.id}`
   await api(2, '/join', { code: view.invitationCode, displayName: 'Singer' })
   await api(3, '/join', { code: view.invitationCode, displayName: 'Viewer' })
@@ -326,6 +327,32 @@ try {
   await poll(() => evaluate(host, `(() => { const button = [...document.querySelectorAll('button')].find(item => item.textContent.includes('Stage · Host') && !item.disabled); if (!button) return false; button.click(); return true })()`), 'select stage')
   view = await poll(async () => { const latest = await api(1, pathRoom); return latest.playback.stageDeviceId ? latest : false }, 'stage designated')
   check(!!view.playback.stageDeviceId, 'Host selects an enabled stage in the rendered UI')
+  if (process.env.KTV_BROWSER_AUTOMATIC === '1') {
+    check(view.room.automaticPlayback === true, 'New room defaults to automatic playback')
+    view = await api(2, `${pathRoom}/queue`, { commandId: crypto.randomUUID(), songId: 1, title: 'Automatic ready song', requestNext: false })
+    view = await api(1, `${pathRoom}/readiness/offer`, { commandId: crypto.randomUUID(), entryId: view.queue[0].id, clockId: view.clock.clockId, baseRevision: view.room.revision })
+    await click(singer, "I'm ready to sing")
+    await poll(async () => (await api(1, pathRoom)).playback.state === 'playing', 'ready automatically prepares and starts the room')
+    check((await audit(host)).length === 1 && !(await audit(host))[0].ended, 'Singer ready alone starts one native stage source without host prepare/start clicks')
+    check(db.prepare("SELECT COUNT(*) n FROM ktv_room_events WHERE room_id = ? AND action = 'automation.prepared'").get(view.room.id).n === 1 &&
+      db.prepare("SELECT COUNT(*) n FROM ktv_room_events WHERE room_id = ? AND action = 'automation.started'").get(view.room.id).n === 1,
+      'Server prepares and starts the accepted turn exactly once')
+    check(await evaluate(singer, "!document.getElementById('party-automatic-playback')"), 'Ordinary singer cannot change the host automation setting')
+    await click(host, 'Pause song')
+    await poll(async () => (await api(1, pathRoom)).playback.state === 'paused', 'automatic song deliberately paused')
+    await poll(async () => (await audit(host)).every(record => record.ended), 'automatic song pause stops native output')
+    await new Promise(resolve => setTimeout(resolve, 600))
+    check((await api(1, pathRoom)).playback.state === 'paused', 'Automation does not override a deliberate pause')
+    await poll(() => evaluate(host, "(() => { const box=document.getElementById('party-automatic-playback');if(!box||box.disabled)return false;box.click();return true })()"), 'host disables automatic playback')
+    await poll(async () => (await api(1, pathRoom)).room.automaticPlayback === false, 'automation preference saved')
+    check((await api(2, pathRoom)).room.automaticPlayback === false, 'Host toggle publishes manual mode to every participant')
+    await evaluate(host, 'window.confirm = () => true')
+    await click(host, 'Skip song')
+    await poll(async () => (await api(1, pathRoom)).playback.state === 'idle', 'automatic fixture finished')
+    // Begin a separate manual performance with fresh source audit counters.
+    await evaluate(host, 'window.__partyAudit = []')
+    await evaluate(singer, 'window.__partyAudit = []')
+  }
   view = await api(2, `${pathRoom}/queue`, { commandId: crypto.randomUUID(), songId: 1, title: 'Browser test song', requestNext: false })
   view = await api(1, `${pathRoom}/readiness/offer`, { commandId: crypto.randomUUID(), entryId: view.queue[0].id, clockId: view.clock.clockId, baseRevision: view.room.revision })
   await click(singer, "I'm ready to sing")

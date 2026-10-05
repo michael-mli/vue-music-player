@@ -590,7 +590,7 @@ test('real room transports authorize stage preparation, scheduled controls, comp
   const assets = { songId: 1, version: 'transport-fixture', durationMs: 60_000,
     instrumental: { durationMs: 60_000 }, original: { durationMs: 60_000 }, lyrics: { mode: 'missing', text: null } }
   const { db, request, realtime, socketUrl, origin } = await setup(t, { clock, resolveAssets: async () => assets })
-  let view = (await request('POST', '/rooms', 1, { name: 'Playback', displayName: 'Host', approvalRequired: false })).body.data
+  let view = (await request('POST', '/rooms', 1, { name: 'Playback', displayName: 'Host', approvalRequired: false, automaticPlayback: false })).body.data
   const path = `/rooms/${view.room.id}`
   const guest = (await request('POST', '/join', 2, { code: view.invitationCode, displayName: 'Singer' })).body.data
   const pending = (await request('POST', '/rooms', 3, { name: 'Other', displayName: 'Other host' })).body.data
@@ -1415,4 +1415,31 @@ test('nominations respect the recipient cap and cannot assign pending or unknown
   assert.equal((await nominate(singer)).body.code, 'SINGER_QUEUE_FULL')
   assert.equal(await request('POST', `${root}/queue/${first}/decline`, 2, { commandId: randomUUID() }).then(r => r.status), 200)
   assert.equal((await nominate(singer)).status, 200)
+})
+
+test('automatic playback defaults on, is host controlled, and persists with idempotent settings', async t => {
+  const f = await setup(t)
+  const created = await f.request('POST', '/rooms', 1, { name: 'Automatic default', displayName: 'Host', approvalRequired: false })
+  const view = created.body.data, route = `/rooms/${view.room.id}`
+  assert.equal(view.room.automaticPlayback, true)
+  assert.equal(view.automation.state, 'waiting-singer')
+  const joined = await f.request('POST', '/join', 2, { code: view.invitationCode, displayName: 'Singer' })
+  assert.equal(joined.body.data.room.automaticPlayback, true)
+  let denied = await f.request('POST', route + '/settings', 2, { automaticPlayback: false })
+  assert.equal(denied.status, 403)
+  assert.equal((await f.request('POST', route + `/members/${joined.body.data.self.id}/role`, 1, { commandId: randomUUID(), role: 'cohost' })).status, 200)
+  denied = await f.request('POST', route + '/settings', 2, { automaticPlayback: false })
+  assert.equal(denied.status, 403)
+  const commandId = randomUUID(), payload = { commandId, automaticPlayback: false }
+  const first = await f.request('POST', route + '/settings', 1, payload)
+  assert.equal(first.status, 200); assert.equal(first.body.data.room.automaticPlayback, false)
+  assert.equal(first.body.data.automation.state, 'off')
+  const duplicate = await f.request('POST', route + '/settings', 1, payload)
+  assert.equal(duplicate.status, 200); assert.equal(duplicate.body.data.room.revision, first.body.data.room.revision)
+  const conflict = await f.request('POST', route + '/settings', 1, { commandId, automaticPlayback: true })
+  assert.equal(conflict.status, 409)
+  await f.restart()
+  assert.equal((await f.request('GET', route, 1)).body.data.room.automaticPlayback, false)
+  const invalid = await f.request('POST', route + '/settings', 1, { automaticPlayback: 'false' })
+  assert.equal(invalid.status, 400)
 })

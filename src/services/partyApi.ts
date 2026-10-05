@@ -29,6 +29,7 @@ export interface PartySnapshot {
     expiresAt: string
     performanceMode?: 'local' | 'online' | 'hybrid'
     mediaConfigured?: boolean
+    automaticPlayback?: boolean
   }
   self: PartyMember
   features?: PartyFeatures
@@ -38,6 +39,7 @@ export interface PartySnapshot {
     pairingLifetimeMs: number; ticketLifetimeMs: number; socketAuthTimeoutMs: number }
   clock: { clockId: string; serverNowMs: number }
   readiness?: PartyReadiness
+  automation?: { state: 'off' | 'waiting-singer' | 'waiting-stage' | 'preparing' | 'waiting-audio' | 'waiting-guide' | 'waiting-host' | 'waiting-output' | 'playing' | 'attention' }
   playback?: PartyPlayback
   presence?: { sequence: number; devices: PartyLiveDevice[]; host: { memberId: string | null; connected: boolean;
     controlAvailable: boolean; graceDeadlineMs: number | null; transferCandidateId: string | null; graceMs: number } }
@@ -285,7 +287,7 @@ export const partyApi = {
     call<PartySnapshot>('post', `/rooms/${encodeURIComponent(roomId)}/members/${encodeURIComponent(memberId)}/transfer-host`, { commandId }, true),
   rotate: (roomId: string) =>
     mutation<PartySnapshot>(`/rooms/${encodeURIComponent(roomId)}/invitations/rotate`, {}),
-  settings: (roomId: string, changes: { locked?: boolean; approvalRequired?: boolean; stageInviteVisible?: boolean; singerRequests?: number }) =>
+  settings: (roomId: string, changes: { locked?: boolean; approvalRequired?: boolean; stageInviteVisible?: boolean; singerRequests?: number; automaticPlayback?: boolean }) =>
     mutation<PartySnapshot>(`/rooms/${encodeURIComponent(roomId)}/settings`, changes),
   close: (roomId: string) =>
     mutation<{ id: string; status: 'closed' }>(`/rooms/${encodeURIComponent(roomId)}/close`, {}),

@@ -7,6 +7,14 @@
       </div>
       <button v-if="stage && fullscreenSupported" type="button" class="min-h-[44px] rounded-full border border-white/30 px-4 py-2 text-sm" :aria-pressed="isFullscreen" @click="fullscreen">{{ $t(isFullscreen ? 'party.exitFullscreen' : 'party.fullscreen') }}</button>
     </header>
+    <label v-if="canManage && party.self.role === 'host' && party.deviceScope !== 'display'" class="mt-4 flex min-h-[44px] items-center gap-3 text-sm">
+      <input id="party-automatic-playback" type="checkbox" :checked="party.room.automaticPlayback === true" :disabled="busy"
+        class="h-5 w-5 accent-green-400" @change="$emit('automation', ($event.target as HTMLInputElement).checked)">
+      {{ $t('party.automaticPlayback') }}
+    </label>
+    <p v-if="party.automation" class="mt-2 text-sm" :class="party.automation.state === 'attention' ? 'text-amber-200' : 'text-gray-300'" role="status">
+      {{ $t(`party.automation_${party.automation.state}`) }}
+    </p>
     <div class="mt-4 flex flex-wrap items-center gap-3">
       <button v-if="stage && !enabled && !audience && (party.room.performanceMode || 'local') === 'local'" :disabled="enabling" type="button" class="rounded-full bg-spotify-green px-5 py-3 font-semibold text-black disabled:opacity-50" @click="audio.enable('stage')">{{ $t('party.enableStageAudio') }}</button>
       <button v-if="!stage && canGuide && !enabled && !audience && party.room.performanceMode !== 'online'" :disabled="enabling" type="button" class="rounded-full bg-spotify-green px-5 py-3 font-semibold text-black disabled:opacity-50" @click="audio.enable('guide')">{{ $t('party.enableGuide') }}</button>
@@ -72,9 +80,9 @@
         </li>
       </ul>
       <div class="mt-4 flex flex-wrap gap-3">
-        <button v-if="party.readiness?.state === 'ready' && (!playback || ['idle', 'preparing'].includes(playback.state))" type="button" :disabled="busy || !stageAvailable"
+        <button v-if="manualPlayback && party.readiness?.state === 'ready' && (!playback || ['idle', 'preparing'].includes(playback.state))" type="button" :disabled="busy || !stageAvailable"
           class="min-h-[44px] rounded-full border border-spotify-green px-5 py-2 text-sm text-spotify-green disabled:opacity-40" @click="$emit('prepare')">{{ $t('party.prepareSong') }}</button>
-        <button v-if="playback && ['preparing', 'paused', 'recovering'].includes(playback.state)" type="button" :disabled="busy || !stagePrepared || !startSafe || party.readiness?.state !== 'ready' || (playback.guideRequired && !playback.guidePrepared) || !party.presence?.host.controlAvailable"
+        <button v-if="manualPlayback && playback && ['preparing', 'paused', 'recovering'].includes(playback.state)" type="button" :disabled="busy || !stagePrepared || !startSafe || party.readiness?.state !== 'ready' || (playback.guideRequired && !playback.guidePrepared) || !party.presence?.host.controlAvailable"
           class="min-h-[44px] rounded-full bg-spotify-green px-5 py-2 text-sm font-semibold text-black disabled:opacity-40" @click="$emit('action', 'start', {})">{{ $t(playback.state === 'preparing' ? 'party.startSong' : 'party.resumeSong') }}</button>
         <button v-if="playback && ['scheduled', 'playing'].includes(playback.state)" type="button" :disabled="busy || !!playback.pendingTransition"
           class="min-h-[44px] rounded-full border border-white/30 px-5 py-2 text-sm disabled:opacity-40" @click="$emit('action', 'pause', {})">{{ $t('party.pauseSong') }}</button>
@@ -114,11 +122,13 @@ import { useI18n } from 'vue-i18n'
 import type { PartySnapshot } from '@/services/partyApi'
 import type { usePartyPlayback } from '@/composables/usePartyPlayback'
 const props = defineProps<{ party: PartySnapshot; audio: ReturnType<typeof usePartyPlayback>; stage: boolean; canManage: boolean; busy: boolean; audience?: boolean; privateOriginal?: boolean }>()
-const emit = defineEmits<{ action: [action: string, payload: Record<string, unknown>]; prepare: [] }>()
+const emit = defineEmits<{ action: [action: string, payload: Record<string, unknown>]; prepare: []; automation: [enabled: boolean] }>()
 const { t } = useI18n()
 const { enabled, enabling, purpose, preparing, prepared, failure, volume, guideAdvanceMs, canGuide, assignedHere,
   positionMs, segment, countdown, lines, lyricGuide, startSafe, serverNowMs, blocked, diagnostics, calibrationInvalidated } = props.audio
 const playback = computed(() => props.party.playback)
+const manualPlayback = computed(() => props.party.room.automaticPlayback !== true || props.party.automation?.state === 'attention' ||
+  ['paused', 'recovering'].includes(playback.value?.state || ''))
 const stageDevices = computed(() => props.party.presence?.devices.filter(device => device.connected && device.purpose === 'stage' && device.audioEnabled && device.clockHealthy) || [])
 const stageAvailable = computed(() => stageDevices.value.some(device => device.id === playback.value?.stageDeviceId))
 const stagePrepared = computed(() => stageAvailable.value && props.party.presence?.devices.some(device => device.id === playback.value?.stageDeviceId &&
