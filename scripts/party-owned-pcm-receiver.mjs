@@ -42,8 +42,9 @@ export function createOwnedPcmReceiver(Queue,worklet,context,track,nativeSource,
         else if(data?.type==='queue-state'){
           if(!Number.isSafeInteger(data.queued)||data.queued<0||data.queued>48||
             !Number.isSafeInteger(data.bytes)||data.bytes<0||data.bytes>1024*1024||
-            !Number.isSafeInteger(data.bufferedFrames)||data.bufferedFrames<0||data.bufferedFrames>48*5760){fail('PLAYOUT_PCM_RENDER');return}
-          queue={queued:data.queued,bytes:data.bytes,bufferedFrames:data.bufferedFrames,observedAt:performance.now()}
+            !Number.isSafeInteger(data.bufferedFrames)||data.bufferedFrames<0||data.bufferedFrames>48*5760||
+            !Number.isSafeInteger(data.renderFrame)||data.renderFrame<0){fail('PLAYOUT_PCM_RENDER');return}
+          queue={queued:data.queued,bytes:data.bytes,bufferedFrames:data.bufferedFrames,renderFrame:data.renderFrame,observedAt:performance.now()}
         }
       }
       pcmNode.onprocessorerror=()=>fail('PLAYOUT_PCM_RENDER')
@@ -66,7 +67,9 @@ export function createOwnedPcmReceiver(Queue,worklet,context,track,nativeSource,
     }catch{fail('PLAYOUT_PCM_CREATE')}
   })()
   return {node,close,snapshot(){const state=row();return {ready,closed,error,delayMs,
-    pcmRate:pcmContext?.sampleRate||null,outputRate:context.sampleRate,decoder:state||null,clock,queue,validatingOutput:badOutputSince!==null}},
+    pcmRate:pcmContext?.sampleRate||null,outputRate:context.sampleRate,decoder:state||null,clock,queue,validatingOutput:badOutputSince!==null,
+    renderClock:anchor?{wallUnixMs:Date.now(),now:performance.now(),anchorWallUnixMs:anchor.wall,anchorFrame:anchor.frame,
+      contextFrame:Math.round(pcmContext.currentTime*48000),reportedFrame:queue?.renderFrame??null,reportedAt:queue?.observedAt??null}:null}},
     captureCursor(){
       const state=row(),now=performance.now()
       if(closed||!ready||!state?.configured||state.closed||state.decoded<2)return null

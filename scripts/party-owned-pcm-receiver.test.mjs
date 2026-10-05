@@ -25,7 +25,7 @@ async function fixture({pendingModule=false}={}){
   const receiver=factory(class{},()=>{},output,original,function(){const node=new Node();nodes.push(node);return node},200)
   await tick()
   return {receiver,contexts,output,original,captured,nodes,messages,states,advance(value){now=value;states[0].observedAt=value;states[0].lastCaptureUnixMs=value},
-    renew(){interval?.()},moduleReady(){finishModule?.()},queueState(data){renderer.port.onmessage({data:{type:'queue-state',...data}})}}
+    renew(){interval?.()},moduleReady(){finishModule?.()},queueState(data){renderer.port.onmessage({data:{type:'queue-state',renderFrame:0,...data}})}}
 }
 test('owned PCM connects through a captured stream into the caller graph and closes only its resources',async()=>{
   const f=await fixture();assert.equal(f.receiver.snapshot().ready,true)
@@ -69,6 +69,20 @@ test('renderer reports retain only bounded sample counts and cannot repopulate d
   assert.equal(f.receiver.snapshot().queue,null)
   f.queueState({queued:30,bytes:230400,bufferedFrames:28500})
   assert.equal(f.receiver.snapshot().queue,null)
+})
+test('read-only render clocks distinguish the context frame from the actual reported quantum and reject invalid reports',async()=>{
+  const f=await fixture();f.queueState({queued:30,bytes:230400,bufferedFrames:28500,renderFrame:8192,secret:'private'})
+  const first=f.receiver.snapshot().renderClock
+  assert.equal(first.contextFrame,9600);assert.equal(first.reportedFrame,8192)
+  assert.equal(first.anchorFrame,9600);assert.equal(first.anchorWallUnixMs,1000)
+  assert.equal('secret' in f.receiver.snapshot().queue,false)
+  f.advance(1100);f.contexts[0].currentTime=.3
+  const second=f.receiver.snapshot().renderClock
+  assert.equal(second.wallUnixMs,1100);assert.equal(second.contextFrame,14400)
+  assert.equal(second.reportedFrame,8192);assert.equal(second.reportedAt,1000)
+  assert.equal(f.messages.filter(row=>row.type==='pcm-bind').length,1)
+  f.queueState({queued:30,bytes:230400,bufferedFrames:28500,renderFrame:NaN})
+  assert.equal(f.receiver.snapshot().error,'PLAYOUT_PCM_RENDER');assert.equal(f.receiver.node.gain.value,0)
 })
 test('closing during module startup cannot later bind a decoder or revive output',async()=>{
   const f=await fixture({pendingModule:true});f.receiver.close();f.moduleReady();await tick()

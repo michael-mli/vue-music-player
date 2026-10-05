@@ -226,8 +226,9 @@ if (remoteMode) {
 
 const continueSfuRtx=process.env.KTV_ROOM_TEST_SFU_RTX_RECOVERY==='continue'
 assert.ok(process.env.KTV_ROOM_TEST_SFU_RTX_RECOVERY===undefined||continueSfuRtx&&sfuAllocationEvidence&&
-  receiverKeyframes&&receiverKeyframeMs===5000&&dependencyVideoReorder&&impairmentProtocol==='udp'&&
-  continuousImpairment&&handoverAv,'Private SFU RTX comparison requires the unchanged full UDP floor/RED journey')
+  receiverKeyframes&&(receiverKeyframeMs===5000||senderTemporal&&videoMarkerProbe&&receiverKeyframeMs===2500)&&
+  dependencyVideoReorder&&impairmentProtocol==='udp'&&
+  continuousImpairment&&handoverAv,'Private SFU RTX comparison requires declared bounded recovery and the full UDP floor/RED journey')
 assert.ok(continueSfuRtx===Boolean(process.env.KTV_ROOM_TEST_SFU_RTX_BUILD),'Private SFU build must explicitly select RTX comparison')
 const exec = promisify(execFile)
 let image=sfuBaseImage

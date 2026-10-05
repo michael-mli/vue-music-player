@@ -91,7 +91,7 @@ export function pcmSourceWorklet(Queue) {
       try { this.queue.render(currentFrame,outputs[0]);
         if(currentFrame>=this.nextReportFrame){
           this.nextReportFrame=currentFrame+4800
-          this.port.postMessage({type:'queue-state',...this.queue.snapshot()})
+          this.port.postMessage({type:'queue-state',...this.queue.snapshot(),renderFrame:currentFrame})
         }
       }
       catch { this.fail();for(const output of outputs)for(const plane of output)plane.fill(0) }

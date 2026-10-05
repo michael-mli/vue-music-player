@@ -49,11 +49,11 @@ is a preview; public online media is still disabled.
 
 | Check | Current evidence | Status |
 | --- | --- | --- |
-| Timing/capability fixtures | 189/189 | Pass |
-| Buffered expiry after both render contexts freeze/resume | 51/51, latest PCM pressure handling | Pass for digital fixture |
+| Timing/capability fixtures | 190/190 | Pass |
+| Buffered expiry after both render contexts freeze/resume | 51/51, latest PCM admission and first-arrival deadline | Pass for digital fixture |
 | Buffered expiry while source and listener pages stall | 46/46, latest reader/revalidation | Pass for digital fixture |
-| Fresh clean 40-pair A/V regression | 50/50; p95 52.44 ms / max 54.11 ms; nominal cadence | Pass for digital fixture |
-| Continuous impaired-network A/V and nominal frame rate | RED-on and RED-off VP9 comparisons time out; required cadence fails | Fail |
+| Latest clean 40-pair A/V regression | Times out after PCM reaches 48 credits; earlier 50/50 pass is historical | Fail |
+| Continuous impaired-network A/V and nominal frame rate | Private L1T1 reaches nominal native cadence; owned cadence and 40-pair timing still fail | Fail |
 | Product integration and physical/mobile/capacity acceptance | Required work remains | Open |
 
 These scripts are private. The deployed preview remains `acb583b`, with public
@@ -5425,3 +5425,117 @@ or oversized diagnostics instead of interpreting failed reads as ordered pixels.
 `/tmp/ktv-temporal-native-marker-fixtures-20261004.log`.
 The full comparison is running in
 `/tmp/ktv-owned-av-vp9-l1t1-source-native-owned-markers-full-udp-20261004.log`.
+
+
+### Single temporal layer separates native recovery from owned admission — 2026-10-04
+
+`/tmp/ktv-owned-av-vp9-l1t1-source-native-owned-markers-full-udp-20261004.log`
+exits 1 at the original impaired 40-pair timeout. Native readback retains `L1T1`,
+25-fps / 350-kbps caps and `motion`. Clean baseline has six pairs, no unmatched
+edges, maximum skew **20.09 ms** and nominal rates. Captured, native and owned
+probes all report **zero backward identities throughout this run**, including
+impairment. This comparison supports temporal structure as a candidate for the
+shared reversal; independent random loss and a single run do not establish a
+causal reliability improvement or release qualification.
+
+During impairment, source / native rates are **24.88 / 23.99 fps** and satisfy
+those original cadence gates. Owned decode / presentation still fail at
+**16.24 / 15.89 fps**. The owned decoder records **715 missing-reference
+rejections**, 25 pressure drains, 17 late frames and 20 keyframes decoded; all
+remain within existing count/byte bounds. Its maximum observed frame arrival age
+is **1,434 ms**, and 214 frames arrive after the 800-ms target. Native and owned
+outputs are therefore not yet equivalent in recovery or cadence. Measured PCM
+missing samples total **48,960** (1.02 seconds); PCM stays alive and early pressure
+handling remains unexercised. No input-dependency, clock, timing or frame-rate
+criterion is relaxed.
+
+A fresh production-VP8/original-SFU buffered-expiry regression after the PCM
+first-arrival deadline fix is running in
+`/tmp/ktv-owned-av-pcm-first-arrival-deadline-both-context-expiry-20261004.log`.
+The temporal experiment remains private; deployed preview and public media state
+remain unchanged.
+
+
+The fresh production-VP8/original-SFU buffered-expiry regression,
+`/tmp/ktv-owned-av-pcm-first-arrival-deadline-both-context-expiry-20261004.log`,
+passes **51/51** native streaming checks after the PCM first-arrival deadline
+change. Independent output silence, actual freeze/resume and replacement
+separation still pass. This establishes a digital expiry regression, not physical
+mobile or impaired timing acceptance.
+
+The next private `L1T1` comparison changes only the already bounded native
+receiver request cooldown from **5,000 to 2,500 ms**, motivated by 715 observed
+missing-reference rejections while native decoding remains nominal. Every decode
+still requires its declared references; no damaged input is accepted and output
+leases/caps, 800-ms target and original timing/cadence gates remain intact.
+This interval was already supported and negatively tested by the worker; the
+SFU experiment selector now permits it only with the nominal `L1T1` marker-probed
+comparison. It does not change the default interval or deployed product.
+The full UDP journey is running in
+`/tmp/ktv-owned-av-vp9-l1t1-recovery2500-source-native-owned-full-udp-20261004.log`.
+
+
+The first 2,500-ms comparison exits 1 before A/V marker observation:
+`/tmp/ktv-owned-av-vp9-l1t1-recovery2500-source-native-owned-full-udp-20261004.log`.
+PCM reaches its unchanged **48-credit** bound plus **eight held packets**, with
+368,640 reserved PCM bytes and nine backpressure events, then closes `PCM_BOUND`;
+controller closure is `PLAYOUT_AUDIO_CLOCK`. No keyframe request occurs, so this
+is not evidence for or against the faster recovery policy. The safety closure
+and startup failure remain recorded. One identical replication is used to reach
+the original comparison if startup passes; limits are not increased and failure
+is not converted into success. It is running in
+`/tmp/ktv-owned-av-vp9-l1t1-recovery2500-source-native-owned-repeat2-full-udp-20261004.log`.
+
+
+### Faster native recovery remains below owned cadence — 2026-10-04
+
+The identical replication,
+`/tmp/ktv-owned-av-vp9-l1t1-recovery2500-source-native-owned-repeat2-full-udp-20261004.log`,
+passes clean baseline (six pairs, no unmatched edges, maximum **17.42 ms**) and
+exits 1 at the original impaired 40-pair timeout. Captured, native and owned
+markers remain ordered throughout. Actual worker readback retains 2,500 ms; ten
+native requests are fulfilled. During impairment, source / native / owned decode /
+presentation rates are **24.77 / 23.40 / 19.21 / 18.94 fps**. Owned rates still
+fail the required 20-fps minimum, despite 21 decoded keyframes. Native impairment
+is independently randomized, so numerical differences are not causal proof.
+
+The decoder records **382 missing-reference rejections**, ten late frames and
+zero pressure drains. Measured PCM missing samples total **43,200** (0.90 seconds);
+PCM stays alive, with maximum five held packets and zero PCM pressure drains.
+No missing-reference input is submitted for decoding. Matching, skew, cadence,
+buffer bounds and lease/clock gates remain unchanged; this candidate is not
+released. Recovery scheduling and actual audio loss concealment remain open.
+
+A fresh clean 40-pair regression of the latest PCM admission/deadline changes
+using production VP8 and the original SFU is running in
+`/tmp/ktv-owned-av-pcm-first-arrival-deadline-clean40-production-vp8-20261004.log`.
+
+
+### Fresh clean regression exposes saturated PCM credits — 2026-10-04
+
+`/tmp/ktv-owned-av-pcm-first-arrival-deadline-clean40-production-vp8-20261004.log`
+exits 1 at the clean 40-pair timeout. Source / native video remains nominal at
+**25.00 / 24.97 fps**, but PCM closes `PCM_BOUND` about **40.44 seconds** into
+observation. It reaches the unchanged 48-credit / eight-held-packet limits with
+368,640 PCM bytes and 3,982 backpressure events; the controller closes
+`PLAYOUT_AUDIO_CLOCK`. The 48-credit cap is already saturated at the first
+baseline sample, and the renderer reports roughly 44,900–45,400 buffered samples
+(about 0.94 seconds), exceeding the requested 800-ms hold. Capture drift stays
+within 20 ms. Whether context mapping, actual render cadence, delivery latency
+or another source explains the residence is not established. Safety closure
+remains terminal; no credit/byte/deadline cap is raised. The latest clean status
+is now failed; earlier 50/50 evidence is historical.
+
+Added bounded, read-only actual worklet `renderFrame` reports and PCM context /
+wall anchor snapshots to distinguish the renderer quantum from main-thread
+`AudioContext.currentTime`. These diagnostics change no frame, schedule, sample,
+output permission or credit. Invalid/non-finite render reports fail explicitly,
+unknown properties are excluded, and closed sessions cannot repopulate queues.
+Tests cover stale reports versus advancing context frames and actual worklet
+quantum reports. **190/190** fixtures pass in
+`/tmp/ktv-pcm-actual-render-clock-fixtures-20261004.log`.
+
+The clean production-VP8/original-SFU 40-pair journey with these read-only clocks
+is running in
+`/tmp/ktv-owned-av-pcm-actual-render-clock-clean40-production-vp8-20261004.log`.
+No new production change is deployed and public online media remains disabled.
