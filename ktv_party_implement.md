@@ -49,7 +49,7 @@ is a preview; public online media is still disabled.
 
 | Check | Current evidence | Status |
 | --- | --- | --- |
-| Timing/capability fixtures | 237/237 including shared-context memory accounting, copy fallback, startup clock readiness and pressured video-reference repair | Pass |
+| Timing/capability fixtures | 239/239 including shared-context memory accounting, copy fallback, startup readiness, pressured parent repair and bounded earlier reference feedback | Pass |
 | Buffered expiry after render/guard clock freeze/resume | 51/51 with shared-context libopus buffers at the 500-ms target, including 524.23-ms retained PCM | Pass for tested digital topology |
 | Buffered expiry while source and listener pages stall | 46/46, latest reader/revalidation | Pass for digital fixture |
 | Latest qualified clean 40-pair A/V regression | Shared-context libopus buffers / 500-ms target: 50/50, p95 61.55 ms / max 79.17 ms, no unmatched edges | Pass for tested digital topology |
@@ -6266,9 +6266,45 @@ under decoder congestion, unknown dependencies and deadline expiry. Full
 timing/capability fixtures pass **237/237** in
 `/tmp/ktv-video-reference-pressure-repair-all-fixtures-20261005.log`.
 
-The unchanged shared-context/800-ms full UDP profile is rerunning in
+The unchanged shared-context/800-ms full UDP profile finishes terminal **exit 1** in
 `/tmp/ktv-owned-av-vp9-l1t1-opus-plc-shared-buffers-reference-parent-repair-full-udp-target800-20261005.log`.
-No native benefit or new acceptance is assumed. Impaired owned-video recovery
-and cadence, sustained clocks, product integration and physical/mobile/capacity/
-release gates remain open. Public deployment remains unchanged with online media
-disabled.
+It reaches **40 impaired pairs**, one unmatched audio and **two unmatched video**;
+the original unmatched-edge gate rejects the run. Skew also fails: p95
+**612.96 ms**, maximum **712.57 ms**. Source/native/owned decode/presentation are
+**24.44 / 21.59 / 18.31 / 17.76 fps**, below the original owned cadence bounds.
+No source/native/owned marker regression occurs. The actual worker reports
+**two reference-parent repair drains**, proving the new path is exercised;
+this does not establish an overall benefit under independent random loss.
+Impaired video records 425 reference misses, 192 keyframe drains, 23 pressure
+drains, 18 late frames and 36 fulfilled requests, including 30 early requests.
+PCM remains live without backpressure or terminal failure: peak **983,040
+bytes / 34 credits**, up to seven held inputs, with 27,840 real missing/concealed
+samples and 991 RED repairs. Live-context lag spans **106.35–633.44 ms**.
+Functional handover is not reached because the impaired gate rejects first.
+
+### 2026-10-05 — Explicit earlier missing-reference feedback
+
+Added a private **100-ms** missing-reference wait comparison through
+`KTV_ROOM_TEST_RECEIVER_KEYFRAME_WAIT_MS=100`. The worker default remains 350 ms.
+It requires the declared shared-buffer/libopus, nominal VP9 L1T1 floor,
+dependency-aware owned decoder and continuous RTX profile. The one-second
+request cooldown, one pending native request, one-second recent-key suppression,
+fixed 700-ms reorder deadline and all resource/output gates remain unchanged.
+The earlier feedback uses actual declared missing-reference history only;
+capture pacing gaps, marker pixels/IDs or measured A/V skew cannot trigger it.
+Each actual A/V sample verifies the worker's declared wait and cooldown.
+
+The worker rejects unsupported waits or unrelated decoder/recovery policies.
+New fixtures check exact threshold admission, recent-key suppression, request
+cooldown and terminal stop. Full timing/capability fixtures pass **239/239** in
+`/tmp/ktv-video-earlier-reference-feedback-all-fixtures-20261005.log`.
+
+Full native comparison is running in
+`/tmp/ktv-owned-av-vp9-l1t1-opus-plc-shared-buffers-reference-wait100-full-udp-target800-20261005.log`,
+with owner-only parameters
+`/tmp/ktv-owned-l1t1-opus-plc-shared-buffers-reference-wait100-full-udp-target800-20261005.env`.
+The nominal source, bitrate, clock checks, PCM/video budgets, original per-leg
+delay/jitter/loss, matching and full recovery/handover scope stay intact.
+No native acceptance is assumed. Impaired recovery/cadence, sustained clocks,
+product integration and physical/mobile/capacity/release gates remain open.
+Public deployment remains unchanged with online media disabled.

@@ -4,7 +4,7 @@ import vm from 'node:vm'
 import {setImmediate as tick} from 'node:timers/promises'
 import {installVp8FrameWorker} from './party-vp8-frame-worker.mjs'
 
-function fixture({recover=false,nativeRequest=true,recoveryMs=5000,dependencyAware=false}={}){
+function fixture({recover=false,nativeRequest=true,recoveryMs=5000,dependencyAware=false,recoveryWaitMs=350}={}){
   let wall=1000,mono=0,listener,timer,delivered,decoded=0,lateFrames=0,requests=0,streamClosed=false,committedGaps=0,referenceMisses=0,missingReferenceWaitMs=0
   const reports=[]
   class Port{constructor(){this.messages=[]}postMessage(packet){this.messages.push(packet)}start(){}close(){this.closed=true}}
@@ -15,8 +15,8 @@ function fixture({recover=false,nativeRequest=true,recoveryMs=5000,dependencyAwa
     __encodedTimingDirection:'receive',addEventListener:(name,callback)=>{listener=callback},
     setInterval:callback=>{timer=callback;return 1},clearInterval:()=>{timer=null},postMessage:row=>reports.push(row),createStream}
   if(nativeRequest)realm.__requestOwnedVideoKeyframe=async()=>{requests++}
-  realm.self=realm;realm.recover=recover;realm.recoveryMs=recoveryMs;realm.dependencyAware=dependencyAware
-  vm.runInNewContext(`(${installVp8FrameWorker.toString()})(createStream,80,recover,recoveryMs,dependencyAware,dependencyAware?'vp9':'vp8',dependencyAware)`,realm)
+  realm.self=realm;realm.recover=recover;realm.recoveryMs=recoveryMs;realm.dependencyAware=dependencyAware;realm.recoveryWaitMs=recoveryWaitMs
+  vm.runInNewContext(`(${installVp8FrameWorker.toString()})(createStream,80,recover,recoveryMs,dependencyAware,dependencyAware?'vp9':'vp8',dependencyAware,null,recoveryWaitMs)`,realm)
   const message=data=>listener({data})
   return {realm,port,reports,message,bind(){message({type:'video-bind',port,expiryUnixMs:10000})},
     send(id,late=false,type='delta',gap=false,missing=false){realm.__observeOwnedVideo({late,type,gap,missing},{});return delivered?.({},{id,bytes:1,captureUnixMs:wall})},
@@ -89,4 +89,21 @@ test('persistent declared-reference waits request bounded native recovery before
   await tick();assert.equal(disabled.requests,0)
   const spacing=fixture({recover:true});spacing.bind();spacing.waiting(700);spacing.advance(1500)
   await tick();assert.equal(spacing.requests,0)
+})
+
+test('explicit earlier reference feedback preserves recent-key suppression, cooldown and terminal closure',async()=>{
+  const f=fixture({recover:true,dependencyAware:true,recoveryMs:1000,recoveryWaitMs:100});f.bind();f.send(1,false,'key')
+  f.waiting(99);f.advance(1500);await tick();assert.equal(f.requests,0)
+  f.waiting(100);f.advance(100);await tick();assert.equal(f.requests,1)
+  f.advance(100);assert.equal(f.reports.at(-1).recoveryWaitMs,100)
+  f.advance(800);await tick();assert.equal(f.requests,1)
+  f.send(2,false,'key');f.advance(900);await tick();assert.equal(f.requests,1)
+  f.advance(100);await tick();assert.equal(f.requests,2)
+  f.message({type:'video-stop'});f.advance(2000);await tick();assert.equal(f.requests,2)
+})
+test('earlier reference feedback rejects unsupported thresholds or an unrelated decoder/recovery policy',()=>{
+  for(const recoveryWaitMs of [99,101,351,NaN])
+    assert.throws(()=>fixture({recover:true,dependencyAware:true,recoveryWaitMs}),/VIDEO_RECOVERY_CONFIG/)
+  assert.throws(()=>fixture({recoveryWaitMs:100,dependencyAware:true}),/VIDEO_RECOVERY_CONFIG/)
+  assert.throws(()=>fixture({recoveryWaitMs:100,recover:true}),/VIDEO_RECOVERY_CONFIG/)
 })

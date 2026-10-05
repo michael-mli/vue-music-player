@@ -178,6 +178,11 @@ const senderKeyframeMs = process.env.KTV_ROOM_TEST_SENDER_KEYFRAME_MS === undefi
 const demandKeyframes = process.env.KTV_ROOM_TEST_DEMAND_KEYFRAMES === '1'
 const receiverKeyframes=process.env.KTV_ROOM_TEST_RECEIVER_KEYFRAME_RECOVERY==='1'
 const receiverKeyframeMs=Number(process.env.KTV_ROOM_TEST_RECEIVER_KEYFRAME_INTERVAL_MS||5000)
+const receiverKeyframeWaitMs=Number(process.env.KTV_ROOM_TEST_RECEIVER_KEYFRAME_WAIT_MS||350)
+assert.ok(process.env.KTV_ROOM_TEST_RECEIVER_KEYFRAME_WAIT_MS===undefined||
+  process.env.KTV_ROOM_TEST_RECEIVER_KEYFRAME_WAIT_MS==='100'&&receiverKeyframes&&receiverKeyframeMs===1000&&
+  pcmRenderer==='buffers'&&pcmPlcBuild&&dependencyVideoReorder&&senderTemporal&&videoMarkerProbe&&videoFloor,
+  'Earlier reference feedback requires the explicit shared-buffer/libopus nominal L1T1 floor comparison')
 assert.ok(!videoFloor||publisherFeedback==='default'&&senderKeyframeMs===null&&!demandKeyframes,
   'Private video floor retains native transport feedback and default sender keyframes')
 assert.ok(Number.isInteger(receiverKeyframeMs)&&receiverKeyframeMs>=1000&&receiverKeyframeMs<=5000&&
@@ -260,6 +265,7 @@ assert.ok(process.env.KTV_ROOM_TEST_SFU_RTX_RECOVERY===undefined||continueSfuRtx
   dependencyVideoReorder&&impairmentProtocol==='udp'&&
   continuousImpairment&&handoverAv,'Private SFU RTX comparison requires declared bounded recovery and the full UDP floor/RED journey')
 assert.ok(continueSfuRtx===Boolean(process.env.KTV_ROOM_TEST_SFU_RTX_BUILD),'Private SFU build must explicitly select RTX comparison')
+assert.ok(receiverKeyframeWaitMs===350||continueSfuRtx,'Earlier reference feedback retains continuous RTX during bounded recovery')
 const exec = promisify(execFile)
 let image=sfuBaseImage
 if(continueSfuRtx){
@@ -482,7 +488,7 @@ try {
     await cdp(socket, 'Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', 'en');
       ${avTiming ? `(${installAvSourceMarkers.toString()})();` : ''}
       ${encodedApi==='legacy' ? 'window.RTCRtpScriptTransform=undefined;' : ''}
-      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify(pcmPlcBootstrap+'('+encodedTimingWorker.toString()+')('+ (opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : vp8DecodeProbe?'null,null,null,'+createVp8DecodeProbe.toString():'') +');'+(pcmPortProbe||ownedPcm ? '('+installOpusPcmWorker.toString()+')('+bindOpusPcmPort.toString()+','+createOpusPcmStream.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString()+');' : '')+(ownedVideo?'('+installVp8FrameWorker.toString()+')('+createVp8FrameStream.toString()+','+videoReorderMs+','+receiverKeyframes+','+receiverKeyframeMs+','+gapVideoReorder+','+JSON.stringify(codecExperiment?.codec||'vp8')+','+dependencyVideoReorder+','+(videoMarkerProbe?readDecodedVideoMarker.toString():'null')+');':''))},${JSON.stringify(receiverEncodedApi)});` : ''}
+      ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify(pcmPlcBootstrap+'('+encodedTimingWorker.toString()+')('+ (opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : vp8DecodeProbe?'null,null,null,'+createVp8DecodeProbe.toString():'') +');'+(pcmPortProbe||ownedPcm ? '('+installOpusPcmWorker.toString()+')('+bindOpusPcmPort.toString()+','+createOpusPcmStream.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString()+');' : '')+(ownedVideo?'('+installVp8FrameWorker.toString()+')('+createVp8FrameStream.toString()+','+videoReorderMs+','+receiverKeyframes+','+receiverKeyframeMs+','+gapVideoReorder+','+JSON.stringify(codecExperiment?.codec||'vp8')+','+dependencyVideoReorder+','+(videoMarkerProbe?readDecodedVideoMarker.toString():'null')+','+receiverKeyframeWaitMs+');':''))},${JSON.stringify(receiverEncodedApi)});` : ''}
       (${installEncodedLeaseObserver.toString()})();
       ${absoluteCapture ? `(${installAbsoluteCaptureExperiment.toString()})();` : ''}
       ${senderCadence ? `(${installSenderCadenceExperiment.toString()})();` : ''}
@@ -866,6 +872,8 @@ try {
         avTimingSamples.push({phase,source,receiver})
         if(receiverKeyframes)assert.equal(receiver.controlledReceiver?.active?.ownedVideo?.decoder?.recoveryMs,
           receiverKeyframeMs,'Current native receiver retains the declared bounded recovery cooldown')
+        if(receiverKeyframes)assert.equal(receiver.controlledReceiver?.active?.ownedVideo?.decoder?.recoveryWaitMs,
+          receiverKeyframeWaitMs,'Current native receiver retains the declared missing-reference wait')
         if(pcmBatchPackets===2)assert.equal(receiver.controlledReceiver?.active?.pcm?.decoder?.batchPackets,
           2,'Current PCM receiver retains the exact bounded grouping policy')
         if(pcmPlcBuild){

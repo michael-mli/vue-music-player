@@ -1449,6 +1449,15 @@ waiting chain in order, within the same encoded-byte budget. It never adds a
 congestion retain the normal rejection behavior. A scalar count records this
 path; fixture correctness still requires native impaired qualification.
 
+An explicit private feedback comparison can select a 100-ms declared-reference
+wait while the normal worker keeps 350 ms. It retains the existing one-second
+request cooldown, one pending native request, one-second recent-key suppression
+and 700-ms input deadline. Continuous RTX remains enabled during this comparison,
+allowing repair and keyframe recovery to proceed together. Only actual declared
+missing references qualify; source pacing, marker identity and observed skew do
+not supply recovery triggers. Native readback verifies both wait and cooldown;
+the original quality, memory, matching and expiry gates still apply.
+
 The private nominal VP9 `L1T1` comparison can select its existing 700-ms input
 reorder bound independently of a 500-ms PCM/output target. This isolates late
 reference repair from output residence: native readback must retain the declared

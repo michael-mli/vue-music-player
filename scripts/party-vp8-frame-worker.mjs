@@ -1,18 +1,19 @@
 // Private receiver worker. Decoding starts at the first received keyframe;
 // binding a port only transfers ownership, never permission to present output.
-export function installVp8FrameWorker(createStream,reorderMs=80,recover=false,recoveryMs=5000,gapAware=false,codec='vp8',dependencyAware=false,markerProbe=null){
+export function installVp8FrameWorker(createStream,reorderMs=80,recover=false,recoveryMs=5000,gapAware=false,codec='vp8',dependencyAware=false,markerProbe=null,recoveryWaitMs=350){
   if(!['vp8','vp9'].includes(codec))throw new Error('VIDEO_CODEC_CONFIG')
   if(typeof dependencyAware!=='boolean'||dependencyAware&&(!gapAware||codec!=='vp9'))throw new Error('VIDEO_REORDER_CONFIG')
   if(!Number.isInteger(recoveryMs)||recoveryMs<1000||recoveryMs>5000)throw new Error('VIDEO_RECOVERY_CONFIG')
+  if(![100,350].includes(recoveryWaitMs)||recoveryWaitMs!==350&&(!recover||!dependencyAware))throw new Error('VIDEO_RECOVERY_CONFIG')
   let stream,port,timer,bound=false,closed=false,reason=null,expiry,lastWall=Date.now(),lastMono=performance.now()
   let lastKey=-Infinity,lastRequest=-Infinity,keyframePending=false,keyframeRequests=0,keyframeFulfilled=0,keyframeEarlyRequests=0
   let seenDamage=0
   const credits=new Map()
-  const recovery=()=>({recovery:recover,recoveryMs,keyframeRequests,keyframeFulfilled,keyframePending,keyframeEarlyRequests})
+  const recovery=()=>({recovery:recover,recoveryMs,recoveryWaitMs,keyframeRequests,keyframeFulfilled,keyframePending,keyframeEarlyRequests})
   function requestRecovery(after){
     const damage=dependencyAware?(after.referenceMisses||0):(after.lateFrames||0),newDamage=damage>seenDamage
     seenDamage=damage
-    const waiting=dependencyAware&&after.missingReferenceWaitMs>=350,now=performance.now()
+    const waiting=dependencyAware&&after.missingReferenceWaitMs>=recoveryWaitMs,now=performance.now()
     if(closed||after.closed||!recover||!newDamage&&!waiting||keyframePending||now-lastRequest<recoveryMs||now-lastKey<1000)return
     keyframePending=true;keyframeRequests++;if(waiting&&!newDamage)keyframeEarlyRequests++;lastRequest=now
     void Promise.resolve().then(()=>{if(!check())return;return self.__requestOwnedVideoKeyframe()})
