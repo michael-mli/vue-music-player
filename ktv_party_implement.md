@@ -57,27 +57,28 @@ is a preview; public online media is still disabled.
 | Continuous impaired-network A/V and nominal frame rate | Latest context-video run reaches 39 impaired pairs, 5 audio/5 video unmatched; p95 100.24 / max 140.45 ms and nominal cadence do not establish complete matching | Fail |
 | Product integration and physical/mobile/capacity acceptance | Required work remains | Open |
 
-These scripts are private. The deployed preview is frontend `47fa5d1` / backend `acb583b`, with public
+These scripts are private. The deployed preview is frontend `4d3bb0d` / backend `4d3bb0d`, with public
 online media disabled. The original video cadence and timing requirements are
 unchanged; the optional adaptive-video preference question has no answer yet.
 
 Recording/export, reactions, themes and remote duets remain optional P09 work.
 
 Current status: The receiver-safe encoded activation preview is deployed at
-`https://music.micstec.com/party` with frontend **`47fa5d1`** / backend **`acb583b`**
-(`main-BXjM9ylL.js`, `main-BTEuAcOR.css`,
+`https://music.micstec.com/party` with frontend **`4d3bb0d`** / backend **`4d3bb0d`**
+(`main-Bqp2DGzb.js`, `main-mNiMAfTE.css`,
 `partyLeaseGuard.worklet-BWdT3O5D.js`, `partyEncodedLease.worker-BxVsrNxp.js`).
 The coupled update includes media protocol 2, durable issued-output reservations,
 the receiver post-buffer deadline guard and Chrome stream reservation before
 publication. Public online media remains disabled; no persistent SFU is running.
-Exact UI **53/53**, PWA **10/10**, backend **143/143** and public release **23/23**
+Exact UI **53/53**, PWA **10/10**, backend **157/157** and public release **27/27**
 checks pass; party units **125/125** and timing/capability fixtures **166/166** pass.
 The candidate passes native clean A/V/frame checks **35/35**, independent SFU
 source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
 **39/39** checks, but continuous impaired A/V still fails. Those experiments are
 not enabled by the deployed build. Physical/sustained output acceptance is open.
-Latest frontend rollback backup: `/home/mli/ktv-party-awake-predeploy.3h539kht`.
+Latest coupled frontend/backend and consistent database rollback backup:
+`/home/mli/ktv-party-auto-predeploy.6lw7u5t_`.
 
 The PWA activation fix is deployed: failed updates retain the current page and
 allow retry; empty catalogs no longer trigger phantom song downloads. Exact-build
@@ -102,7 +103,14 @@ ordinary members, queue requests, and routine settings. Full local acceptance an
 online streaming remain open release work.
 Singer nomination/acceptance, selected-turn readiness, and room clock negotiation
 are live. A singer can accept a nominated song and confirm a host-selected turn
-from a paired phone. Readiness is a human confirmation; it does not start audio.
+from a paired phone. Readiness is a human confirmation. Automatic playback is now on by default:
+the server prepares that selected turn and starts the shared countdown once the
+selected speaker, clock, optional required guide and output guards are ready.
+The host can turn off “Automatic playback” / “自动播放” for manual controls.
+Initial speaker audio activation/selection remains explicit; problems hold the
+flow, and paused/recovering performances require deliberate action. The exact
+committed native Chrome journey passes **67/67**, including default automatic
+start, the host off toggle, pause preservation and the existing manual flow.
 Scheduled stage playback, pinned lyrics, pause/resume/seek/skip, output leases and
 a private original guide are live and pass a production-build journey
 with three isolated Chrome sessions. Physical audio alignment and streaming remain
@@ -6964,3 +6972,72 @@ remain available. Protected rollback archive:
 The public probe room was closed and no account was added. Refresh/accept the
 PWA update to see the default-on header control. The main stable tag is unchanged;
 remaining streaming, physical/mobile and capacity release work stays open.
+
+
+### 2026-10-05 — Automatically prepare and start after singer readiness
+
+User requested that singer readiness proceed without extra host clicks, with a
+host-controlled opt-out. Existing and newly created rooms now default to
+`automatic_playback = 1` through an additive SQLite column; no identities or
+rooms are reset. The host-only “Automatic playback” / “自动播放” checkbox updates
+the room setting, persists across restarts and reaches every participant through
+snapshots. Co-hosts, singers, guests and display grants cannot change the flag.
+Normal automatic mode hides manual Prepare/Start controls; manual mode, recovery
+and attention states retain deliberate controls. Pause and skip remain available.
+
+A server-owned coordinator prepares only the human-ready accepted queued turn
+with its explicitly selected connected speaker, then invokes the existing guarded
+start path when audio, clock, required guide, host and output readiness permit.
+The shared countdown and native output leases retain their existing timing.
+Initial speaker enable/selection still requires a user action. Missing audio,
+required guide, host connection or assets produces a translated waiting/attention
+status. Failed asset preparation is held without repeated downloads. Intentionally
+paused and recovering songs never automatically resume. Turning automation off
+holds subsequent preparation/start; it does not abruptly stop an already
+scheduled or playing performance.
+
+Each room has one asynchronous asset job. Generation/readiness/stage identities
+are rechecked inside the commit transaction after asset resolution. Disable,
+cancel, room close, speaker change, shutdown or manual preparation wins against a
+stale result. Existing manual start, asset grants, device permissions, output
+reservation and restart-silence guards remain in use. Online countdown uses the
+existing publisher acquisition path; public online media remains disabled.
+
+Validation: exact committed build/type checks; full backend **157/157**, including
+13 orchestration/migration fixtures plus default/strict settings/host-only,
+idempotence and persisted preference API checks. Existing manual transport/browser
+fixtures explicitly opt out. Exact Chrome 154 native journey **67/67** verifies
+singer ready → automatic preparation/countdown/playback without host Prepare/Start,
+exactly one automatic preparation/start event, one native stage source, paused
+song preservation and the actual host off checkbox before completing the manual,
+guide, stage refresh, recovery, queue and moderation journey. Exact UI **53/53**
+(including native wake locks), PWA **10/10**, and public release **27/27** pass.
+The public probe verifies default-on and off/on HTTP settings plus the restored
+WSS snapshot, exact asset/service-worker bytes, timing defaults, SQLite integrity
+and foreign keys. Its disposable room was closed and no account was added.
+Physical stage/phone synchronization and device background acceptance remain open;
+this journey does not qualify earlier sustained/headless timing failures.
+
+Logs (0600):
+`/tmp/ktv-auto-release-build-20261005.log`,
+`/tmp/ktv-auto-backend-release-20261005.log`,
+`/tmp/ktv-auto-exact-browser-20261005.log`,
+`/tmp/ktv-auto-exact-ui-20261005.log`,
+`/tmp/ktv-auto-exact-pwa-20261005.log`,
+`/tmp/ktv-auto-public-20261005.log`.
+
+Published frontend/backend **`4d3bb0d`** at `https://music.micstec.com/party`,
+bundles `main-Bqp2DGzb.js` / `main-mNiMAfTE.css`, index SHA-256
+`59bfb845be52378a2fc0630aa70f6533d859590f457398b822c1853d8222a650`.
+Protected rollback backup `/home/mli/ktv-party-auto-predeploy.6lw7u5t_` (0700,
+files 0600) contains the previous static frontend, previous tracked server source,
+a consistent SQLite backup and release metadata. The backend was restarted only
+after checking no playing/countdown performance; account/room counts were preserved
+(86 accounts, 40 rooms before the disposable public probe). The additive migration
+keeps previous backend code compatible. A code rollback must preserve subsequent
+room/account activity; the database backup is not automatically restored.
+Hashed assets preceded backend restart and atomic index/service-worker publication;
+old hashed assets remain available. Environment configuration, song library and
+stable main rollback tag are unchanged. Refresh/accept the PWA update on phones
+and shared screens. Existing recovered rooms need explicit speaker/recovery setup.
+Streaming, physical/mobile and capacity release work remains open.
