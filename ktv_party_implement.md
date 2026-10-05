@@ -5866,3 +5866,29 @@ owner-only parameters are in
 `/tmp/ktv-owned-l1t1-group2-early-reference-recovery-full-udp-20261004.env`.
 Source, impairment, output target, grouping, continuous RTX and every acceptance
 criterion are unchanged from the prior keyframe-drain comparison.
+
+The native comparison is now terminal **exit 1**, timing out before 40 impaired
+pairs and before outage/handover. The new aggregate diagnostics record:
+
+- Baseline: six pairs, no unmatched edges, maximum skew **14.57 ms**, all
+  source/native/owned/presentation cadence stages nominal.
+- Impaired: **37 pairs**, **eight unmatched audio / six unmatched video**,
+  matched p95 **484.74 ms** / maximum **667.00 ms**; video observation delay
+  maximum **1,546.30 ms**. Pairing and skew fail the original criteria.
+- Source/native decode **24.72/21.86 fps** pass; owned decode/presentation
+  **17.26/16.87 fps** fail. Captured/native/owned marker identities never reverse.
+- Owned video stays alive: **606** missing-reference rejections, **277**
+  keyframe drains, 43 pressure drains, 21 late frames, at most 20 held packets;
+  **41 fulfilled requests, including 35 early requests**, and 48 decoded keys.
+- PCM stays alive with **27 maximum credits**, five held packets,
+  **391,680 maximum reserved bytes**, no pressure/backpressure events and
+  2,456 grouped transfers. Unrepaired gaps total **27,840 samples / 580 ms**;
+  the final measured secondary-context wall-clock lag is **169.33 ms**.
+
+This proves early recovery and bounded diagnostics execute in the actual native
+journey, not that the policy meets impaired acceptance. Independent random loss
+prevents causal numerical comparisons. Earlier requests alone do not establish
+reliable dependency recovery; loss concealment, clock stability, sustained /
+outage / handover, product integration and physical/mobile/capacity/release
+requirements remain open. Public online media remains disabled.
+
