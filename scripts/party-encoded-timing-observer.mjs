@@ -142,7 +142,7 @@ export function installEncodedTimingProbe(workerSource,receiverApi='native') {
           if(['I420','I420A','I422','I444','I420P10','I422P10','I444P10','NV12','RGBA','RGBX','BGRA','BGRX'].includes(input.format))value.format=input.format
           row.outputDiagnostic=value
         }
-        for(const key of ['decoded','decodedKeyFrames','discarded','encodedBytes','pending','maximumBytes','maximumPending','maximumReady','committedGaps','contiguousDrains','transferWaits','normalizedOutputs','maximumCopyBytes','dependencyPackets','referenceMisses','keyframeDrains','missingReferenceWaitMs','inFlight',
+        for(const key of ['decoded','decodedKeyFrames','discarded','encodedBytes','pending','maximumBytes','maximumPending','maximumReady','committedGaps','contiguousDrains','transferWaits','normalizedOutputs','maximumCopyBytes','dependencyPackets','referenceMisses','keyframeDrains','referenceRepairDrains','missingReferenceWaitMs','inFlight',
           'heldPackets','maximumHeld','heldLimit','duplicates','lateFrames','reordered','pressureDrains','reorderMs','recoveryMs','keyframeRequests','keyframeFulfilled','keyframeEarlyRequests'])
           if(Number.isSafeInteger(data[key])&&data[key]>=0)row[key]=data[key]
         if(Number.isFinite(data.maximumResidualMs))row.maximumResidualMs=data.maximumResidualMs

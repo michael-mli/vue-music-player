@@ -1439,6 +1439,16 @@ RTP-gap waits, keeps required references within a fixed 700-ms bound, discards
 inputs whose required references never arrive, and requests bounded recovery
 only for such misses. Incomplete declarations close this mode permanently.
 
+At a full dependency queue, check whether the arriving older delta is the
+oldest held frame's missing parent before forcing a pressure discard. Its own
+declared references must already be available, its RTP must precede the held
+queue, and the original wait must still be live. Such a repair can enter an
+available slot in the existing four-output decoder reservation and drain the
+waiting chain in order, within the same encoded-byte budget. It never adds a
+21st held entry or extends a deadline. Missing dependencies or decoder
+congestion retain the normal rejection behavior. A scalar count records this
+path; fixture correctness still requires native impaired qualification.
+
 The private nominal VP9 `L1T1` comparison can select its existing 700-ms input
 reorder bound independently of a 500-ms PCM/output target. This isolates late
 reference repair from output residence: native readback must retain the declared

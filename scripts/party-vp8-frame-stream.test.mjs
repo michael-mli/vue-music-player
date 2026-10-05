@@ -217,6 +217,41 @@ test('declared references decode across unnecessary RTP gaps and hold only a mis
   assert.equal(repair.stream.snapshot().decoded,3);assert.equal(repair.stream.snapshot().referenceMisses,0)
   for(const packet of repair.delivered)packet.frame.close();repair.stream.close()
 })
+test('a missing parent repairs the full dependency queue before pressure can discard it, including RTP wrap',async()=>{
+  for(const start of [0,0xfffffe00]){
+    const f=await fixture({codec:'vp9',gapAware:true,dependencyAware:true,reorderMs:700})
+    f.send(start,0,'key',{frameId:1,dependencies:[]})
+    for(let i=2;i<=21;i++)f.send((start+i*3600)>>>0,i*40,'delta',{frameId:i+1,dependencies:[i]})
+    assert.equal(f.stream.snapshot().heldPackets,20);f.advance(1400)
+    f.send((start+3600)>>>0,40,'delta',{frameId:2,dependencies:[1]})
+    assert.deepEqual(f.delivered.map(p=>p.rtpTimestamp),Array.from({length:22},(_,i)=>(start+i*3600)>>>0))
+    assert.equal(f.stream.snapshot().referenceRepairDrains,1);assert.equal(f.stream.snapshot().referenceMisses,0)
+    assert.equal(f.stream.snapshot().pressureDrains,0);assert.equal(f.stream.snapshot().lateFrames,0)
+    assert.equal(f.stream.snapshot().maximumHeld,20);assert.ok(f.stream.snapshot().maximumPending<=4)
+    assert.equal(f.stream.snapshot().heldPackets,0);assert.equal(f.stream.snapshot().encodedBytes,0)
+    assert.equal(f.timers.size,0);for(const p of f.delivered)p.frame.close();f.stream.close()
+  }
+})
+test('a pressured reference repair cannot bypass full native output slots, unknown dependencies or the original deadline',async()=>{
+  const stalled=await fixture({codec:'vp9',gapAware:true,dependencyAware:true,reorderMs:700,accept:'wait'})
+  stalled.send(0,0,'key',{frameId:1,dependencies:[]})
+  for(let i=1;i<=3;i++)stalled.send(i*3600,i*40,'delta',{frameId:i+1,dependencies:[i]})
+  for(let i=5;i<=24;i++)stalled.send(i*3600,i*40,'delta',{frameId:i+1,dependencies:[i]})
+  stalled.send(14400,160,'delta',{frameId:5,dependencies:[4]})
+  assert.equal(stalled.stream.snapshot().closed,true);assert.equal(stalled.reports[0].reason,'VIDEO_BOUND')
+  assert.equal(stalled.stream.snapshot().referenceRepairDrains,0);assert.equal(stalled.stream.snapshot().maximumPending,4)
+  assert.ok(stalled.frames.every(frame=>frame.closes===1))
+  for(const expired of [false,true]){
+    const f=await fixture({codec:'vp9',gapAware:true,dependencyAware:true,reorderMs:700})
+    f.send(0,0,'key',{frameId:1,dependencies:[]})
+    for(let i=2;i<=21;i++)f.send(i*3600,i*40,'delta',{frameId:i+1,dependencies:[i]})
+    if(expired)f.advance(1700)
+    f.send(3600,40,'delta',{frameId:2,dependencies:[expired?1:999]})
+    assert.equal(f.stream.snapshot().referenceRepairDrains,0);assert.ok(f.stream.snapshot().referenceMisses>0)
+    assert.equal(f.stream.snapshot().lateFrames,1)
+    for(const p of f.delivered)p.frame.close();f.stream.close()
+  }
+})
 test('missing declared references expire at the fixed bound without decoding an unsafe input or retaining its payload',async()=>{
   const f=await fixture({codec:'vp9',gapAware:true,dependencyAware:true,reorderMs:700})
   f.send(0,0,'key',{frameId:1,dependencies:[]})

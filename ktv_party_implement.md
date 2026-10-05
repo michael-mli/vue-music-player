@@ -49,7 +49,7 @@ is a preview; public online media is still disabled.
 
 | Check | Current evidence | Status |
 | --- | --- | --- |
-| Timing/capability fixtures | 235/235 including shared-context memory accounting, copy fallback and startup clock readiness | Pass |
+| Timing/capability fixtures | 237/237 including shared-context memory accounting, copy fallback, startup clock readiness and pressured video-reference repair | Pass |
 | Buffered expiry after render/guard clock freeze/resume | 51/51 with shared-context libopus buffers at the 500-ms target, including 524.23-ms retained PCM | Pass for tested digital topology |
 | Buffered expiry while source and listener pages stall | 46/46, latest reader/revalidation | Pass for digital fixture |
 | Latest qualified clean 40-pair A/V regression | Shared-context libopus buffers / 500-ms target: 50/50, p95 61.55 ms / max 79.17 ms, no unmatched edges | Pass for tested digital topology |
@@ -6227,3 +6227,48 @@ one-second bounded recovery, continuous RTX, 150-ms/0–40-ms/5% per-leg impairm
 tests existing additional buffering against the observed video/audio skew; no
 memory, timing, nominal-quality or expiry limit is raised. Native log:
 `/tmp/ktv-owned-av-vp9-l1t1-opus-plc-shared-buffers-startup-full-udp-target800-20261005.log`.
+
+The 800-ms full comparison is terminal **exit 1**, timing out before 40 impaired
+pairs: **39 pairs**, six unmatched audio/four unmatched video, p95 **652.92 ms**,
+maximum **720.58 ms**. Source/native/owned decode/presentation rates are
+**24.79 / 21.94 / 16.78 / 16.88 fps**. No terminal PCM or video failure occurs.
+Live impaired-context wall lag is **91.52–221.79 ms**; PCM peaks at **798,720
+bytes / 25 credits**, no backpressure or grouping-copy fallback. Actual codec
+concealment covers **49,920 samples (1,040 ms)** in 52 outputs, with 1,062 RED
+repairs. Owned video records 656 reference misses, 270 keyframe drains, 26 late
+frames, **26 pressure drains**, and 41 fulfilled recovery requests, 31 early.
+The owned marker probe has zero backward transitions. More buffering alone does
+not qualify the impaired journey; cadence and matching still fail.
+
+### 2026-10-05 — Repair a full video queue before discarding its missing parent
+
+Found a deterministic input-ordering defect in `party-vp8-frame-stream.mjs`:
+when the 20-entry dependency queue is full, an arriving older missing parent
+triggers a forced drain first. That can discard the oldest waiting child and
+advance the RTP frontier past the parent, which is then rejected as late. The
+incoming parent could have repaired the chain within the existing deadline.
+The earlier native pressure counts motivate this check, but do not prove how
+many such parents occurred in those runs.
+
+The receiver now admits that specific repair into an existing native decoder
+slot before forcing a queue drain. It requires a delta that precedes the oldest
+held RTP input, matches that input's declared missing dependency, has all its
+own references already available, and arrives before the fixed reorder deadline.
+The four-output cap and shared 512-KiB encoded budget still apply; no 21st held
+entry is allocated. Repair then drains the existing chain in RTP order. Unknown
+dependencies, full native output slots, expired waits and stale RTP retain their
+previous rejection behavior. Stop/expiry cannot revive decoding.
+
+A scalar `referenceRepairDrains` counter exposes actual use. New fixtures
+reproduce the full 20-frame queue under ordinary and wrapped RTP, verify exact
+ordered delivery with zero reference/late/pressure loss, and check rejection
+under decoder congestion, unknown dependencies and deadline expiry. Full
+timing/capability fixtures pass **237/237** in
+`/tmp/ktv-video-reference-pressure-repair-all-fixtures-20261005.log`.
+
+The unchanged shared-context/800-ms full UDP profile is rerunning in
+`/tmp/ktv-owned-av-vp9-l1t1-opus-plc-shared-buffers-reference-parent-repair-full-udp-target800-20261005.log`.
+No native benefit or new acceptance is assumed. Impaired owned-video recovery
+and cadence, sustained clocks, product integration and physical/mobile/capacity/
+release gates remain open. Public deployment remains unchanged with online media
+disabled.

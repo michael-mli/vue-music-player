@@ -10,7 +10,7 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAwar
   const expected=new Map(),pending=[]
   const held=new Map(),seen=new Set()
   const references=new Set()
-  let referenceKey=null,dependencyPackets=0,referenceMisses=0,keyframeDrains=0
+  let referenceKey=null,dependencyPackets=0,referenceMisses=0,keyframeDrains=0,referenceRepairDrains=0
   const dependencies=metadata=>Number.isSafeInteger(metadata?.frameId)&&metadata.frameId>=0&&
     Array.isArray(metadata.dependencies)&&metadata.dependencies.length<=8&&
     metadata.dependencies.every(id=>Number.isSafeInteger(id)&&id>=0)
@@ -29,7 +29,7 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAwar
   }
   function snapshot(){return {closed,configured,decoded,decodedKeyFrames,discarded,encodedBytes,pending:expected.size,
     maximumBytes,maximumPending,maximumReady,maximumResidualMs,heldPackets:held.size,maximumHeld,heldLimit,duplicates,lateFrames,reordered,pressureDrains,reorderMs,
-    codec,gapAware,dependencyAware,dependencyPackets,referenceMisses,keyframeDrains,missingReferenceWaitMs:missingReferenceWaitMs(),committedGaps,contiguousDrains,transferWaits,outputDiagnostic,normalizedOutputs,maximumCopyBytes,
+    codec,gapAware,dependencyAware,dependencyPackets,referenceMisses,keyframeDrains,referenceRepairDrains,missingReferenceWaitMs:missingReferenceWaitMs(),committedGaps,contiguousDrains,transferWaits,outputDiagnostic,normalizedOutputs,maximumCopyBytes,
     ...(markerProbe?{markerProbe:{reads:markerReads,invalid:markerInvalid,transitions:markerTransitions,regressions:markerRegressions}}:{})}}
   function close(reason=null){
     if(closed)return
@@ -206,13 +206,22 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAwar
       const data=frame.data
       if(!(data instanceof ArrayBuffer)||data.byteLength<1||data.byteLength>256*1024)throw new Error('VIDEO_PACKET')
       if(dependencyAware&&(!dependencies(metadata)||frame.type!=='key'&&metadata.dependencies.length===0))throw new Error('VIDEO_REFERENCE')
+      const oldest=dependencyAware&&held.size>=heldLimit?
+        [...held.values()].sort((a,b)=>delta(a.rtp,b.rtp))[0]:null
+      // Admit an actual missing parent before a pressure drain advances past
+      // it. This uses an existing native output slot, never a 21st held entry.
+      // It must precede every held RTP input and repair the oldest dependency
+      // using references already owned by this decoder, before the fixed wait.
+      const repair=oldest&&frame.type==='delta'&&expected.size<4&&delta(rtp,oldest.rtp)<0&&
+        oldest.dependencies.includes(metadata.frameId)&&metadata.dependencies.every(id=>references.has(id))&&
+        performance.now()-Math.min(...[...held.values()].map(item=>item.arrivedAt))<reorderMs
       // A network burst can fill the time-based queue before its deadline.
       // Decode the oldest retained packet before exceeding the encoded count.
       // A stalled decoder still fails closed at the same queue/input bounds.
-      if(held.size>=heldLimit)flush(true)
+      if(held.size>=heldLimit&&!repair)flush(true)
       if(closed)return
       if(lastRtp!==null&&delta(rtp,lastRtp)<=0){discarded++;lateFrames++;return}
-      if(held.size>=heldLimit||encodedBytes+data.byteLength>512*1024||reorderMs===0&&expected.size>=4)throw new Error('VIDEO_BOUND')
+      if(held.size>=heldLimit&&!repair||encodedBytes+data.byteLength>512*1024||reorderMs===0&&expected.size>=4)throw new Error('VIDEO_BOUND')
       const packet={rtp,type:frame.type,bytes:data.byteLength,data:data.slice(0),capture:metadata?.captureTime,arrivedAt:performance.now()}
       if(dependencyAware&&dependencies(metadata)&&(frame.type==='key'||metadata.dependencies.length>0)){
         packet.frameId=metadata.frameId;packet.dependencies=metadata.dependencies.slice();dependencyPackets++
@@ -220,7 +229,7 @@ export function createVp8FrameStream(deliver,report=()=>{},{reorderMs=80,gapAwar
       if(highestRtp!==null&&delta(rtp,highestRtp)<0)reordered++
       else highestRtp=rtp
       encodedBytes+=packet.bytes;maximumBytes=Math.max(maximumBytes,encodedBytes)
-      if(lastRtp===null)accept(packet)
+      if(lastRtp===null||repair){accept(packet);if(repair){referenceRepairDrains++;flush()}}
       else{held.set(rtp,packet);maximumHeld=Math.max(maximumHeld,held.size);flush()}
     }catch(error){failure(error)}
   }}
