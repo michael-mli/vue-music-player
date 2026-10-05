@@ -5992,3 +5992,62 @@ in `/tmp/ktv-owned-av-opus-plc-both-context-expiry-20261004.log`, selecting
 `KTV_ROOM_TEST_RECEIVER_FAULT=suspend-task-stall` over the same immutable clean
 profile. It must retain all existing buffered-residence, silence/deadline and
 replacement separation proofs before the full impaired comparison.
+
+Native both-context buffered expiry is terminal **exit 0, 51/51**:
+`/tmp/ktv-owned-av-opus-plc-both-context-expiry-20261004.log`.
+Actual suspend/resume, independently recorded old-output silence, measured
+retained residence above 500 ms and replacement separation pass with the codec
+backend. The existing exact-session expiry certificate still requires all those
+proofs; early, unrelated or uncertified closures remain invalid. This is digital
+expiry qualification, not physical or impaired acceptance.
+
+The full UDP / VP9 L1T1 / 350-kbps cap / floor / original 800-ms target /
+700-ms reference reorder / group2 / one-second request cooldown / early recovery /
+continuous-RTX journey now selects the verified codec artifact at
+`/tmp/ktv-owned-av-vp9-l1t1-opus-plc-full-udp-20261004.log`.
+Immutable owner-only parameters are
+`/tmp/ktv-owned-l1t1-opus-plc-full-udp-20261004.env`.
+The original 150-ms delay, 0–40-ms jitter and 5% loss each direction/leg, 40-pair
+matching, original source quality and timing/expiry/cadence gates stay intact.
+
+The full PLC profile is terminal **exit 1 before impairment**, during baseline:
+`PCM_BOUND` closes the decoder at **48 credits / eight held inputs**, maximum
+reserved PCM 698,880 bytes and 56 backpressure events. No source gaps or PLC
+outputs occur. Five pre-closure samples show actual secondary-context wall lag
+**838.67–973.67 ms** (998 ms at closure), unlike the smaller lags of earlier
+comparisons. Two baseline pairs have maximum skew 9.94 ms but video delay
+approaches 1.83 seconds; those two pairs do not qualify the six-pair baseline.
+The sampler's fixed codec reservation assertion detects the released decoder;
+private closure evidence identifies the underlying bound failure.
+
+Actual codec work is **108.50 ms total for 504 decoded packets**, maximum
+**19.10 ms** for one call, with **0.60-ms** instance initialisation. These costs
+and the render-clock lag are separate observations, not a causal explanation.
+The comparison cannot claim impaired concealment, outage or handover acceptance.
+Original credit and clock limits remain intact. The next private comparison
+combines the existing constant-zero hardware clock driver with grouped codec PCM
+because its earlier single-packet rejection did not test this credit policy.
+No performance PCM can connect to that driver; the final guarded graph remains
+the only performance output. This combination needs its own full/expiry proofs.
+
+The grouped-libopus / constant-zero hardware driver comparison is also terminal
+**exit 1 during baseline, before impairment**:
+`/tmp/ktv-owned-av-vp9-l1t1-opus-plc-device-clock-full-udp-20261004.log`.
+It closes at `PCM_BOUND` after 282 decoded packets, **48 credits / eight held
+inputs**, 683,520 maximum PCM bytes and 45 backpressure events. No input gaps or
+concealment occur; no complete baseline pair is recorded. The driver is enabled
+and measured running before closure, then stopped by cleanup. At final closure
+snapshot the secondary-context wall lag is 1,650.67 ms; closed-context snapshots
+cannot establish continuing drift. Codec initialisation is 0.60 ms, accumulated
+decode work 66.70 ms and maximum call 7.60 ms. This combination is unqualified
+and stays disabled by default. The added zero sink does not establish a render-
+clock fix; source quality, credit limits and output-clock checks stay intact.
+
+Next work should remove the independently advancing secondary render clock from
+this private comparison by testing native 48-kHz AudioBuffer scheduling on the
+existing default-rate guarded AudioContext. It must use the browser's native
+resampling, preserve the RTP/capture schedule, reserve both transfer and buffer
+copies within the unchanged PCM/aggregate budgets, and prove clean/buffered-
+expiry/impaired output before any product integration. This alternative is not
+implemented or accepted yet. Current public deployment remains unchanged with
+online media disabled; physical/mobile/capacity and all release gates stay open.
