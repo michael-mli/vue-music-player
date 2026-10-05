@@ -98,6 +98,9 @@
     "favorites": "收藏"
   },
   "party": {
+    "keepScreenAwake": "保持屏幕常亮",
+    "screenAwakeUnavailable": "浏览器未能保持屏幕常亮。请重试或检查省电设置。",
+    "screenAwakeUnsupported": "当前浏览器不支持保持屏幕常亮。",
     "playbackTitle": "演唱与播放",
     "waitingForSilence": "正在等待上一播放设备的音频租约到期…",
     "stageAudioHint": "在此屏幕启用音频，再请房主将它选为房间扬声器。其他屏幕保持静音。",

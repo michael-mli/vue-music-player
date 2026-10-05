@@ -70,6 +70,21 @@ async function page(actor, route, language = 'en', width = 320, siteOrigin = ori
   await cdp('Page.enable', {}, sessionId); await cdp('Runtime.enable', {}, sessionId)
   await cdp('Emulation.setDeviceMetricsOverride', { width, height: 740, deviceScaleFactor: 1, mobile: true }, sessionId)
   await cdp('Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('auth_token', '${actor}'); localStorage.setItem('language', '${language}');` }, sessionId)
+  if (process.env.KTV_UI_TEST_WAKE_LOCK === '1') {
+    await cdp('Page.addScriptToEvaluateOnNewDocument', { source: `
+      window.__partyWakeAudit = { requests: 0, acquired: 0, releases: 0, handles: [] };
+      if (navigator.wakeLock) {
+        const native = navigator.wakeLock.request.bind(navigator.wakeLock);
+        navigator.wakeLock.request = async type => {
+          window.__partyWakeAudit.requests++;
+          const handle = await native(type);
+          window.__partyWakeAudit.acquired++; window.__partyWakeAudit.handles.push(handle);
+          handle.addEventListener('release', () => window.__partyWakeAudit.releases++);
+          return handle;
+        };
+      }
+    ` }, sessionId)
+  }
   await cdp('Page.navigate', { url: siteOrigin + route }, sessionId)
   await poll(() => evaluate(sessionId, '!!document.querySelector(".party-page")'), 'party page')
   return sessionId
@@ -132,6 +147,25 @@ try {
   const host = await page(1, `/party/${room.room.id}`)
   await poll(() => evaluate(host, '!!document.getElementById("party-tab-songs")'), 'host tabs')
   await layout(host, '320px host Songs')
+  if (process.env.KTV_UI_TEST_WAKE_LOCK === '1') {
+    await poll(() => evaluate(host, "document.getElementById('party-keep-screen-awake')?.checked && window.__partyWakeAudit.acquired === 1"), 'default native room wake lock')
+    check(await evaluate(host, "window.__partyWakeAudit.handles.some(handle => !handle.released)"), 'Room defaults to a real native screen wake lock without playing a song')
+    await evaluate(host, "document.getElementById('party-keep-screen-awake').click()")
+    await poll(() => evaluate(host, "window.__partyWakeAudit.releases === 1 && localStorage.getItem('party-keep-screen-awake') === 'false'"), 'disable releases native lock')
+    check(await evaluate(host, "!document.getElementById('party-keep-screen-awake').checked"), 'Room header lets the user disable sleep prevention')
+    await cdp('Page.reload', {}, host)
+    await poll(() => evaluate(host, "!!document.getElementById('party-tab-songs') && !document.getElementById('party-keep-screen-awake').checked"), 'off choice survives room reload')
+    check(await evaluate(host, 'window.__partyWakeAudit.requests === 0'), 'Reload preserves an off preference without requesting another native lock')
+    await evaluate(host, "document.getElementById('party-keep-screen-awake').click()")
+    await poll(() => evaluate(host, 'window.__partyWakeAudit.acquired === 1'), 'explicit enable native lock')
+    check(true, 'Re-enabling the header control acquires a native screen wake lock')
+    await evaluate(host, "document.querySelector('.party-room a[href=\"/party\"]').click()")
+    await poll(() => evaluate(host, "!!document.getElementById('party-room-name') && window.__partyWakeAudit.handles.every(handle => handle.released)"), 'leaving releases native lock')
+    check(true, 'Leaving the room releases its native wake lock')
+    await cdp('Page.navigate', { url: origin + `/party/${room.room.id}` }, host)
+    await poll(() => evaluate(host, "!!document.getElementById('party-tab-songs') && window.__partyWakeAudit.acquired === 1"), 'returning room lock')
+    check(true, 'Returning to the room restores the enabled preference and native wake lock')
+  }
   const tree = await cdp('Accessibility.getFullAXTree', {}, host)
   check(tree.nodes.some(node => node.role?.value === 'tab' && node.name?.value === 'Songs'), 'native accessibility tree exposes named Songs tab')
   await evaluate(host, "document.getElementById('party-tab-songs').focus()")
@@ -146,10 +180,15 @@ try {
   await poll(() => evaluate(phone, '!!document.getElementById("party-tab-people")'), 'Chinese controller tabs')
   await evaluate(phone, "document.getElementById('party-tab-people').click()")
   await layout(phone, '320px Chinese guest People')
+  if (process.env.KTV_UI_TEST_WAKE_LOCK === '1') check(await evaluate(phone, "document.getElementById('party-keep-screen-awake').checked && document.querySelector('label[for=\"party-keep-screen-awake\"], label:has(#party-keep-screen-awake)').textContent.includes('保持屏幕常亮')"), 'Ordinary singer has a translated default-on screen control')
   check(await evaluate(phone, "!document.body.innerText.includes('关闭房间')"), 'ordinary guest omits host-only close control')
   const stage = await page(1, `/party/${room.room.id}/stage`, 'en', 1280)
   await poll(() => evaluate(stage, 'document.body.innerText.includes("Shared stage")'), 'common stage')
   await layout(stage, '1280px shared stage')
+  if (process.env.KTV_UI_TEST_WAKE_LOCK === '1') {
+    await poll(() => evaluate(stage, 'window.__partyWakeAudit.acquired === 1'), 'shared stage native lock')
+    check(await evaluate(stage, "document.getElementById('party-keep-screen-awake').checked"), 'Shared screen also defaults to a native wake lock')
+  }
   const disabled = await featureFixture({ rooms: false })
   for (const language of ['en', 'zh']) for (const route of ['/party', '/party/join', '/party/pair']) {
     const session = await page(1, route, language, 320, disabled.origin)

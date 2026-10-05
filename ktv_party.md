@@ -1718,6 +1718,19 @@ This policy applies to the local guide; camera/microphone publication still stop
 when hidden. OS page freezing or audio interruption can stop playback, and requires
 physical iOS/Android lock-screen acceptance before declaring device support.
 
+Admitted room participants and shared screens request a Screen Wake Lock by
+default, including when waiting for a song or paused. The room header exposes
+“Keep screen awake” / “保持屏幕常亮” for every participant; the choice is local
+to that device and remembered separately from the solo player's preference.
+Turning it off releases the lock, and room exit/access loss releases it as well.
+Hidden pages release it and visible returns reacquire it only if still enabled.
+Rejecting or automatically releasing a lock shows an unavailable state with
+an explicit retry, without repeatedly overriding a platform power-saving decision.
+Pending requests must release their late handles after disable/exit. Users can
+still manually lock their device; physical device/battery-mode acceptance is open.
+See the [Screen Wake Lock specification](https://www.w3.org/TR/screen-wake-lock/)
+for visibility, platform revocation and manual screen-off behavior.
+
 Record command latency/conflicts, reconnects, active rooms/sockets, readiness time,
 decode/memory failures, clock uncertainty, measured/estimated drift, underruns,
 lease expiry, and streaming quality. Label estimated timing separately from acoustic

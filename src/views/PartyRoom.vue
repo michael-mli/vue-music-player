@@ -13,6 +13,11 @@
             <h1 class="mt-1 text-2xl font-bold sm:text-3xl">{{ party.room.name }}</h1>
           </div>
           <div class="flex flex-wrap gap-2">
+            <label v-if="party.self.admission === 'admitted'" class="flex min-h-[44px] cursor-pointer items-center gap-2 rounded-full border border-white/25 px-4 py-2 text-sm">
+              <input id="party-keep-screen-awake" type="checkbox" :checked="screenAwake.enabled.value"
+                @change="screenAwake.setEnabled(($event.target as HTMLInputElement).checked)">
+              {{ $t('party.keepScreenAwake') }}
+            </label>
             <RouterLink v-if="!stage && party.self.admission === 'admitted'" :to="`/party/${roomId}/stage`"
               class="rounded-full border border-white/25 px-4 py-2 text-sm hover:bg-white/10">
               {{ $t('party.openStage') }}
@@ -22,6 +27,11 @@
             </RouterLink>
           </div>
         </header>
+        <p v-if="party.self.admission === 'admitted' && screenAwake.enabled.value && !screenAwake.active.value && !screenAwake.requesting.value"
+          class="mt-2 text-xs text-yellow-300" role="status">
+          {{ $t(screenAwake.supported.value ? 'party.screenAwakeUnavailable' : 'party.screenAwakeUnsupported') }}
+          <button v-if="screenAwake.supported.value" type="button" class="ml-2 min-h-[44px] px-2 underline" @click="screenAwake.retry()">{{ $t('common.retry') }}</button>
+        </p>
         <p class="mt-2 text-xs" :class="liveConnected ? 'text-spotify-green' : 'text-gray-400'" role="status">
           {{ liveConnected ? $t('party.liveConnected') : $t('party.reconnecting') }}
         </p>
@@ -325,6 +335,7 @@ import { subscribeParty } from '@/services/partyRealtime'
 import type { PartySubscription } from '@/services/partyRealtime'
 import { usePartyPlayback } from '@/composables/usePartyPlayback'
 import { usePartyMedia } from '@/composables/usePartyMedia'
+import { usePartyWakeLock } from '@/composables/usePartyWakeLock'
 import PartyMediaPanel from '@/components/Party/PartyMediaPanel.vue'
 import PartyPlaybackPanel from '@/components/Party/PartyPlaybackPanel.vue'
 import PartyQrCode from '@/components/Party/PartyQrCode.vue'
@@ -354,6 +365,7 @@ function tabKeydown(event: KeyboardEvent, tab: ControllerTab) {
   void nextTick(() => document.getElementById(`party-tab-${target}`)?.focus())
 }
 const party = ref<PartySnapshot | null>(null)
+const screenAwake = usePartyWakeLock(computed(() => party.value?.self.admission === 'admitted'))
 const loading = ref(true)
 const busy = ref(false)
 const copied = ref(false)

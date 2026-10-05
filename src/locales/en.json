@@ -98,6 +98,9 @@
     "favorites": "Favorites"
   },
   "party": {
+    "keepScreenAwake": "Keep screen awake",
+    "screenAwakeUnavailable": "The browser couldn’t keep the screen awake. Try again or check power-saving settings.",
+    "screenAwakeUnsupported": "Your browser does not support keeping the screen awake.",
     "playbackTitle": "Sing and playback",
     "waitingForSilence": "Waiting for the previous speaker's audio lease to expire…",
     "stageAudioHint": "Enable audio on this screen, then ask the host to select it as the room speaker. Other screens stay muted.",
