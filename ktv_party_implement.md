@@ -50,9 +50,9 @@ is a preview; public online media is still disabled.
 | Check | Current evidence | Status |
 | --- | --- | --- |
 | Timing/capability fixtures | 235/235 including shared-context memory accounting, copy fallback and startup clock readiness | Pass |
-| Buffered expiry after both render contexts freeze/resume | 51/51 with grouped libopus PCM at the 800-ms target; shared-context renderer still pending | Pass for tested digital topology |
+| Buffered expiry after render/guard clock freeze/resume | 51/51 with shared-context libopus buffers at the 500-ms target, including 524.23-ms retained PCM | Pass for tested digital topology |
 | Buffered expiry while source and listener pages stall | 46/46, latest reader/revalidation | Pass for digital fixture |
-| Latest qualified clean 40-pair A/V regression | Grouped libopus / 800-ms target: 50/50, p95 67.38 ms / max 73.11 ms, no unmatched edges; shared-context renderer still pending | Pass for tested digital topology |
+| Latest qualified clean 40-pair A/V regression | Shared-context libopus buffers / 500-ms target: 50/50, p95 61.55 ms / max 79.17 ms, no unmatched edges | Pass for tested digital topology |
 | Continuous impaired-network A/V and nominal frame rate | Private L1T1 reaches nominal native cadence; owned cadence and 40-pair timing still fail | Fail |
 | Product integration and physical/mobile/capacity acceptance | Required work remains | Open |
 
@@ -6137,16 +6137,54 @@ so an invalid initial observation cannot escape the eight-second bound. Latest
 full fixtures pass **235/235** in
 `/tmp/ktv-pcm-shared-buffer-startup-clock-final-all-20261005.log`.
 
-A native comparison at the existing supported **500-ms target** is running in
+A native comparison at the existing supported **500-ms target** is terminal
+**exit 0, 50/50** in
 `/tmp/ktv-owned-av-opus-plc-shared-buffers-startup-clean40-target500-20261005.log`,
 with owner-only parameters
 `/tmp/ktv-owned-opus-plc-shared-buffers-startup-clean40-target500-20261005.env`.
 Only the explicit playout target differs from the previous native profile;
 codec, nominal source, original SFU, memory, clock, marker and cadence bounds
 remain unchanged. This tests shorter buffering/headroom, while sustained clock
-stability remains a separate required gate. The full L1T1/floor/impairment
+stability remains a separate required gate. It records **40 pairs, zero
+unmatched**, p95 **61.55 ms**, maximum **79.17 ms**. Video capture-to-presentation
+maximum is **897.00 ms**. Source/native/owned decode/presentation rates are
+**25.02 / 24.97 / 24.99 / 24.86 fps**, meeting the unchanged cadence bounds.
+Actual live-context wall lag ranges **138.48–279.02 ms**; peak reserved PCM is
+**706,560 bytes**, at most 22 credits. No copy-pressure fallback or concealment
+is needed on this clean path. Independent random loss and separate browser
+starts prevent attributing the changed numeric results solely to the target.
+
+The same shared-context/500-ms backend completes actual suspend/task-stall expiry
+qualification, terminal **exit 0, 51/51**, in
+`/tmp/ktv-owned-opus-plc-shared-buffers-startup-target500-expiry-20261005.log`,
+over the same owner-only profile with `KTV_ROOM_TEST_AV_TIMING=0` and
+`KTV_ROOM_TEST_RECEIVER_FAULT=suspend-task-stall`. This must prove retained PCM
+residence above 500 ms, actual shared render/guard clock freeze/resume, independent
+old-output silence, deadline enforcement, replacement separation and the existing
+expiry certificate. Measured future owned PCM residence is **524.23 ms**,
+14 queued sources and 414,720 reserved bytes; the actual one-context graph and
+all existing independent output checks pass. This digital expiry proof does not
+establish physical-device or impaired-network acceptance.
+
+The full L1T1/floor/impairment
 shared-context profile is prepared at
 `/tmp/ktv-owned-l1t1-opus-plc-shared-buffers-startup-full-udp-20261005.env`;
 it has not been launched or accepted.
-Shared-context buffered expiry and full impaired qualification remain required;
-no new native acceptance is claimed yet.
+An attempted 500-ms full profile is rejected at configuration preflight before
+any native journey starts:
+`/tmp/ktv-owned-av-vp9-l1t1-opus-plc-shared-buffers-startup-full-udp-target500-20261005.log`.
+The historical one-second RTX-recovery tuple requires an 800-ms output target.
+Added an explicit 500-ms shared-buffer/libopus tuple that retains the original
+independent 700-ms video reorder bound, two-packet grouping and one-second
+bounded recovery. All source, SFU, loss, clock, memory, matching and cadence gates
+remain intact. Other private/default tuples retain their previous restrictions.
+This qualifies a new declared comparison; it does not waive any measured gate.
+
+Full impaired qualification is now launched at the 500-ms target with explicitly
+retained 700-ms video reorder, using owner-only parameters
+`/tmp/ktv-owned-l1t1-opus-plc-shared-buffers-startup-full-udp-target500-reorder700-20261005.env`
+and log
+`/tmp/ktv-owned-av-vp9-l1t1-opus-plc-shared-buffers-startup-full-udp-target500-reorder700-20261005.log`.
+Only the stated clean digital timing/quality and actual buffered-expiry journeys
+are accepted so far. Full impairment, sustained clocks, product integration and
+physical/mobile/capacity/release gates remain open.
