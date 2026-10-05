@@ -49,11 +49,11 @@ is a preview; public online media is still disabled.
 
 | Check | Current evidence | Status |
 | --- | --- | --- |
-| Timing/capability fixtures | 244/244 previous full suite; latest temporal/stream/worker change passes 43/43 focused checks | Pass |
+| Timing/capability fixtures | 244/244 previous full suite; latest stop/clock/controller checks 29/29 and source-reference format checks 8/8 | Pass for tested contracts |
 | Buffered expiry after render/guard clock freeze/resume | 51/51 with shared-context libopus buffers at the 500-ms target, including 524.23-ms retained PCM | Pass for tested digital topology |
 | Buffered expiry while source and listener pages stall | 46/46, latest reader/revalidation | Pass for digital fixture |
 | Latest qualified clean 40-pair A/V regression | Explicit VP8 L1T1 / floor / supported RTP ordering / shared-context libopus and generated-video clock / 500-ms target: 55/55, p95 80.58 ms / max 82.33 ms, no unmatched edges | Pass for tested digital topology |
-| Continuous impaired-network A/V and nominal frame rate | VP8 L1T1 full run matches 40 impaired/next-singer pairs, max skew fails; latest scoped repeat reaches 40 impaired pairs with 3 audio/2 video unmatched, max 508.86 ms | Fail |
+| Continuous impaired-network A/V and nominal frame rate | Latest context-video run reaches 39 impaired pairs, 5 audio/5 video unmatched; p95 100.24 / max 140.45 ms and nominal cadence do not establish complete matching | Fail |
 | Product integration and physical/mobile/capacity acceptance | Required work remains | Open |
 
 These scripts are private. The deployed preview remains `acb583b`, with public
@@ -6619,3 +6619,59 @@ All original 40-pair/missing-edge/skew, nominal cadence, actual recovery, memory
 deadline and complete hybrid gates remain required. Public preview and media
 policy are unchanged; sustained/product/physical/mobile/capacity/release work
 remains open.
+
+The full context-video comparison is terminal **exit 1**, timing out on the
+original 40-pair impaired gate. Baseline has six pairs, no unmatched edges and
+p95/max **80.02 ms**. Impaired matching reaches **39 pairs**, five unmatched
+audio/five unmatched video, p95 **100.24 ms**, maximum **140.45 ms**. Skew of the
+matched subset is within target, but missing-edge and pair-count requirements
+fail. Source/native/owned decode/presentation are **24.96 / 20.83 / 24.38 /
+24.29 fps**, with no nominal quality errors. The receiver remains alive without
+a PCM, queue or terminal clock error. PCM peaks at **875,520 bytes / 29 credits**,
+with no backpressure/copy fallback, **52,800** genuinely concealed samples and
+1052 RED repairs. Live-context wall lag is **277.63–445.50 ms** impaired.
+
+Source/native pixel probes remain monotonic; the owned decoder reports **one
+backward transition** and 148 invalid pixel reads cumulatively. It records 46
+committed RTP gaps, 25 late inputs, one pressure drain and 14 fulfilled keyframe
+requests. No contiguous repair is exercised. Full recovery/handover remains
+unmeasured in this run. These measurements do not prove a causal benefit of the
+clock policy against independent random-loss runs, nor robust VP8 reference
+recovery without the unavailable receiver declarations.
+
+### 2026-10-05 — Bounded transport format for actual VP8 sender references
+
+Implemented `scripts/party-video-reference-envelope.mjs` as the next transport
+building block. It appends the sender's actual frame ID and bounded reference
+list after the original VP8 codec bytes, preserving the clear codec header.
+An explicit receiver removes the trailer and returns those transmitted
+declarations. This supplies new source information; it does not reclassify absent
+native receiver metadata or infer dependencies from RTP spacing/pixel markers.
+
+The versioned trailer is **30 + 8×reference-count bytes**, maximum **94 bytes**,
+with at most eight distinct, preceding safe-integer references. Keyframes have
+none; deltas require actual declarations. The total frame, including metadata,
+stays at or below the original **256-KiB** input limit. Source IDs must advance;
+received frames can reorder for the existing bounded dependency queue. Strict
+nominal VP8 headers/dimensions, format/type/length checks and a checksum binding
+codec bytes plus declarations reject malformed or corrupted input. The checksum
+is not authentication; existing transport/source authority remains required.
+Buffer transfer detaches the prior complete payload before replacing it, without
+a second reachable payload copy in this primitive. Unsupported transfer APIs or
+failed native data assignment close it permanently with a fixed error. Snapshot
+output contains counters/limits only, never frame IDs, dependencies or payload.
+
+Format fixtures pass **8/8** in
+`/tmp/ktv-video-source-reference-envelope-ordered-final-fixtures-20261005.log`,
+covering exact codec-byte round trips, detached ownership, reordered receipt,
+maximum frame/trailer budgets, missing/corrupted headers and declarations,
+duplicate source wrapping, native assignment failure and privacy.
+
+This format is **not connected to runtime or deployed**. Next required work:
+explicit private source/receiver negotiation and native worker integration;
+strip metadata before both native and owned decoding; keep native capability
+evidence distinct from transmitted declarations; retain all aggregate queue/
+codec reservations and account for wire bitrate overhead; then requalify clean,
+expiry, loss, full hybrid, sustained and remaining release gates. The default
+VP8 native-reference rejection remains intact until that explicit new transport
+path exists and is verified. Public media remains disabled.
