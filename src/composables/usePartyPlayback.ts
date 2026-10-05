@@ -1,6 +1,7 @@
 import { computed, onUnmounted, ref, watch, type Ref } from 'vue'
 import { PartyAudioEngine } from '@/services/partyAudioEngine'
 import { createPartyOutputMonitor } from '@/services/partyOutputMonitor'
+import { createPartyGuideSession } from '@/services/partyGuideSession'
 import type { PartySnapshot, PartyLease } from '@/services/partyApi'
 import type { PartyClockEstimate } from '@/utils/partyClock'
 import { partyPosition, partySegment } from '@/utils/partyTimeline'
@@ -11,6 +12,7 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
   send: (message: Record<string, unknown>) => boolean) {
   const deviceId = crypto.randomUUID()
   const engine = new PartyAudioEngine()
+  const guideSession = createPartyGuideSession(() => { void enable('guide') }, disable)
   const purpose = ref<'viewer' | 'stage' | 'guide'>('viewer')
   const enabled = ref(false), enabling = ref(false), preparing = ref(false), prepared = ref(false), failure = ref('')
   const blocked = ref(false), calibrationInvalidated = ref(false), diagnostics = ref(engine.diagnostics)
@@ -42,25 +44,29 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
     lease.value?.clockId === clock.value.clockId ? lease.value.safeAfterServerMs : playback.value?.lease?.safeAfterServerMs || 0))
   const healthy = computed(() => connected.value && clock.value?.status === 'healthy' &&
     nowMs.value - clockReceivedMs + (clock.value?.ageMs || 0) <= 30_000)
+  const foregroundAllowed = () => !document.hidden || purpose.value === 'guide' && canGuide.value
 
   function status() {
+    nowMs.value = performance.now()
     if (!connected.value) return
-    if (!healthy.value || document.hidden || blocked.value) readyKeys.clear()
+    if (!healthy.value || !foregroundAllowed() || blocked.value) readyKeys.clear()
     send({ type: 'device.status', label: purpose.value === 'stage' ? 'Stage' : purpose.value === 'guide' ? 'Singer phone' : 'Controller',
-      purpose: purpose.value, audioEnabled: !document.hidden && !blocked.value && enabled.value && engine.enabled,
+      purpose: purpose.value, audioEnabled: foregroundAllowed() && !blocked.value && enabled.value && engine.enabled,
       mediaProtocol: typeof RTCPeerConnection === 'function' ? PARTY_MEDIA_PROTOCOL_VERSION : 0,
-      clockHealthy: !document.hidden && healthy.value, audioIssue: audioIssue.value })
+      clockHealthy: foregroundAllowed() && healthy.value, audioIssue: audioIssue.value })
     lastStatusMs = performance.now()
   }
   async function enable(role: 'stage' | 'guide') {
     failure.value = ''; blocked.value = false; audioIssue.value = null; engine.resetRecovery()
     if (role === 'guide' && (!canGuide.value || assignedHere.value)) return
     purpose.value = role
+    if (role === 'guide') guideSession.acquire()
+    else guideSession.release()
     const attempt = ++enableAttempt
     enabling.value = true; enabled.value = false
     try {
       await engine.enable()
-      if (disposed || attempt !== enableAttempt || document.hidden) return
+      if (disposed || attempt !== enableAttempt || !foregroundAllowed()) return
       enabled.value = engine.enabled; failedKey = ''; readyKeys.clear(); status(); void outputs.inspect(); void prepare()
     } catch {
       if (disposed || attempt !== enableAttempt) return
@@ -68,6 +74,7 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
     } finally { if (attempt === enableAttempt) enabling.value = false }
   }
   function disable() {
+    guideSession.release()
     enableAttempt++; engine.cancelEnable()
     enabling.value = false
     loadAttempt++; engine.releaseBuffer(); enabled.value = false; prepared.value = false; preparing.value = false
@@ -82,7 +89,7 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
   }
   async function prepare() {
     const current = playback.value
-    const eligible = !document.hidden && !blocked.value && enabled.value && healthy.value && current?.assets && current.state !== 'idle' &&
+    const eligible = foregroundAllowed() && !blocked.value && enabled.value && healthy.value && current?.assets && current.state !== 'idle' &&
       (purpose.value === 'stage' ? assignedHere.value : purpose.value === 'guide' && canGuide.value)
     if (!eligible || !current?.assets) return
     const asset = purpose.value === 'stage' ? current.assets.instrumental : current.assets.original
@@ -127,6 +134,9 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
     if (!next || next.clockId !== playback.value?.clockId || next.performanceId !== playback.value?.performanceId) return
     if (lease.value && lease.value.id === next.id && lease.value.sequence >= next.sequence) return
     lease.value = next
+    // Lease packets continue arriving when animation frames are suspended.
+    // Renew the native deadline immediately instead of waiting for a UI frame.
+    synchronize()
   }
   engine.onSuspended = () => {
     loadAttempt++; loadingKey = ''; preparing.value = false; engine.releaseBuffer()
@@ -159,7 +169,7 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
     send({ type: 'playback.ended', clockId: current.clockId, performanceId: current.performanceId,
       generation, entryId: current.entryId, leaseId: grant.id })
   }
-  watch(clock, () => { clockReceivedMs = performance.now(); status(); void prepare() })
+  watch(clock, () => { clockReceivedMs = performance.now(); status(); void prepare(); synchronize() })
   watch(connected, online => {
     readyKeys.clear(); lease.value = null
     if (!online) { engine.stop(); prepared.value = false }
@@ -177,17 +187,18 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
     }
   })
   watch(() => playback.value?.lease?.sequence, () => acceptLease(playback.value?.lease))
+  watch([() => playback.value?.state, () => playback.value?.pendingTransition, () => playback.value?.generation], synchronize)
   watch(() => party.value?.features?.guide, available => {
     if (available === false && purpose.value === 'guide') disable()
   }, { flush: 'sync' })
   watch(volume, value => engine.setVolume(value))
   watch(guideAdvanceMs, value => { guideAdvanceMs.value = Math.max(-2000, Math.min(2000, value)); localStorage.setItem('party-guide-advance-ms', String(guideAdvanceMs.value)); engine.stop() })
-  function tick() {
+  function synchronize() {
     if (disposed) return
     nowMs.value = performance.now()
     const current = playback.value
     if (nowMs.value - lastStatusMs >= 2000) status()
-    if (enabled.value && !blocked.value && current && current.state !== 'idle' && healthy.value) {
+    if (foregroundAllowed() && enabled.value && engine.enabled && !blocked.value && current && current.state !== 'idle' && healthy.value) {
       if (nowMs.value - lastHeartbeatMs >= 2000) {
         const grant = lease.value
         send({ type: 'device.heartbeat', clockId: current.clockId, performanceId: current.performanceId,
@@ -195,21 +206,28 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
         lastHeartbeatMs = nowMs.value
       }
       const grant = lease.value
-      if (purpose.value === 'guide' || (purpose.value === 'stage' && assignedHere.value && grant?.deviceId === deviceId)) {
+      if (purpose.value === 'guide' && canGuide.value || (purpose.value === 'stage' && assignedHere.value && grant?.deviceId === deviceId)) {
         engine.sync(current, healthy.value ? clock.value : null, grant, purpose.value === 'guide' ? 'guide' : 'stage',
           purpose.value === 'guide' ? guideAdvanceMs.value : 0)
         if (segment.value?.state === 'paused' && nowMs.value - lastHeartbeatMs < 20) acknowledgeStop()
         if (current.state === 'recovering') acknowledgeStop()
       } else engine.stop()
     } else engine.stop()
-    if (nowMs.value - lastDiagnosticsMs >= 1000) { diagnostics.value = engine.diagnostics; lastDiagnosticsMs = nowMs.value }
+    if (nowMs.value - lastDiagnosticsMs >= 1000) {
+      diagnostics.value = engine.diagnostics; lastDiagnosticsMs = nowMs.value
+      guideSession.update(current?.title || 'KTV', engine.renderPositionMs !== null && healthy.value,
+        (engine.renderPositionMs ?? positionMs.value), engine.durationMs)
+    }
+  }
+  function tick() {
+    synchronize()
     animation = requestAnimationFrame(tick)
   }
   function foreground() {
-    // Resume is explicit after suspension. Do not make a stale source audible
-    // simply because the browser resumes an AudioContext in the background.
-    if (document.hidden) { engine.stop(); acknowledgeStop(); readyKeys.clear(); status() }
-    else { lease.value = null; readyKeys.clear(); status(); void prepare() }
+    // A hidden singer can keep playing while their real output, clock and lease
+    // remain healthy. Actual suspension still requires explicit audio enablement.
+    if (!foregroundAllowed()) { engine.stop(); acknowledgeStop(); readyKeys.clear() }
+    status(); synchronize(); void prepare()
   }
   function retry() {
     blocked.value = false; audioIssue.value = null; failure.value = ''; engine.resetRecovery()
@@ -221,15 +239,16 @@ export function usePartyPlayback(party: Ref<PartySnapshot | null>, connected: Re
   }
   document.addEventListener('visibilitychange', foreground)
   const statusTimer = window.setInterval(() => {
-    // rAF can stop in a hidden page. Report that device as unavailable so it
-    // cannot keep the stage's lease alive while hidden.
-    if (document.hidden) send({ type: 'device.status', label: 'Device', purpose: purpose.value, audioEnabled: false, clockHealthy: false })
-  }, 2000)
+    // Background pages have no rAF. Keep heartbeats and native lease deadlines
+    // current without extending authority if the OS freezes the page entirely.
+    synchronize()
+  }, 1000)
   animation = requestAnimationFrame(tick)
   onUnmounted(() => {
     disposed = true; cancelAnimationFrame(animation); window.clearInterval(statusTimer)
     document.removeEventListener('visibilitychange', foreground)
     outputs.stop()
+    guideSession.release()
     if (lease.value?.deviceId === deviceId) send({ type: 'device.stopped', leaseId: lease.value.id,
       clockId: lease.value.clockId, generation: lease.value.generation })
     void engine.close()

@@ -332,7 +332,7 @@ try {
   await poll(async () => (await api(1, pathRoom)).readiness.state === 'ready', 'human ready')
   if(process.env.KTV_BROWSER_STAGE_RELOAD==='1'){
     await cdp('Page.reload',{},host)
-    await poll(()=>evaluate(host,"document.body.innerText.includes('Live room updates connected')"),'stage reconnected after refresh')
+    await poll(()=>evaluate(host,"document.body?.innerText.includes('Live room updates connected')"),'stage reconnected after refresh')
     await poll(()=>evaluate(host,"document.body.innerText.includes('The selected stage is disconnected') && [...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Prepare selected song'&&button.disabled)"),'stale stage selection explained and preparation disabled')
     check(true,'Refreshing the selected stage blocks stale preparation and explains reselection')
     await click(host,'Enable stage audio')
@@ -358,6 +358,29 @@ try {
     check((await audit(singer)).length===1&&!(await audit(singer))[0].ended,
       'Private guide remains playing through output-clock measurements and lease renewal')
   }
+  const backgroundGuide = process.env.KTV_BROWSER_GUIDE_BACKGROUND === '1'
+  if (backgroundGuide) {
+    // Simulate the browser's hidden/no-rAF contract while retaining native
+    // Web Audio and real sockets. This is not a physical phone lock test.
+    await evaluate(singer, `(() => {
+      window.__guideBackgroundTest = true;
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => window.__guideBackgroundTest });
+      window.__guideNativeRaf = window.requestAnimationFrame.bind(window);
+      window.requestAnimationFrame = callback => window.__guideNativeRaf(time => {
+        if (window.__guideBackgroundTest) window.__guidePendingFrame = callback; else callback(time);
+      });
+      document.dispatchEvent(new Event('visibilitychange'));
+    })()`)
+    await new Promise(resolve => setTimeout(resolve, 12000))
+    view = await api(1, pathRoom)
+    check(await evaluate(singer, 'document.hidden && !!window.__guidePendingFrame'), 'Background fixture hides singer and suspends animation callbacks')
+    check(view.playback.state === 'playing' && view.playback.guidePrepared,
+      'Required hidden guide remains ready beyond the eight-second lease interval')
+    check((await audit(singer)).length === 1 && !(await audit(singer))[0].ended,
+      'Hidden guide renews native output deadlines without restarting its source')
+    check(await evaluate(singer, "navigator.mediaSession.playbackState === 'playing' && navigator.mediaSession.metadata?.title === 'Browser test song'"),
+      'Private guide reports active song to the phone media session')
+  }
   await tab(singer, 'queue')
   check(await evaluate(singer, "document.body.innerText.includes('Requested by') && document.body.innerText.includes('Singer')"), 'Queue tab shows singer and requester attribution')
   check(await evaluate(singer, "![...document.querySelectorAll('#party-panel-queue button')].some(button => button.textContent.trim() === 'Remove song')"),
@@ -374,6 +397,18 @@ try {
   await poll(async () => (await api(1, pathRoom)).playback.state === 'playing', 'resumed')
   await poll(async () => (await audit(host)).length === 2 && (await audit(singer)).length === 2, 'resumed sources')
   check(true, 'Resume creates fresh sources for the new generation')
+  if (backgroundGuide) {
+    check(await evaluate(singer, 'document.hidden'), 'Host pause and resume work while the guide page remains hidden')
+    await evaluate(singer, `(() => {
+      window.__guideBackgroundTest = false;
+      document.dispatchEvent(new Event('visibilitychange'));
+      if (window.__guidePendingFrame) window.__guideNativeRaf(window.__guidePendingFrame);
+      window.__guidePendingFrame = null;
+    })()`)
+    await new Promise(resolve => setTimeout(resolve, 1000))
+    check((await audit(singer)).length === 2 && !(await audit(singer)).at(-1).ended,
+      'Returning to the screen preserves the current healthy guide and clock')
+  }
   await evaluate(host, `(() => { const slider = document.querySelector('input[aria-label="Shared song position"]'); slider.value = '20000'; slider.dispatchEvent(new Event('change', { bubbles: true })); })()`)
   await poll(async () => { const latest = await api(1, pathRoom); return latest.playback.positionMs === 20000 && !latest.playback.pendingTransition }, 'seek effective')
   await poll(async () => (await audit(host)).length === 3 && (await audit(singer)).length === 3, 'seek sources')

@@ -31,10 +31,12 @@ export function subscribeParty(
   const clock = new PartyClockEstimator()
   const pendingProbes = new Map<string, number>()
   let lastResyncMs = -Infinity
+  let probeNow: (() => void) | undefined
 
   function stopClock() {
     if (probeTimer !== undefined) window.clearTimeout(probeTimer)
     probeTimer = undefined
+    probeNow = undefined
     pendingProbes.clear()
     clock.reset()
     expectedClockId = ''
@@ -51,6 +53,7 @@ export function subscribeParty(
     onClock(null)
     let burst = 8
     function probe() {
+      if (probeTimer !== undefined) window.clearTimeout(probeTimer)
       if (stopped || !admitted || socket?.readyState !== WebSocket.OPEN) return
       const nowMs = performance.now()
       for (const [id, sentMs] of pendingProbes) if (nowMs - sentMs > 10_000) pendingProbes.delete(id)
@@ -62,11 +65,16 @@ export function subscribeParty(
       }
       probeTimer = window.setTimeout(probe, --burst > 0 ? 300 : 10_000)
     }
+    probeNow = probe
     probe()
   }
 
   function resyncClock() {
-    if (admitted && expectedClockId && !document.hidden && performance.now() - lastResyncMs >= 10_000) syncClock(expectedClockId)
+    if (admitted && expectedClockId && !document.hidden && performance.now() - lastResyncMs >= 10_000) {
+      // Refresh the existing estimate on return. A visibility change does not
+      // change the server clock; resetting it would interrupt a live guide.
+      lastResyncMs = performance.now(); probeNow?.()
+    }
   }
   document.addEventListener('visibilitychange', resyncClock)
   window.addEventListener('online', resyncClock)

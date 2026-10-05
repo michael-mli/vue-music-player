@@ -1705,6 +1705,19 @@ Defer user-triggered app reloads during performances where possible and handle
 controller changes/reloads as reconnects. Browsers may suspend background audio;
 publish a measured support matrix rather than promise lock-screen operation.
 
+For the local private vocal guide, hiding the singer page must not intentionally
+mute a healthy output. Run playback synchronization and device heartbeats from
+a one-second timer as well as visible animation frames; apply incoming lease
+renewals and room transitions immediately. Keep the same eight-second output
+lease, clock freshness, native deadline and drift checks. A healthy return to
+the page retains its lease and clock estimate; actual output suspension requires
+explicit enablement again. Claim a guide-specific Media Session with song/position
+and device-only play/pause/stop controls, and request the `playback` Audio Session
+category when supported. Release that ownership on disable or room exit.
+This policy applies to the local guide; camera/microphone publication still stops
+when hidden. OS page freezing or audio interruption can stop playback, and requires
+physical iOS/Android lock-screen acceptance before declaring device support.
+
 Record command latency/conflicts, reconnects, active rooms/sockets, readiness time,
 decode/memory failures, clock uncertainty, measured/estimated drift, underruns,
 lease expiry, and streaming quality. Label estimated timing separately from acoustic
