@@ -108,6 +108,13 @@ separate message and does not change audio readiness.
 7. A shared countdown leads into the song. Phones can show lyrics and a private guide.
 8. At song end, the next entry is offered to its singer; a new readiness cycle begins.
 
+Refreshing a stage page creates a new device connection. The host enables its
+audio and explicitly selects that current device again. Preparation requires a
+connected selected stage with audio enabled and a healthy clock; a persisted ID
+alone cannot enable the prepare action. If the selection is unavailable, show
+the reselection instructions next to the stage controls. Readiness errors identify
+the stage, required guide or performance stream separately.
+
 The stage emphasizes large lyrics, current singer, song progress, and upcoming
 singers. Invitation display is host-controlled and hidden when the room is locked.
 Phone actions should remain usable with one hand. Host controls appear inside

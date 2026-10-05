@@ -56,15 +56,15 @@ is a preview; public online media is still disabled.
 | Continuous impaired-network A/V and nominal frame rate | Latest context-video run reaches 39 impaired pairs, 5 audio/5 video unmatched; p95 100.24 / max 140.45 ms and nominal cadence do not establish complete matching | Fail |
 | Product integration and physical/mobile/capacity acceptance | Required work remains | Open |
 
-These scripts are private. The deployed preview is frontend `ee520f2` / backend `acb583b`, with public
+These scripts are private. The deployed preview is frontend `9030eb4` / backend `acb583b`, with public
 online media disabled. The original video cadence and timing requirements are
 unchanged; the optional adaptive-video preference question has no answer yet.
 
 Recording/export, reactions, themes and remote duets remain optional P09 work.
 
 Current status: The receiver-safe encoded activation preview is deployed at
-`https://music.micstec.com/party` with frontend **`ee520f2`** / backend **`acb583b`**
-(`main-BlIjhFmY.js`, `main-DnE6rWx5.css`,
+`https://music.micstec.com/party` with frontend **`9030eb4`** / backend **`acb583b`**
+(`main-D61Hk-Rz.js`, `main-DnE6rWx5.css`,
 `partyLeaseGuard.worklet-BWdT3O5D.js`, `partyEncodedLease.worker-BxVsrNxp.js`).
 The coupled update includes media protocol 2, durable issued-output reservations,
 the receiver post-buffer deadline guard and Chrome stream reservation before
@@ -854,7 +854,7 @@ prototype result is not automatically a release result.
 
 ### Current next action
 
-Public preview is frontend `ee520f2` / backend `acb583b`, with rooms/private guide
+Public preview is frontend `9030eb4` / backend `acb583b`, with rooms/private guide
 enabled and online media disabled. The receiver guard and encoded activation
 fix are deployed; private decoder/controller experiments remain unpublished.
 Current timing/capability fixtures pass 95 checks. Direct receiver-worker/PCM
@@ -6808,3 +6808,42 @@ Temporary public release room was closed and no account was added. The main
 baseline rollback tag is unchanged. Users need to refresh/accept the PWA update
 to run the new frontend. This fix does not qualify the private receiver envelope
 or complete the remaining streaming/physical/mobile/capacity release work.
+
+### 2026-10-05 — Explain and recover refreshed stage selection
+
+User reported the generic required-device-not-ready message after refreshing.
+Read-only, redacted production request evidence showed repeated preparation 409s,
+then successful explicit stage selection, preparation and start. Refresh creates
+a new device connection while the room retains its prior stage selection. The
+prepare control previously trusted that persisted ID despite its device being
+unavailable.
+
+The frontend now requires the selected stage to be connected, audio enabled and
+clock healthy before enabling preparation. Unavailable selections display direct
+instructions to enable audio and explicitly select the current device. Stage
+lists omit disconnected devices, and start readiness also requires an available
+stage. Existing backend checks and explicit moderator stage selection are retained.
+Stage, required-guide and performance-stream errors have separate actionable
+English/Chinese messages. No current room selection is automatically changed.
+
+Fixtures pass **7/7**. A full native Chrome 154 journey passes **62/62**, including
+refreshing a selected stage before preparation, verifying the disabled prepare
+control/hint, explicitly selecting the fresh audio-enabled device and completing
+playback/guide/recovery checks. Exact committed build/type checks, UI **45/45**,
+PWA **10/10** and public release **23/23** pass. Logs:
+`/tmp/ktv-stage-reselection-unit-20261005.log`,
+`/tmp/ktv-stage-reselection-browser-20261005.log`,
+`/tmp/ktv-stage-release-build-20261005.log`,
+`/tmp/ktv-stage-release-exact-ui-20261005.log`,
+`/tmp/ktv-stage-release-exact-pwa-20261005.log`,
+`/tmp/ktv-stage-reselection-public-20261005.log`.
+
+Published frontend **`9030eb4`**, bundle `main-D61Hk-Rz.js`, index SHA-256
+`774856bee361734d812a858b769caf054ce077e14530ddf284520a97fed8d557`.
+Backend remains `acb583b`, online media disabled. Static assets preceded atomic
+index/service-worker publication; older hashed assets are retained. Rollback
+archive: `/home/mli/ktv-stage-reselection-predeploy.yxt0_dz4` (0700, files 0600).
+The temporary public check room was closed and no account was added. Refresh or
+accept the PWA update to receive the improved controls, then explicitly enable
+and select the current stage. Previous guide startup/retry fixes are included.
+Streaming, physical/mobile and capacity release work remains open.
