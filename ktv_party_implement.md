@@ -5539,3 +5539,34 @@ The clean production-VP8/original-SFU 40-pair journey with these read-only clock
 is running in
 `/tmp/ktv-owned-av-pcm-actual-render-clock-clean40-production-vp8-20261004.log`.
 No new production change is deployed and public online media remains disabled.
+
+
+### Actual PCM context loses wall-clock progress — 2026-10-04
+
+`/tmp/ktv-owned-av-pcm-actual-render-clock-clean40-production-vp8-20261004.log`
+exits 1 at final unexpected-controller-closure accounting. Its 40 clean matched
+pairs have **zero unmatched edges**, p95 / maximum skew **32.62 / 58.31 ms**,
+source / native video **25.00 / 24.98 fps**, owned decode **25.01 fps** and
+presentation **24.66 fps**. Those timing/cadence observations pass; the entire
+journey does not. Old session 1 later closes at `PCM_BOUND` / `PLAYOUT_AUDIO_CLOCK`
+with 6,856 backpressure events. The strict classifier still rejects that
+unexpected closure despite later session 2 completing cleanup.
+
+The readonly clocks expose a concrete scheduling problem: secondary 48-kHz PCM
+context progress initially lags its wall anchor by about **19–21 ms**, then
+**219–221 ms** at 21–32 seconds and about **262–274 ms** later. Worklet-reported
+frames remain close to main-thread context frames after report age is accounted
+for; this is not merely an old quantum report. Credits rise from 42 to 48 and
+held packets from zero to six/seven while queued residence rises from about
+802–821 ms to 928–950 ms. The fixed wall-to-render mapping therefore becomes
+stale as the context loses progress. The underlying device/timer/load cause is
+not yet proven. Capture offset stays within its existing bound. A release still
+requires a clock solution or safe recovery within all unchanged output guards;
+increasing retained samples would not close that requirement.
+
+Latest state: **190/190 fixtures**, **51/51 digital buffered-expiry checks**, but
+latest full clean and impaired streaming journeys fail. All private native jobs
+are terminal. Public preview remains `acb583b`, media disabled; no private codec,
+SFU or controlled-output experiment is deployed. The active implementation work
+continues with the secondary PCM render clock, then impaired recovery, product
+integration and the remaining physical/mobile/capacity/release gates.
