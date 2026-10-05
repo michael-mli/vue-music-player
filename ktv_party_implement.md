@@ -5656,3 +5656,32 @@ parameters are preserved in owner-only
 `/tmp/ktv-owned-l1t1-target500-reorder700-full-udp-20261004.env`.
 The unchanged full timing/quality/handover journey is running in
 `/tmp/ktv-owned-av-vp9-l1t1-target500-reorder700-full-udp-20261004.log`.
+
+
+### Independent input repair reaches 40 pairs but timing and cadence still fail — 2026-10-04
+
+`/tmp/ktv-owned-av-vp9-l1t1-target500-reorder700-full-udp-20261004.log`
+exits 1 at the original impaired unmatched-edge gate. Actual decoder readback
+retains 700 ms while the output target remains 500 ms. Six clean baseline pairs
+have no unmatched edges and maximum skew **69.45 ms**. During impairment, 40
+pairs match but **two unmatched audio edges** exceed the allowance of one;
+one unmatched video edge is within its allowance. Matched p95 / maximum skew is
+**591.25 / 745.89 ms**, above the unchanged **150 / 250 ms** gates.
+
+Source / native / owned decode / presentation rates are **24.84 / 23.21 / 18.07 /
+16.18 fps**. The owned decoder remains alive and bounded, but nominal owned
+cadence still fails. It records **508 missing-reference rejections**, 15 late
+frames, one pressure drain, 13 fulfilled requests, 24 decoded keys and maximum
+20 held packets. Captured/native/owned markers remain ordered. PCM stays alive
+within **33** maximum credits and six held packets, with 36,480 measured missing
+samples (0.76 seconds). The secondary context still loses about **287.67 ms**
+against its fixed wall anchor by the last impaired sample. Independent randomized
+loss prevents attributing numerical improvements between runs to this one change.
+
+Current evidence remains **192/192** fixtures and **50/50** clean streaming checks
+at the 500-ms target, plus historical **51/51** buffered-expiry checks for the
+latest PCM admission/deadline code. The full impaired/handover journey, sustained
+clock recovery, missing-audio concealment and nominal owned video recovery remain
+open. All native jobs from this update are terminal; public preview and media
+policy are unchanged. No timing, unmatched-edge, source-quality, clock, output
+permission or buffer-bound criterion is relaxed.
