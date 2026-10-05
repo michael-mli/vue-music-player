@@ -37,7 +37,8 @@ is a preview; public online media is still disabled.
 3. **Physical stage/phone measurements:** demonstrate five-minute guide/stage
    acoustic alignment at p95 <= 50 ms; test pause/seek, calibration, output changes,
    lease-expiry silence, wired/Bluetooth outputs, microphone delay and leakage.
-4. **Device acceptance:** test iOS/Android/Safari, autoplay, lock/background/resume,
+4. **Device acceptance:** local guide background continuation is implemented and
+   deployed; physical lock-screen acceptance remains open. Test iOS/Android/Safari, autoplay, lock/background/resume,
    installed-PWA upgrades and representative long-song memory/decode behavior.
 5. **Capacity and real networks:** validate nominal-quality 59-audience and
    representative multi-room loads, plus distinct physical Wi-Fi/LTE paths.
@@ -56,15 +57,15 @@ is a preview; public online media is still disabled.
 | Continuous impaired-network A/V and nominal frame rate | Latest context-video run reaches 39 impaired pairs, 5 audio/5 video unmatched; p95 100.24 / max 140.45 ms and nominal cadence do not establish complete matching | Fail |
 | Product integration and physical/mobile/capacity acceptance | Required work remains | Open |
 
-These scripts are private. The deployed preview is frontend `9030eb4` / backend `acb583b`, with public
+These scripts are private. The deployed preview is frontend `a295ef8` / backend `acb583b`, with public
 online media disabled. The original video cadence and timing requirements are
 unchanged; the optional adaptive-video preference question has no answer yet.
 
 Recording/export, reactions, themes and remote duets remain optional P09 work.
 
 Current status: The receiver-safe encoded activation preview is deployed at
-`https://music.micstec.com/party` with frontend **`9030eb4`** / backend **`acb583b`**
-(`main-D61Hk-Rz.js`, `main-DnE6rWx5.css`,
+`https://music.micstec.com/party` with frontend **`a295ef8`** / backend **`acb583b`**
+(`main-ntKMzv2c.js`, `main-DnE6rWx5.css`,
 `partyLeaseGuard.worklet-BWdT3O5D.js`, `partyEncodedLease.worker-BxVsrNxp.js`).
 The coupled update includes media protocol 2, durable issued-output reservations,
 the receiver post-buffer deadline guard and Chrome stream reservation before
@@ -76,7 +77,7 @@ source-stall **24/24** and separate native stage/source freeze/expiry **16/16**.
 Private capture-clock experiments pass clean **42/42** and decoded capability
 **39/39** checks, but continuous impaired A/V still fails. Those experiments are
 not enabled by the deployed build. Physical/sustained output acceptance is open.
-Private rollback backup: `/home/mli/ktv-party-receiver-safe-predeploy.ehv22v0u`.
+Latest frontend rollback backup: `/home/mli/ktv-guide-background-predeploy.3xfe1rxp`.
 
 The PWA activation fix is deployed: failed updates retain the current page and
 allow retry; empty catalogs no longer trigger phantom song downloads. Exact-build
@@ -207,6 +208,13 @@ touch controls, keyboard focus and wrapping of long room/member/song names.
 Party units pass 49/49 and the built-app UI checker passes 29/29. Protocol and
 reference contracts now live in `ktv_party_protocol.md`. This checkpoint is
 deployed; it does not resolve streaming/device acceptance.
+
+Latest background-guide hotfix: focused audio/lease/controller/session fixtures
+**40/40**, exact native browser journey **65/65** (simulated hidden page/no rAF,
+real Web Audio/sockets), UI **45/45**, PWA **10/10**, public release **23/23**.
+Earlier combined longer browser runs failed genuine stage drift/lease recovery;
+those failures remain recorded below. Physical/mobile and sustained acceptance
+are open.
 
 ## 1. How to use this tracker
 
@@ -6847,3 +6855,62 @@ The temporary public check room was closed and no account was added. Refresh or
 accept the PWA update to receive the improved controls, then explicitly enable
 and select the current stage. Previous guide startup/retry fixes are included.
 Streaming, physical/mobile and capacity release work remains open.
+
+
+### 2026-10-05 — Continue local private guidance when the singer screen hides
+
+User confirmed guide playback works, then reported that dimming/locking the
+singer screen stops it. The local controller explicitly stopped audio and
+reported the device unavailable on `document.hidden`. Its heartbeats and lease
+renewal also depended on animation frames, which can stop on a hidden page.
+
+The guide now retains playback while the actual output, connection, clock and
+lease remain healthy. A one-second timer runs synchronization/heartbeats without
+animation frames; incoming lease packets and room transitions update native
+output immediately. Returning to the screen retains a healthy lease and clock;
+visibility resync probes the existing estimator without resetting it. Genuine
+suspension, stale clocks, disconnection, singer reassignment, pause, disable and
+lease expiry retain their guards. Stage/publisher visibility policy and the
+8-second output lease are retained. No backend changes or restart were needed.
+
+A guide-specific Media Session reports the song and bounded position, with
+controls affecting this device only. The guide requests the `playback` Audio
+Session category when supported and releases ownership on disable/exit. These
+are browser playback hints, not proof that every phone supports locked playback.
+
+Validation: **40/40** focused audio/lease/controller/session fixtures, committed
+build/type checks, and **65/65** exact Chrome 154 journey checks. The journey
+simulates a hidden page and stops animation callbacks while using real Web Audio
+and sockets: the required guide stays ready/playing for 12 seconds, renews native
+deadlines without restarting, follows host pause/resume while hidden, and retains
+its source when visible again. It also passes seek, output confirmation/retry,
+injected stage drift and room/queue/moderation checks. This is not a physical
+phone lock test. Exact UI **45/45**, PWA **10/10**, public release **23/23** pass.
+
+Earlier combined reload + five-second sustained + background journeys failed:
+`/tmp/ktv-guide-background-browser-repeat-20261005.log` passed hidden playback,
+pause/resume and return checks before later stage lease recovery prevented the
+injected drift assertion; `/tmp/ktv-guide-background-exact-browser-20261005.log`
+entered genuine stage drift recovery during the hidden interval. Those failed
+runs are not qualified, their thresholds were not weakened, and sustained and
+physical/mobile acceptance remains open. An initial harness reload-body race
+was fixed by tolerating the temporarily absent body during navigation.
+
+Qualified logs:
+`/tmp/ktv-guide-background-unit-final-20261005.log`,
+`/tmp/ktv-guide-background-release-build-20261005.log`,
+`/tmp/ktv-guide-background-exact-isolated-browser-20261005.log`,
+`/tmp/ktv-guide-background-exact-ui-20261005.log`,
+`/tmp/ktv-guide-background-exact-pwa-20261005.log`,
+`/tmp/ktv-guide-background-public-20261005.log`.
+
+Published frontend **`a295ef8`**, bundle `main-ntKMzv2c.js`, index SHA-256
+`3e59b94f81f767aed0fbd73c5ad06a1988f7f9a1726decbb017807ebfab3d187`.
+Backend remains `acb583b`, online media disabled. Assets preceded atomic index/
+service-worker publication; older hashed assets remain. Protected rollback
+archive: `/home/mli/ktv-guide-background-predeploy.3xfe1rxp` (0700/files 0600).
+The disposable public release room was closed, no account was added, and the
+main baseline tag is unchanged. Refresh/accept the PWA update on the singer
+phone, enable private guidance and test dimming/locking the physical device.
+Device/browser identification was requested; no answer has arrived yet.
+Remaining streaming/physical/mobile/capacity release work stays open.
