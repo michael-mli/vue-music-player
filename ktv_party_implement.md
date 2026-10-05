@@ -53,7 +53,7 @@ is a preview; public online media is still disabled.
 | Buffered expiry after render/guard clock freeze/resume | 51/51 with shared-context libopus buffers at the 500-ms target, including 524.23-ms retained PCM | Pass for tested digital topology |
 | Buffered expiry while source and listener pages stall | 46/46, latest reader/revalidation | Pass for digital fixture |
 | Latest qualified clean 40-pair A/V regression | Explicit VP8 L1T1 / floor / supported RTP ordering / shared-context libopus / 500-ms target: 55/55, p95 54.78 ms / max 62.91 ms, no unmatched edges | Pass for tested digital topology |
-| Continuous impaired-network A/V and nominal frame rate | VP8 floor/shared buffers reaches 40 pairs and nominal cadence; four audio/three video edges unmatched, maximum skew 344.70 ms | Fail |
+| Continuous impaired-network A/V and nominal frame rate | Explicit VP8 L1T1 matches 40 impaired and 40 next-singer pairs with no missing edges and nominal cadence; maximum skew 427.44 / 250.63 ms fails | Fail |
 | Product integration and physical/mobile/capacity acceptance | Required work remains | Open |
 
 These scripts are private. The deployed preview remains `acb583b`, with public
@@ -6483,7 +6483,7 @@ markers have zero backward transitions. PCM peaks at **691,200 bytes / 21
 credits**, with no concealment, backpressure or copy fallback. Live-context wall
 lag spans **18.19–270.08 ms**; sustained device-clock acceptance remains open.
 
-The full native UDP impairment/recovery/handover comparison is now running in
+The first full native UDP impairment/recovery/handover comparison is terminal **exit 1** in
 `/tmp/ktv-owned-av-vp8-l1t1-opus-plc-shared-buffers-floor-gap-full-udp-target800-20261005.log`.
 Its owner-only immutable profile is
 `/tmp/ktv-owned-vp8-l1t1-opus-plc-shared-buffers-floor-gap-full-udp-target800-20261005.env`.
@@ -6492,3 +6492,47 @@ one-second native recovery cooldown, continuous RTX, nominal source and original
 150-ms-plus-jitter/5%-loss impairment per direction/leg. Actual recovery response,
 complete impaired/post-handover matching and all original skew/cadence/resource
 gates remain required. The public preview remains unchanged with media disabled.
+
+Baseline has six pairs and no unmatched edges, p95/max **57.33 ms**. Impaired
+and next-singer phases both measure **40 pairs with zero unmatched audio/video**.
+Impaired p95/max is **69.96 / 427.44 ms**; next-singer is **115.86 / 250.63 ms**.
+Original maximum-skew limits fail; two impaired observations exceed 250 ms.
+Source/native/owned decode/presentation are **24.81 / 24.14 / 24.30 / 23.92 fps**
+under impairment and **25.01 / 24.40 / 24.64 / 23.12 fps** after singer handover,
+with no nominal quality errors. All source/native/owned marker probes remain
+monotonic, unlike the previous default-temporal VP8 run. Independent randomized
+loss prevents a causal numeric comparison.
+
+PCM remains bounded, with no terminal error, backpressure, copy fallback or late
+native packet: impaired maximum **860,160 bytes / 29 credits**, **36,480** truly
+concealed samples, 918 RED repairs; next-singer maximum **552,960 bytes / 17
+credits**, **40,320** concealed samples, 915 RED repairs. Live-context wall lag is
+**130.85–443.42 ms** impaired and **2.10–66.96 ms** after handover. Ten/twelve
+native keyframe requests are fulfilled respectively. Contiguous pressure repair
+remains unexercised. Outage recovery and online singer replacement pass their
+functional checks. No full journey acceptance is claimed.
+
+### 2026-10-05 — Scope allocation evidence to the measured browser during hybrid turns
+
+The first full L1T1 run stops before venue-to-remote timing because the allocation
+collector incorrectly demands a single active audience in the whole fixture.
+Hybrid turns permit both the host and common screen to listen. This is a scope
+bug in the test, separate from the measured maximum-skew failures.
+
+Added a bounded per-page observer for the exact same-origin successful media-grant
+response. It retains only opaque identity, room and scope, never a token, permit
+or unknown field. Each phase verifies this page's audience identity against an
+active server grant in the current room and an exact provider participant, then
+requires the same one-current-publisher and one-current-video-track checks.
+Other audiences cannot supply its evidence; no global-first or unscoped fallback
+exists. Failed/malformed grants clear the observed scope, and publisher/audience
+role replacements update it. Allocation logs remain read only after timing.
+
+Scope/parser/temporal fixtures pass **8/8** in
+`/tmp/ktv-sfu-current-browser-scope-fixtures-20261005.log`; harness syntax passes.
+The full original L1T1 impairment/handover profile runs again with this corrected
+collector in
+`/tmp/ktv-owned-av-vp8-l1t1-opus-plc-shared-buffers-floor-gap-scoped-hybrid-full-udp-target800-20261005.log`.
+It reuses the immutable full owner-only profile above. No quality, pairing, skew,
+memory, authority, outage or full hybrid acceptance gate is waived. Public media
+remains disabled; sustained/product/physical/mobile/capacity/release work is open.

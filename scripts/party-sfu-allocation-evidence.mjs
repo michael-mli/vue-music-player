@@ -5,6 +5,34 @@ const reasons = new Set(['opportunistic', 'optimal', 'cooperative', 'next-higher
 const pauses = new Set(['NONE', 'MUTED', 'PUB_MUTED', 'FEED_DRY', 'BANDWIDTH'])
 export const sfuLogByteLimit = 16 * 1024 * 1024
 
+// Observe only the opaque scope of this page's successful grant response.
+// Tokens, permits and arbitrary response fields are never retained. The caller
+// must still verify this identity against active room grants and SFU tracks.
+export function installSfuGrantScopeProbe(){
+  if(window.__sfuGrantScope)throw new Error('SFU_SCOPE_INSTALLED')
+  const open=XMLHttpRequest.prototype.open
+  let current=null
+  XMLHttpRequest.prototype.open=function(method,url,...rest){
+    const result=open.call(this,method,url,...rest)
+    let parsed;try{parsed=new URL(url,location.href)}catch{return result}
+    const match=/^\/api\/ktv\/rooms\/([^/]+)\/media-token$/.exec(parsed.pathname)
+    if(String(method).toUpperCase()!=='POST'||parsed.origin!==location.origin||!match||match[1].length>512)return result
+    this.addEventListener('load',()=>{
+      current=null
+      try{
+        if(this.status!==200)return
+        const body=this.responseType==='json'?this.response:JSON.parse(this.responseText),grant=body?.data
+        if(!grant||!['audience','publisher'].includes(grant.scope)||
+          typeof grant.identity!=='string'||!grant.identity||grant.identity.length>512||
+          typeof grant.room!=='string'||grant.room!==`ktv-${match[1]}`)return
+        current={identity:grant.identity,scope:grant.scope,roomId:match[1]}
+      }catch{}
+    },{once:true})
+    return result
+  }
+  window.__sfuGrantScope={snapshot:()=>current?{...current}:null}
+}
+
 export function analyseSfuAllocationLogs(raw, windows) {
   const errors = new Set(), events = []
   const fail = code => errors.add(code)

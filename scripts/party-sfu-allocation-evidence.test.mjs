@@ -1,8 +1,51 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { analyseSfuAllocationLogs, sfuLogByteLimit } from './party-sfu-allocation-evidence.mjs'
+import vm from 'node:vm'
+import { analyseSfuAllocationLogs, installSfuGrantScopeProbe, sfuLogByteLimit } from './party-sfu-allocation-evidence.mjs'
 
 const window = { phase: 'impaired', start: 2000, end: 10000, identity: 'private-listener', track: 'private-video' }
+function scopeFixture(){
+  const calls=[]
+  class Request{
+    open(...args){calls.push(args);return 42}
+    addEventListener(name,callback,options){assert.equal(name,'load');assert.equal(options.once,true);this.loaded=callback}
+    reply(data,{status=200,json=true}={}){
+      this.status=status;this.responseType=json?'json':''
+      this.response={data};this.responseText=JSON.stringify({data});this.loaded?.()
+    }
+  }
+  const realm={window:{},XMLHttpRequest:Request,URL,location:{href:'https://fixture.test/party',origin:'https://fixture.test'}}
+  vm.runInNewContext(`(${installSfuGrantScopeProbe.toString()})()`,realm)
+  return {realm,calls,request:()=>new Request(),snapshot:()=>realm.window.__sfuGrantScope.snapshot()}
+}
+test('page grant scope records only its exact room identity and follows audience/publisher replacements',()=>{
+  const f=scopeFixture(),one=f.request(),two=f.request()
+  assert.equal(one.open('POST','/api/ktv/rooms/private-room/media-token',true),42)
+  assert.deepEqual(f.calls[0],['POST','/api/ktv/rooms/private-room/media-token',true])
+  one.reply({identity:'private-listener',scope:'audience',room:'ktv-private-room',token:'secret-token',permit:{secret:'secret-permit'}})
+  assert.deepEqual(JSON.parse(JSON.stringify(f.snapshot())),{identity:'private-listener',scope:'audience',roomId:'private-room'})
+  for(const secret of ['secret-token','secret-permit','permit','token'])assert.equal(JSON.stringify(f.snapshot()).includes(secret),false)
+  const copy=f.snapshot();copy.identity='changed';assert.equal(f.snapshot().identity,'private-listener')
+  two.open('post','/api/ktv/rooms/private-room/media-token');two.reply({identity:'new-publisher',scope:'publisher',room:'ktv-private-room'},{json:false})
+  assert.equal(f.snapshot().scope,'publisher');assert.equal(f.snapshot().identity,'new-publisher')
+  const replacement=f.request();replacement.open('POST','/api/ktv/rooms/private-room/media-token')
+  replacement.reply({identity:'replacement-listener',scope:'audience',room:'ktv-private-room'})
+  assert.equal(f.snapshot().identity,'replacement-listener')
+  assert.throws(()=>vm.runInNewContext(`(${installSfuGrantScopeProbe.toString()})()`,f.realm),/SFU_SCOPE_INSTALLED/)
+})
+test('scope observation ignores other origins/endpoints and rejects failed, malformed or oversized bindings without a fallback',()=>{
+  const f=scopeFixture()
+  for(const [method,url] of [['GET','/api/ktv/rooms/private-room/media-token'],['POST','https://other.test/api/ktv/rooms/private-room/media-token'],['POST','/api/ktv/rooms/private-room/media/status'],[42,'/other']]){
+    const r=f.request();assert.equal(r.open(method,url),42);assert.equal(r.loaded,undefined)
+  }
+  for(const grant of [null,{}, {identity:'x',scope:'audience',room:'ktv-wrong'},
+    {identity:'x',scope:'admin',room:'ktv-private-room'},{identity:'x'.repeat(513),scope:'audience',room:'ktv-private-room'}]){
+    const r=f.request();r.open('POST','/api/ktv/rooms/private-room/media-token');r.reply(grant);assert.equal(f.snapshot(),null)
+  }
+  const denied=f.request();denied.open('POST','/api/ktv/rooms/private-room/media-token')
+  denied.reply({identity:'x',scope:'audience',room:'ktv-private-room'},{status:403});assert.equal(f.snapshot(),null)
+  const broken=f.request();broken.open('POST','/api/ktv/rooms/private-room/media-token');broken.status=200;broken.responseType='';broken.responseText='{';broken.loaded();assert.equal(f.snapshot(),null)
+})
 function row(time, temporal = 2, changes = {}) {
   return JSON.stringify({ ts: time / 1000, msg: 'stream allocation: optimal', participant: window.identity,
     trackID: window.track, room: 'secret-room', arbitrary: 'secret-token', allocation: {

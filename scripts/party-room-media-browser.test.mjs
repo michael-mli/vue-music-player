@@ -52,7 +52,7 @@ import { collectAvMediaStats } from './party-av-stats.mjs'
 import { analyseCodecQuality, analyseCaptureCadence, analyseSourceAllocation } from './party-av-codec-quality.mjs'
 import { analyseAudioRedEvidence } from './party-audio-red-experiment.mjs'
 import { publisherVideoFloorSdp, installVideoFloorExperiment } from './party-video-floor-experiment.mjs'
-import { analyseSfuAllocationLogs, sfuLogByteLimit } from './party-sfu-allocation-evidence.mjs'
+import { analyseSfuAllocationLogs, installSfuGrantScopeProbe, sfuLogByteLimit } from './party-sfu-allocation-evidence.mjs'
 import { validateSfuRtxImage, sfuBaseImage } from './party-sfu-rtx-experiment.mjs'
 import { installEncodedLeaseObserver } from './party-encoded-lease-observer.mjs'
 import { installSenderKeyframeExperiment } from './party-sender-keyframes.mjs'
@@ -493,6 +493,7 @@ try {
       ${encodedApi==='legacy' ? 'window.RTCRtpScriptTransform=undefined;' : ''}
       ${encodedTiming ? `(${installEncodedTimingProbe.toString()})(${JSON.stringify(pcmPlcBootstrap+'('+encodedTimingWorker.toString()+')('+ (opusDecodeProbe ? createOpusDecodeProbe.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString() : vp8DecodeProbe?'null,null,null,'+createVp8DecodeProbe.toString():'') +');'+(pcmPortProbe||ownedPcm ? '('+installOpusPcmWorker.toString()+')('+bindOpusPcmPort.toString()+','+createOpusPcmStream.toString()+','+primaryOpusPayload.toString()+','+opusPacketFrames.toString()+');' : '')+(ownedVideo?'('+installVp8FrameWorker.toString()+')('+createVp8FrameStream.toString()+','+videoReorderMs+','+receiverKeyframes+','+receiverKeyframeMs+','+gapVideoReorder+','+JSON.stringify(codecExperiment?.codec||'vp8')+','+dependencyVideoReorder+','+(videoMarkerProbe?readDecodedVideoMarker.toString():'null')+','+receiverKeyframeWaitMs+');':''))},${JSON.stringify(receiverEncodedApi)});` : ''}
       (${installEncodedLeaseObserver.toString()})();
+      ${sfuAllocationEvidence ? `(${installSfuGrantScopeProbe.toString()})();` : ''}
       ${absoluteCapture ? `(${installAbsoluteCaptureExperiment.toString()})();` : ''}
       ${senderCadence ? `(${installSenderCadenceExperiment.toString()})();` : ''}
       ${senderTemporal ? `(${installSenderTemporalExperiment.toString()})(${JSON.stringify(codecExperiment.codec)});` : ''}
@@ -847,11 +848,17 @@ try {
     if(videoMarkerProbe)await evaluate(audience,`(${installSourceMarkerProbe.toString()})(${readDecodedVideoMarker.toString()},'native-receiver')`)
     let allocationWindow
     if(sfuAllocationEvidence){
-      const grants=db.prepare("SELECT identity FROM ktv_media_grants WHERE scope = 'audience' AND state = 'active'").all()
-      const publishers=db.prepare("SELECT identity FROM ktv_media_grants WHERE scope = 'publisher' AND state = 'active'").all()
+      const binding=await evaluate(audience,'window.__sfuGrantScope.snapshot()')
+      assert.ok(binding?.scope==='audience'&&binding.roomId===room.room.id,
+        'SFU allocation evidence requires the measured page current audience scope')
+      const grants=db.prepare("SELECT identity FROM ktv_media_grants WHERE room_id = ? AND identity = ? AND scope = 'audience' AND state = 'active'").all(room.room.id,binding.identity)
+      const publishers=db.prepare("SELECT identity FROM ktv_media_grants WHERE room_id = ? AND scope = 'publisher' AND state = 'active'").all(room.room.id)
       assert.equal(grants.length,1,'SFU allocation evidence requires one exact current audience')
       assert.equal(publishers.length,1,'SFU allocation evidence requires one exact current publisher')
-      const tracks=(await provider.listParticipants(`ktv-${room.room.id}`)).find(p=>p.identity===publishers[0].identity)?.tracks.filter(t=>t.type===1)
+      const participants=await provider.listParticipants(`ktv-${room.room.id}`)
+      assert.equal(participants.filter(p=>p.identity===binding.identity).length,1,
+        'SFU allocation evidence verifies the measured current audience at the provider')
+      const tracks=participants.find(p=>p.identity===publishers[0].identity)?.tracks.filter(t=>t.type===1)
       assert.equal(tracks?.length,1,'SFU allocation evidence requires one exact current video track')
       allocationWindow={phase,start:Date.now(),end:null,identity:grants[0].identity,track:tracks[0].sid}
       sfuAllocationWindows.push(allocationWindow)
