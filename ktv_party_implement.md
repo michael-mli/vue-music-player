@@ -6180,7 +6180,7 @@ bounded recovery. All source, SFU, loss, clock, memory, matching and cadence gat
 remain intact. Other private/default tuples retain their previous restrictions.
 This qualifies a new declared comparison; it does not waive any measured gate.
 
-Full impaired qualification is now launched at the 500-ms target with explicitly
+Full impaired qualification was launched at the 500-ms target with explicitly
 retained 700-ms video reorder, using owner-only parameters
 `/tmp/ktv-owned-l1t1-opus-plc-shared-buffers-startup-full-udp-target500-reorder700-20261005.env`
 and log
@@ -6188,3 +6188,42 @@ and log
 Only the stated clean digital timing/quality and actual buffered-expiry journeys
 are accepted so far. Full impairment, sustained clocks, product integration and
 physical/mobile/capacity/release gates remain open.
+
+The full shared-context/500-ms comparison is terminal **exit 1** after functional
+recovery and venue handover, timing out on the next-singer 40-pair gate. Baseline
+passes six pairs with no unmatched markers, p95/max **43.47 ms**. Impaired output
+reaches **40 pairs**, one unmatched audio and one unmatched video, but p95 skew
+is **631.34 ms**, maximum **738.90 ms**. Eleven pairs exceed the 150-ms bound;
+seven have later video and four have later audio. Post-handover output reaches
+only **38 pairs**, six unmatched audio/four unmatched video, p95 **668.46 ms**,
+maximum **719.19 ms**. Matching, skew and cadence gates remain unchanged.
+
+Source/native/owned decode/presentation rates are **24.69 / 20.15 / 17.32 /
+17.00 fps** under impairment, and **24.79 / 20.65 / 15.23 / 11.84 fps** after
+handover. Actual source capture remains about 25 fps. Source, native-decoded and
+owned-decoded marker probes report **zero backward transitions** throughout.
+Impaired owned video records 530 reference misses, 240 keyframe drains, 17 late
+frames, 22 pressure drains and 37 fulfilled bounded recovery requests, including
+30 early requests. The new receiver remains alive with no terminal PCM/video
+error through these phases; its video recovery/cadence still needs work.
+
+This run finally exercises actual codec concealment: by the end of impairment,
+**43,200 missing samples (900 ms)** produce 45 bounded codec-loss outputs, with
+968 real RED repairs. The new singer's independent receiver records **39,360
+missing/concealed samples (820 ms)**, 41 loss outputs and 1,067 RED repairs.
+Maximum PCM reservation is **798,720 bytes / 25 credits**, at most six held
+inputs, zero PCM backpressure events and zero grouping-copy fallbacks. No codec
+or output-clock terminal failures occur. Live-context lag spans **348.77–506.44
+ms** during impairment and **78.88–152.71 ms** in the new receiver after handover.
+This establishes actual bounded concealment behavior in a failed full journey;
+it does not qualify overall impaired timing, nominal owned video or long-term
+clock stability. Separate random-loss runs do not establish causal improvements.
+
+Next comparison uses the already prepared **800-ms** shared-context full profile
+at `/tmp/ktv-owned-l1t1-opus-plc-shared-buffers-startup-full-udp-20261005.env`.
+Its nominal L1T1 source, bitrate floor, real PLC, original 700-ms video reorder,
+one-second bounded recovery, continuous RTX, 150-ms/0–40-ms/5% per-leg impairment,
+40-pair matching and full recovery/handover scope remain intact. The comparison
+tests existing additional buffering against the observed video/audio skew; no
+memory, timing, nominal-quality or expiry limit is raised. Native log:
+`/tmp/ktv-owned-av-vp9-l1t1-opus-plc-shared-buffers-startup-full-udp-target800-20261005.log`.
