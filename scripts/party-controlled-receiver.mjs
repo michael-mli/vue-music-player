@@ -53,12 +53,14 @@ export function installControlledReceiver(Clock, FrameQueue, delayMs = 800, crea
       anchors:decoder?.decoded||0,ageMs:decoder?Date.now()-decoder.lastCaptureUnixMs:null,maximumResidualMs:decoder?.maximumResidualMs||0}}
     let closed = false, frameId, presentationId, presented = 0, drawn = 0, missing = 0, maximumBytes = 0, maximumQueued = 0
     let firstPresentation = null, lastPresentation = null, error = null, ready = false, writing = false, lastOutputTimestamp = -Infinity
+    let videoOutputFailure=null
     let decodedAudio = 0, closedAtUnixMs = null, waitingReadFrame = null, presentationBackpressure = 0
     const videoArrival={count:0,totalMs:0,maximumMs:0,afterHold:0}
     const videoRelease={count:0,totalLateMs:0,maximumLateMs:0,over150:0,over250:0}
     const item = { original, state, snapshot() { return { session, ready, closed, closedAtUnixMs, error,
       delayMs, audioDelayMs: ownedPcm?delayMs:state.delay.delayTime.value * 1000,codecReservationBytes:codecBytes,queueReservationBytes,
       videoOutputClock:timestampForOutput?'context':'wall',
+      videoOutputFailure,
       ...(ownedPcm?{pcm:state.pcm.snapshot(),epochOffset}:{}),
       ...(ownedVideo?{ownedVideo:video.snapshot()}:{}),
       drawn, presented, missing, decodedAudio, maximumBytes, maximumQueued,presentationBackpressure,waitingReadFrame:waitingReadFrame?1:0,
@@ -181,6 +183,10 @@ export function installControlledReceiver(Clock, FrameQueue, delayMs = 800, crea
               writing = true
               void writer.write(frame).then(() => { frame.close(); writing = false; drawn++; ready = true },
                 () => { frame.close(); writing = false; fail('PLAYOUT_VIDEO_WRITE') })
+            }
+            catch(failure){
+              videoOutputFailure=['CONTEXT_NOT_RUNNING','INVALID_CLOCK','UNCHANGED_CLOCK','REVERSED_CLOCK'].includes(failure.reason)?failure.reason:null
+              throw failure
             }
             finally { selected.frame.close() }
           }

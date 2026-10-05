@@ -115,7 +115,8 @@ export function installEncodedTimingProbe(workerSource,receiverApi='native') {
       if(data?.type==='video-reference-state'){
         const known=[null,'VIDEO_ENVELOPE_CLOSED','VIDEO_ENVELOPE_INPUT','VIDEO_ENVELOPE_CODEC',
           'VIDEO_ENVELOPE_REFERENCE','VIDEO_ENVELOPE_BOUND','VIDEO_ENVELOPE_TRANSFER','VIDEO_ENVELOPE_FORMAT','VIDEO_ENVELOPE_INTEGRITY']
-        const row={worker:id,direction,closed:data.closed===true,error:known.includes(data.error)?data.error:'VIDEO_ENVELOPE_INPUT'}
+        const row={worker:id,direction,observedAtUnixMs:performance.timeOrigin+performance.now(),
+          closed:data.closed===true,error:known.includes(data.error)?data.error:'VIDEO_ENVELOPE_INPUT'}
         const keys=['version','wrapped','unwrapped','maximumBytes','maximumTrailerBytes','maximumFrameBytes','maximumDependencies',
           'payloadBytes','wireBytes','overheadBytes']
         for(const key of keys)if(Number.isSafeInteger(data[key])&&data[key]>=0)row[key]=data[key]

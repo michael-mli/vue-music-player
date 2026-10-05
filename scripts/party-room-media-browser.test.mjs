@@ -52,6 +52,7 @@ import { encodedTimingWorker, installEncodedTimingProbe } from './party-encoded-
 import { installAvSourceMarkers, installAvObserver, analyseAvObservations, summariseAvObservations } from './party-av-observer.mjs'
 import { collectAvMediaStats } from './party-av-stats.mjs'
 import { analyseCodecQuality, analyseCaptureCadence, analyseSourceAllocation } from './party-av-codec-quality.mjs'
+import { analyseVideoReferenceOverhead } from './party-video-reference-overhead.mjs'
 import { analyseAudioRedEvidence } from './party-audio-red-experiment.mjs'
 import { publisherVideoFloorSdp, installVideoFloorExperiment } from './party-video-floor-experiment.mjs'
 import { analyseSfuAllocationLogs, installSfuGrantScopeProbe, sfuLogByteLimit } from './party-sfu-allocation-evidence.mjs'
@@ -1298,6 +1299,11 @@ try {
     console.log('Native capture versus encoding:',JSON.stringify(analyseCaptureCadence(avTimingSamples,phase)))
   for(const phase of new Set(avTimingSamples.map(item=>item.phase)))
     console.log('Native source allocation:',JSON.stringify(analyseSourceAllocation(avTimingSamples,phase)))
+  if(sourceVideoReferences)for(const phase of new Set(avTimingSamples.map(item=>item.phase))){
+    const overhead=analyseVideoReferenceOverhead(avTimingSamples,phase)
+    console.log('Private video-reference envelope overhead:',JSON.stringify(overhead))
+    check(overhead.errors.length===0,'source reference wire overhead is measured across the complete phase')
+  }
   if(audioRedComparison)check(avTimingSamples.length>1&&avTimingSamples.every(sample=>{
     const senders=sample.source?.senderParameters?.filter(row=>row.kind==='audio')||[]
     return senders.length===1&&senders[0].encodings?.length===1&&senders[0].encodings[0].maxBitrate===64000
@@ -1365,6 +1371,8 @@ try {
     console.error('Native capture versus encoding on failure:',JSON.stringify(analyseCaptureCadence(avTimingSamples,phase)))
   for(const phase of new Set(avTimingSamples.map(item=>item.phase)))
     console.error('Native source allocation on failure:',JSON.stringify(analyseSourceAllocation(avTimingSamples,phase)))
+  if(sourceVideoReferences)for(const phase of new Set(avTimingSamples.map(item=>item.phase)))
+    console.error('Private video-reference envelope overhead on failure:',JSON.stringify(analyseVideoReferenceOverhead(avTimingSamples,phase)))
   for(const phase of new Set(avTimingSamples.map(item=>item.phase)))
     console.error('Native codec quality on failure:',JSON.stringify(analyseCodecQuality(avTimingSamples,phase,codecExperiment?.codec || 'vp8',(senderKeyframeMs??codecExperiment?.keyframeMs??null),codecExperiment?.maxBitrate ?? 350000)))
   if(receiverKeyframes)for(const phase of new Set(avTimingSamples.map(item=>item.phase)))

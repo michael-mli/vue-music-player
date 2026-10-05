@@ -39,6 +39,30 @@ test('invalid explicit envelopes close the stream and owned decoder without forw
   assert.equal(forwarded,0);assert.equal(closed,1);assert.equal(error,'VIDEO_ENVELOPE_INPUT')
   assert.equal(JSON.stringify(f.allMessages).includes('secret-token'),false)
 })
+test('envelope stripping and owned admission continue beyond the bounded timing record limit',()=>{
+  const send=fixture(null,createVideoReferenceEnvelope),receive=fixture(null,createVideoReferenceEnvelope)
+  send.realm.__encodedTimingDirection='send';receive.realm.__encodedTimingDirection='receive'
+  const sender=send.stream({},'video'),receiver=receive.stream({},'video')
+  let owned=0,forwarded=0,audioForwarded=0
+  receive.realm.__observeOwnedVideo=(frame,metadata)=>{
+    assert.equal(frame.data.byteLength,12);assert.equal(metadata.sourceReferences,true);owned++
+  }
+  for(let i=1;i<=5000;i++){
+    const body=new Uint8Array(12);body[0]=i===1?0:1
+    if(i===1)body.set([0x9d,1,0x2a,0,5,0xd0,2],3)
+    const frame={type:i===1?'key':'delta',timestamp:i,data:body.buffer,
+      getMetadata:()=>({frameId:i,dependencies:i===1?[]:[i-1]})}
+    sender.transformer.transform(frame,{enqueue(){}})
+    frame.getMetadata=()=>({captureTime:i})
+    receiver.transformer.transform(frame,{enqueue(){forwarded++}})
+  }
+  assert.equal(owned,5000);assert.equal(forwarded,5000)
+  assert.ok(receive.messages.every(message=>message.count<=4000))
+  assert.equal(receive.allMessages.filter(row=>row.type==='video-reference-state').at(-1).unwrapped,5000)
+  const audio={type:'key',timestamp:1,data:new Uint8Array([1,2,3]).buffer},before=audio.data
+  receive.stream({},'audio').transformer.transform(audio,{enqueue(){audioForwarded++}})
+  assert.equal(audioForwarded,1);assert.equal(audio.data,before)
+})
 test('timing observation preserves frame identity and delivery without touching encoded payload', () => {
   const f = fixture(), frame = { constructor: { name: 'RTCEncodedVideoFrame' }, timestamp: 1234, type: 'key',
     get data() { throw new Error('Encoded payload must remain unread') },
@@ -114,7 +138,7 @@ function browserFixture(legacy,api='native') {
   const revoked = [], realm = { URL: class extends URL {
     static createObjectURL() { return 'blob:owned-'+(++nextUrl) }
     static revokeObjectURL(url) { revoked.push(url) }
-  }, Blob, performance:{now:()=>7}, RTCRtpReceiver: Receiver, RTCRtpSender: class {},
+  }, Blob, performance:{timeOrigin:1000,now:()=>7}, RTCRtpReceiver: Receiver, RTCRtpSender: class {},
   RTCRtpScriptTransform: class { constructor(worker, options) { this.worker = worker; this.options = options } },
   location: { href: 'https://owned.test/party', origin: 'https://owned.test' } }
   realm.window = { Worker, RTCPeerConnection: Peer }
@@ -173,6 +197,23 @@ test('received video decoder diagnostics allowlist scalars and cap frames and ge
   const rows=f.realm.window.__encodedTimingProbe.videoDecoders
   assert.equal(rows.length,8);assert.ok(rows.every(row=>row.records.length===8))
   assert.equal(rows[0].records[0].width,1280);assert.ok(!JSON.stringify(rows).includes('excluded'))
+  f.realm.window.__encodedTimingProbe.close()
+})
+test('parent envelope state timestamps its own observation and rejects malformed counters without retaining declarations',()=>{
+  const f=browserFixture(true),peer=new f.realm.window.RTCPeerConnection(),receiver=f.receiver()
+  f.track(peer,receiver)
+  const data={type:'video-reference-state',closed:false,error:null,version:1,wrapped:0,unwrapped:100,
+    maximumBytes:1000,maximumTrailerBytes:38,maximumFrameBytes:262144,maximumDependencies:8,
+    payloadBytes:10000,overheadBytes:3800,wireBytes:13800,observedAtUnixMs:999999,
+    frameId:'private-source',dependencies:['private-parent'],token:'private-token'}
+  f.workers[0].dispatchEvent(new MessageEvent('message',{data}))
+  const probe=f.realm.window.__encodedTimingProbe
+  assert.equal(probe.referenceStates[0].observedAtUnixMs,1007)
+  assert.equal(probe.referenceStates[0].direction,'receive');assert.equal(probe.errors,0)
+  assert.ok(!JSON.stringify(probe.referenceStates).includes('private-'))
+  f.workers[0].dispatchEvent(new MessageEvent('message',{data:{...data,wireBytes:1}}))
+  assert.equal(probe.referenceStates.length,1);assert.equal(probe.errors,1)
+  assert.equal(probe.referenceStates[0].error,'VIDEO_ENVELOPE_INPUT')
   f.realm.window.__encodedTimingProbe.close()
 })
 
