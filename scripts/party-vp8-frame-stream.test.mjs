@@ -232,6 +232,7 @@ test('a missing parent repairs the full dependency queue before pressure can dis
     assert.equal(f.timers.size,0);for(const p of f.delivered)p.frame.close();f.stream.close()
   }
 })
+
 test('a pressured reference repair cannot bypass full native output slots, unknown dependencies or the original deadline',async()=>{
   const stalled=await fixture({codec:'vp9',gapAware:true,dependencyAware:true,reorderMs:700,accept:'wait'})
   stalled.send(0,0,'key',{frameId:1,dependencies:[]})
@@ -260,6 +261,10 @@ test('missing declared references expire at the fixed bound without decoding an 
   assert.equal(f.stream.snapshot().encodedBytes,0)
   f.send(10800,120,'delta',{frameId:4,dependencies:[1]});assert.equal(f.stream.snapshot().decoded,2)
   for(const packet of f.delivered)packet.frame.close();f.stream.close()
+})
+
+test('VP8 receiver cannot opt into unavailable declared references or silently use another codec',async()=>{
+  await assert.rejects(fixture({codec:'vp8',gapAware:true,dependencyAware:true,reorderMs:700}),/VIDEO_REORDER_CONFIG/)
 })
 
 test('a new independent keyframe drains the older broken chain without waiting or decoding missing references',async()=>{

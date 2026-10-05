@@ -148,19 +148,21 @@ const encodedApi = process.env.KTV_ROOM_TEST_ENCODED_API || 'native'
 assert.ok(['native','legacy'].includes(encodedApi)&&(encodedApi==='native'||encodedTiming),
   'A private encoded API comparison requires timing observation')
 const videoFloor=process.env.KTV_ROOM_TEST_VIDEO_MIN_BITRATE!==undefined
+const vp8GapComparison=codecExperiment?.codec==='vp8'&&pcmRenderer==='buffers'&&pcmPlcBuild&&
+  ownedVideo&&gapVideoReorder&&!dependencyVideoReorder&&avTiming
 const senderTemporal=process.env.KTV_ROOM_TEST_SOURCE_TEMPORAL==='L1T1'
 assert.ok(process.env.KTV_ROOM_TEST_SOURCE_TEMPORAL===undefined||senderTemporal&&videoFloor&&
   ownedVideo&&avTiming&&codecExperiment?.codec==='vp9','Private temporal comparison requires nominal VP9 floor timing')
 const videoMarkerProbe=process.env.KTV_ROOM_TEST_DECODED_MARKER_PROBE==='1'
 assert.ok(process.env.KTV_ROOM_TEST_DECODED_MARKER_PROBE===undefined||videoMarkerProbe&&ownedVideo&&avTiming&&
-  codecExperiment?.codec==='vp9'&&videoFloor,'Decoded marker observation requires nominal private VP9 owned timing')
+  (codecExperiment?.codec==='vp9'||vp8GapComparison)&&videoFloor,'Decoded marker observation requires nominal private owned timing')
 const sfuAllocationEvidence=process.env.KTV_ROOM_TEST_SFU_ALLOCATION_EVIDENCE==='1'
 assert.ok(process.env.KTV_ROOM_TEST_SFU_ALLOCATION_EVIDENCE===undefined||sfuAllocationEvidence&&remoteMode&&videoFloor,
-  'Private SFU observation requires the unchanged remote VP9 floor comparison')
+  'Private SFU observation requires the declared remote nominal floor comparison')
 assert.ok(!videoFloor||process.env.KTV_ROOM_TEST_VIDEO_MIN_BITRATE==='250000'&&avTiming&&encodedTiming&&ownedPcm&&ownedVideo&&
-  codecExperiment?.codec==='vp9'&&codecExperiment.maxBitrate===350000&&codecExperiment.transport==='default'&&
+  (codecExperiment?.codec==='vp9'||vp8GapComparison)&&codecExperiment.maxBitrate===350000&&codecExperiment.transport==='default'&&
   codecExperiment.keyframeMs===null&&!audioRedComparison&&!equalSourcePriority&&!senderCadence,
-  'Private video floor requires the marked nominal VP9/RED profile without another sender comparison')
+  'Private video floor requires a marked nominal codec/RED profile without another sender comparison')
 const receiverFault = process.env.KTV_ROOM_TEST_RECEIVER_FAULT || 'off'
 assert.ok(!ownedPcm || encodedTiming && absoluteCapture && !opusDecodeProbe && !pcmPortProbe,
   'Owned PCM requires received capture/worker evidence without another audio probe')
@@ -207,14 +209,14 @@ const receiverSync = process.env.KTV_ROOM_TEST_RECEIVER_SYNC || 'off'
 const controlledPlayoutMs = process.env.KTV_ROOM_TEST_CONTROLLED_PLAYOUT_MS === undefined ? null : Number(process.env.KTV_ROOM_TEST_CONTROLLED_PLAYOUT_MS)
 const independentVideoReorder=process.env.KTV_ROOM_TEST_VIDEO_REORDER_MS!==undefined
 assert.ok(!independentVideoReorder||process.env.KTV_ROOM_TEST_VIDEO_REORDER_MS==='700'&&
-  controlledPlayoutMs===500&&ownedVideo&&dependencyVideoReorder&&senderTemporal&&videoMarkerProbe&&videoFloor,
-  'Independent reorder comparison requires the nominal L1T1 floor with a 500-ms output target and the existing 700-ms decoder bound')
+  controlledPlayoutMs===500&&ownedVideo&&(dependencyVideoReorder&&senderTemporal||vp8GapComparison)&&videoMarkerProbe&&videoFloor,
+  'Independent reorder comparison requires a declared nominal floor with a 500-ms output target and the existing 700-ms decoder bound')
 const videoReorderMs=independentVideoReorder?700:
   controlledPlayoutMs>=800?(gapVideoReorder?700:500):controlledPlayoutMs>=500?240:80
 assert.ok(!ownedPcm||controlledPlayoutMs!==null&&controlledPlayoutMs<=800&&
-  (!codecExperiment||ownedVideo&&codecExperiment.codec==='vp9'&&codecExperiment.maxBitrate===350000&&
+  (!codecExperiment||ownedVideo&&(codecExperiment.codec==='vp9'||vp8GapComparison)&&codecExperiment.maxBitrate===350000&&
     codecExperiment.keyframeMs===null&&codecExperiment.transport==='default'),
-  'Owned PCM requires its bounded production layout or explicitly marked nominal VP9 comparison')
+  'Owned PCM requires its bounded production layout or explicitly marked nominal codec comparison')
 assert.ok(!absoluteCapture || encodedTiming || controlledPlayoutMs !== null && receiverFault !== 'off',
   'Absolute capture negotiation requires native frame timing or controlled native expiry evidence')
 assert.ok(controlledPlayoutMs === null || (avTiming || receiverFault !== 'off' || ownedPcm) && absoluteCapture && receiverSync === 'off' && receiverTargetMs === null &&
@@ -259,10 +261,10 @@ if (remoteMode) {
 
 const continueSfuRtx=process.env.KTV_ROOM_TEST_SFU_RTX_RECOVERY==='continue'
 assert.ok(process.env.KTV_ROOM_TEST_SFU_RTX_RECOVERY===undefined||continueSfuRtx&&sfuAllocationEvidence&&
-  receiverKeyframes&&(receiverKeyframeMs===5000||senderTemporal&&videoMarkerProbe&&
+  receiverKeyframes&&(receiverKeyframeMs===5000||(senderTemporal||vp8GapComparison)&&videoMarkerProbe&&
     (receiverKeyframeMs===2500||pcmBatchPackets===2&&receiverKeyframeMs===1000&&
       (controlledPlayoutMs===800||controlledPlayoutMs===500&&pcmRenderer==='buffers'&&pcmPlcBuild&&independentVideoReorder)))&&
-  dependencyVideoReorder&&impairmentProtocol==='udp'&&
+  (dependencyVideoReorder||vp8GapComparison)&&impairmentProtocol==='udp'&&
   continuousImpairment&&handoverAv,'Private SFU RTX comparison requires declared bounded recovery and the full UDP floor/RED journey')
 assert.ok(continueSfuRtx===Boolean(process.env.KTV_ROOM_TEST_SFU_RTX_BUILD),'Private SFU build must explicitly select RTX comparison')
 assert.ok(receiverKeyframeWaitMs===350||continueSfuRtx,'Earlier reference feedback retains continuous RTX during bounded recovery')
@@ -574,7 +576,7 @@ try {
           }).filter(line=>line!==null).join('\\r\\n');return remote.call(this,{type:value.type,sdp});
         };
       }
-      ${videoFloor ? `(${installVideoFloorExperiment.toString()})(${publisherVideoFloorSdp.toString()});` : ''}
+      ${videoFloor ? `(${installVideoFloorExperiment.toString()})(${publisherVideoFloorSdp.toString()},${JSON.stringify(codecExperiment.codec)});` : ''}
       const timestamp = AudioContext.prototype.getOutputTimestamp;
       AudioContext.prototype.getOutputTimestamp = function() { const output = timestamp.call(this); window.__outputEvidence.push({ ...output, context: window.__contexts.indexOf(this), now: performance.now(), render: this.currentTime, latency: this.outputLatency }); if (__outputEvidence.length > 24) __outputEvidence.shift(); return output; };
       const getMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);

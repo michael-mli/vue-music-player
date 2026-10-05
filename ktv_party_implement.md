@@ -49,7 +49,7 @@ is a preview; public online media is still disabled.
 
 | Check | Current evidence | Status |
 | --- | --- | --- |
-| Timing/capability fixtures | 239/239 including shared-context memory accounting, copy fallback, startup readiness, pressured parent repair and bounded earlier reference feedback | Pass |
+| Timing/capability fixtures | 242/242 including bounded earlier feedback, explicit codec floor selection and rejection of unavailable VP8 receiver references | Pass |
 | Buffered expiry after render/guard clock freeze/resume | 51/51 with shared-context libopus buffers at the 500-ms target, including 524.23-ms retained PCM | Pass for tested digital topology |
 | Buffered expiry while source and listener pages stall | 46/46, latest reader/revalidation | Pass for digital fixture |
 | Latest qualified clean 40-pair A/V regression | Shared-context libopus buffers / 500-ms target: 50/50, p95 61.55 ms / max 79.17 ms, no unmatched edges | Pass for tested digital topology |
@@ -6308,3 +6308,69 @@ delay/jitter/loss, matching and full recovery/handover scope stay intact.
 No native acceptance is assumed. Impaired recovery/cadence, sustained clocks,
 product integration and physical/mobile/capacity/release gates remain open.
 Public deployment remains unchanged with online media disabled.
+
+The 100-ms feedback comparison is terminal **exit 1**, timing out on impaired
+matching: **38 pairs**, seven unmatched audio/seven unmatched video, p95
+**618.09 ms**, maximum **733.00 ms**. Actual worker wait is 100 ms in every
+observed sample. Source/native/owned decode/presentation rates are **24.83 /
+19.20 / 16.92 / 16.81 fps**; native and owned cadence fail. Video records 643
+reference misses, zero pressure drains or parent-repair drains, 25 late frames,
+55 fulfilled requests and 50 early requests. No marker regression or terminal
+receiver error occurs. PCM stays below **768,000 bytes / 24 credits**, with
+39,360 missing/concealed samples and no backpressure. This comparison remains
+unqualified; default feedback stays 350 ms. Independent random loss prevents
+claiming a causal numeric improvement or regression between runs.
+
+### 2026-10-05 — Explicit production-codec floor and supported VP8 RTP ordering
+
+Prepared a private VP8/RED build at
+`/tmp/ktv-codec-candidate-owned-vp8-reference-20261005`, using the existing
+non-publishable codec builder: 1280×720, 25 fps, 350-kbit video, default transport,
+no backup codec or extra periodic keyframes, RED retained. Build exits 0 in
+15.92 seconds; its digest check confirms production `dist` is unchanged.
+Build log: `/tmp/ktv-vp8-reference-private-build-20261005.log`.
+
+The first declared-reference VP8 trial is terminal **exit 1 before initial
+presentation** in
+`/tmp/ktv-owned-av-vp8-opus-plc-shared-buffers-floor-reference-clean40-target500-20261005.log`.
+The worker fails closed at `VIDEO_REFERENCE` before decoding any video or PCM.
+An earlier metadata histogram was misread: **sender** VP8 records expose frame
+IDs/dependencies, but **receiver** records in this setup do not. Synthetic
+reference fixtures cannot establish this native capability. Reverted the
+experimental VP8-reference admission; stream and worker still reject that mode.
+New regression fixtures explicitly preserve this rejection.
+
+The private floor helper now accepts an explicit VP8 or VP9 codec and modifies
+only that codec's 250-kbit minimum parameter. Default remains VP9. Tests verify
+other codec sections, audio, feedback and SDP bytes remain intact, idempotent
+normalization and actual native retention. This enables a declared VP8 comparison
+using its existing **RTP-gap ordering** and actual late-frame recovery, without
+invented reference metadata or a silent dependency fallback. The same 700-ms
+input wait, 20 retained packets, four decoder outputs, two transfers, aggregate
+memory, capture clock, expiry and nominal source/quality gates remain intact.
+The source retains its production temporal policy; no L1T1 override is applied.
+
+Final timing/capability fixtures pass **242/242** in
+`/tmp/ktv-vp8-explicit-floor-gap-final-all-fixtures-20261005.log`.
+Clean 40-pair qualification at the existing 500-ms output target, with explicitly
+retained 700-ms video input reorder, is terminal **exit 1** in
+`/tmp/ktv-owned-av-vp8-opus-plc-shared-buffers-floor-gap-clean40-target500-20261005.log`.
+Owner-only parameters:
+`/tmp/ktv-owned-vp8-opus-plc-shared-buffers-floor-gap-clean40-target500-20261005.env`.
+It reaches **40 pairs**, zero unmatched audio/video, p95 **54.23 ms**, maximum
+**57.04 ms**. Source/native/owned decode/presentation are **25.00 / 24.97 /
+25.01 / 24.86 fps**, with no nominal-quality errors. The declared recovery
+profile then correctly rejects: it requires actual fulfilled recovery requests,
+while this clean path has zero requests and zero newly encoded/decoded keys.
+This is not a complete accepted native journey.
+
+The pure clean VP8 profile now omits receiver recovery and its interval flag,
+retaining every clock, codec, source, marker, memory, cadence and skew gate.
+It runs in
+`/tmp/ktv-owned-av-vp8-opus-plc-shared-buffers-floor-gap-clean40-no-recovery-target500-20261005.log`,
+with owner-only parameters
+`/tmp/ktv-owned-vp8-opus-plc-shared-buffers-floor-gap-clean40-no-recovery-target500-20261005.env`.
+Full impaired qualification still enables actual bounded native recovery and
+requires real response evidence. No recovery gate is waived. No new VP8-floor
+release acceptance is assumed; public deployment remains unchanged and all
+remaining release gates stay open.

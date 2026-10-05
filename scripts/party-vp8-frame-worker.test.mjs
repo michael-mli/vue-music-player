@@ -4,7 +4,7 @@ import vm from 'node:vm'
 import {setImmediate as tick} from 'node:timers/promises'
 import {installVp8FrameWorker} from './party-vp8-frame-worker.mjs'
 
-function fixture({recover=false,nativeRequest=true,recoveryMs=5000,dependencyAware=false,recoveryWaitMs=350}={}){
+function fixture({recover=false,nativeRequest=true,recoveryMs=5000,dependencyAware=false,recoveryWaitMs=350,codec=dependencyAware?'vp9':'vp8'}={}){
   let wall=1000,mono=0,listener,timer,delivered,decoded=0,lateFrames=0,requests=0,streamClosed=false,committedGaps=0,referenceMisses=0,missingReferenceWaitMs=0
   const reports=[]
   class Port{constructor(){this.messages=[]}postMessage(packet){this.messages.push(packet)}start(){}close(){this.closed=true}}
@@ -15,8 +15,8 @@ function fixture({recover=false,nativeRequest=true,recoveryMs=5000,dependencyAwa
     __encodedTimingDirection:'receive',addEventListener:(name,callback)=>{listener=callback},
     setInterval:callback=>{timer=callback;return 1},clearInterval:()=>{timer=null},postMessage:row=>reports.push(row),createStream}
   if(nativeRequest)realm.__requestOwnedVideoKeyframe=async()=>{requests++}
-  realm.self=realm;realm.recover=recover;realm.recoveryMs=recoveryMs;realm.dependencyAware=dependencyAware;realm.recoveryWaitMs=recoveryWaitMs
-  vm.runInNewContext(`(${installVp8FrameWorker.toString()})(createStream,80,recover,recoveryMs,dependencyAware,dependencyAware?'vp9':'vp8',dependencyAware,null,recoveryWaitMs)`,realm)
+  realm.self=realm;realm.recover=recover;realm.recoveryMs=recoveryMs;realm.dependencyAware=dependencyAware;realm.recoveryWaitMs=recoveryWaitMs;realm.codec=codec
+  vm.runInNewContext(`(${installVp8FrameWorker.toString()})(createStream,80,recover,recoveryMs,dependencyAware,codec,dependencyAware,null,recoveryWaitMs)`,realm)
   const message=data=>listener({data})
   return {realm,port,reports,message,bind(){message({type:'video-bind',port,expiryUnixMs:10000})},
     send(id,late=false,type='delta',gap=false,missing=false){realm.__observeOwnedVideo({late,type,gap,missing},{});return delivered?.({},{id,bytes:1,captureUnixMs:wall})},
@@ -106,4 +106,9 @@ test('earlier reference feedback rejects unsupported thresholds or an unrelated 
     assert.throws(()=>fixture({recover:true,dependencyAware:true,recoveryWaitMs}),/VIDEO_RECOVERY_CONFIG/)
   assert.throws(()=>fixture({recoveryWaitMs:100,dependencyAware:true}),/VIDEO_RECOVERY_CONFIG/)
   assert.throws(()=>fixture({recoveryWaitMs:100,recover:true}),/VIDEO_RECOVERY_CONFIG/)
+})
+
+test('worker rejects VP8 reference mode while retaining its supported RTP recovery path',()=>{
+  assert.throws(()=>fixture({codec:'vp8',recover:true,dependencyAware:true}),/VIDEO_REORDER_CONFIG/)
+  assert.doesNotThrow(()=>fixture({codec:'vp8',recover:true,dependencyAware:false}))
 })

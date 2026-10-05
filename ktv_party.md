@@ -1458,6 +1458,16 @@ missing references qualify; source pacing, marker identity and observed skew do
 not supply recovery triggers. Native readback verifies both wait and cooldown;
 the original quality, memory, matching and expiry gates still apply.
 
+A separate explicit production-codec comparison can apply the same 250-kbit
+vendor floor to VP8 while retaining its 350-kbit ceiling, RED and nominal source
+dimensions/cadence. The SDP helper selects one declared codec and preserves all
+other codec, audio and feedback sections; native retention and measured quality
+remain required. VP8 receiver frame IDs/dependencies are unavailable in the
+tested native setup. Sender metadata does not establish receiver capability;
+the dependency mode remains restricted to the validated VP9 path. The VP8
+comparison uses the existing bounded RTP-gap ordering and actual late-frame
+recovery instead, without fabricated references or silent codec fallback.
+
 The private nominal VP9 `L1T1` comparison can select its existing 700-ms input
 reorder bound independently of a 500-ms PCM/output target. This isolates late
 reference repair from output residence: native readback must retain the declared

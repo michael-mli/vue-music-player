@@ -27,7 +27,7 @@ test('video floor normalizes shared VP9 formats while preserving audio, feedback
   assert.throws(() => publisherVideoFloorSdp(description(), 350), /VIDEO_FLOOR_INPUT/)
 })
 
-function fixture(t, { ignore = false, reject = false, pending = false } = {}) {
+function fixture(t, { ignore = false, reject = false, pending = false,codec='vp9' } = {}) {
   const previous = globalThis.window
   t.after(() => { if (previous === undefined) delete globalThis.window; else globalThis.window = previous })
   let complete
@@ -43,7 +43,7 @@ function fixture(t, { ignore = false, reject = false, pending = false } = {}) {
   }
   globalThis.window = { RTCPeerConnection: Peer }
   const original = Peer.prototype.setRemoteDescription
-  installVideoFloorExperiment(publisherVideoFloorSdp)
+  installVideoFloorExperiment(publisherVideoFloorSdp,codec)
   return { Peer, original, state: window.__videoFloorExperiment, complete: () => complete() }
 }
 test('floor experiment scopes actual publisher answers, verifies native retention and restores the original method', async t => {
@@ -58,6 +58,17 @@ test('floor experiment scopes actual publisher answers, verifies native retentio
   f.state.close(); f.state.close(); assert.equal(f.Peer.prototype.setRemoteDescription, f.original)
   await publisher.setRemoteDescription({ type: 'answer', sdp: description() })
   assert.equal(f.state.snapshot().verified, 1); assert.equal(publisher.remoteDescription.sdp, description())
+})
+
+test('an explicit VP8 floor preserves other codecs, feedback and audio and verifies actual native retention',async t=>{
+  const vp8=description().replaceAll('VP9','VP8'),other='m=video 9 UDP/TLS/RTP/SAVPF 100\r\na=rtpmap:100 VP9/90000\r\na=fmtp:100 profile-id=0\r\n'
+  const mixed=vp8+other,rewritten=publisherVideoFloorSdp(mixed,250,'vp8')
+  assert.equal(rewritten.replaceAll(';x-google-min-bitrate=250',''),mixed)
+  assert.ok(rewritten.endsWith(other));assert.equal(publisherVideoFloorSdp(rewritten,250,'vp8'),rewritten)
+  assert.throws(()=>publisherVideoFloorSdp(vp8,250,'h264'),/VIDEO_FLOOR_INPUT/)
+  const f=fixture(t,{codec:'vp8'}),publisher=new f.Peer('video')
+  await publisher.setRemoteDescription({type:'answer',sdp:mixed})
+  assert.equal(f.state.snapshot().codec,'vp8');assert.equal(f.state.snapshot().verified,1);f.state.close()
 })
 test('ignored native floor and rejected descriptions remain failed evidence', async t => {
   for (const options of [{ ignore: true }, { reject: true }]) {
