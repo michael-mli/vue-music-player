@@ -54,7 +54,13 @@ test('expired or discontinuous worker clocks close the renderer port and cannot 
     assert.equal(f.adapter.snapshot().closed,true);assert.equal(f.port.closed,true)
     f.port.onmessage({data:{type:'renew',expiryUnixMs:9000}})
     assert.equal(f.closes.length,1);assert.equal(f.messages.at(-1).data.type,'stop')
+    assert.equal(f.messages.at(-1).data.reason,'PCM_PORT_CLOCK')
   }
+})
+test('adapter stop conveys the original fixed terminal cause before periodic state reporting',()=>{
+  const f=fixture();f.adapter.close('PCM_BOUND')
+  assert.equal(f.messages.at(-1).data.reason,'PCM_BOUND');assert.equal(f.adapter.snapshot().reason,'PCM_BOUND')
+  const ordinary=fixture();ordinary.adapter.close();assert.equal(ordinary.messages.at(-1).data.reason,null)
 })
 test('bounded valid renewal extends decoding; invalid controls and malformed mapping fail closed',()=>{
   const f=fixture();f.port.onmessage({data:{type:'renew',expiryUnixMs:3000}})

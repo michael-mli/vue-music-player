@@ -6568,8 +6568,39 @@ cadence, matching, skew, deadline and memory gates remain intact.
 
 Clock/controller/scope/temporal fixtures pass **22/22** in
 `/tmp/ktv-native-context-video-output-clock-fixtures-20261005.log`; harness syntax
-and diff checks pass. The pure clean comparison runs in
+and diff checks pass. The first pure clean comparison is terminal **exit 1** in
 `/tmp/ktv-owned-av-vp8-l1t1-opus-plc-shared-context-video-floor-gap-clean40-target500-20261005.log`,
 using owner-only profile
 `/tmp/ktv-owned-vp8-l1t1-opus-plc-shared-context-video-floor-gap-clean40-target500-20261005.env`.
 No measured benefit or native acceptance is assumed.
+
+The first context-video run reaches **40 clean pairs with no unmatched edges**,
+p95 **45.00 ms**, maximum **52.77 ms**, and nominal source/native/owned
+decode/presentation **25.00 / 24.98 / 25.04 / 24.78 fps**. Every timed sample
+retains the declared context clock, and visual probes stay monotonic. Whole
+journey acceptance still fails after **43 checks**: the final receiver history
+contains `PLAYOUT_AUDIO_CLOCK` / `PLAYOUT_PCM_RENDER` following an upstream PCM
+stop. Live wall lag during measurement grows **260.25–685.23 ms**. By termination,
+the PCM queues reach **48 credits**, maximum **1,044,480 bytes**, 58 backpressure
+events and 15 copy fallbacks, but the last cached decoder state has no terminal
+cause. The stop packet previously discarded that cause, so neither successful
+teardown nor a specific capacity/clock failure is established. Timing-only
+results do not qualify the entire native journey.
+
+### 2026-10-05 — Retain bounded PCM stop causes before worker teardown
+
+The PCM adapter now includes its fixed terminal reason in the renderer stop
+packet, allowing the scheduler's terminal snapshot to distinguish an ordinary
+stop from clock, credit, decoder or capacity failure even when teardown happens
+before the next periodic worker report. The scheduler retains only a fixed
+allowlist in `upstreamReason`; arbitrary strings are rejected and never echoed.
+Legacy reason-free stops remain valid. Output closure, source cleanup, credits,
+capacity, deadline and error acceptance remain unchanged; no stop is waived.
+
+Scheduler/port/context-clock/controller fixtures pass **29/29** in
+`/tmp/ktv-pcm-upstream-stop-reason-fixtures-20261005.log`. The same immutable clean
+context-video profile now runs in
+`/tmp/ktv-owned-av-vp8-l1t1-opus-plc-shared-context-video-stop-reason-clean40-target500-20261005.log`
+to resolve the concrete missing terminal evidence. No complete native
+context-video acceptance is claimed. Public preview and media policy remain
+unchanged; all remaining release gates stay open.

@@ -69,6 +69,18 @@ test('terminal closure removes callbacks and delayed completion cannot duplicate
   assert.equal(f.sources.length,1);assert.equal(f.messages.filter(row=>row.type==='consumed').length,0)
   assert.equal(f.sources[0].onended,null);assert.equal(f.sources[0].buffer,null)
 })
+test('upstream stops preserve only fixed diagnostic causes and close all sources without returning stale credits',()=>{
+  for(const reason of [undefined,null,'PCM_BOUND','PCM_PORT_CLOCK','PCM_CREDIT']){
+    const f=fixture();f.send(1,60000);f.port.onmessage({data:{type:'stop',reason}})
+    assert.equal(f.scheduler.snapshot().closed,true);assert.equal(f.scheduler.snapshot().error,null)
+    assert.equal(f.scheduler.snapshot().upstreamReason,reason??null)
+    assert.equal(f.scheduler.snapshot().bytes,0);assert.equal(f.messages.filter(row=>row.type==='consumed').length,0)
+    assert.equal(f.sources[0].buffer,null)
+  }
+  const invalid=fixture();invalid.port.onmessage({data:{type:'stop',reason:'secret-token'}})
+  assert.equal(invalid.scheduler.snapshot().error,'PLAYOUT_PCM_BUFFER_FORMAT')
+  assert.equal(JSON.stringify(invalid.scheduler.snapshot()).includes('secret-token'),false)
+})
 test('graph evidence rejects markers on backing, cross-context or direct hardware sources',()=>{
   const context={destination:{}},sink={context,__partyOwnedPcmSink:true}
   const source={__partyOwnedPcmSource:true,__partyOwnedPcmSink:sink,__state:{context,connections:[sink],ended:false}}

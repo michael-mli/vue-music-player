@@ -10,7 +10,7 @@ export function bindOpusPcmPort(createStream, primaryPayload, packetFrames, conf
   function close(reason=null) {
     if(closed)return
     closed=true;closeReason=reason;clearInterval(timer);stream?.close(reason)
-    try{port.postMessage({type:'stop'})}catch{}
+    try{port.postMessage({type:'stop',reason:closeReason})}catch{}
     port.close()
   }
   function check() {

@@ -4,7 +4,7 @@ export function createPcmBufferScheduler(context,node,port){
   if(!context||typeof context.createBuffer!=='function'||typeof context.createBufferSource!=='function'||
     !node||!(port instanceof MessagePort))throw new Error('PLAYOUT_PCM_BUFFER_CONFIG')
   const entries=new Map(),copyReservationBytes=46080,limit=1024*1024-copyReservationBytes
-  let closed=false,error=null,bytes=0,maximumBytes=0,maximumQueued=0,lastId=0,lastEnd=0,latePackets=0,trimmedFrames=0
+  let closed=false,error=null,upstreamReason=null,bytes=0,maximumBytes=0,maximumQueued=0,lastId=0,lastEnd=0,latePackets=0,trimmedFrames=0
   function release(entry,consumed=true){
     if(!entries.delete(entry.id))return
     bytes-=entry.bytes
@@ -27,7 +27,12 @@ export function createPcmBufferScheduler(context,node,port){
     if(closed)return
     let source
     try{
-      if(data?.type==='stop'){close();return}
+      if(data?.type==='stop'){
+        const known=['PCM_API','PCM_CONFIG','PCM_DECODE','PCM_OUTPUT','PCM_CLOCK','PCM_BOUND','PCM_PACKET','PCM_CREDIT',
+          'PCM_PORT_CLOCK','PCM_PORT_MESSAGE','PCM_PORT_DECODER','PCM_PORT_SCHEDULE']
+        if(data.reason!==undefined&&data.reason!==null&&!known.includes(data.reason))throw new Error('PLAYOUT_PCM_BUFFER_FORMAT')
+        upstreamReason=data.reason??null;close();return
+      }
       const {id,startFrame,planes,creditBytes}=data||{}
       if(data.type!=='pcm'||!Number.isSafeInteger(id)||id<=lastId||!Number.isSafeInteger(startFrame)||startFrame<lastEnd||
         !Array.isArray(planes)||planes.length<1||planes.length>2)throw new Error('PLAYOUT_PCM_BUFFER_CLOCK')
@@ -71,7 +76,7 @@ export function createPcmBufferScheduler(context,node,port){
   port.onmessage=receive;port.start()
   return {close,snapshot(){
     const renderFrame=Math.round(context.currentTime*48000)
-    return {closed,error,queued:entries.size,bytes,maximumBytes,maximumQueued,copyReservationBytes,
+    return {closed,error,upstreamReason,queued:entries.size,bytes,maximumBytes,maximumQueued,copyReservationBytes,
       latePackets,trimmedFrames,renderFrame,observedAt:performance.now(),
       bufferedFrames:[...entries.values()].reduce((sum,item)=>sum+Math.max(0,item.endFrame-Math.max(item.startFrame,renderFrame)),0)}
   }}
