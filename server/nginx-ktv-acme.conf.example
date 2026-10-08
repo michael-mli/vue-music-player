@@ -1,0 +1,12 @@
+# Render __KTV_TURN_HOSTNAME__ with the DNS-only TURN hostname before installing.
+# HTTP serves only certificate challenges; TURN TLS itself listens on 5349.
+server {
+    listen 80;
+    server_name __KTV_TURN_HOSTNAME__;
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/ktv-acme;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+    location / { return 404; }
+}

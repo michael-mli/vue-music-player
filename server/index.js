@@ -13,6 +13,10 @@ import { initDb } from './db.js'
 import { createDigProvider } from './dig-provider.js'
 import { createDigLibrary } from './dig-library.js'
 import { registerDigRoutes } from './dig-routes.js'
+import { registerKtvRoutes } from './ktv-routes.js'
+import { ktvFeaturesFromEnv } from './ktv-features.js'
+import { createKtvAssets } from './ktv-assets.js'
+import { createKtvMetrics, registerKtvHealthRoute } from './ktv-observability.js'
 import { createDigIngestionWorker } from './dig-ingestion.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -160,6 +164,58 @@ function requireAdmin(req, res, next) {
   }
   next()
 }
+
+const karaokeManifestPath = process.env.KARAOKE_MANIFEST_PATH || path.join(WEB_ROOT, 'karaoke', 'karaoke_manifest.json')
+const ktvMetrics = createKtvMetrics()
+const ktvFeatures = ktvFeaturesFromEnv(process.env)
+app.use('/api/ktv', ktvMetrics.middleware)
+const ktvRealtime = registerKtvRoutes(app, {
+  features: ktvFeatures,
+  db, authMiddleware, secret: JWT_SECRET || 'unconfigured-development-secret',
+  allowedOrigins: (process.env.KTV_ALLOWED_ORIGINS || '').split(',').map((origin) => origin.trim()).filter(Boolean),
+  hostGraceMs: Number(process.env.KTV_HOST_GRACE_MS || 30_000),
+  timing: {
+    prepareTimeoutMs: Number(process.env.KTV_PREPARE_TIMEOUT_MS || 30000),
+    playbackLeadMs: Number(process.env.KTV_PLAYBACK_LEAD_MS || 2000),
+    onlineLeadMs: Number(process.env.KTV_ONLINE_LEAD_MS || 6000),
+    outputLeaseMs: Number(process.env.KTV_OUTPUT_LEASE_MS || 8000),
+    outputMarginMs: Number(process.env.KTV_OUTPUT_MARGIN_MS || 500),
+    pairingLifetimeMs: Number(process.env.KTV_PAIRING_LIFETIME_MS || 120000),
+    ticketLifetimeMs: Number(process.env.KTV_TICKET_LIFETIME_MS || 30000),
+    socketAuthTimeoutMs: Number(process.env.KTV_SOCKET_AUTH_TIMEOUT_MS || 5000),
+  },
+  media: ktvFeatures.media ? {
+    apiKey: process.env.KTV_MEDIA_API_KEY, apiSecret: process.env.KTV_MEDIA_API_SECRET,
+    controlSecret: process.env.KTV_MEDIA_CONTROL_SECRET,
+    workerUrl: process.env.KTV_MEDIA_WORKER_URL || 'http://127.0.0.1:3103',
+  } : undefined,
+  policy: {
+    members: Number(process.env.KTV_MAX_MEMBERS || 20),
+    queue: Number(process.env.KTV_MAX_QUEUE || 100),
+    singerRequests: Number(process.env.KTV_MAX_SINGER_REQUESTS || 3),
+    deviceGrants: Number(process.env.KTV_MAX_DEVICE_GRANTS ?? 2),
+    roomLifetimeMs: Number(process.env.KTV_ROOM_LIFETIME_MS || 12 * 60 * 60 * 1000),
+    emptyRoomMs: Number(process.env.KTV_EMPTY_ROOM_MS || 30 * 60 * 1000),
+    receiptRetentionMs: Number(process.env.KTV_RECEIPT_RETENTION_MS || 24 * 60 * 60 * 1000),
+    historyRetentionMs: Number(process.env.KTV_HISTORY_RETENTION_MS || 7 * 24 * 60 * 60 * 1000),
+    eventsPerRoom: Number(process.env.KTV_MAX_ROOM_EVENTS || 1000),
+  },
+  resolveAssets: createKtvAssets({
+    musicRoot: process.env.MUSIC_DIR || path.join(WEB_ROOT, 'data'),
+    karaokeRoot: path.dirname(karaokeManifestPath),
+    importRoot: process.env.DIG_MUSIC_DIR || path.join(DATA_DIR, 'music'),
+    syncedRoot: process.env.KTV_SYNCED_DIR || path.join(WEB_ROOT, 'synced'),
+    lyricsRoot: process.env.KTV_LYRICS_DIR || path.join(process.env.MUSIC_DIR || path.join(WEB_ROOT, 'data'), 'lyrics'),
+  }),
+  isKaraokeSong: (songId) => {
+    try {
+      const manifest = JSON.parse(fs.readFileSync(karaokeManifestPath, 'utf8'))
+      return Array.isArray(manifest.ids) && manifest.ids.includes(songId)
+    } catch { return false }
+  },
+})
+
+registerKtvHealthRoute(app, { db, authMiddleware, requireAdmin, metrics: ktvMetrics, realtime: ktvRealtime })
 
 registerDigRoutes(app, {
   authMiddleware,
@@ -957,7 +1013,7 @@ app.delete('/api/admin/users/:id', authMiddleware, requireAdmin, (req, res) => {
   res.json({ success: true, data: { id } })
 })
 
-app.listen(Number(PORT), '127.0.0.1', () => {
+const httpServer = app.listen(Number(PORT), '127.0.0.1', () => {
   console.log(`[auth] listening on 127.0.0.1:${PORT}`)
   const initialProfile = setTimeout(() => startCategoryProfile('system:startup'), 3000)
   initialProfile.unref()
@@ -970,3 +1026,4 @@ app.listen(Number(PORT), '127.0.0.1', () => {
   const autoIngestSweep = setInterval(() => { void pumpAutoIngest() }, 15 * 60 * 1000)
   autoIngestSweep.unref()
 })
+ktvRealtime.attach(httpServer)

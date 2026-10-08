@@ -65,3 +65,4 @@ __pycache__/
 
 # Backend secrets
 .env.server
+ktv-media-private/

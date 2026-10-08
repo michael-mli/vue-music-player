@@ -35,7 +35,20 @@ if (!savedTheme) {
   document.documentElement.classList.toggle('dark', savedTheme === 'dark')
 }
 
-app.mount('#app')
+async function clearPreviousPartyCache() {
+  // Older installed workers may have stored room responses. Remove those entries
+  // before mounting a room page so an offline worker cannot replay old authority.
+  if (!location.pathname.startsWith('/party') || !('caches' in window)) return
+  for (const name of await caches.keys()) {
+    const cache = await caches.open(name)
+    for (const request of await cache.keys()) {
+      const url = new URL(request.url)
+      if (/^\/api\/ktv(?:\/|$)/.test(url.pathname) || url.searchParams.has('ktvAsset')) await cache.delete(request)
+    }
+  }
+}
+
+void clearPreviousPartyCache().catch(() => { /* Private storage may be unavailable. */ }).finally(() => app.mount('#app'))
 
 // Register service worker
 if ('serviceWorker' in navigator) {
@@ -44,6 +57,15 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register(`/sw.js?v=${encodeURIComponent(__APP_BUILD_TIME__)}`, { updateViaCache: 'none' })
       .then((registration) => {
         console.log('SW registered: ', registration)
+        const announceWaiting = () => {
+          if (navigator.serviceWorker.controller && registration.waiting) window.dispatchEvent(new Event('party:sw-update-available'))
+        }
+        const watchInstalling = () => registration.installing?.addEventListener('statechange', event => {
+          if ((event.target as ServiceWorker).state === 'installed') announceWaiting()
+        })
+        registration.addEventListener('updatefound', watchInstalling)
+        watchInstalling()
+        announceWaiting()
       })
       .catch((registrationError) => {
         console.log('SW registration failed: ', registrationError)

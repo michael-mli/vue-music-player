@@ -7,6 +7,7 @@
       <div class="flex-1">
         <p class="font-medium mb-1">{{ $t('pwa.updateAvailable') }}</p>
         <p class="text-sm opacity-90 mb-3">{{ $t('pwa.updateDescription') }}</p>
+        <p v-if="failed" role="alert" class="text-sm mb-3">{{ $t('pwa.updateFailed') }}</p>
         <div class="flex space-x-2">
           <button 
             @click="$emit('dismiss')"
@@ -16,9 +17,11 @@
           </button>
           <button 
             @click="$emit('update')"
-            class="bg-white text-spotify-green px-4 py-1 rounded-full text-sm font-medium hover:bg-gray-100 transition-colors duration-200"
+            :disabled="updating"
+            :aria-busy="updating"
+            class="bg-white text-spotify-green px-4 py-1 rounded-full text-sm font-medium hover:bg-gray-100 transition-colors duration-200 disabled:opacity-60"
           >
-            {{ $t('pwa.update') }}
+            {{ $t(updating ? 'pwa.updating' : 'pwa.update') }}
           </button>
         </div>
       </div>
@@ -35,6 +38,7 @@
 <script setup lang="ts">
 import { ArrowPathIcon, XMarkIcon } from '@heroicons/vue/24/outline'
 
+defineProps<{ updating?: boolean; failed?: boolean }>()
 defineEmits(['update', 'dismiss'])
 </script>
 

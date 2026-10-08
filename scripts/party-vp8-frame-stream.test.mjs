@@ -1,0 +1,383 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import vm from 'node:vm'
+import {setImmediate as tick} from 'node:timers/promises'
+import {createVp8FrameStream} from './party-vp8-frame-stream.mjs'
+
+test('explicit VP8 source declarations repair actual dependency order within the unchanged queue limits',async()=>{
+  const f=await fixture({codec:'vp8',gapAware:true,dependencyAware:true,sourceReferences:true,reorderMs:700})
+  const sourceReferences=true
+  f.send(0,0,'key',{frameId:1,dependencies:[],sourceReferences})
+  f.send(7200,80,'delta',{frameId:3,dependencies:[2],sourceReferences})
+  assert.equal(f.stream.snapshot().decoded,1)
+  f.send(3600,40,'delta',{frameId:2,dependencies:[1],sourceReferences})
+  assert.deepEqual(f.delivered.map(packet=>packet.rtpTimestamp),[0,3600,7200])
+  assert.equal(f.stream.snapshot().sourceReferences,true);assert.equal(f.stream.snapshot().referenceMisses,0)
+  assert.ok(f.stream.snapshot().maximumHeld<=20);assert.ok(f.stream.snapshot().maximumPending<=4)
+  for(const packet of f.delivered)packet.frame.close();f.stream.close()
+})
+test('source-reference admission rejects native-only metadata and invalid source-mode tuples',async()=>{
+  for(const metadata of [{frameId:1,dependencies:[]},{frameId:1,dependencies:[],sourceReferences:false},
+    {frameId:1,dependencies:[0],sourceReferences:true}]){
+    const f=await fixture({codec:'vp8',gapAware:true,dependencyAware:true,sourceReferences:true,reorderMs:700})
+    f.send(0,0,'key',metadata);assert.equal(f.stream.snapshot().closed,true)
+    assert.equal(f.reports.at(-1).reason,'VIDEO_REFERENCE')
+  }
+  await assert.rejects(fixture({codec:'vp8',gapAware:true,dependencyAware:true}),/VIDEO_REORDER_CONFIG/)
+  await assert.rejects(fixture({codec:'vp9',gapAware:true,dependencyAware:true,sourceReferences:true}),/VIDEO_REFERENCE_CONFIG/)
+  await assert.rejects(fixture({sourceReferences:true}),/VIDEO_REFERENCE_CONFIG/)
+})
+
+async function fixture({hold=false,accept=true,reorderMs=0,format='I420',gapAware=false,codec='vp8',receivedCodec=codec,padded=false,copyHold=false,dependencyAware=false,markerProbe=null,sourceReferences=false}={}){
+  const delivered=[],frames=[],reports=[],waiting=[],copies=[]
+  let now=1000,decoder,timerId=0,configUsed
+  let acceptance=accept
+  const timers=new Map()
+  class Decoder{
+    static async isConfigSupported(config){return {supported:true,config}}
+    constructor(callbacks){this.callbacks=callbacks;this.state='configured';decoder=this}
+    configure(config){configUsed=config}close(){this.state='closed'}
+    decode(chunk){const frame={timestamp:chunk.timestamp,codedWidth:padded?1344:1280,codedHeight:720,displayWidth:1280,displayHeight:720,
+      visibleRect:{x:0,y:0,width:1280,height:720},
+      copyTo(data,options){assert.equal(options.rect.width,1280);assert.equal(options.rect.height,720);assert.equal(data.byteLength,1382400);
+        const layout=[{offset:0,stride:1280},{offset:921600,stride:640},{offset:1152000,stride:640}];
+        return copyHold?new Promise(resolve=>copies.push(()=>resolve(layout))):Promise.resolve(layout)},
+      format,closes:0,allocationSize:()=>1280*720*3/2,close(){this.closes++}}
+      frames.push(frame);if(hold)waiting.push(frame);else this.callbacks.output(frame)}
+  }
+  const realm={ArrayBuffer,performance:{timeOrigin:10000,now:()=>now},VideoDecoder:Decoder,
+    EncodedVideoChunk:class{constructor(config){Object.assign(this,config)}},
+    VideoFrame:class{constructor(data,config){Object.assign(this,config);this.closes=0;frames.push(this)}
+      allocationSize(){return 1382400}close(){this.closes++}},
+    __encodedTimingCodecs:[{payloadType:96,mimeType:`video/${receivedCodec}`}],deliver:(frame,packet)=>{if(acceptance===true)delivered.push({frame,...packet});return acceptance},report:row=>reports.push(row),reorderMs,gapAware,codec,dependencyAware,markerProbe,sourceReferences,
+    setTimeout(callback,delay){const id=++timerId;timers.set(id,{callback,at:now+delay});return id},clearTimeout(id){timers.delete(id)}}
+  realm.self=realm
+  const stream=vm.runInNewContext(`(${createVp8FrameStream.toString()})(deliver,report,{reorderMs,gapAware,codec,dependencyAware,markerProbe,sourceReferences})`,realm)
+  await tick()
+  const send=(rtp,captureTime=rtp/90,type=frames.length?'delta':'key',reference={})=>stream.observe(
+    {timestamp:rtp>>>0,type,data:new Uint8Array([7]).buffer},{captureTime,payloadType:96,...reference})
+  return {get config(){return configUsed},finishCopies(){while(copies.length)copies.shift()()},stream,send,delivered,frames,reports,waiting,timers,setAccept(value){acceptance=value},advance(value){now=value;for(const [id,timer]of[...timers])if(timer.at<=now){timers.delete(id);timer.callback()}},
+    flush(){while(waiting.length)decoder.callbacks.output(waiting.shift())}}
+}
+test('asynchronous marker reads count decoded regressions in transfer order without changing media delivery',async()=>{
+  const reads=[]
+  const f=await fixture({markerProbe:frame=>new Promise(resolve=>reads.push({frame,resolve}))})
+  for(let i=0;i<4;i++)f.send(i*3600)
+  reads[3].resolve({valid:true,id:1});reads[2].resolve({valid:true,id:0});reads[1].resolve({valid:true,id:1})
+  await tick();assert.equal(f.delivered.length,0)
+  reads[0].resolve({valid:true,id:0});await tick()
+  assert.deepEqual(f.delivered.map(packet=>packet.rtpTimestamp),[0,3600,7200,10800])
+  assert.deepEqual({...f.stream.snapshot().markerProbe},{reads:4,invalid:0,transitions:3,regressions:1})
+  assert.equal(f.stream.snapshot().maximumPending,4);f.stream.close()
+})
+test('marker backpressure and terminal closure cannot duplicate counts or leak borrowed native frames',async()=>{
+  const f=await fixture({accept:'wait',markerProbe:async()=>({valid:false})});f.send(0);await tick()
+  assert.equal(f.stream.snapshot().markerProbe.reads,0)
+  f.setAccept(true);f.stream.resume();f.stream.resume()
+  assert.deepEqual({...f.stream.snapshot().markerProbe},{reads:1,invalid:1,transitions:0,regressions:0});f.stream.close()
+  let complete
+  const pending=await fixture({markerProbe:()=>new Promise(resolve=>{complete=resolve})});pending.send(0)
+  pending.stream.close();assert.equal(pending.frames[0].closes,1)
+  complete({valid:true,id:0});await tick();assert.equal(pending.delivered.length,0)
+  assert.equal(pending.frames[0].closes,1)
+  const rejected=await fixture({markerProbe:async()=>({valid:true,id:256})});rejected.send(0);await tick()
+  assert.equal(rejected.stream.snapshot().closed,true);assert.equal(rejected.frames[0].closes,1)
+})
+test('gap-only repair decodes contiguous RTP immediately and drains repaired history before its fixed deadline',async()=>{
+  const f=await fixture({gapAware:true,reorderMs:700,accept:false}),start=0xfffffe00
+  f.send(start,0);f.send((start+3600)>>>0,40);assert.equal(f.stream.snapshot().decoded,2)
+  f.send((start+10800)>>>0,120);f.advance(1600);assert.equal(f.stream.snapshot().decoded,2)
+  f.send((start+7200)>>>0,80)
+  assert.deepEqual(f.frames.map(frame=>frame.timestamp),[0,40000,80000,120000])
+  assert.equal(f.stream.snapshot().committedGaps,0);assert.equal(f.timers.size,0);f.stream.close()
+})
+test('gap expiry commits once and later packets cannot extend its original deadline',async()=>{
+  const f=await fixture({gapAware:true,reorderMs:700,accept:false});f.send(0);f.send(7200)
+  f.advance(1699);f.send(10800);assert.equal(f.stream.snapshot().decoded,1)
+  f.advance(1700);assert.equal(f.stream.snapshot().decoded,3)
+  assert.equal(f.stream.snapshot().committedGaps,1);assert.equal(f.timers.size,0);f.stream.close()
+})
+test('transfer congestion parks at most four decoded frames in the existing reservation then resumes in RTP order',async()=>{
+  const f=await fixture({accept:'wait',reorderMs:80});for(let i=0;i<5;i++)f.send(i*3600)
+  f.advance(1080);assert.equal(f.stream.snapshot().pending,4);assert.equal(f.stream.snapshot().maximumReady,4)
+  assert.equal(f.stream.snapshot().heldPackets,1);assert.equal(f.delivered.length,0)
+  f.setAccept(true);f.stream.resume()
+  assert.deepEqual(f.delivered.map(frame=>frame.rtpTimestamp),[0,3600,7200,10800,14400])
+  assert.equal(f.stream.snapshot().pending,0);assert.equal(f.stream.snapshot().encodedBytes,0)
+  for(const packet of f.delivered)packet.frame.close();f.stream.close()
+  assert.ok(f.frames.every(frame=>frame.closes===1))
+  const stopped=await fixture({accept:'wait',reorderMs:80});for(let i=0;i<4;i++)stopped.send(i*3600)
+  stopped.advance(1080);stopped.stream.close();stopped.setAccept(true);stopped.stream.resume()
+  assert.equal(stopped.delivered.length,0);assert.ok(stopped.frames.every(frame=>frame.closes===1))
+})
+test('continuous VP8 warms its decoder without capture headers then transfers associated bounded frames across RTP wrap',async()=>{
+  const f=await fixture();const start=0xfffffe00
+  f.send(start,NaN);assert.equal(f.frames[0].closes,1);assert.equal(f.delivered.length,0)
+  f.send((start+3600)>>>0,40);assert.equal(f.delivered[0].captureUnixMs,10040)
+  assert.equal(f.delivered[0].frame.closes,0);f.delivered[0].frame.close()
+  f.send((start+7200)>>>0,80);f.delivered[1].frame.close()
+  assert.equal(f.stream.snapshot().decoded,3);assert.equal(f.stream.snapshot().discarded,1)
+  assert.equal(f.stream.snapshot().encodedBytes,0);f.stream.close()
+})
+test('a full transfer port can drop presentation while decoding every input and closing untransferred frames',async()=>{
+  const f=await fixture({accept:false})
+  for(let i=0;i<100;i++)f.send(i*3600)
+  assert.equal(f.stream.snapshot().decoded,100);assert.equal(f.stream.snapshot().discarded,100)
+  assert.ok(f.frames.every(frame=>frame.closes===1));assert.equal(f.stream.snapshot().maximumPending,1)
+  f.stream.close()
+})
+test('owned decoder rejects larger or unknown frame formats before transferring ownership',async()=>{
+  for(const format of ['RGBA',null]){
+    const f=await fixture({format});f.send(0)
+    assert.equal(f.reports[0].reason,'VIDEO_OUTPUT')
+    assert.equal(f.delivered.length,0);assert.equal(f.frames[0].closes,1)
+  }
+})
+test('stalled native decoding has at most four pending frames and fails closed without resurrection',async()=>{
+  const f=await fixture({hold:true});for(let i=0;i<5;i++)f.send(i*3600)
+  assert.equal(f.reports[0].reason,'VIDEO_BOUND');assert.equal(f.stream.snapshot().maximumPending,4)
+  assert.equal(f.stream.snapshot().encodedBytes,0);f.flush()
+  assert.ok(f.frames.every(frame=>frame.closes===1));f.send(18000);assert.equal(f.frames.length,4)
+})
+test('late duplicates do not read payload or refresh capture evidence; clock jumps and stale capture fail safely',async()=>{
+  const f=await fixture({accept:false});f.send(0)
+  f.stream.observe({timestamp:0,type:'delta',get data(){throw new Error('duplicate read')}},{payloadType:96,captureTime:500})
+  assert.equal(f.stream.snapshot().closed,false)
+  f.advance(7001);f.send(3600,NaN);assert.equal(f.stream.snapshot().discarded,3)
+  f.send(7200,161);assert.equal(f.reports[0].reason,'VIDEO_CLOCK')
+})
+test('video reorder window decodes earlier RTP first without extending the first arrival deadline',async()=>{
+  const f=await fixture({reorderMs:80,accept:false});const start=0xfffffe00
+  f.send(start,0);f.send((start+7200)>>>0,80)
+  f.advance(1060);f.send((start+3600)>>>0,40)
+  assert.equal(f.stream.snapshot().decoded,1);f.advance(1079);assert.equal(f.stream.snapshot().decoded,1)
+  f.advance(1080);assert.equal(f.stream.snapshot().decoded,3)
+  assert.equal(f.frames[1].timestamp,40000);assert.equal(f.frames[2].timestamp,80000)
+  assert.equal(f.stream.snapshot().reordered,1);assert.equal(f.stream.snapshot().maximumHeld,2)
+  assert.equal(f.stream.snapshot().encodedBytes,0);assert.equal(f.timers.size,0)
+  f.stream.close()
+})
+test('reorder queue and shared encoded budget stay bounded, release on stop, and distinguish unseen late frames',async()=>{
+  const f=await fixture({reorderMs:80,accept:false,hold:true});f.send(0)
+  for(let i=1;i<13;i++)f.send(i*3600)
+  assert.equal(f.reports[0].reason,'VIDEO_BOUND');assert.equal(f.stream.snapshot().maximumHeld,8)
+  assert.equal(f.stream.snapshot().encodedBytes,0);assert.equal(f.timers.size,0)
+  const late=await fixture({reorderMs:80,accept:false});late.send(0);late.send(7200)
+  late.advance(1080);late.send(3600);late.send(3600)
+  assert.equal(late.stream.snapshot().lateFrames,1);assert.equal(late.stream.snapshot().duplicates,1)
+  late.send(10800);late.stream.close();late.advance(1200)
+  assert.equal(late.stream.snapshot().decoded,2);assert.equal(late.timers.size,0)
+})
+test('a burst drains oldest RTP under pressure without a ninth retained copy or a later deadline',async()=>{
+  const f=await fixture({reorderMs:240,accept:false});f.send(0)
+  for(let i=1;i<=9;i++)f.send(i*3600)
+  assert.equal(f.stream.snapshot().closed,false)
+  assert.equal(f.stream.snapshot().maximumHeld,8)
+  assert.equal(f.stream.snapshot().pressureDrains,1)
+  assert.equal(f.frames[1].timestamp,40000)
+  f.advance(1239);assert.equal(f.stream.snapshot().decoded,2)
+  f.advance(1240);assert.equal(f.stream.snapshot().decoded,10)
+  assert.equal(f.stream.snapshot().encodedBytes,0);assert.equal(f.timers.size,0)
+  f.stream.close()
+})
+test('longer playout can retain 180-ms repairs without extending its 240-ms encoded window',async()=>{
+  const f=await fixture({reorderMs:240,accept:false});f.send(0);f.send(18000)
+  f.advance(1180);for(let i=1;i<5;i++)f.send(i*3600)
+  f.advance(1239);assert.equal(f.stream.snapshot().decoded,1)
+  f.advance(1240);assert.equal(f.stream.snapshot().decoded,6)
+  assert.deepEqual(f.frames.map(frame=>frame.timestamp),[0,40000,80000,120000,160000,200000])
+  assert.equal(f.stream.snapshot().lateFrames,0);assert.equal(f.stream.snapshot().maximumHeld,5)
+  assert.equal(f.stream.snapshot().reorderMs,240);f.stream.close()
+})
+test('an extended repair window retains a 350-ms reordered burst within the same encoded byte budget',async()=>{
+  const f=await fixture({reorderMs:500,accept:false});f.send(0);f.send(16*3600)
+  f.advance(1350);for(let i=1;i<16;i++)f.send(i*3600)
+  assert.equal(f.stream.snapshot().heldPackets,16);assert.equal(f.stream.snapshot().heldLimit,20)
+  assert.equal(f.stream.snapshot().maximumBytes,16);assert.equal(f.stream.snapshot().pressureDrains,0)
+  f.advance(1499);assert.equal(f.stream.snapshot().decoded,1)
+  f.advance(1500);assert.equal(f.stream.snapshot().decoded,17)
+  assert.deepEqual(f.frames.map(frame=>frame.timestamp),Array.from({length:17},(_,i)=>i*40000))
+  assert.equal(f.stream.snapshot().lateFrames,0);assert.equal(f.stream.snapshot().encodedBytes,0);f.stream.close()
+})
+
+test('declared nominal VP9 uses its exact decoder configuration and rejects another received codec',async()=>{
+  const f=await fixture({codec:'vp9'});f.send(0);f.send(3600)
+  assert.equal(f.config.codec,'vp09.00.31.08');assert.equal(f.config.codedWidth,1280)
+  assert.equal(f.config.codedHeight,720);assert.equal(f.stream.snapshot().decoded,2)
+  assert.equal(f.stream.snapshot().codec,'vp9')
+  for(const value of f.delivered)value.frame.close();f.stream.close()
+  const wrong=await fixture({codec:'vp9',receivedCodec:'vp8'});wrong.send(0)
+  assert.equal(wrong.reports.at(-1).reason,'VIDEO_PACKET');assert.equal(wrong.delivered.length,0)
+})
+
+test('codec padding is copied without scaling and releases the original before transferring a nominal frame',async()=>{
+  const f=await fixture({codec:'vp9',padded:true});f.send(0);await tick()
+  assert.equal(f.delivered.length,1);assert.equal(f.delivered[0].frame.codedWidth,1280)
+  assert.equal(f.delivered[0].frame.codedHeight,720);assert.equal(f.frames[0].closes,1)
+  assert.equal(f.stream.snapshot().normalizedOutputs,1);assert.equal(f.stream.snapshot().maximumCopyBytes,1382400)
+  f.delivered[0].frame.close();f.stream.close();assert.ok(f.frames.every(frame=>frame.closes===1))
+})
+test('stop during a bounded padding copy closes every original once and never constructs or transfers replacements',async()=>{
+  const f=await fixture({codec:'vp9',padded:true,copyHold:true})
+  for(let i=0;i<4;i++)f.send(i*3600)
+  assert.equal(f.stream.snapshot().pending,4);assert.equal(f.stream.snapshot().maximumCopyBytes,1382400)
+  f.stream.close();f.finishCopies();await tick()
+  assert.equal(f.delivered.length,0);assert.equal(f.frames.length,4);assert.ok(f.frames.every(frame=>frame.closes===1))
+})
+
+test('declared references decode across unnecessary RTP gaps and hold only a missing required reference',async()=>{
+  const f=await fixture({codec:'vp9',gapAware:true,dependencyAware:true,reorderMs:700})
+  f.send(0,0,'key',{frameId:10,dependencies:[]})
+  f.send(7200,80,'delta',{frameId:12,dependencies:[10]})
+  assert.equal(f.stream.snapshot().decoded,2);assert.equal(f.timers.size,0)
+  f.send(3600,40,'delta',{frameId:11,dependencies:[10]})
+  assert.equal(f.stream.snapshot().lateFrames,1);assert.equal(f.stream.snapshot().referenceMisses,0)
+  for(const packet of f.delivered)packet.frame.close();f.stream.close()
+  const repair=await fixture({codec:'vp9',gapAware:true,dependencyAware:true,reorderMs:700})
+  repair.send(0,0,'key',{frameId:1,dependencies:[]})
+  repair.send(7200,80,'delta',{frameId:3,dependencies:[2]});repair.advance(1699)
+  assert.equal(repair.stream.snapshot().decoded,1)
+  repair.send(3600,40,'delta',{frameId:2,dependencies:[1]})
+  assert.equal(repair.stream.snapshot().decoded,3);assert.equal(repair.stream.snapshot().referenceMisses,0)
+  for(const packet of repair.delivered)packet.frame.close();repair.stream.close()
+})
+test('a missing parent repairs the full dependency queue before pressure can discard it, including RTP wrap',async()=>{
+  for(const start of [0,0xfffffe00]){
+    const f=await fixture({codec:'vp9',gapAware:true,dependencyAware:true,reorderMs:700})
+    f.send(start,0,'key',{frameId:1,dependencies:[]})
+    for(let i=2;i<=21;i++)f.send((start+i*3600)>>>0,i*40,'delta',{frameId:i+1,dependencies:[i]})
+    assert.equal(f.stream.snapshot().heldPackets,20);f.advance(1400)
+    f.send((start+3600)>>>0,40,'delta',{frameId:2,dependencies:[1]})
+    assert.deepEqual(f.delivered.map(p=>p.rtpTimestamp),Array.from({length:22},(_,i)=>(start+i*3600)>>>0))
+    assert.equal(f.stream.snapshot().referenceRepairDrains,1);assert.equal(f.stream.snapshot().referenceMisses,0)
+    assert.equal(f.stream.snapshot().pressureDrains,0);assert.equal(f.stream.snapshot().lateFrames,0)
+    assert.equal(f.stream.snapshot().maximumHeld,20);assert.ok(f.stream.snapshot().maximumPending<=4)
+    assert.equal(f.stream.snapshot().heldPackets,0);assert.equal(f.stream.snapshot().encodedBytes,0)
+    assert.equal(f.timers.size,0);for(const p of f.delivered)p.frame.close();f.stream.close()
+  }
+})
+
+test('a pressured reference repair cannot bypass full native output slots, unknown dependencies or the original deadline',async()=>{
+  const stalled=await fixture({codec:'vp9',gapAware:true,dependencyAware:true,reorderMs:700,accept:'wait'})
+  stalled.send(0,0,'key',{frameId:1,dependencies:[]})
+  for(let i=1;i<=3;i++)stalled.send(i*3600,i*40,'delta',{frameId:i+1,dependencies:[i]})
+  for(let i=5;i<=24;i++)stalled.send(i*3600,i*40,'delta',{frameId:i+1,dependencies:[i]})
+  stalled.send(14400,160,'delta',{frameId:5,dependencies:[4]})
+  assert.equal(stalled.stream.snapshot().closed,true);assert.equal(stalled.reports[0].reason,'VIDEO_BOUND')
+  assert.equal(stalled.stream.snapshot().referenceRepairDrains,0);assert.equal(stalled.stream.snapshot().maximumPending,4)
+  assert.ok(stalled.frames.every(frame=>frame.closes===1))
+  for(const expired of [false,true]){
+    const f=await fixture({codec:'vp9',gapAware:true,dependencyAware:true,reorderMs:700})
+    f.send(0,0,'key',{frameId:1,dependencies:[]})
+    for(let i=2;i<=21;i++)f.send(i*3600,i*40,'delta',{frameId:i+1,dependencies:[i]})
+    if(expired)f.advance(1700)
+    f.send(3600,40,'delta',{frameId:2,dependencies:[expired?1:999]})
+    assert.equal(f.stream.snapshot().referenceRepairDrains,0);assert.ok(f.stream.snapshot().referenceMisses>0)
+    assert.equal(f.stream.snapshot().lateFrames,1)
+    for(const p of f.delivered)p.frame.close();f.stream.close()
+  }
+})
+
+test('gap-only ordering admits a full-queue contiguous repair without fabricating references or crossing RTP order',async()=>{
+  for(const start of [0,0xfffffe00]){
+    const f=await fixture({codec:'vp8',gapAware:true,reorderMs:700})
+    f.send(start,0,'key');for(let i=2;i<=21;i++)f.send((start+i*3600)>>>0,i*40,'delta')
+    assert.equal(f.stream.snapshot().heldPackets,20);f.advance(1400);f.send((start+3600)>>>0,40,'delta')
+    assert.deepEqual(f.delivered.map(p=>p.rtpTimestamp),Array.from({length:22},(_,i)=>(start+i*3600)>>>0))
+    assert.equal(f.stream.snapshot().contiguousRepairDrains,1);assert.equal(f.stream.snapshot().referenceRepairDrains,0)
+    assert.equal(f.stream.snapshot().dependencyPackets,0);assert.equal(f.stream.snapshot().pressureDrains,0)
+    assert.equal(f.stream.snapshot().committedGaps,0);assert.equal(f.stream.snapshot().maximumHeld,20)
+    assert.ok(f.stream.snapshot().maximumPending<=4);assert.equal(f.stream.snapshot().encodedBytes,0)
+    for(const p of f.delivered)p.frame.close();f.stream.close()
+  }
+})
+test('gap-only repair cannot exceed native slots or extend an expired wait',async()=>{
+  const full=await fixture({gapAware:true,reorderMs:700,accept:'wait'})
+  for(let i=0;i<4;i++)full.send(i*3600)
+  for(let i=5;i<=24;i++)full.send(i*3600)
+  full.send(14400);assert.equal(full.reports[0].reason,'VIDEO_BOUND')
+  assert.equal(full.stream.snapshot().contiguousRepairDrains,0);assert.equal(full.stream.snapshot().maximumPending,4)
+  assert.ok(full.frames.every(f=>f.closes===1))
+  const late=await fixture({gapAware:true,reorderMs:700});late.send(0)
+  for(let i=2;i<=21;i++)late.send(i*3600)
+  late.advance(1700);late.send(3600)
+  assert.equal(late.stream.snapshot().contiguousRepairDrains,0);assert.equal(late.stream.snapshot().lateFrames,1)
+  for(const p of late.delivered)p.frame.close();late.stream.close()
+})
+test('missing declared references expire at the fixed bound without decoding an unsafe input or retaining its payload',async()=>{
+  const f=await fixture({codec:'vp9',gapAware:true,dependencyAware:true,reorderMs:700})
+  f.send(0,0,'key',{frameId:1,dependencies:[]})
+  f.send(7200,80,'delta',{frameId:3,dependencies:[2]});f.advance(1700)
+  assert.equal(f.stream.snapshot().decoded,1);assert.equal(f.stream.snapshot().referenceMisses,1)
+  assert.equal(f.stream.snapshot().encodedBytes,0)
+  f.send(10800,120,'delta',{frameId:4,dependencies:[1]});assert.equal(f.stream.snapshot().decoded,2)
+  for(const packet of f.delivered)packet.frame.close();f.stream.close()
+})
+
+test('VP8 receiver cannot opt into unavailable declared references or silently use another codec',async()=>{
+  await assert.rejects(fixture({codec:'vp8',gapAware:true,dependencyAware:true,reorderMs:700}),/VIDEO_REORDER_CONFIG/)
+})
+
+test('a new independent keyframe drains the older broken chain without waiting or decoding missing references',async()=>{
+  const f=await fixture({codec:'vp9',gapAware:true,dependencyAware:true,reorderMs:700}),start=0xfffffe00
+  f.send(start,0,'key',{frameId:1,dependencies:[]})
+  f.send((start+7200)>>>0,80,'delta',{frameId:3,dependencies:[2]})
+  f.send((start+10800)>>>0,120,'delta',{frameId:4,dependencies:[3]})
+  // An independent older delta remains safe, even behind the broken chain.
+  f.send((start+14400)>>>0,160,'delta',{frameId:5,dependencies:[1]})
+  f.advance(1140);assert.equal(f.stream.snapshot().decoded,1)
+  f.send((start+18000)>>>0,200,'key',{frameId:6,dependencies:[]})
+  assert.deepEqual(f.delivered.map(packet=>packet.rtpTimestamp),[start,(start+14400)>>>0,(start+18000)>>>0])
+  assert.equal(f.stream.snapshot().referenceMisses,2)
+  assert.equal(f.stream.snapshot().keyframeDrains,2)
+  assert.equal(f.stream.snapshot().pressureDrains,0)
+  assert.equal(f.stream.snapshot().encodedBytes,0);assert.equal(f.timers.size,0)
+  f.send((start+21600)>>>0,240,'delta',{frameId:7,dependencies:[6]})
+  assert.equal(f.stream.snapshot().decoded,4)
+  for(const packet of f.delivered)packet.frame.close();f.stream.close()
+})
+
+test('keyframe repair cannot bypass output reservations or revive a stopped queue',async()=>{
+  const f=await fixture({codec:'vp9',gapAware:true,dependencyAware:true,reorderMs:700,accept:'wait'})
+  f.send(0,0,'key',{frameId:1,dependencies:[]})
+  for(let i=1;i<4;i++)f.send(i*3600,i*40,'delta',{frameId:i+1,dependencies:[i]})
+  f.send(18000,200,'delta',{frameId:6,dependencies:[5]})
+  f.send(21600,240,'key',{frameId:7,dependencies:[]})
+  assert.equal(f.stream.snapshot().pending,4);assert.equal(f.stream.snapshot().heldPackets,2)
+  assert.equal(f.stream.snapshot().keyframeDrains,0)
+  f.setAccept(true);f.stream.resume()
+  assert.deepEqual(f.delivered.map(packet=>packet.rtpTimestamp),[0,3600,7200,10800,21600])
+  assert.equal(f.stream.snapshot().maximumPending,4);assert.equal(f.stream.snapshot().referenceMisses,1)
+  assert.equal(f.stream.snapshot().keyframeDrains,1);assert.equal(f.stream.snapshot().encodedBytes,0)
+  for(const packet of f.delivered)packet.frame.close();f.stream.close();f.advance(1700);f.stream.resume()
+  assert.equal(f.delivered.length,5);assert.equal(f.timers.size,0)
+})
+
+test('reference wait age preserves the first arrival and clears on original repair, independent keys and stop',async()=>{
+  const f=await fixture({codec:'vp9',gapAware:true,dependencyAware:true,reorderMs:700})
+  f.send(0,0,'key',{frameId:1,dependencies:[]})
+  f.send(7200,80,'delta',{frameId:3,dependencies:[2]});f.advance(1350)
+  assert.equal(f.stream.snapshot().missingReferenceWaitMs,350)
+  f.send(10800,120,'delta',{frameId:4,dependencies:[3]})
+  assert.equal(f.stream.snapshot().missingReferenceWaitMs,350)
+  f.send(3600,40,'delta',{frameId:2,dependencies:[1]})
+  assert.equal(f.stream.snapshot().missingReferenceWaitMs,0)
+  assert.equal(f.stream.snapshot().referenceMisses,0);assert.equal(f.stream.snapshot().decoded,4)
+  f.send(18000,200,'delta',{frameId:6,dependencies:[5]});f.advance(1400)
+  assert.equal(f.stream.snapshot().missingReferenceWaitMs,50)
+  f.send(21600,240,'key',{frameId:7,dependencies:[]})
+  assert.equal(f.stream.snapshot().missingReferenceWaitMs,0)
+  for(const packet of f.delivered)packet.frame.close();f.stream.close();f.advance(2400)
+  assert.equal(f.stream.snapshot().missingReferenceWaitMs,0)
+})
+
+test('explicit reference mode closes permanently on absent or malformed native declarations',async()=>{
+  for(const metadata of [{},{frameId:2,dependencies:[]},{frameId:2,dependencies:['private']},
+    {frameId:2,dependencies:Array(9).fill(1)},{frameId:-1,dependencies:[1]}]){
+    const f=await fixture({codec:'vp9',gapAware:true,dependencyAware:true,reorderMs:700})
+    f.send(0,0,'key',{frameId:1,dependencies:[]});f.send(3600,40,'delta',metadata)
+    assert.equal(f.reports.at(-1).reason,'VIDEO_REFERENCE');assert.equal(f.stream.snapshot().closed,true)
+    f.send(7200,80,'delta',{frameId:3,dependencies:[1]});assert.equal(f.stream.snapshot().decoded,1)
+    for(const packet of f.delivered)packet.frame.close()
+  }
+})

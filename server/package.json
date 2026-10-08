@@ -6,13 +6,16 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "test": "node --test dig.test.js"
+    "test": "node --test ktv-automation.test.js dig.test.js ktv.test.js ktv-playback.test.js ktv-timing.test.js ktv-media.test.js ktv-media-ice.test.js ktv-media-grants.test.js ktv-media-routes.test.js ktv-observability.test.js"
   },
   "dependencies": {
+    "@livekit/protocol": "1.51.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.2",
     "google-auth-library": "^9.15.0",
-    "jsonwebtoken": "^9.0.2"
+    "jsonwebtoken": "^9.0.2",
+    "livekit-server-sdk": "2.19.1",
+    "ws": "^8.22.0"
   }
 }

@@ -67,9 +67,17 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
+        navigateFallbackDenylist: [/^\/api\//, /^\/internal\//],
         runtimeCaching: [
           {
-            urlPattern: /^\/api\/.*/,
+            urlPattern: ({ url }) => url.origin === self.location.origin &&
+              (/^\/api\/ktv(?:\/|$)/.test(url.pathname) || url.searchParams.has('ktvAsset')),
+            handler: 'NetworkOnly'
+          },
+          {
+            // KTV membership, invitations and future socket/media credentials must
+            // never be served from an offline API response.
+            urlPattern: /^\/api\/(?!ktv(?:\/|$)).*/,
             handler: 'NetworkFirst',
             options: {
               cacheName: 'api-cache',
@@ -108,11 +116,13 @@ export default defineConfig({
     port: 5173,
     proxy: {
       // Auth/admin backend (karaoke-auth) — lets dev exercise guest identities/profiles
-      '/api': 'http://127.0.0.1:3101'
+      '/api': { target: 'http://127.0.0.1:3101', ws: true }
     }
   },
   publicDir: false,
   build: {
+    // Render worklets and RTP workers need hashed URLs and PWA cache entries.
+    assetsInlineLimit: file => file.endsWith('.worklet.js') || file.endsWith('.worker.js') ? false : undefined,
     rollupOptions: {
       input: {
         // Manually include icon files

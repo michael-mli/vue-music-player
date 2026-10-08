@@ -1,0 +1,11 @@
+[Unit]
+Description=Check KTV Party TURN certificate every six hours
+
+[Timer]
+OnCalendar=*-*-* 04,10,16,22:15:00
+RandomizedDelaySec=15m
+Persistent=true
+Unit=ktv-media-tls.service
+
+[Install]
+WantedBy=timers.target

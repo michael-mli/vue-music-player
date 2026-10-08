@@ -15,7 +15,7 @@
           <XMarkIcon class="w-4 h-4" />
         </button>
       </div>
-      <audio :src="recorder.resultUrl.value" controls class="h-9 w-64 max-w-full"></audio>
+      <audio ref="previewAudio" :src="recorder.resultUrl.value" controls class="h-9 w-64 max-w-full"></audio>
       <a
         :href="recorder.resultUrl.value"
         :download="recorder.resultName.value"
@@ -62,9 +62,10 @@ const playerStore = usePlayerStore()
 const recorder = useKaraokeRecorder()
 
 const showResult = ref(false)
+const previewAudio = ref<HTMLAudioElement | null>(null)
 
 // Present the whole time karaoke mode is on — on every page, Karaoke included
-const visible = computed(() => playerStore.karaokeMode && recorder.supported.value)
+const visible = computed(() => !playerStore.partyAudioOwned && playerStore.karaokeMode && recorder.supported.value)
 // Recording needs a current song with an instrumental
 const canRecord = computed(() => !!playerStore.currentSong && playerStore.karaokeAvailable)
 
@@ -75,7 +76,7 @@ const elapsedLabel = computed(() => {
 
 function toggleRecord() {
   const song = playerStore.currentSong
-  if (!song) return
+  if (!song || playerStore.partyAudioOwned) return
   if (recorder.recording.value) {
     const safe = (song.title || `song-${song.id}`).replace(/[^\p{L}\p{N} _-]/gu, '').trim() || `song-${song.id}`
     recorder.stop(`karaoke-${safe}.mp3`)
@@ -94,6 +95,12 @@ function toggleRecord() {
 watch(() => playerStore.karaokeMode, (on) => {
   if (!on) recorder.stop()
 })
+
+// Keep the finished take available when returning to solo mode, release the mic,
+// and cancel a pending permission request before party audio can be enabled.
+watch(() => playerStore.partyAudioOwned, (owned) => {
+  if (owned) { previewAudio.value?.pause(); recorder.stop() }
+}, { flush: 'sync' })
 
 // Pop the result panel open when a recording finishes
 watch(() => recorder.recording.value, (rec, was) => {

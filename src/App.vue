@@ -2,7 +2,7 @@
   <div class="app flex flex-col h-screen bg-light-bg dark:bg-spotify-black text-light-text-primary dark:text-white">
     <!-- Loading overlay for initial data load -->
     <div 
-      v-if="songsStore.loading || songsStore.titleLoadingProgress >= 0"
+      v-if="!isPartyRoute && (songsStore.loading || songsStore.titleLoadingProgress >= 0)"
       class="fixed inset-0 z-[100] bg-light-bg dark:bg-spotify-black flex flex-col items-center justify-center"
     >
       <div class="flex flex-col items-center gap-4">
@@ -24,11 +24,11 @@
     <!-- Main Content -->
     <div class="flex flex-1 overflow-hidden relative">
       <!-- Desktop Sidebar -->
-      <Sidebar class="hidden md:flex" />
+      <Sidebar v-if="!isPartyStage" class="hidden md:flex" />
       
       <!-- Mobile Sidebar Overlay -->
       <div 
-        v-if="showMobileSidebar"
+        v-if="showMobileSidebar && !isPartyStage"
         class="md:hidden fixed inset-0 z-50 flex"
       >
         <div 
@@ -39,9 +39,9 @@
       </div>
       
       <!-- Main View -->
-      <main class="flex-1 flex flex-col bg-gradient-to-b from-light-surface to-light-bg dark:from-spotify-dark dark:to-spotify-black pb-36 sm:pb-0">
+      <main class="flex-1 flex flex-col bg-gradient-to-b from-light-surface to-light-bg dark:from-spotify-dark dark:to-spotify-black" :class="isPartyRoute ? 'pb-0 min-w-0' : 'pb-36 sm:pb-0'">
         <!-- Header -->
-        <Header @toggle-sidebar="showMobileSidebar = !showMobileSidebar" />
+        <Header v-if="!isPartyStage" @toggle-sidebar="showMobileSidebar = !showMobileSidebar" />
         
         <!-- Content Area with Lyrics -->
         <div class="flex-1 overflow-hidden flex flex-col lg:flex-row">
@@ -54,7 +54,7 @@
           <!-- Only render when a song is loaded, so it never pops up on a fresh
                launch with no song selected (confusing on mobile). -->
           <LyricsPanel
-            v-if="showLyrics && playerStore.currentSong"
+            v-if="!isPartyRoute && showLyrics && playerStore.currentSong"
             class="lg:relative lg:w-80 absolute inset-x-0 bottom-28 top-0 lg:top-auto lg:bottom-auto z-30 lg:z-auto"
             @close="showLyrics = false"
           />
@@ -63,14 +63,14 @@
     </div>
     
     <!-- Bottom Player -->
-    <PlayerControls 
+    <PlayerControls v-if="!isPartyRoute"
       @toggle-lyrics="showLyrics = !showLyrics" 
       @add-to-playlist="openAddToPlaylistFromPlayer"
       @toggle-visualizer="showVisualizer = !showVisualizer"
     />
     
     <!-- Music Visualizer -->
-    <MusicVisualizer
+    <MusicVisualizer v-if="!isPartyRoute"
       :is-visible="showVisualizer"
       @close="showVisualizer = false"
     />
@@ -88,6 +88,8 @@
     <!-- Update Available Notification -->
     <UpdateNotification 
       v-if="updateAvailable" 
+      :updating="updating"
+      :failed="updateFailed"
       @update="handleUpdate" 
       @dismiss="updateAvailable = false"
     />
@@ -108,7 +110,7 @@
     />
 
     <!-- One-time hint shown after a background-playback freeze is detected -->
-    <BackgroundPlaybackHint />
+    <BackgroundPlaybackHint v-if="!isPartyRoute" />
 
     <!-- Debug Panel (only visible when VITE_DEBUG_PLAYER=true) -->
     <DebugPanel />
@@ -116,7 +118,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { RouterView, useRoute } from 'vue-router'
 import { MusicalNoteIcon } from '@heroicons/vue/24/outline'
@@ -126,6 +128,7 @@ import { usePlaylistsStore } from '@/stores/playlists'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
 import { releaseAllMicStreams } from '@/composables/useMicDevices'
+import { applyPwaUpdate } from '@/services/pwaUpdate'
 
 // Components
 import Sidebar from '@/components/UI/Sidebar.vue'
@@ -147,13 +150,23 @@ const songsStore = useSongsStore()
 const playlistsStore = usePlaylistsStore()
 const authStore = useAuthStore()
 const route = useRoute()
+const isPartyRoute = computed(() => route.path.startsWith('/party'))
+const isPartyStage = computed(() => route.name === 'PartyStage')
 
 // Reactive state
 // Lyrics/visualizer visibility lives in the ui store so other pages (e.g. the shared-song
 // Music view) can toggle the same panels.
 const { showLyrics, showVisualizer } = storeToRefs(useUiStore())
+watch(isPartyRoute, (inParty) => {
+  playerStore.setPartyAudioOwnership(inParty)
+  if (inParty) {
+    showVisualizer.value = false
+  }
+}, { immediate: true, flush: 'sync' })
 const showInstallPrompt = ref(false)
 const updateAvailable = ref(false)
+const updating = ref(false)
+const updateFailed = ref(false)
 const showMobileSidebar = ref(false)
 const deferredPrompt = ref<any>(null)
 
@@ -183,6 +196,8 @@ watch(
 )
 
 onMounted(async () => {
+  // Update readiness must not wait for catalog or lyric downloads.
+  checkForUpdates()
   // Initialize audio
   playerStore.initializeAudio()
 
@@ -203,15 +218,12 @@ onMounted(async () => {
   await songsStore.fetchUncachedTitles()
   
   // Auto-play a random song after data is loaded (skip if accessing direct song URL)
-  if (!isDirectSongAccess()) {
+  if (!isDirectSongAccess() && !isPartyRoute.value) {
     await startRandomSong()
   }
   
   // Check for PWA install prompt
   checkInstallPrompt()
-  
-  // Check for app updates
-  checkForUpdates()
   
   // Setup user activity listeners for auto-visualizer
   setupActivityListeners()
@@ -223,6 +235,7 @@ onUnmounted(() => {
   window.removeEventListener('focus', refreshPlaylistsOnResume)
   window.removeEventListener('online', refreshPlaylistsOnResume)
   document.removeEventListener('visibilitychange', refreshPlaylistsWhenVisible)
+  window.removeEventListener('party:sw-update-available', showAvailableUpdate)
 })
 
 function isDirectSongAccess(): boolean {
@@ -294,16 +307,22 @@ async function handleInstall() {
 }
 
 function checkForUpdates() {
-  // Listen for SW updates
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      updateAvailable.value = true
+    window.addEventListener('party:sw-update-available', showAvailableUpdate)
+    void navigator.serviceWorker.getRegistration().then(registration => {
+      if (navigator.serviceWorker.controller && registration?.waiting) showAvailableUpdate()
     })
   }
 }
 
-function handleUpdate() {
-  window.location.reload()
+function showAvailableUpdate() { updateAvailable.value = true }
+
+async function handleUpdate() {
+  if (updating.value) return
+  updating.value = true; updateFailed.value = false
+  try { await applyPwaUpdate(navigator.serviceWorker, () => window.location.reload()) }
+  catch { updateFailed.value = true }
+  finally { updating.value = false }
 }
 
 // Player modal handlers
@@ -406,6 +425,7 @@ watch(showVisualizer, (isVisible) => {
 
 // Global keyboard shortcuts
 window.addEventListener('keydown', async (e) => {
+  if (isPartyRoute.value) return
   if (e.target && (e.target as HTMLElement).tagName === 'INPUT') return
   
   switch (e.code) {

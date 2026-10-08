@@ -2,6 +2,7 @@
 import { DatabaseSync } from 'node:sqlite'
 import fs from 'node:fs'
 import path from 'node:path'
+import { initKtvSchema } from './ktv-schema.js'
 
 // v3 schema: v2 identities/profile fields plus lightweight session activity used
 // by the admin user-details view. `session_count` counts authenticated app-session
@@ -123,6 +124,7 @@ export function initDb(dataDir) {
   if (!hasUsers) {
     db.exec(SCHEMA_V3)
     initApplicationSchema(db)
+    initKtvSchema(db)
     return db
   }
 
@@ -190,5 +192,6 @@ export function initDb(dataDir) {
     console.log('[db] migrated users table to v3 (activity fields)')
   }
   initApplicationSchema(db)
+  initKtvSchema(db)
   return db
 }

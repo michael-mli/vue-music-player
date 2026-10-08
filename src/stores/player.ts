@@ -13,6 +13,9 @@ export const usePlayerStore = defineStore('player', () => {
   // State
   const currentSong = ref<Song | null>(null)
   const isPlaying = ref(false)
+  const partyAudioOwned = ref(false)
+  let playbackEpoch = 0
+  const mayPlay = (epoch: number) => !partyAudioOwned.value && epoch === playbackEpoch
   const volume = ref(0.8)
   const isMuted = ref(false)
   const currentTime = ref(0)
@@ -212,6 +215,8 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   async function playSongFromHistory(song: Song) {
+    if (partyAudioOwned.value) return
+    ++playbackEpoch
     const generation = ++readAheadGeneration
     nextUpIndex.value = -1
     debugLogger.info('PLAYER', `playSongFromHistory #${song.id} "${song.title}"`)
@@ -270,6 +275,8 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   async function playSong(song: Song, songQueue?: Song[], index?: number) {
+    if (partyAudioOwned.value) return
+    ++playbackEpoch
     const generation = ++readAheadGeneration
     nextUpIndex.value = -1
     debugLogger.info('PLAYER', `playSong #${song.id} "${song.title}"`)
@@ -356,6 +363,8 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   async function play() {
+    const epoch = playbackEpoch
+    if (!mayPlay(epoch)) return
     if (!audioElement.value || !currentSong.value) {
       debugLogger.error('PLAYER', 'play(): audioElement or currentSong is null')
       return
@@ -366,6 +375,7 @@ export const usePlayerStore = defineStore('player', () => {
       debugLogger.info('PLAYER', 'play() succeeded ✓')
       updateMediaSession()
     } catch (error) {
+      if (!mayPlay(epoch)) return
       if (error instanceof Error && error.name === 'AbortError') {
         debugLogger.warn('PLAYER', 'play(): AbortError — src changed while play was pending, waiting for canplay')
         await new Promise<void>((resolve) => {
@@ -376,6 +386,7 @@ export const usePlayerStore = defineStore('player', () => {
           audioElement.value?.addEventListener('canplay', onReady, { once: true })
           setTimeout(resolve, 3000)
         })
+        if (!mayPlay(epoch)) return
         try {
           await audioElement.value!.play()
           debugLogger.info('PLAYER', 'play() retry after AbortError succeeded ✓')
@@ -392,6 +403,7 @@ export const usePlayerStore = defineStore('player', () => {
       if (error instanceof Error && error.name === 'NotAllowedError') {
         debugLogger.warn('PLAYER', 'play(): NotAllowedError — retrying in 500ms')
         await new Promise(resolve => setTimeout(resolve, 500))
+        if (!mayPlay(epoch)) return
         try {
           await audioElement.value!.play()
           debugLogger.info('PLAYER', 'play() retry after NotAllowedError succeeded ✓')
@@ -404,11 +416,43 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   function pause() {
+    ++playbackEpoch
+    lastPlayState.value = false
+    isPlaying.value = false
+    stopPlaytimeTracking()
+    stopSleepTimerCountdown()
     // Explicit stop ends the current session — the session counter restarts at 0
     // next time playback begins.
     sessionPlaytime.value = 0
     if (audioElement.value) {
       audioElement.value.pause()
+    }
+  }
+
+  function setPartyAudioOwnership(owned: boolean) {
+    if (partyAudioOwned.value === owned) return
+    partyAudioOwned.value = owned
+    if (owned) {
+      ++readAheadGeneration
+      nextUpIndex.value = -1
+      isTransitioning.value = false
+      bgHiddenAt = 0
+      cancelScheduledMicOutputReset()
+      if (stallTimeout.value) { clearTimeout(stallTimeout.value); stallTimeout.value = null }
+      if (endFallbackTimeout.value) { clearTimeout(endFallbackTimeout.value); endFallbackTimeout.value = null }
+      pause()
+      if ('mediaSession' in navigator) {
+        for (const action of ['play', 'pause', 'nexttrack', 'previoustrack'] as MediaSessionAction[]) {
+          navigator.mediaSession.setActionHandler(action, null)
+        }
+        navigator.mediaSession.metadata = null
+        navigator.mediaSession.playbackState = 'none'
+        try { navigator.mediaSession.setPositionState() } catch { /* Older browsers. */ }
+      }
+    } else {
+      // Preserve the solo queue and position, but require an explicit Play after leaving.
+      updateMediaSession()
+      if (micOutputResetPending && !micCaptureActive) scheduleMicOutputReset()
     }
   }
 
@@ -446,6 +490,7 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   async function nextSong() {
+    if (partyAudioOwned.value) return
     debugLogger.info('PLAYER', `nextSong called — currentIndex=${currentIndex.value} shuffle=${shuffle.value} canNext=${canPlayNext.value}`, snapAudio())
 
     // Sequential playback follows the queue even if the next download failed.
@@ -488,6 +533,7 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   async function previousSong() {
+    if (partyAudioOwned.value) return
     if (!canPlayPrevious.value || playHistory.value.length === 0) return
 
     // Get the last played song from history
@@ -525,6 +571,7 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   async function toggleKaraoke() {
+    if (partyAudioOwned.value) return
     karaokeMode.value = !karaokeMode.value
     localStorage.setItem(KARAOKE_MODE_KEY, String(karaokeMode.value))
 
@@ -603,7 +650,7 @@ export const usePlayerStore = defineStore('player', () => {
     if (!isAndroid) return
     micOutputResetPending = true
     localStorage.setItem(MIC_OUTPUT_RESET_KEY, '1')
-    if (document.hidden || micOutputResetInFlight) return
+    if (partyAudioOwned.value || document.hidden || micOutputResetInFlight) return
 
     cancelScheduledMicOutputReset()
     micOutputResetTimer = window.setTimeout(() => {
@@ -638,7 +685,8 @@ export const usePlayerStore = defineStore('player', () => {
    * creates, while preserving the current source, position, volume and play state.
    */
   async function rebuildAudioOutputAfterMic() {
-    if (!isAndroid || document.hidden || micOutputResetInFlight || !micOutputResetPending) return
+    if (partyAudioOwned.value || !isAndroid || document.hidden || micOutputResetInFlight || !micOutputResetPending) return
+    const epoch = playbackEpoch
 
     const oldAudio = audioElement.value
     const song = currentSong.value
@@ -686,7 +734,7 @@ export const usePlayerStore = defineStore('player', () => {
       freshAudio.volume = volume.value
       freshAudio.muted = isMuted.value || recordingDuck
 
-      if (shouldResume) await play()
+      if (shouldResume && mayPlay(epoch)) await play()
       debugLogger.info('AUDIO', 'Bluetooth output rebuilt after mic release — ' + snapAudio())
     } finally {
       micOutputResetInFlight = false
@@ -741,6 +789,7 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   async function handleSongEnd() {
+    if (partyAudioOwned.value) return
     // Prevent duplicate handling (from both 'ended' event and timeupdate fallback)
     if (endedHandled.value) {
       debugLogger.warn('PLAYER', 'handleSongEnd SKIPPED — already handled', snapAudio())
@@ -779,6 +828,7 @@ export const usePlayerStore = defineStore('player', () => {
 
     // Handle app returning to foreground — mobile browsers can suspend audio in background
     document.addEventListener('visibilitychange', () => {
+      if (partyAudioOwned.value) return
       const hidden = document.hidden
       debugLogger.info('VIS', `visibilitychange — hidden=${hidden} lastPlayState=${lastPlayState.value} ${snapAudio()}`)
 
@@ -840,7 +890,7 @@ export const usePlayerStore = defineStore('player', () => {
       // If we were playing but browser paused audio (e.g. device locked), resume
       if (lastPlayState.value && audio.paused) {
         debugLogger.warn('VIS', 'Foreground: audio was paused by browser — resuming')
-        audio.play().catch(err => {
+        play().catch(err => {
           debugLogger.error('VIS', `Failed to resume on foreground: ${String(err)}`)
         })
         return
@@ -859,6 +909,8 @@ export const usePlayerStore = defineStore('player', () => {
   }
   
   function handleAudioError(error: MediaError) {
+    if (partyAudioOwned.value) return
+    const epoch = playbackEpoch
     // MediaError codes:
     // 1 = MEDIA_ERR_ABORTED - fetching aborted by user
     // 2 = MEDIA_ERR_NETWORK - network error
@@ -875,15 +927,17 @@ export const usePlayerStore = defineStore('player', () => {
         // Don't give up — wait and retry so background playback can recover
         debugLogger.error('PLAYER', `Too many consecutive failures (${consecutiveFailures.value}), cooldown 10s then retry`)
         consecutiveFailures.value = 0
-        setTimeout(() => nextSong().catch(e => console.error(e)), 10_000)
+        setTimeout(() => { if (mayPlay(epoch)) nextSong().catch(e => console.error(e)) }, 10_000)
         return
       }
       // Skip to next song quickly
-      setTimeout(() => nextSong().catch(e => console.error(e)), 50)
+      setTimeout(() => { if (mayPlay(epoch)) nextSong().catch(e => console.error(e)) }, 50)
     }
   }
   
   async function handleNetworkRetry() {
+    const epoch = playbackEpoch
+    if (!mayPlay(epoch)) return
     if (networkRetryAttempts.value >= maxRetryAttempts) {
       console.log('Max retry attempts reached, giving up')
       return
@@ -894,6 +948,7 @@ export const usePlayerStore = defineStore('player', () => {
     
     // Wait before retrying
     await new Promise(resolve => setTimeout(resolve, retryDelay))
+    if (!mayPlay(epoch)) return
     
     if (currentSong.value && audioElement.value) {
       const currentTimeBeforeRetry = currentTime.value
@@ -909,21 +964,24 @@ export const usePlayerStore = defineStore('player', () => {
         
         // If we were playing, try to resume
         if (lastPlayState.value) {
-          await audioElement.value.play()
+          await play()
         }
       } catch (error) {
+        if (!mayPlay(epoch)) return
         console.error('Retry failed:', error)
         
         // If this was the last attempt and we're in auto-play mode, try next song
         if (networkRetryAttempts.value >= maxRetryAttempts) {
           console.log('All retries failed, attempting to play next song')
-          setTimeout(() => nextSong(), 1000)
+          setTimeout(() => { if (mayPlay(epoch)) nextSong() }, 1000)
         }
       }
     }
   }
   
   async function handleNetworkReconnect() {
+    const epoch = playbackEpoch
+    if (!mayPlay(epoch) || !lastPlayState.value) return
     if (currentSong.value && audioElement.value) {
       try {
         // Reload the current song
@@ -933,8 +991,9 @@ export const usePlayerStore = defineStore('player', () => {
         // Wait a bit for the connection to stabilize
         await new Promise(resolve => setTimeout(resolve, 1000))
         
-        // Try to resume playback
-        await audioElement.value.play()
+        // A route change or explicit pause cancels this reconnect attempt.
+        if (!mayPlay(epoch)) return
+        await play()
       } catch (error) {
         console.error('Failed to resume after network reconnect:', error)
       }
@@ -1076,6 +1135,7 @@ export const usePlayerStore = defineStore('player', () => {
     }, { signal })
 
     audio.addEventListener('playing', () => {
+      if (partyAudioOwned.value) { audio.pause(); return }
       if (stallTimeout.value) {
         clearTimeout(stallTimeout.value)
         stallTimeout.value = null
@@ -1099,6 +1159,7 @@ export const usePlayerStore = defineStore('player', () => {
     }, { signal })
 
     audio.addEventListener('play', () => {
+      if (partyAudioOwned.value) { audio.pause(); return }
       debugLogger.info('AUDIO', `play event fired — ${snapAudio()}`)
       isPlaying.value = true
       sessionStartTime.value = Date.now()
@@ -1171,6 +1232,7 @@ export const usePlayerStore = defineStore('player', () => {
    * streaming playback will fail and must not silently skip a song.
    */
   async function triggerReadAheadCache() {
+    if (partyAudioOwned.value) return
     const generation = ++readAheadGeneration
     const activeQueue = queue.value
     const activeSong = currentSong.value
@@ -1219,7 +1281,7 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   function updateMediaSession() {
-    if ('mediaSession' in navigator && currentSong.value) {
+    if (!partyAudioOwned.value && 'mediaSession' in navigator && currentSong.value) {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: currentSong.value.title,
         artist: 'Unknown Artist',
@@ -1247,7 +1309,7 @@ export const usePlayerStore = defineStore('player', () => {
    * background playback survive aggressive battery optimization (e.g. newer OneUI).
    */
   function updateMediaPositionState() {
-    if (!('mediaSession' in navigator) || !('setPositionState' in navigator.mediaSession)) return
+    if (partyAudioOwned.value || !('mediaSession' in navigator) || !('setPositionState' in navigator.mediaSession)) return
     const audio = audioElement.value
     if (!audio) return
     const dur = audio.duration
@@ -1298,7 +1360,7 @@ export const usePlayerStore = defineStore('player', () => {
 
   function startSleepTimerCountdown() {
     if (sleepTimer.value > 0 && sleepTimerRemaining.value > 0) {
-      sleepTimerInterval.value = setInterval(() => {
+      sleepTimerInterval.value = window.setInterval(() => {
         sleepTimerRemaining.value--
         
         // Save every 10 seconds to persist remaining time
@@ -1351,7 +1413,7 @@ export const usePlayerStore = defineStore('player', () => {
     }
     
     // Start new interval to increment playtime every second
-    playtimeInterval.value = setInterval(() => {
+    playtimeInterval.value = window.setInterval(() => {
       totalPlaytime.value += 1
       sessionPlaytime.value += 1
 
@@ -1499,6 +1561,7 @@ export const usePlayerStore = defineStore('player', () => {
     // State
     currentSong,
     isPlaying,
+    partyAudioOwned,
     volume,
     isMuted,
     currentTime,
@@ -1541,6 +1604,7 @@ export const usePlayerStore = defineStore('player', () => {
 
     // Actions
     initializeAudio,
+    setPartyAudioOwnership,
     playSong,
     play,
     pause,
