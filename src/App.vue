@@ -1,5 +1,5 @@
 <template>
-  <div class="app flex flex-col h-screen bg-light-bg dark:bg-spotify-black text-light-text-primary dark:text-white">
+  <div class="app flex flex-col h-full min-h-0 bg-light-bg dark:bg-spotify-black text-light-text-primary dark:text-white">
     <!-- Loading overlay for initial data load -->
     <div 
       v-if="!isPartyRoute && (songsStore.loading || songsStore.titleLoadingProgress >= 0)"
@@ -22,7 +22,7 @@
     </div>
 
     <!-- Main Content -->
-    <div class="flex flex-1 overflow-hidden relative">
+    <div class="flex flex-1 min-h-0 overflow-hidden relative">
       <!-- Desktop Sidebar -->
       <Sidebar v-if="!isPartyStage" class="hidden md:flex" />
       
@@ -39,14 +39,14 @@
       </div>
       
       <!-- Main View -->
-      <main class="flex-1 flex flex-col bg-gradient-to-b from-light-surface to-light-bg dark:from-spotify-dark dark:to-spotify-black" :class="isPartyRoute ? 'pb-0 min-w-0' : 'pb-36 sm:pb-0'">
+      <main class="flex-1 min-h-0 min-w-0 flex flex-col bg-gradient-to-b from-light-surface to-light-bg dark:from-spotify-dark dark:to-spotify-black">
         <!-- Header -->
         <Header v-if="!isPartyStage" @toggle-sidebar="showMobileSidebar = !showMobileSidebar" />
         
         <!-- Content Area with Lyrics -->
-        <div class="flex-1 overflow-hidden flex flex-col lg:flex-row">
+        <div class="flex-1 min-h-0 overflow-hidden flex flex-col lg:flex-row">
           <!-- Router View -->
-          <div class="flex-1 overflow-hidden">
+          <div class="flex-1 min-h-0 min-w-0 overflow-hidden">
             <RouterView />
           </div>
           
@@ -55,14 +55,14 @@
                launch with no song selected (confusing on mobile). -->
           <LyricsPanel
             v-if="!isPartyRoute && showLyrics && playerStore.currentSong"
-            class="lg:relative lg:w-80 absolute inset-x-0 bottom-28 top-0 lg:top-auto lg:bottom-auto z-30 lg:z-auto"
+            class="lg:relative lg:w-80 absolute inset-x-0 bottom-0 top-0 lg:top-auto lg:bottom-auto z-30 lg:z-auto"
             @close="showLyrics = false"
           />
         </div>
       </main>
     </div>
     
-    <!-- Bottom Player -->
+    <!-- Keep the player in the flex layout so content reserves its actual height. -->
     <PlayerControls v-if="!isPartyRoute"
       @toggle-lyrics="showLyrics = !showLyrics" 
       @add-to-playlist="openAddToPlaylistFromPlayer"

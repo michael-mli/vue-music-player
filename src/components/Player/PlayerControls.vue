@@ -1,6 +1,6 @@
 <template>
   <!-- Mobile Layout -->
-  <div class="fixed bottom-0 left-0 right-0 bg-light-card dark:bg-spotify-dark border-t border-light-border dark:border-spotify-light sm:hidden z-40">
+  <div class="shrink-0 bg-light-card dark:bg-spotify-dark border-t border-light-border dark:border-spotify-light sm:hidden z-40">
     <!-- Current Song Info - Mobile -->
     <div v-if="currentSong" class="flex items-center px-2 py-1.5 border-b border-light-border dark:border-spotify-light h-12">
       <div class="w-8 h-8 bg-light-border dark:bg-spotify-light rounded mr-2 overflow-hidden flex-shrink-0">
@@ -287,7 +287,7 @@
   </div>
 
   <!-- Desktop Layout -->
-  <div class="h-24 bg-light-card dark:bg-spotify-dark border-t border-light-border dark:border-spotify-light hidden sm:flex items-center px-4">
+  <div class="h-24 shrink-0 bg-light-card dark:bg-spotify-dark border-t border-light-border dark:border-spotify-light hidden sm:flex items-center px-4">
     <!-- Current Song Info -->
     <div class="flex items-center w-80 min-w-0">
       <div v-if="currentSong" class="flex items-center min-w-0 flex-1">
