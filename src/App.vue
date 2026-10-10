@@ -63,6 +63,10 @@
     </div>
     
     <!-- Keep the player in the flex layout so content reserves its actual height. -->
+    <RouterLink v-if="karaokeDevice.grant && !isGuideRoute" to="/sing/guide"
+      class="karaoke-pair-return flex min-h-[48px] shrink-0 items-center justify-center bg-spotify-green px-4 py-3 text-center text-sm font-semibold text-black">
+      {{ $t('karaoke.guide.returnToPair') }} · {{ karaokeDevice.grant.name }}
+    </RouterLink>
     <PlayerControls v-if="!isDetachedPlayer"
       @toggle-lyrics="showLyrics = !showLyrics" 
       @add-to-playlist="openAddToPlaylistFromPlayer"
@@ -128,6 +132,7 @@ import { usePlaylistsStore } from '@/stores/playlists'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
 import { useKaraokeGuideStore } from '@/stores/karaokeGuide'
+import { useKaraokeDeviceStore } from '@/stores/karaokeDevice'
 import { releaseAllMicStreams } from '@/composables/useMicDevices'
 import { applyPwaUpdate } from '@/services/pwaUpdate'
 
@@ -157,6 +162,7 @@ const isGuideRoute = computed(() => route.name === 'KaraokeVocalGuide')
 const isDetachedPlayer = computed(() => isPartyRoute.value || isGuideRoute.value)
 const isImmersiveRoute = computed(() => route.name === 'PartyStage' || isGuideRoute.value)
 const karaokeGuide = useKaraokeGuideStore()
+const karaokeDevice = useKaraokeDeviceStore()
 
 // Reactive state
 // Lyrics/visualizer visibility lives in the ui store so other pages (e.g. the shared-song
@@ -229,7 +235,7 @@ async function loadLibrary() {
   await songsStore.fetchUncachedTitles()
   
   // Auto-play a random song after data is loaded (skip if accessing direct song URL)
-  if (!isDirectSongAccess() && !isDetachedPlayer.value) {
+  if (!isDirectSongAccess() && !isDetachedPlayer.value && !karaokeDevice.grant) {
     await startRandomSong()
   }
   
@@ -242,14 +248,25 @@ async function loadLibrary() {
 
 onMounted(async () => {
   await router.isReady()
+  karaokeDevice.start()
+  window.addEventListener('online', karaokeDevice.resume)
+  window.addEventListener('focus', karaokeDevice.resume)
+  document.addEventListener('visibilitychange', karaokeDevice.resume)
   if (isGuideRoute.value) {
     checkForUpdates()
   } else void initializeLibrary()
 })
-watch(isGuideRoute, guide => { if (!guide) void initializeLibrary() })
+watch(isGuideRoute, guide => {
+  karaokeDevice.setInGuide(guide)
+  if (!guide) void initializeLibrary()
+})
 
 onUnmounted(() => {
   karaokeGuide.stop()
+  karaokeDevice.stop()
+  window.removeEventListener('online', karaokeDevice.resume)
+  window.removeEventListener('focus', karaokeDevice.resume)
+  document.removeEventListener('visibilitychange', karaokeDevice.resume)
   clearInactivityTimer()
   cleanupActivityListeners()
   window.removeEventListener('focus', refreshPlaylistsOnResume)

@@ -25,3 +25,45 @@ export async function guideRequest<T>(clock: KaraokeGuideClock, path: string, to
 }
 
 export interface KaraokeGuideReply { state: KaraokeGuideState | null; hostOnline: boolean }
+
+export interface KaraokePairedDevice {
+  id: string
+  name: string
+  canControl: boolean
+  status: 'guide' | 'away' | 'offline'
+  idleRemainingMs: number
+}
+export interface KaraokeDeviceGrant {
+  sessionId: string
+  token: string
+  deviceId: string
+  name: string
+  expiresAt: number
+}
+export type KaraokeRemoteAction = 'play' | 'pause' | 'stop' | 'skip' | 'seek' | 'enqueue' | 'singNow' | 'removeQueued'
+export interface KaraokeRemoteCommand {
+  id: string
+  action: KaraokeRemoteAction
+  songId?: number
+  position?: number
+  expiresAt: number
+}
+export interface KaraokeCommandResult { id: string; status: 'pending' | 'applied' | 'failed'; code?: string }
+export interface KaraokeHostReply {
+  connectedDevices: number
+  guideToken: string
+  devices: KaraokePairedDevice[]
+  commands: KaraokeRemoteCommand[]
+  deviceIdleMs: number
+}
+export interface KaraokeCatalogSong { id: number; title: string; artist: string }
+export interface KaraokeCatalogReply { songs: KaraokeCatalogSong[]; total: number; page: number; ready: boolean }
+export interface KaraokeDeviceReply extends KaraokeGuideReply {
+  device: KaraokePairedDevice
+  controlsAvailable: boolean
+  queue: { id: number; title: string }[]
+  commands: KaraokeCommandResult[]
+}
+export function karaokeRequestId() {
+  return globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`
+}

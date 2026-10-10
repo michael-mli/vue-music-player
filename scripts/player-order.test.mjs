@@ -226,3 +226,39 @@ test('party entry during an Android output rebuild retains the paused solo sourc
   assert.equal(replacement.src, '/api/dig/files/link.1370.mp3')
   assert.equal(replacement.currentTime, 12); assert.equal(replacement.paused, true); assert.equal(replacement.playCalls, 0)
 })
+
+test('requested songs keep FIFO order ahead of shuffle, repeat-one, and song range', async () => {
+  const { environment } = audioEnvironment(), player = setup(undefined, undefined, environment)
+  player.initializeAudio()
+  const queue = [song(1370), song(1369), song(1368)]
+  await player.playSong(queue[0], queue, 0)
+  player.shuffle = true; player.repeat = 'one'; player.setSongRange(1370, 1370)
+  assert.equal(player.enqueueSong(queue[2]), true)
+  assert.equal(player.enqueueSong(queue[1]), true)
+  assert.equal(player.enqueueSong(queue[2]), false)
+  // Automatic end must consume the first request rather than repeat the current song.
+  player.audioElement.dispatchEvent(new Event('ended'))
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(player.currentSong.id, 1368)
+  await player.nextSong()
+  assert.equal(player.currentSong.id, 1369)
+  assert.equal(player.requestedQueue.length, 0)
+})
+
+test('removing a request changes the next song and stopping resets without advancing', async () => {
+  const { environment, window, flushTimers } = audioEnvironment(), player = setup(undefined, undefined, environment)
+  player.initializeAudio()
+  const queue = [song(1370), song(1369), song(1368)]
+  await player.playSong(queue[0], queue, 0)
+  player.enqueueSong(queue[2]); player.removeQueuedSong(queue[2].id)
+  await player.nextSong()
+  assert.equal(player.currentSong.id, 1369)
+  player.seek(50); player.stopPlayback()
+  window.dispatchEvent(new Event('online')); await flushTimers()
+  assert.equal(player.audioElement.paused, true)
+  assert.equal(player.audioElement.currentTime, 0)
+  assert.equal(player.currentTime, 0)
+  assert.equal(player.currentSong.id, 1369)
+  player.setPartyAudioOwnership(true)
+  assert.equal(player.enqueueSong(queue[2]), false)
+})

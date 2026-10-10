@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "type-check": "vue-tsc --noEmit",
     "test:lyrics": "node --test scripts/lyrics-timing.test.mjs",
-    "test:karaoke-guide": "node --test server/karaoke-guide.test.js scripts/karaoke-guide-sync.test.mjs",
+    "test:karaoke-guide": "node --test server/karaoke-guide.test.js scripts/karaoke-guide-sync.test.mjs scripts/karaoke-device.test.mjs",
     "test:karaoke-guide:browser": "node scripts/karaoke-guide-browser.test.mjs",
     "test:party": "node --test scripts/party-wake-lock.test.mjs scripts/party-guide-background.test.mjs scripts/party-clock.test.mjs scripts/party-audio.test.mjs scripts/party-lease-guard.test.mjs scripts/party-encoded-lease.test.mjs scripts/party-commands.test.mjs scripts/party-publish.test.mjs scripts/party-receive.test.mjs scripts/party-capture.test.mjs scripts/party-media-lifecycle.test.mjs scripts/party-transport.test.mjs scripts/party-media-config.test.mjs",
     "test:party:lease-browser": "node scripts/party-audio-lease-browser.test.mjs",

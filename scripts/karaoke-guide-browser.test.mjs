@@ -12,8 +12,8 @@ import WebSocket from '../server/node_modules/ws/wrapper.mjs'
 import { registerKaraokeGuideRoutes } from '../server/karaoke-guide-routes.js'
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'karaoke-guide-browser-'))
-const app = express(), contexts = [], pending = new Map(), errors = []
-let server, guide, chrome, socket, nextId = 0, passed = 0, dropHostUpdates = false
+const app = express(), contexts = [], pending = new Map(), errors = [], dialogs = []
+let server, guide, chrome, socket, nextId = 0, passed = 0, dropHostUpdates = false, dialogChoice = true, loseCommandResponse = false
 const check = (value, message) => { assert.ok(value, message); passed++; console.log('PASS', message) }
 async function poll(work, label, attempts = 150) {
   for (let i = 0; i < attempts; i++) {
@@ -58,6 +58,10 @@ try {
   app.use(express.json())
   app.use('/api/karaoke-guide/sessions', (req, res, next) => {
     if (dropHostUpdates && req.method === 'PUT') return res.sendStatus(503)
+    if (loseCommandResponse && req.method === 'POST' && req.path.endsWith('/commands')) {
+      loseCommandResponse = false
+      res.json = () => { res.destroy(); return res }
+    }
     next()
   })
   const user = { id: 1, username: 'Fixture', name: 'Fixture', role: 'user', kind: 'guest' }
@@ -101,6 +105,9 @@ try {
       if (!task) return
       pending.delete(message.id)
       message.error ? task.reject(new Error(message.error.message)) : task.resolve(message.result)
+    } else if (message.method === 'Page.javascriptDialogOpening') {
+      dialogs.push(message.params)
+      void cdp('Page.handleJavaScriptDialog', { accept: dialogChoice }, message.sessionId)
     } else if (message.method === 'Runtime.exceptionThrown') errors.push(message.params.exceptionDetails.exception?.description || message.params.exceptionDetails.text)
   })
   console.log('Browser:', info.Browser)
@@ -115,7 +122,7 @@ try {
   check(new URL(link).pathname === '/sing/guide' && new URL(link).hash.includes('token='), 'QR targets regular karaoke guide with a fragment credential')
   check(await evaluate(host, `${store('player')}.audioElement.src.includes('.instrumental.mp3')`), 'main device continues instrumental playback')
   const phone = await page(origin, new URL(link).pathname + new URL(link).hash)
-  await poll(() => evaluate(phone, `document.body.innerText.includes('Paired · tap Start vocal guide')`), 'phone paired')
+  await poll(() => evaluate(phone, `document.body?.innerText.includes('Paired · tap Start vocal guide')`), 'phone paired')
   check(await evaluate(phone, `document.querySelector('.karaoke-vocal-guide audio').paused && !${store('player')}.currentSong && ${store('songs')}.songs.length === 0`), 'phone waits for a tap and does not auto-play or load the music catalog')
   check(await evaluate(phone, `!location.hash && !document.querySelector('.player-controls') && !document.querySelector('.floating-recorder')`), 'guide removes its URL credential and hides the regular player and recorder')
   await clickText(phone, 'Start vocal guide')
@@ -131,9 +138,9 @@ try {
   }, 'mid-song seek settles and drift correction aligns media', 30)
   check(drift < 0.35, `mid-song media positions align (${drift.toFixed(3)}s drift)`)
   check(await evaluate(phone, `document.querySelector('audio').src.endsWith('/data/link.1.mp3')`), 'phone plays the original track with vocals')
-  await poll(() => evaluate(host, `document.body.innerText.includes('1 device(s) paired')`), 'host paired indicator')
+  await poll(() => evaluate(host, `document.body?.innerText.includes('1 device(s) paired')`), 'host paired indicator')
   await evaluate(host, `${store('player')}.pause()`)
-  await poll(() => evaluate(phone, `document.querySelector('audio').paused && document.body.innerText.includes('Karaoke player paused')`), 'pause sync')
+  await poll(() => evaluate(phone, `document.querySelector('audio').paused && document.body?.innerText.includes('Karaoke player paused')`), 'pause sync')
   await evaluate(host, `${store('player')}.seek(44)`)
   await poll(() => evaluate(phone, `Math.abs(document.querySelector('audio').currentTime - 44) < 0.1`), 'paused seek sync')
   check(true, 'phone follows host pause and seeks while paused')
@@ -149,20 +156,59 @@ try {
   await clickText(phone, 'Stop guide on this device')
   check(await evaluate(host, `!${store('player')}.audioElement.paused`), 'stopping the private guide leaves host playback running')
   await clickText(phone, 'Start vocal guide')
+  async function control(action) {
+    await poll(() => evaluate(phone, `${store('karaokeDevice')}.canControl`), 'remote controls ready')
+    await evaluate(phone, `document.querySelector('[data-command="${action}"]').click()`)
+    await poll(() => evaluate(phone, `!${store('karaokeDevice')}.pending && ${store('karaokeDevice')}.commandNotice === 'commandApplied'`), 'remote ' + action)
+  }
+  await control('pause')
+  await poll(() => evaluate(host, `${store('player')}.audioElement.paused`), 'remote pause on host')
+  await control('play')
+  await poll(() => evaluate(host, `!${store('player')}.audioElement.paused`), 'remote play on host')
+  await evaluate(phone, `(() => { const slider = document.querySelector('#karaoke-remote-seek'); slider.value = '12'; slider.dispatchEvent(new Event('change', { bubbles: true })); })()`)
+  await poll(() => evaluate(host, `${store('player')}.audioElement.currentTime >= 12 && ${store('player')}.audioElement.currentTime < 17`), 'remote seek on host')
+  await poll(() => evaluate(phone, `!${store('karaokeDevice')}.pending`), 'remote seek acknowledged')
+  await control('stop')
+  await poll(() => evaluate(host, `${store('player')}.audioElement.paused && ${store('player')}.audioElement.currentTime === 0`), 'remote stop on host')
+  check(true, 'phone controls host play, pause, seek and stop/reset')
+  await control('play')
+  await evaluate(phone, `(() => { const input = document.querySelector('input[type="search"]'); input.value = 'Second'; input.dispatchEvent(new Event('input', { bubbles: true })); input.form.requestSubmit(); })()`)
+  await poll(() => evaluate(phone, `!!document.querySelector('[data-song-id="2"]') && !document.querySelector('[data-song-id="1"]')`), 'remote song search')
+  await evaluate(phone, `document.querySelector('[data-song-id="2"] [data-action="enqueue"]').click()`)
+  await poll(() => evaluate(host, `${store('player')}.requestedQueue[0]?.id === 2`), 'remote song added')
+  await poll(() => evaluate(phone, `${store('karaokeDevice')}.queue[0]?.id === 2 && !${store('karaokeDevice')}.pending`), 'queue sync')
+  await evaluate(phone, `(() => { const input = document.querySelector('input[type="search"]'); input.value = 'First'; input.dispatchEvent(new Event('input', { bubbles: true })); input.form.requestSubmit(); })()`)
+  await poll(() => evaluate(phone, `!!document.querySelector('[data-song-id="1"]')`), 'search second request')
+  await evaluate(phone, `document.querySelector('[data-song-id="1"] [data-action="enqueue"]').click()`)
+  await poll(() => evaluate(host, `${store('player')}.requestedQueue.length === 2`), 'two remote requests')
+  await evaluate(host, `${store('player')}.shuffle = true; ${store('player')}.repeat = 'one'`)
+  loseCommandResponse = true
+  await control('skip')
+  await poll(() => evaluate(host, `${store('player')}.currentSong.id === 2 && ${store('player')}.requestedQueue.length === 1`), 'skip honors request queue')
+  await new Promise(resolve => setTimeout(resolve, 2800))
+  check(await evaluate(host, `${store('player')}.currentSong.id === 2 && ${store('player')}.requestedQueue.length === 1`), 'lost command response cannot execute skip twice; requests override shuffle and repeat')
+  await control('skip')
+  await poll(() => evaluate(host, `${store('player')}.currentSong.id === 1 && ${store('player')}.requestedQueue.length === 0`), 'FIFO second request')
+  check(true, 'phone searches ready karaoke songs and adds a synchronized FIFO queue')
+  await evaluate(phone, `(() => { const input = document.querySelector('input[type="search"]'); input.value = 'Second'; input.dispatchEvent(new Event('input', { bubbles: true })); input.form.requestSubmit(); })()`)
+  await poll(() => evaluate(phone, `!!document.querySelector('[data-song-id="2"]') && ${store('karaokeDevice')}.canControl`), 'sing now search')
+  await evaluate(phone, `document.querySelector('[data-song-id="2"] [data-action="singNow"]').click()`)
+  await poll(() => evaluate(host, `${store('player')}.currentSong.id === 2`), 'sing now starts host')
+  check(true, 'Sing now starts the selected song on the host')
   await evaluate(host, `${store('player')}.playSong(${store('songs')}.songs.find(song => song.id === 2), ${store('songs')}.songs, 1)`)
-  await poll(() => evaluate(phone, `document.querySelector('audio').src.endsWith('/data/link.2.mp3') && !document.querySelector('audio').paused && document.body.innerText.includes('Second guide song')`), 'song change sync')
+  await poll(() => evaluate(phone, `document.querySelector('audio').src.endsWith('/data/link.2.mp3') && !document.querySelector('audio').paused && document.body?.innerText.includes('Second guide song')`), 'song change sync')
   check(true, 'paired guide automatically follows song changes')
   await evaluate(host, `document.querySelector('#app').__vue_app__.config.globalProperties.$router.push('/library')`)
   await evaluate(host, `${store('player')}.seek(35)`)
   await poll(() => evaluate(phone, `document.querySelector('audio').currentTime > 34 && document.querySelector('audio').currentTime < 39`), 'pairing while browsing')
   check(true, 'guide stays paired when the host browses another page')
   dropHostUpdates = true
-  await poll(() => evaluate(phone, `document.querySelector('audio').paused && document.body.innerText.includes('Waiting for the karaoke player to reconnect')`), 'stale host stops audio')
+  await poll(() => evaluate(phone, `document.querySelector('audio').paused && document.body?.innerText.includes('Waiting for the karaoke player to reconnect')`), 'stale host stops audio')
   dropHostUpdates = false
   await poll(() => evaluate(phone, `!document.querySelector('audio').paused`), 'reconnect resumes guide')
   check(true, 'stale host updates pause guide audio and reconnect restores sync')
   await cdp('Page.reload', {}, phone)
-  await poll(() => evaluate(phone, `document.body.innerText.includes('Paired · tap Start vocal guide')`), 'guide reload pairing')
+  await poll(() => evaluate(phone, `document.body?.innerText.includes('Paired · tap Start vocal guide')`), 'guide reload pairing')
   check(await evaluate(phone, `document.querySelector('audio').paused`), 'guide reload retains pairing and requires a fresh playback tap')
   await clickText(phone, 'Start vocal guide')
   await poll(() => evaluate(phone, `!!navigator.serviceWorker.controller`), 'PWA controls the guide page')
@@ -175,27 +221,55 @@ try {
   await cdp('Network.enable', {}, phone)
   await cdp('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 }, phone)
   try {
-    await poll(() => evaluate(phone, `document.querySelector('audio').paused && document.body.innerText.includes('Reconnecting')`), 'offline guide stops')
+    await poll(() => evaluate(phone, `document.querySelector('audio').paused && document.body?.innerText.includes('Reconnecting')`), 'offline guide stops')
     check(true, 'offline PWA cannot replay cached guide state or continue following stale playback')
   } finally {
     await cdp('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: 0, uploadThroughput: 0 }, phone)
   }
   await poll(() => evaluate(phone, `!document.querySelector('audio').paused`), 'phone reconnect restores guide')
   await evaluate(host, `${store('karaokeGuide')}.stop()`)
-  await poll(() => evaluate(phone, `document.querySelector('audio').paused && document.body.innerText.includes('Pairing has ended')`), 'ending pairing')
+  await poll(() => evaluate(phone, `document.querySelector('audio').paused && document.body?.innerText.includes('Pairing has ended')`), 'ending pairing')
   check(true, 'ending pairing stops guide audio and invalidates the link')
-  // A fresh session allows checking route cleanup while audio is actively playing.
+  // A fresh session checks browser Back warnings and returning without rescanning.
   await evaluate(host, `${store('karaokeGuide')}.start()`)
   const newLink = await evaluate(host, `${store('karaokeGuide')}.pairUrl`)
-  const leavingPhone = await page(origin, new URL(newLink).pathname + new URL(newLink).hash)
-  await poll(() => evaluate(leavingPhone, `document.body.innerText.includes('Paired · tap Start vocal guide')`), 'second guide paired')
+  const leavingPhone = await page(origin, '/library')
+  await evaluate(leavingPhone, `document.querySelector('#app').__vue_app__.config.globalProperties.$router.push(${JSON.stringify(new URL(newLink).pathname + new URL(newLink).hash)})`)
+  await poll(() => evaluate(leavingPhone, `document.body?.innerText.includes('Paired · tap Start vocal guide')`), 'returning phone paired')
   await clickText(leavingPhone, 'Start vocal guide')
-  await poll(() => evaluate(leavingPhone, `!document.querySelector('audio').paused`), 'second guide plays')
-  await evaluate(leavingPhone, `window.__guideAudio = document.querySelector('audio'); document.querySelector('#app').__vue_app__.config.globalProperties.$router.push('/sing')`)
-  await poll(() => evaluate(leavingPhone, `!document.querySelector('.karaoke-vocal-guide') && window.__guideAudio.paused && !window.__guideAudio.getAttribute('src')`), 'guide route cleanup')
-  check(true, 'leaving the guide stops and releases its audio element')
+  await poll(() => evaluate(leavingPhone, `!document.querySelector('.karaoke-vocal-guide audio').paused`), 'returning phone plays')
+  const deviceId = await evaluate(leavingPhone, `${store('karaokeDevice')}.grant.deviceId`)
+  const savedToken = await evaluate(leavingPhone, `${store('karaokeDevice')}.grant.token`)
+  dialogChoice = false
+  await evaluate(leavingPhone, `history.back()`)
+  await poll(() => Promise.resolve(dialogs.some(dialog => dialog.type === 'confirm' && dialog.message.includes('Your pairing stays saved'))), 'browser Back warning')
+  check(await evaluate(leavingPhone, `!!document.querySelector('.karaoke-vocal-guide') && !document.querySelector('.karaoke-vocal-guide audio').paused`), 'cancelling browser Back keeps the paired guide and audio open')
+  dialogChoice = true
+  await evaluate(leavingPhone, `window.__guideAudio = document.querySelector('.karaoke-vocal-guide audio'); history.back()`)
+  await poll(() => evaluate(leavingPhone, `!!document.querySelector('.karaoke-pair-return') && window.__guideAudio.paused && !window.__guideAudio.getAttribute('src')`), 'guide route cleanup and return link')
+  await poll(() => evaluate(host, `${store('karaokeGuide')}.devices.find(item => item.id === '${deviceId}')?.status === 'away'`), 'host away device status')
+  await cdp('Page.reload', {}, leavingPhone)
+  await poll(() => evaluate(leavingPhone, `!!document.querySelector('.karaoke-pair-return')`), 'saved pairing after away reload')
+  await evaluate(leavingPhone, `document.querySelector('.karaoke-pair-return').click()`)
+  await poll(() => evaluate(leavingPhone, `document.body?.innerText.includes('Paired · tap Start vocal guide')`), 'resume guide')
+  check(await evaluate(leavingPhone, `${store('karaokeDevice')}.grant.token === '${savedToken}' && document.querySelector('.karaoke-vocal-guide audio').paused`), 'confirmed Back stops guide audio; saved pairing returns after reload without another scan')
+  await clickText(leavingPhone, 'Start vocal guide')
+  await poll(() => evaluate(leavingPhone, `!document.querySelector('.karaoke-vocal-guide audio').paused`), 'resumed guide audio source')
+  await evaluate(host, `document.querySelector('#app').__vue_app__.config.globalProperties.$router.push('/sing')`)
+  await poll(() => evaluate(host, `!!document.querySelector('[data-device-id="${deviceId}"] input[type="checkbox"]')`), 'host device controls')
+  await evaluate(host, `document.querySelector('[data-device-id="${deviceId}"] input[type="checkbox"]').click()`)
+  await poll(() => evaluate(leavingPhone, `!${store('karaokeDevice')}.device.canControl && document.querySelector('[data-command="pause"]').disabled`), 'host disables remote controls')
+  check(await evaluate(leavingPhone, `!document.querySelector('.karaoke-vocal-guide audio').paused`), 'host can disable controls while allowing vocal-guide listening')
+  await evaluate(host, `document.querySelector('[data-device-id="${deviceId}"] input[type="checkbox"]').click()`)
+  await poll(() => evaluate(leavingPhone, `${store('karaokeDevice')}.canControl`), 'host restores remote controls')
+  const otherPhone = await page(origin, new URL(newLink).pathname + new URL(newLink).hash)
+  await poll(() => evaluate(otherPhone, `!!${store('karaokeDevice')}.device`), 'second independent device')
+  await evaluate(host, `document.querySelector('[data-device-id="${deviceId}"] button').click()`)
+  await poll(() => evaluate(leavingPhone, `document.body?.innerText.includes('The host removed this device') && !${store('karaokeDevice')}.grant && document.querySelector('.karaoke-vocal-guide audio').paused`), 'host removes device')
+  check(await evaluate(otherPhone, `!!${store('karaokeDevice')}.grant && ${store('karaokeDevice')}.hostOnline`), 'host removal clears only the selected phone; another paired device stays connected')
+  check(await evaluate(host, `${store('karaokeGuide')}.pairUrl !== ${JSON.stringify(newLink)}`), 'removing a device refreshes the QR invitation')
   const invalid = await page(origin, '/sing/guide', 320, 'zh')
-  await poll(() => evaluate(invalid, `document.body.innerText.includes('配对链接无效')`), 'localized invalid pair')
+  await poll(() => evaluate(invalid, `document.body?.innerText.includes('配对链接无效')`), 'localized invalid pair')
   check(true, 'missing pairing links show a localized recovery message')
   check(errors.length === 0, 'no uncaught browser errors: ' + errors.join('\n'))
   console.log(`${passed} karaoke guide browser checks passed`)

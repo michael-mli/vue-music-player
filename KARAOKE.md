@@ -159,7 +159,28 @@ as Bluetooth). Clock estimation removes device clock differences, and ongoing
 drift correction keeps the media timelines aligned. Physical speaker/headphone
 latency still depends on the devices; use the timing slider to tune it by ear.
 
-Keep both pages open. Guide playback requests a screen wake lock where supported
+The paired device can **Play**, **Pause**, **Stop song** (pause and reset to the
+beginning), **Skip song**, and seek the host. Search the host’s ready karaoke
+songs by title, artist, or song ID; **Add to queue** schedules songs in request
+order ahead of shuffle/repeat, and **Sing now** starts a selection immediately.
+Both devices show the requested queue, and either can remove a request. Commands
+are acknowledged by the host and use stable request IDs so reconnecting cannot
+repeat a skip or add the same request twice.
+
+Back/navigation shows a warning before stopping this device’s audio. Continuing
+keeps the pairing in local storage: **Return to paired karaoke** appears elsewhere
+in the app, including after a reload. Returning requires a fresh audio tap. Name
+your phone on the guide page to identify it in the host’s **Paired devices** list.
+The host can turn controls off while keeping listening available, or remove an
+individual device. Removal revokes that device and refreshes the QR invitation;
+other devices retain their grants. Up to 10 devices can pair with one host.
+
+A device expires after **30 minutes without listening or interaction**. Away,
+offline, untouched paused, and guide-stopped devices time out; active listening,
+controls, and searches renew activity. Background polling alone does not renew
+it. The host list shows connection state and time remaining before idle removal.
+
+Keep both pages open while listening. Guide playback requests a screen wake lock where supported
 and pauses if host updates or the network connection stop. **End pairing**,
 turning off karaoke, or entering KTV Party invalidates the link. Host reloads
 require a fresh pairing; guide reloads preserve the pairing but require another
@@ -170,10 +191,14 @@ This uses the existing backend through `/api/karaoke-guide/sessions`, independen
 of KTV Party features or media infrastructure. Deploy the frontend and restart the
 backend together. No extra WebSocket proxy configuration is needed. Pairing tokens
 live in the QR link fragment; the guide removes that fragment after opening and
-uses a read-only token. Live sync responses are never cached by the PWA.
+exchanges the invitation for a separate device token, saved locally for returning.
+Only the host token can publish playback, update the song catalog, or manage
+other devices. Per-device control permissions are enforced on the backend. Live sync responses are never cached by the PWA.
 
 Run `npm run test:karaoke-guide` for route authorization, lifecycle, playback state,
-clock mapping, and drift correction tests. After `npm run build`, run
+device permissions/removal, idle expiry, command deduplication/deadlines, catalog
+search, clock mapping, and drift correction tests. Run `node --test
+scripts/player-order.test.mjs` to verify requested-song priority and stopping. After `npm run build`, run
 `npm run test:karaoke-guide:browser` for isolated two-device Chrome acceptance.
 
 ## Configuration

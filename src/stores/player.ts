@@ -23,6 +23,8 @@ export const usePlayerStore = defineStore('player', () => {
   const shuffle = ref(true)
   const repeat = ref<'none' | 'one' | 'all'>('none')
   const queue = ref<Song[]>([])
+  // Explicit karaoke requests play in order before the normal/shuffled queue.
+  const requestedQueue = ref<Song[]>([])
   const currentIndex = ref(0)
   // The exact next song, decided when the current song starts and preloaded ahead so it's
   // already buffered when the current one ends. -1 = not decided yet. This is what makes
@@ -146,7 +148,7 @@ export const usePlayerStore = defineStore('player', () => {
   })
 
   const canPlayNext = computed(() => {
-    return shuffle.value || currentIndex.value < queue.value.length - 1 || repeat.value === 'all'
+    return requestedQueue.value.length > 0 || shuffle.value || currentIndex.value < queue.value.length - 1 || repeat.value === 'all'
   })
 
   const canPlayPrevious = computed(() => {
@@ -429,6 +431,27 @@ export const usePlayerStore = defineStore('player', () => {
     }
   }
 
+  function stopPlayback() {
+    pause()
+    if (endFallbackTimeout.value) { clearTimeout(endFallbackTimeout.value); endFallbackTimeout.value = null }
+    if (audioElement.value?.readyState && audioElement.value.readyState >= 1) audioElement.value.currentTime = 0
+    currentTime.value = 0
+    endedHandled.value = false
+  }
+
+  function enqueueSong(song: Song) {
+    if (partyAudioOwned.value || requestedQueue.value.length >= 50 || requestedQueue.value.some(item => item.id === song.id)) return false
+    if (!queue.value.some(item => item.id === song.id)) queue.value.push(song)
+    requestedQueue.value.push(song)
+    void triggerReadAheadCache()
+    return true
+  }
+
+  function removeQueuedSong(songId: number) {
+    requestedQueue.value = requestedQueue.value.filter(song => song.id !== songId)
+    void triggerReadAheadCache()
+  }
+
   function setPartyAudioOwnership(owned: boolean) {
     if (partyAudioOwned.value === owned) return
     partyAudioOwned.value = owned
@@ -491,6 +514,14 @@ export const usePlayerStore = defineStore('player', () => {
 
   async function nextSong() {
     if (partyAudioOwned.value) return
+    const requested = requestedQueue.value.shift()
+    if (requested) {
+      ++readAheadGeneration
+      nextUpIndex.value = -1
+      currentIndex.value = queue.value.findIndex(song => song.id === requested.id)
+      await playSong(requested)
+      return
+    }
     debugLogger.info('PLAYER', `nextSong called — currentIndex=${currentIndex.value} shuffle=${shuffle.value} canNext=${canPlayNext.value}`, snapAudio())
 
     // Sequential playback follows the queue even if the next download failed.
@@ -798,7 +829,7 @@ export const usePlayerStore = defineStore('player', () => {
     endedHandled.value = true
     debugLogger.info('PLAYER', `handleSongEnd called — repeat=${repeat.value}`, snapAudio())
 
-    if (repeat.value === 'one') {
+    if (repeat.value === 'one' && requestedQueue.value.length === 0) {
       debugLogger.info('PLAYER', 'Repeat=one: restarting current song')
       await play()
     } else {
@@ -1198,6 +1229,11 @@ export const usePlayerStore = defineStore('player', () => {
    */
   function nextIndexCandidates(max: number): number[] {
     if (queue.value.length === 0) return []
+    const requested = requestedQueue.value[0]
+    if (requested) {
+      const index = queue.value.findIndex(song => song.id === requested.id)
+      if (index >= 0) return [index]
+    }
 
     if (shuffle.value) {
       const eligible = queue.value
@@ -1569,6 +1605,7 @@ export const usePlayerStore = defineStore('player', () => {
     shuffle,
     repeat,
     queue,
+    requestedQueue,
     currentIndex,
     playHistory,
     sleepTimer,
@@ -1608,6 +1645,9 @@ export const usePlayerStore = defineStore('player', () => {
     playSong,
     play,
     pause,
+    stopPlayback,
+    enqueueSong,
+    removeQueuedSong,
     togglePlay,
     nextSong,
     previousSong,
