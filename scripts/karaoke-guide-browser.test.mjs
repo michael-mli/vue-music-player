@@ -112,7 +112,7 @@ try {
   })
   console.log('Browser:', info.Browser)
   const host = await page(origin, '/sing', 1100)
-  await poll(() => evaluate(host, `!!${store('songs')}?.songs.length && !!${store('player')}.audioElement`), 'host library')
+  await poll(() => evaluate(host, `!!${store('songs')}?.songs.length && !!${store('player')}.audioElement && !!${store('player')}.currentSong && ${store('songs')}.titleLoadingProgress < 0`), 'host library')
   await evaluate(host, `${store('player')}.playSong(${store('songs')}.songs.find(song => song.id === 1), ${store('songs')}.songs, 0)`)
   await poll(() => evaluate(host, `${store('player')}.audioElement.readyState >= 3 && ${store('player')}.isPlaying`), 'host instrumental playing')
   await evaluate(host, `${store('player')}.seek(20)`)
