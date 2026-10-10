@@ -52,6 +52,11 @@ async function page(origin, route, width = 320, language = 'en') {
 async function clickText(session, text) {
   await evaluate(session, `[...document.querySelectorAll('button')].find(button => button.textContent.trim() === ${JSON.stringify(text)}).click()`)
 }
+async function reloadPage(session) {
+  await evaluate(session, 'window.__beforeReload = true')
+  await cdp('Page.reload', {}, session)
+  await poll(() => evaluate(session, `!window.__beforeReload && !!document.querySelector('#app')?.__vue_app__?.config.globalProperties.$pinia`), 'reload mounts a new document')
+}
 try {
   const media = path.join(root, 'track.mp3')
   await promisify(execFile)('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=90', '-codec:a', 'libmp3lame', '-b:a', '64k', media])
@@ -207,7 +212,7 @@ try {
   dropHostUpdates = false
   await poll(() => evaluate(phone, `!document.querySelector('audio').paused`), 'reconnect resumes guide')
   check(true, 'stale host updates pause guide audio and reconnect restores sync')
-  await cdp('Page.reload', {}, phone)
+  await reloadPage(phone)
   await poll(() => evaluate(phone, `document.body?.innerText.includes('Paired · tap Start vocal guide')`), 'guide reload pairing')
   check(await evaluate(phone, `document.querySelector('audio').paused`), 'guide reload retains pairing and requires a fresh playback tap')
   await clickText(phone, 'Start vocal guide')
@@ -248,7 +253,7 @@ try {
   await evaluate(leavingPhone, `window.__guideAudio = document.querySelector('.karaoke-vocal-guide audio'); history.back()`)
   await poll(() => evaluate(leavingPhone, `!!document.querySelector('.karaoke-pair-return') && window.__guideAudio.paused && !window.__guideAudio.getAttribute('src')`), 'guide route cleanup and return link')
   await poll(() => evaluate(host, `${store('karaokeGuide')}.devices.find(item => item.id === '${deviceId}')?.status === 'away'`), 'host away device status')
-  await cdp('Page.reload', {}, leavingPhone)
+  await reloadPage(leavingPhone)
   await poll(() => evaluate(leavingPhone, `!!document.querySelector('.karaoke-pair-return')`), 'saved pairing after away reload')
   await evaluate(leavingPhone, `document.querySelector('.karaoke-pair-return').click()`)
   await poll(() => evaluate(leavingPhone, `document.body?.innerText.includes('Paired · tap Start vocal guide')`), 'resume guide')
