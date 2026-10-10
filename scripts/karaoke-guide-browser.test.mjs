@@ -1,0 +1,211 @@
+// Isolated real-media acceptance: two browser contexts act as separate devices.
+// Requires a production build, Chrome, and ffmpeg. No live backend is modified.
+import assert from 'node:assert/strict'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { spawn, execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { once } from 'node:events'
+import express from '../server/node_modules/express/index.js'
+import WebSocket from '../server/node_modules/ws/wrapper.mjs'
+import { registerKaraokeGuideRoutes } from '../server/karaoke-guide-routes.js'
+
+const root = await fs.mkdtemp(path.join(os.tmpdir(), 'karaoke-guide-browser-'))
+const app = express(), contexts = [], pending = new Map(), errors = []
+let server, guide, chrome, socket, nextId = 0, passed = 0, dropHostUpdates = false
+const check = (value, message) => { assert.ok(value, message); passed++; console.log('PASS', message) }
+async function poll(work, label, attempts = 150) {
+  for (let i = 0; i < attempts; i++) {
+    try { if (await work()) return }
+    catch (error) {
+      if (!/Execution context was destroyed|Cannot find context|Inspected target navigated/.test(error.message)) throw error
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('Browser timeout: ' + label)
+}
+function cdp(method, params = {}, sessionId) {
+  return new Promise((resolve, reject) => {
+    const id = ++nextId, timeout = setTimeout(() => { pending.delete(id); reject(new Error('CDP timeout: ' + method)) }, 15000)
+    pending.set(id, { resolve(value) { clearTimeout(timeout); resolve(value) }, reject(error) { clearTimeout(timeout); reject(error) } })
+    socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
+  })
+}
+async function evaluate(session, expression) {
+  const result = await cdp('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, userGesture: true }, session)
+  if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text)
+  return result.result.value
+}
+const store = name => `document.querySelector('#app').__vue_app__.config.globalProperties.$pinia._s.get('${name}')`
+async function page(origin, route, width = 320, language = 'en') {
+  const { browserContextId } = await cdp('Target.createBrowserContext'); contexts.push(browserContextId)
+  const { targetId } = await cdp('Target.createTarget', { url: 'about:blank', browserContextId })
+  const { sessionId } = await cdp('Target.attachToTarget', { targetId, flatten: true })
+  await cdp('Page.enable', {}, sessionId); await cdp('Runtime.enable', {}, sessionId)
+  await cdp('Emulation.setDeviceMetricsOverride', { width, height: 820, deviceScaleFactor: 1, mobile: width < 600 }, sessionId)
+  await cdp('Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('language', '${language}'); localStorage.setItem('auth_token', 'fixture-host'); localStorage.setItem('music-player-karaoke-mode', 'true');` }, sessionId)
+  await cdp('Page.navigate', { url: origin + route }, sessionId)
+  await poll(() => evaluate(sessionId, `!!document.querySelector('#app')?.__vue_app__?.config.globalProperties.$pinia`), 'Vue mount')
+  return sessionId
+}
+async function clickText(session, text) {
+  await evaluate(session, `[...document.querySelectorAll('button')].find(button => button.textContent.trim() === ${JSON.stringify(text)}).click()`)
+}
+try {
+  const media = path.join(root, 'track.mp3')
+  await promisify(execFile)('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=90', '-codec:a', 'libmp3lame', '-b:a', '64k', media])
+  app.use(express.json())
+  app.use('/api/karaoke-guide/sessions', (req, res, next) => {
+    if (dropHostUpdates && req.method === 'PUT') return res.sendStatus(503)
+    next()
+  })
+  const user = { id: 1, username: 'Fixture', name: 'Fixture', role: 'user', kind: 'guest' }
+  app.get('/api/auth/me', (_req, res) => res.json({ success: true, data: user }))
+  app.post('/api/auth/guest', (_req, res) => res.json({ success: true, data: { token: 'fixture-host', user } }))
+  guide = registerKaraokeGuideRoutes(app, { authMiddleware(req, res, next) {
+    if (req.headers.authorization !== 'Bearer fixture-host') return res.sendStatus(401)
+    req.auth = { sub: 1 }; next()
+  } })
+  app.get('/api/categories', (_req, res) => res.json({ success: true, data: { categories: [], assignments: [], lockedSongIds: [] } }))
+  app.get('/api/*', (_req, res) => res.json({ success: true, data: [] }))
+  app.get('/data/song_number.txt', (_req, res) => res.type('text').send('2'))
+  app.get('/data/metadata.json', (_req, res) => res.json({ '1': { title: 'First guide song', duration: 90 }, '2': { title: 'Second guide song', duration: 90 } }))
+  app.get('/karaoke/karaoke_manifest.json', (_req, res) => res.json({ version: 1, ids: [1, 2] }))
+  app.get(['/data/link.:id.mp3', '/karaoke/link.:id.instrumental.mp3'], (_req, res) => res.sendFile(media))
+  app.get(['/lyrics/link.:id.l', '/data/lyrics/link.:id.l'], (_req, res) => res.type('text').send('Fixture song\nSing along'))
+  app.get('/synced/link.:id.lrc', (_req, res) => res.type('text').send('[00:05.00]Sing along\n[00:10.00]Second line'))
+  const dist = path.resolve(process.env.KARAOKE_GUIDE_TEST_DIST || 'dist')
+  app.use(express.static(dist)); app.get('*', (_req, res) => res.sendFile(path.join(dist, 'index.html')))
+  server = app.listen(0, '127.0.0.1'); await once(server, 'listening')
+  const origin = `http://127.0.0.1:${server.address().port}`
+  let debug = process.env.CHROME_DEBUG_URL
+  if (!debug) {
+    const profile = path.join(root, 'chrome')
+    chrome = spawn(process.env.CHROME_BIN || 'google-chrome', ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
+      '--no-first-run', '--no-default-browser-check', '--autoplay-policy=document-user-activation-required',
+      '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdio: 'ignore' })
+    let port
+    await poll(async () => {
+      try { port = (await fs.readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]; return !!port }
+      catch { return false }
+    }, 'Chrome debug port')
+    debug = `http://127.0.0.1:${port}`
+  }
+  const info = await (await fetch(debug + '/json/version')).json()
+  socket = new WebSocket(info.webSocketDebuggerUrl); await once(socket, 'open')
+  socket.on('message', raw => {
+    const message = JSON.parse(raw)
+    if (message.id) {
+      const task = pending.get(message.id)
+      if (!task) return
+      pending.delete(message.id)
+      message.error ? task.reject(new Error(message.error.message)) : task.resolve(message.result)
+    } else if (message.method === 'Runtime.exceptionThrown') errors.push(message.params.exceptionDetails.exception?.description || message.params.exceptionDetails.text)
+  })
+  console.log('Browser:', info.Browser)
+  const host = await page(origin, '/sing', 1100)
+  await poll(() => evaluate(host, `!!${store('songs')}?.songs.length && !!${store('player')}.audioElement`), 'host library')
+  await evaluate(host, `${store('player')}.playSong(${store('songs')}.songs.find(song => song.id === 1), ${store('songs')}.songs, 0)`)
+  await poll(() => evaluate(host, `${store('player')}.audioElement.readyState >= 3 && ${store('player')}.isPlaying`), 'host instrumental playing')
+  await evaluate(host, `${store('player')}.seek(20)`)
+  await clickText(host, 'Pair vocal guide')
+  await poll(() => evaluate(host, `!!document.querySelector('#karaoke-guide-link')?.value && document.querySelector('canvas[aria-label="Scan to pair your vocal guide"]')?.width === 224`), 'QR and pairing link')
+  const link = await evaluate(host, `document.querySelector('#karaoke-guide-link').value`)
+  check(new URL(link).pathname === '/sing/guide' && new URL(link).hash.includes('token='), 'QR targets regular karaoke guide with a fragment credential')
+  check(await evaluate(host, `${store('player')}.audioElement.src.includes('.instrumental.mp3')`), 'main device continues instrumental playback')
+  const phone = await page(origin, new URL(link).pathname + new URL(link).hash)
+  await poll(() => evaluate(phone, `document.body.innerText.includes('Paired · tap Start vocal guide')`), 'phone paired')
+  check(await evaluate(phone, `document.querySelector('.karaoke-vocal-guide audio').paused && !${store('player')}.currentSong && ${store('songs')}.songs.length === 0`), 'phone waits for a tap and does not auto-play or load the music catalog')
+  check(await evaluate(phone, `!location.hash && !document.querySelector('.player-controls') && !document.querySelector('.floating-recorder')`), 'guide removes its URL credential and hides the regular player and recorder')
+  await clickText(phone, 'Start vocal guide')
+  await poll(() => evaluate(phone, `!document.querySelector('audio').paused && document.querySelector('audio').currentTime > 19`), 'mid-song guide playback')
+  let drift
+  await poll(async () => {
+    const [hostPosition, phonePosition] = await Promise.all([
+      evaluate(host, `${store('player')}.audioElement.currentTime`),
+      evaluate(phone, `document.querySelector('audio').currentTime`),
+    ])
+    drift = Math.abs(hostPosition - phonePosition)
+    return drift < 0.35
+  }, 'mid-song seek settles and drift correction aligns media', 30)
+  check(drift < 0.35, `mid-song media positions align (${drift.toFixed(3)}s drift)`)
+  check(await evaluate(phone, `document.querySelector('audio').src.endsWith('/data/link.1.mp3')`), 'phone plays the original track with vocals')
+  await poll(() => evaluate(host, `document.body.innerText.includes('1 device(s) paired')`), 'host paired indicator')
+  await evaluate(host, `${store('player')}.pause()`)
+  await poll(() => evaluate(phone, `document.querySelector('audio').paused && document.body.innerText.includes('Karaoke player paused')`), 'pause sync')
+  await evaluate(host, `${store('player')}.seek(44)`)
+  await poll(() => evaluate(phone, `Math.abs(document.querySelector('audio').currentTime - 44) < 0.1`), 'paused seek sync')
+  check(true, 'phone follows host pause and seeks while paused')
+  await evaluate(host, `${store('player')}.play()`)
+  await poll(() => evaluate(phone, `!document.querySelector('audio').paused`), 'resume sync')
+  await evaluate(host, `${store('player')}.audioElement.playbackRate = 1.25`)
+  await poll(() => evaluate(phone, `Math.abs(document.querySelector('audio').playbackRate - 1.25) < 0.05`), 'rate sync')
+  check(true, 'phone follows resume and playback rate changes')
+  await evaluate(phone, `(() => { const slider = document.querySelector('#vocal-guide-offset'); slider.value = '500'; slider.dispatchEvent(new Event('input', { bubbles: true })); })()`)
+  await poll(() => evaluate(phone, `localStorage.getItem('karaoke-guide-offset') === '500'`), 'timing preference')
+  await clickText(phone, 'Reset timing')
+  check(await evaluate(phone, `document.querySelector('.karaoke-vocal-guide').scrollWidth <= document.querySelector('.karaoke-vocal-guide').clientWidth`), '320px guide layout has no horizontal overflow')
+  await clickText(phone, 'Stop guide on this device')
+  check(await evaluate(host, `!${store('player')}.audioElement.paused`), 'stopping the private guide leaves host playback running')
+  await clickText(phone, 'Start vocal guide')
+  await evaluate(host, `${store('player')}.playSong(${store('songs')}.songs.find(song => song.id === 2), ${store('songs')}.songs, 1)`)
+  await poll(() => evaluate(phone, `document.querySelector('audio').src.endsWith('/data/link.2.mp3') && !document.querySelector('audio').paused && document.body.innerText.includes('Second guide song')`), 'song change sync')
+  check(true, 'paired guide automatically follows song changes')
+  await evaluate(host, `document.querySelector('#app').__vue_app__.config.globalProperties.$router.push('/library')`)
+  await evaluate(host, `${store('player')}.seek(35)`)
+  await poll(() => evaluate(phone, `document.querySelector('audio').currentTime > 34 && document.querySelector('audio').currentTime < 39`), 'pairing while browsing')
+  check(true, 'guide stays paired when the host browses another page')
+  dropHostUpdates = true
+  await poll(() => evaluate(phone, `document.querySelector('audio').paused && document.body.innerText.includes('Waiting for the karaoke player to reconnect')`), 'stale host stops audio')
+  dropHostUpdates = false
+  await poll(() => evaluate(phone, `!document.querySelector('audio').paused`), 'reconnect resumes guide')
+  check(true, 'stale host updates pause guide audio and reconnect restores sync')
+  await cdp('Page.reload', {}, phone)
+  await poll(() => evaluate(phone, `document.body.innerText.includes('Paired · tap Start vocal guide')`), 'guide reload pairing')
+  check(await evaluate(phone, `document.querySelector('audio').paused`), 'guide reload retains pairing and requires a fresh playback tap')
+  await clickText(phone, 'Start vocal guide')
+  await poll(() => evaluate(phone, `!!navigator.serviceWorker.controller`), 'PWA controls the guide page')
+  check(await evaluate(phone, `(async () => {
+    for (const name of await caches.keys()) for (const request of await (await caches.open(name)).keys()) {
+      if (new URL(request.url).pathname.startsWith('/api/karaoke-guide')) return false;
+    }
+    return true;
+  })()`), 'PWA stores no live guide sessions or credentials')
+  await cdp('Network.enable', {}, phone)
+  await cdp('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 }, phone)
+  try {
+    await poll(() => evaluate(phone, `document.querySelector('audio').paused && document.body.innerText.includes('Reconnecting')`), 'offline guide stops')
+    check(true, 'offline PWA cannot replay cached guide state or continue following stale playback')
+  } finally {
+    await cdp('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: 0, uploadThroughput: 0 }, phone)
+  }
+  await poll(() => evaluate(phone, `!document.querySelector('audio').paused`), 'phone reconnect restores guide')
+  await evaluate(host, `${store('karaokeGuide')}.stop()`)
+  await poll(() => evaluate(phone, `document.querySelector('audio').paused && document.body.innerText.includes('Pairing has ended')`), 'ending pairing')
+  check(true, 'ending pairing stops guide audio and invalidates the link')
+  // A fresh session allows checking route cleanup while audio is actively playing.
+  await evaluate(host, `${store('karaokeGuide')}.start()`)
+  const newLink = await evaluate(host, `${store('karaokeGuide')}.pairUrl`)
+  const leavingPhone = await page(origin, new URL(newLink).pathname + new URL(newLink).hash)
+  await poll(() => evaluate(leavingPhone, `document.body.innerText.includes('Paired · tap Start vocal guide')`), 'second guide paired')
+  await clickText(leavingPhone, 'Start vocal guide')
+  await poll(() => evaluate(leavingPhone, `!document.querySelector('audio').paused`), 'second guide plays')
+  await evaluate(leavingPhone, `window.__guideAudio = document.querySelector('audio'); document.querySelector('#app').__vue_app__.config.globalProperties.$router.push('/sing')`)
+  await poll(() => evaluate(leavingPhone, `!document.querySelector('.karaoke-vocal-guide') && window.__guideAudio.paused && !window.__guideAudio.getAttribute('src')`), 'guide route cleanup')
+  check(true, 'leaving the guide stops and releases its audio element')
+  const invalid = await page(origin, '/sing/guide', 320, 'zh')
+  await poll(() => evaluate(invalid, `document.body.innerText.includes('配对链接无效')`), 'localized invalid pair')
+  check(true, 'missing pairing links show a localized recovery message')
+  check(errors.length === 0, 'no uncaught browser errors: ' + errors.join('\n'))
+  console.log(`${passed} karaoke guide browser checks passed`)
+} finally {
+  if (socket?.readyState === WebSocket.OPEN) {
+    for (const browserContextId of contexts) await cdp('Target.disposeBrowserContext', { browserContextId }).catch(() => {})
+    socket.close()
+  }
+  if (chrome) { chrome.kill('SIGTERM'); await once(chrome, 'exit').catch(() => {}) }
+  guide?.close()
+  if (server) await new Promise(resolve => server.close(resolve))
+  await fs.rm(root, { recursive: true, force: true })
+}

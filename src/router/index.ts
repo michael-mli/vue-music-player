@@ -4,6 +4,7 @@ import Search from '@/views/Search.vue'
 import Library from '@/views/Library.vue'
 import DigSong from '@/views/DigSong.vue'
 import Karaoke from '@/views/Karaoke.vue'
+import KaraokeVocalGuide from '@/views/KaraokeVocalGuide.vue'
 import Admin from '@/views/Admin.vue'
 import Playlist from '@/views/Playlist.vue'
 import Music from '@/views/Music.vue'
@@ -42,6 +43,7 @@ const router = createRouter({
       name: 'Karaoke',
       component: Karaoke
     },
+    { path: '/sing/guide', name: 'KaraokeVocalGuide', component: KaraokeVocalGuide },
     { path: '/party', name: 'PartyHome', component: PartyHome },
     { path: '/party/join', name: 'PartyJoin', component: PartyJoin },
     { path: '/party/pair', name: 'PartyPair', component: PartyPair },

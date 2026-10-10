@@ -6,7 +6,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "test": "node --test ktv-automation.test.js dig.test.js ktv.test.js ktv-playback.test.js ktv-timing.test.js ktv-media.test.js ktv-media-ice.test.js ktv-media-grants.test.js ktv-media-routes.test.js ktv-observability.test.js"
+    "test": "node --test karaoke-guide.test.js ktv-automation.test.js dig.test.js ktv.test.js ktv-playback.test.js ktv-timing.test.js ktv-media.test.js ktv-media-ice.test.js ktv-media-grants.test.js ktv-media-routes.test.js ktv-observability.test.js"
   },
   "dependencies": {
     "@livekit/protocol": "1.51.0",

@@ -18,6 +18,7 @@ import { ktvFeaturesFromEnv } from './ktv-features.js'
 import { createKtvAssets } from './ktv-assets.js'
 import { createKtvMetrics, registerKtvHealthRoute } from './ktv-observability.js'
 import { createDigIngestionWorker } from './dig-ingestion.js'
+import { registerKaraokeGuideRoutes } from './karaoke-guide-routes.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // override:true so a restart always reflects the current .env.server (pm2 may carry a
@@ -166,6 +167,7 @@ function requireAdmin(req, res, next) {
 }
 
 const karaokeManifestPath = process.env.KARAOKE_MANIFEST_PATH || path.join(WEB_ROOT, 'karaoke', 'karaoke_manifest.json')
+registerKaraokeGuideRoutes(app, { authMiddleware })
 const ktvMetrics = createKtvMetrics()
 const ktvFeatures = ktvFeaturesFromEnv(process.env)
 app.use('/api/ktv', ktvMetrics.middleware)

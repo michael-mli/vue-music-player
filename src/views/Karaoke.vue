@@ -35,6 +35,8 @@
         </button>
       </div>
 
+      <KaraokeGuidePairing />
+
       <!-- Now-singing lyrics stage -->
       <div
         v-if="currentSong"
@@ -189,6 +191,7 @@ import { MicrophoneIcon } from '@heroicons/vue/24/outline'
 import SongCover from '@/components/UI/SongCover.vue'
 import SearchBar from '@/components/UI/SearchBar.vue'
 import KaraokeMicSetup from '@/components/UI/KaraokeMicSetup.vue'
+import KaraokeGuidePairing from '@/components/UI/KaraokeGuidePairing.vue'
 import KaraokeGuide from '@/components/Lyrics/KaraokeGuide.vue'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'

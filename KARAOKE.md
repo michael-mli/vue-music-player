@@ -145,6 +145,37 @@ share the settings. The audio and original LRC files are unchanged.
 
 ---
 
+## Paired original vocal guide
+
+In regular Karaoke (`/sing`), enable karaoke mode, select a song, and click
+**Pair vocal guide**. Scan the QR code on another device and tap **Start vocal
+guide**. The main player keeps playing the instrumental; the paired device
+plays the original recording with vocals. Use headphones for a private guide.
+
+The guide follows play/pause, seeking, playback rate, and song changes, including
+while the host browses other pages. Each guide has its own volume and a saved
+timing adjustment (positive values advance the guide for delayed outputs such
+as Bluetooth). Clock estimation removes device clock differences, and ongoing
+drift correction keeps the media timelines aligned. Physical speaker/headphone
+latency still depends on the devices; use the timing slider to tune it by ear.
+
+Keep both pages open. Guide playback requests a screen wake lock where supported
+and pauses if host updates or the network connection stop. **End pairing**,
+turning off karaoke, or entering KTV Party invalidates the link. Host reloads
+require a fresh pairing; guide reloads preserve the pairing but require another
+tap to enable audio. Sessions expire after 12 hours or two minutes without host
+updates, and restarting the backend also invalidates them.
+
+This uses the existing backend through `/api/karaoke-guide/sessions`, independently
+of KTV Party features or media infrastructure. Deploy the frontend and restart the
+backend together. No extra WebSocket proxy configuration is needed. Pairing tokens
+live in the QR link fragment; the guide removes that fragment after opening and
+uses a read-only token. Live sync responses are never cached by the PWA.
+
+Run `npm run test:karaoke-guide` for route authorization, lifecycle, playback state,
+clock mapping, and drift correction tests. After `npm run build`, run
+`npm run test:karaoke-guide:browser` for isolated two-device Chrome acceptance.
+
 ## Configuration
 
 | Key | Purpose | Default |

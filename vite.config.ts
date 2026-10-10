@@ -71,13 +71,13 @@ export default defineConfig({
         runtimeCaching: [
           {
             urlPattern: ({ url }) => url.origin === self.location.origin &&
-              (/^\/api\/ktv(?:\/|$)/.test(url.pathname) || url.searchParams.has('ktvAsset')),
+              (/^\/api\/(?:ktv|karaoke-guide)(?:\/|$)/.test(url.pathname) || url.searchParams.has('ktvAsset')),
             handler: 'NetworkOnly'
           },
           {
-            // KTV membership, invitations and future socket/media credentials must
-            // never be served from an offline API response.
-            urlPattern: /^\/api\/(?!ktv(?:\/|$)).*/,
+            // Live room authority and karaoke guide timelines must never be
+            // served from an offline API response.
+            urlPattern: /^\/api\/(?!(?:ktv|karaoke-guide)(?:\/|$)).*/,
             handler: 'NetworkFirst',
             options: {
               cacheName: 'api-cache',
