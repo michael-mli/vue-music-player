@@ -31,6 +31,17 @@
             :disabled="!pair.canControl || !snapshot?.song" class="min-h-[44px] rounded-lg border border-light-border dark:border-white/20 px-2 text-sm disabled:opacity-40"
             :data-command="action" @click="pair.command(action)">{{ $t(`karaoke.guide.remote${action}`) }}</button>
         </div>
+        <div class="mt-4" role="group" :aria-label="$t('karaoke.guide.hostAudioMode')">
+          <p class="text-sm">{{ $t('karaoke.guide.hostAudioMode') }}</p>
+          <div class="mt-2 grid grid-cols-2 gap-2">
+            <button v-for="mode in (['karaoke', 'original'] as const)" :key="mode" type="button" :data-remote-mode="mode"
+              :aria-pressed="mode === 'karaoke' ? snapshot?.karaoke !== false : snapshot?.karaoke === false"
+              :disabled="!pair.canControl || !snapshot?.canSwitchMode"
+              class="min-h-[44px] rounded-lg border px-2 text-sm disabled:opacity-40"
+              :class="(mode === 'karaoke' ? snapshot?.karaoke !== false : snapshot?.karaoke === false) ? 'bg-spotify-green/15 text-spotify-green border-spotify-green' : 'border-light-border dark:border-white/20'"
+              @click="pair.command('setMode', { karaoke: mode === 'karaoke' })">{{ $t(mode === 'karaoke' ? 'karaoke.switchKaraoke' : 'karaoke.switchOriginal') }}</button>
+          </div>
+        </div>
         <label for="karaoke-remote-seek" class="mt-4 block text-sm">{{ $t('karaoke.guide.seek') }}</label>
         <input id="karaoke-remote-seek" type="range" min="0" :max="snapshot?.duration || 0" :value="position" step="1"
           :disabled="!pair.canControl || !snapshot?.duration" class="min-h-[44px] w-full accent-spotify-green disabled:opacity-40"

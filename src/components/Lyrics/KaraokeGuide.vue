@@ -24,6 +24,12 @@
         <button type="button" data-stage-command="stop" :disabled="!player.currentSong || player.partyAudioOwned" @click="player.stopPlayback()"><StopIcon />{{ $t('karaoke.stageStop') }}</button>
         <button type="button" data-stage-command="next" :disabled="!player.canPlayNext || player.partyAudioOwned" @click="player.nextSong()"><ForwardIcon />{{ $t('player.next') }}</button>
       </div>
+      <div class="stage-mode" role="group" :aria-label="$t('karaoke.guide.hostAudioMode')">
+        <button type="button" data-stage-mode="karaoke" :aria-pressed="player.karaokeMode"
+          :disabled="!player.karaokeAvailable || player.partyAudioOwned || player.isTransitioning" @click="switchMode(true)">{{ $t('karaoke.switchKaraoke') }}</button>
+        <button type="button" data-stage-mode="original" :aria-pressed="!player.karaokeMode"
+          :disabled="!player.karaokeAvailable || player.partyAudioOwned || player.isTransitioning" @click="switchMode(false)">{{ $t('karaoke.switchOriginal') }}</button>
+      </div>
       <div class="stage-tools">
         <button ref="songsButton" type="button" data-action="toggle-stage-songs" :aria-expanded="songsOpen" aria-controls="karaoke-stage-songs"
           @click="toggleSongs">{{ $t('karaoke.stageSongs') }}</button>
@@ -120,7 +126,7 @@
           </footer>
         </div>
         <aside v-if="fullscreen" class="stage-sidebar">
-          <section v-if="player.karaokeMode && !player.partyAudioOwned" class="stage-pairing" :aria-label="$t('karaoke.guide.pairTitle')">
+          <section v-if="!player.partyAudioOwned && (player.karaokeMode || player.karaokeAvailable || pairing.session)" class="stage-pairing" :aria-label="$t('karaoke.guide.pairTitle')">
             <h2 class="stage-pairing-title">{{ $t('karaoke.guide.pairTitle') }}</h2>
             <template v-if="pairing.pairUrl">
               <KaraokeGuideQr :value="pairing.pairUrl" class="stage-pairing-qr">
@@ -195,6 +201,9 @@ import type { LyricLine, LyricWord } from '@/types'
 
 const props = defineProps<{ lines: LyricLine[]; compact?: boolean; loading?: boolean; plainLyrics?: string }>()
 const player = usePlayerStore()
+function switchMode(karaoke: boolean) {
+  if (player.karaokeAvailable && !player.partyAudioOwned && !player.isTransitioning && player.karaokeMode !== karaoke) void player.toggleKaraoke()
+}
 const pairing = useKaraokeGuideStore()
 const ui = useUiStore()
 const { offset } = useLyricsOffset(computed(() => player.currentSong?.id))
@@ -412,12 +421,13 @@ button:focus-visible, summary:focus-visible, input:focus-visible { outline: 2px 
 .singing-guide:fullscreen .guide-header { position: relative; z-index: 2; flex-shrink: 0; }
 .singing-guide:fullscreen .guide-song { max-width: min(70vw, 800px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stage-toolbar { position: relative; z-index: 2; flex-shrink: 0; display: flex; flex-wrap: wrap; gap: 8px; padding: 8px; margin: 12px 0; border: 1px solid #56716b; border-radius: 12px; background: #081b16eb; }
-.stage-playback, .stage-tools { display: grid; gap: 6px; flex: 1 1 320px; min-width: 0; }
+.stage-playback, .stage-tools, .stage-mode { display: grid; gap: 6px; flex: 1 1 320px; min-width: 0; }
 .stage-playback { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.stage-mode { flex-basis: 160px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .stage-tools { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .stage-toolbar button { display: flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; min-height: 44px; border: 1px solid #56716b; border-radius: 8px; padding: 8px 4px; font-size: 12px; }
 .stage-toolbar button svg { width: 18px; height: 18px; flex-shrink: 0; }
-.stage-toolbar [aria-expanded="true"], .stage-toolbar [data-stage-command="play"]:not(:disabled) { color: #7ef0b6; border-color: #7ef0b6; }
+.stage-toolbar [aria-expanded="true"], .stage-mode [aria-pressed="true"], .stage-toolbar [data-stage-command="play"]:not(:disabled) { color: #7ef0b6; border-color: #7ef0b6; }
 .singing-guide:fullscreen .stage-workspace { position: relative; z-index: 1; flex: 1; min-height: 0; }
 .singing-guide:fullscreen .guide-layout { height: 100%; overflow-y: auto; padding: 0 4px 24px; overscroll-behavior: contain; }
 .stage-panel { position: absolute; inset: 0; z-index: 3; min-width: 0; padding: clamp(12px, 2vw, 24px); border: 1px solid #56716b; border-radius: 12px; background: #081b16; overflow-y: auto; overscroll-behavior: contain; }

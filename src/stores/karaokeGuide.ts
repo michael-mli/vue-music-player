@@ -31,7 +31,7 @@ export const useKaraokeGuideStore = defineStore('karaokeGuide', () => {
   function execute(command: KaraokeRemoteCommand) {
     let result: KaraokeCommandResult = { id: command.id, status: 'applied' }
     try {
-      if (!session.value || !player.karaokeMode || player.partyAudioOwned || clock.serverNow(performance.now()) >= command.expiresAt) throw new Error('commandExpired')
+      if (!session.value || player.partyAudioOwned || clock.serverNow(performance.now()) >= command.expiresAt) throw new Error('commandExpired')
       const song = command.songId ? songs.songs.find(song => song.id === command.songId && karaokeService.isAvailable(song.id)) : null
       const run = (work: Promise<unknown>) => { void work.catch(() => { error.value = 'commandFailed' }) }
       switch (command.action) {
@@ -42,6 +42,10 @@ export const useKaraokeGuideStore = defineStore('karaokeGuide', () => {
           if (!player.canPlayNext) throw new Error('noNextSong')
           run(player.nextSong()); break
         case 'seek': player.seek(Math.min(command.position || 0, player.duration || command.position || 0)); break
+        case 'setMode':
+          if (!player.karaokeAvailable || typeof command.karaoke !== 'boolean') throw new Error('songUnavailable')
+          if (player.karaokeMode !== command.karaoke) run(player.toggleKaraoke())
+          break
         case 'enqueue':
           if (!song) throw new Error('songUnavailable')
           if (!player.requestedQueue.some(item => item.id === song.id) && !player.enqueueSong(song)) throw new Error('queueFull')
@@ -79,9 +83,10 @@ export const useKaraokeGuideStore = defineStore('karaokeGuide', () => {
       song: song ? { id: song.id, title: song.title,
         url: new URL(getMusicUrl(`link.${song.id}.mp3`), window.location.origin).href } : null,
       position: audio?.currentTime || 0, duration: audio && Number.isFinite(audio.duration) ? audio.duration : 0,
-      playing: !!audio && player.karaokeMode && !player.partyAudioOwned && !player.isTransitioning &&
+      playing: !!audio && !player.partyAudioOwned && !player.isTransitioning &&
         !audio.paused && !audio.ended && !audio.seeking && audio.readyState >= 3,
       rate: audio?.playbackRate || 1, sampledAt: clock.serverNow(performance.now()),
+      karaoke: player.karaokeMode, canSwitchMode: player.karaokeAvailable && !player.isTransitioning,
     }
     try {
       const result = await guideRequest<KaraokeHostReply>(clock, `/${current.id}`, current.hostToken, 'PUT', {
@@ -118,14 +123,14 @@ export const useKaraokeGuideStore = defineStore('karaokeGuide', () => {
     }
   }
   async function start() {
-    if (busy.value || session.value || !player.karaokeMode || player.partyAudioOwned) return
+    if (busy.value || session.value || (!player.karaokeMode && !player.karaokeAvailable) || player.partyAudioOwned) return
     const attempt = ++generation
     busy.value = true; error.value = ''
     try {
       await auth.ensureIdentity()
       if (!auth.token) throw new Error('No identity')
       const result = await guideRequest<KaraokeGuideSession>(clock, '', auth.token, 'POST', {})
-      if (attempt !== generation || !player.karaokeMode || player.partyAudioOwned) {
+      if (attempt !== generation || player.partyAudioOwned) {
         void guideRequest(clock, `/${result.id}`, result.hostToken, 'DELETE').catch(() => {}); return
       }
       session.value = result; processed.clear(); acknowledgements.clear()
@@ -158,11 +163,12 @@ export const useKaraokeGuideStore = defineStore('karaokeGuide', () => {
     }
     changed()
   }, { immediate: true })
-  watch(() => [player.currentSong?.id, player.isPlaying, player.requestedQueue.map(song => song.id).join(',')], changed)
+  watch(() => [player.currentSong?.id, player.isPlaying, player.isTransitioning, player.requestedQueue.map(song => song.id).join(',')], changed)
   watch(() => JSON.stringify(catalog.value), () => {
     window.clearTimeout(catalogTimer)
     if (session.value) catalogTimer = window.setTimeout(() => { void uploadCatalog() }, 500)
   })
-  watch(() => [player.karaokeMode, player.partyAudioOwned], () => { if (!player.karaokeMode || player.partyAudioOwned) stop() })
+  watch(() => player.karaokeMode, changed)
+  watch(() => player.partyAudioOwned, owned => { if (owned) stop() })
   return { session, busy, error, connectedDevices, devices, managing, catalogBusy, pairUrl, start, stop, manageDevice }
 })

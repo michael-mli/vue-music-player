@@ -571,6 +571,7 @@
       "keepOpen": "Keep this page open for continuous sync. The screen stays awake while the guide is enabled when your browser supports it.",
       "back": "Back to Karaoke",
       "remoteControls": "Control karaoke player",
+      "hostAudioMode": "Main player audio",
       "remoteplay": "Play",
       "remotepause": "Pause",
       "remotestop": "Stop song",

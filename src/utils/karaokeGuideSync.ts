@@ -3,6 +3,8 @@ export interface KaraokeGuideState {
   position: number
   duration: number
   playing: boolean
+  karaoke?: boolean
+  canSwitchMode?: boolean
   rate: number
   sampledAt: number
 }

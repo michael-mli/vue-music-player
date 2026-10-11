@@ -68,7 +68,7 @@ export function registerKaraokeGuideRoutes(app, {
     return { guideToken: session.guideToken, devices, deviceIdleMs,
       connectedDevices: devices.filter(device => device.status === 'guide').length,
       commands: [...session.commands.values()].filter(command => command.status === 'pending')
-        .map(({ id, action, songId, position, expiresAt }) => ({ id, action, songId, position, expiresAt })) }
+        .map(({ id, action, songId, position, karaoke, expiresAt }) => ({ id, action, songId, position, karaoke, expiresAt })) }
   }
   app.post(base, authMiddleware, (req, res) => {
     sweep()
@@ -128,6 +128,8 @@ export function registerKaraokeGuideRoutes(app, {
     if (!context) return
     const { session } = context, state = req.body
     if (!state || typeof state.playing !== 'boolean' ||
+      (state.karaoke !== undefined && typeof state.karaoke !== 'boolean') ||
+      (state.canSwitchMode !== undefined && typeof state.canSwitchMode !== 'boolean') ||
       ![state.position, state.duration, state.rate, state.sampledAt].every(Number.isFinite) ||
       state.position < 0 || state.duration < 0 || state.duration > 86400 || state.position > 86400 ||
       state.rate < 0.25 || state.rate > 4 || Math.abs(state.sampledAt - now()) > 10_000) return fail(res, 400, 'invalidState')
@@ -151,7 +153,9 @@ export function registerKaraokeGuideRoutes(app, {
       !song || !Number.isSafeInteger(song.id) || song.id <= 0 || typeof song.title !== 'string' || song.title.length > 500))) return fail(res, 400, 'invalidState')
     session.state = { song, playing: !!song && state.playing,
       position: state.duration > 0 ? Math.min(state.position, state.duration) : state.position,
-      duration: state.duration, rate: state.rate, sampledAt: state.sampledAt }
+      duration: state.duration, rate: state.rate, sampledAt: state.sampledAt,
+      ...(state.karaoke !== undefined ? { karaoke: state.karaoke } : {}),
+      ...(state.canSwitchMode !== undefined ? { canSwitchMode: state.canSwitchMode } : {}) }
     session.controlsAvailable = state.controlsAvailable === true
     session.queue = (state.queue || []).map(({ id, title }) => ({ id, title }))
     session.updatedAt = now()
@@ -188,24 +192,26 @@ export function registerKaraokeGuideRoutes(app, {
   app.post(`${base}/:id/commands`, (req, res) => {
     const context = find(req, res, 'device')
     if (!context) return
-    const { session, device } = context, { commandId, action, songId, position } = req.body || {}
+    const { session, device } = context, { commandId, action, songId, position, karaoke } = req.body || {}
     if (typeof commandId !== 'string' || !/^[\w-]{16,64}$/.test(commandId) ||
-      !['play', 'pause', 'stop', 'skip', 'seek', 'enqueue', 'singNow', 'removeQueued'].includes(action) ||
+      !['play', 'pause', 'stop', 'skip', 'seek', 'enqueue', 'singNow', 'removeQueued', 'setMode'].includes(action) ||
+      (action === 'setMode' && typeof karaoke !== 'boolean') ||
       (['enqueue', 'singNow', 'removeQueued'].includes(action) && (!Number.isSafeInteger(songId) || songId <= 0)) ||
       (action === 'seek' && (!Number.isFinite(position) || position < 0 || position > 86400))) return fail(res, 400, 'invalidState')
-    const fingerprint = JSON.stringify({ action, songId, position }), prior = session.commands.get(commandId)
+    const fingerprint = JSON.stringify({ action, songId, position, karaoke }), prior = session.commands.get(commandId)
     if (prior) {
       if (prior.deviceId !== device.id || prior.fingerprint !== fingerprint) return fail(res, 409, 'commandConflict')
       return reply(req, res, { command: { id: prior.id, status: prior.status, code: prior.code } })
     }
     if (!device.canControl) return fail(res, 403, 'controlsDisabled')
     if (now() - session.updatedAt > staleMs || !session.controlsAvailable) return fail(res, 409, 'hostOffline')
+    if (action === 'setMode' && !session.state?.canSwitchMode) return fail(res, 409, 'songUnavailable')
     if (['enqueue', 'singNow'].includes(action) && !session.catalog.has(songId)) return fail(res, 404, 'songUnavailable')
     if (now() - device.rateStart > 60_000) { device.rateStart = now(); device.rateCount = 0 }
     if (++device.rateCount > 60 || [...session.commands.values()].filter(command => command.status === 'pending').length >= 50 ||
       session.commands.size >= 1000) return fail(res, 429, 'commandBusy')
     device.lastActiveAt = now()
-    const command = { id: commandId, deviceId: device.id, action, songId, position, fingerprint,
+    const command = { id: commandId, deviceId: device.id, action, songId, position, karaoke, fingerprint,
       status: 'pending', createdAt: now(), expiresAt: now() + 10_000 }
     session.commands.set(command.id, command)
     reply(req, res, { command: { id: command.id, status: command.status } })

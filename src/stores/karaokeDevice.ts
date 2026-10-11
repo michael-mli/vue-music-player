@@ -25,7 +25,7 @@ export const useKaraokeDeviceStore = defineStore('karaokeDevice', () => {
   const queue = ref<{ id: number; title: string }[]>([]), lastReply = ref(-Infinity)
   const catalog = ref<KaraokeCatalogReply | null>(null), searching = ref(false), searchError = ref('')
   const browseCatalog = ref<KaraokeCatalogReply | null>(null), browsing = ref(false), browseError = ref('')
-  const pending = ref<{ commandId: string; action: KaraokeRemoteAction; songId?: number; position?: number; createdAt: number } | null>(null)
+  const pending = ref<{ commandId: string; action: KaraokeRemoteAction; songId?: number; position?: number; karaoke?: boolean; createdAt: number } | null>(null)
   const clock = markRaw(new KaraokeGuideClock())
   const canControl = computed(() => !!grant.value && !!device.value?.canControl && hostOnline.value && controlsAvailable.value && !pending.value)
   let timer: number | undefined, polling = false, sending = false, running = false, needsActivity = false, searchGeneration = 0
@@ -161,7 +161,7 @@ export const useKaraokeDeviceStore = defineStore('karaokeDevice', () => {
       // Transport failures retry the same ID; a lost response must not skip twice.
     } finally { sending = false; schedule(0) }
   }
-  function command(action: KaraokeRemoteAction, values: { songId?: number; position?: number } = {}) {
+  function command(action: KaraokeRemoteAction, values: { songId?: number; position?: number; karaoke?: boolean } = {}) {
     if (!canControl.value) return
     touch(); commandError.value = ''; commandNotice.value = ''
     pending.value = { commandId: karaokeRequestId(), action, ...values, createdAt: Date.now() }

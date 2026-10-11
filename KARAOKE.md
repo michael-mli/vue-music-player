@@ -122,6 +122,14 @@ a line progress bar, replay with a two-second lead-in, next-line seeking, a song
 timeline, and an expandable full lyric list. Its fullscreen button opens a larger
 stage on supported browsers; playback controls remain available there.
 
+Fullscreen keeps **Play**, **Pause**, **Stop**, **Next**, and **Karaoke / Original**
+in a fixed toolbar. **Search / browse** opens an independently searchable, paginated
+list of ready karaoke songs, including IDs and Add to queue / Sing now actions.
+**Full lyrics** follows the current timed line automatically, including after seeks;
+its list scrolls without moving the playback controls. The current cover is the stage
+background, with a saved **Hide cover / Show cover** preference. The queue, pairing QR,
+and visualization settings remain available inside fullscreen.
+
 Enhanced LRC word timestamps (`<mm:ss.xx>` or inline `[mm:ss.xx]`) are preserved
 and used for word highlighting. Standard LRC uses line progress only. Breaks
 require blank timed lines or explicit vocal end markers; long intervals alone do
@@ -170,6 +178,13 @@ fullscreen, including while new lyrics load or a song has only plain lyrics. Com
 are acknowledged by the host and use stable request IDs so reconnecting cannot
 repeat a skip or add the same request twice.
 
+Both fullscreen and the paired remote provide **Karaoke / Original** buttons for the
+main player's audio. Switching preserves the song position and play/pause state,
+keeps fullscreen and the pairing session, and synchronizes the selected mode on both
+devices. The private guide always uses the original recording. Mode changes require
+the host's control permission and an available instrumental; retries carry an explicit
+target mode so a lost response cannot accidentally toggle back.
+
 Back/navigation shows a warning before stopping this device’s audio. Continuing
 keeps the pairing in local storage: **Return to paired karaoke** appears elsewhere
 in the app, including after a reload. Returning requires a fresh audio tap. Name
@@ -184,8 +199,8 @@ controls, and searches renew activity. Background polling alone does not renew
 it. The host list shows connection state and time remaining before idle removal.
 
 Keep both pages open while listening. Guide playback requests a screen wake lock where supported
-and pauses if host updates or the network connection stop. **End pairing**,
-turning off karaoke, or entering KTV Party invalidates the link. Host reloads
+and pauses if host updates or the network connection stop. **End pairing**
+or entering KTV Party invalidates the link. Switching to Original keeps pairing. Host reloads
 require a fresh pairing; guide reloads preserve the pairing but require another
 tap to enable audio. Sessions expire after 12 hours or two minutes without host
 updates, and restarting the backend also invalidates them.

@@ -571,6 +571,7 @@
       "keepOpen": "请保持此页面打开以持续同步。浏览器支持时，启用导唱会保持屏幕常亮。",
       "back": "返回卡拉OK",
       "remoteControls": "控制主播放器",
+      "hostAudioMode": "主播放器音轨",
       "remoteplay": "播放",
       "remotepause": "暂停",
       "remotestop": "停止歌曲",

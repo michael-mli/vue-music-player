@@ -1,5 +1,5 @@
 <template>
-  <section v-if="player.karaokeMode" class="mb-6 rounded-xl border border-light-border dark:border-spotify-light bg-light-card dark:bg-spotify-dark p-4" aria-labelledby="vocal-guide-pairing-title">
+  <section v-if="!player.partyAudioOwned && (player.karaokeMode || player.karaokeAvailable || guide.session)" class="mb-6 rounded-xl border border-light-border dark:border-spotify-light bg-light-card dark:bg-spotify-dark p-4" aria-labelledby="vocal-guide-pairing-title">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div class="min-w-0">
         <h2 id="vocal-guide-pairing-title" class="font-semibold">{{ $t('karaoke.guide.pairTitle') }}</h2>

@@ -80,6 +80,20 @@ test('rescanning the current QR replaces a removed saved grant rather than resto
   assert.equal(f.storage.has('karaoke-device-invitation'), false)
 })
 
+test('retrying an audio mode request preserves its explicit target and original command ID', async () => {
+  const posts = [], f = setup(async (_clock, _path, _token, method, body) => {
+    if (method !== 'POST') return reply()
+    posts.push({ commandId: body.commandId, action: body.action, karaoke: body.karaoke })
+    if (posts.length === 1) throw new GuideError('unavailable', 503)
+    return { command: { id: body.commandId, status: 'applied' } }
+  })
+  f.store.start(); await f.tick(); f.store.command('setMode', { karaoke: false })
+  await new Promise(resolve => setImmediate(resolve))
+  f.advance(2600); await f.tick()
+  assert.deepEqual(posts, Array(2).fill({ commandId: 'unique-request-id-long', action: 'setMode', karaoke: false }))
+  assert.equal(f.store.pending, null); assert.equal(f.store.commandNotice, 'commandApplied')
+})
+
 test('browsing pages and searching keep independent results and discard older browse responses', async () => {
   const requests = [], f = setup((_clock, path) => new Promise(resolve => requests.push({ path, resolve })))
   const first = f.store.browse(1), second = f.store.browse(2), search = f.store.search('Singer', 1)

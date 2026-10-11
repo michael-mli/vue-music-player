@@ -69,12 +69,52 @@ test('invalid media, timestamps and playback values cannot replace valid state',
   const f = await setup(t), pair = await f.create(), route = `/${pair.id}`
   const device = await f.join(pair)
   await f.request('PUT', route, pair.hostToken, f.state())
-  for (const patch of [{ position: -1 }, { duration: null }, { rate: 0 }, { playing: 'true' },
+  for (const patch of [{ position: -1 }, { duration: null }, { rate: 0 }, { playing: 'true' }, { karaoke: 'true' }, { canSwitchMode: 1 },
     { sampledAt: 99_999 }, { song: { id: 42, title: 'bad', url: 'javascript:alert(1)' } },
     { song: { id: 42, title: 'bad', url: 'https://music.test/link.42.instrumental.mp3' } }]) {
     assert.equal((await f.request('PUT', route, pair.hostToken, { ...f.state(), ...patch })).status, 400)
   }
   assert.deepEqual((await f.request('GET', route, device.token)).data.data.state, f.state())
+})
+
+test('audio mode requests relay an explicit target, retry once and retain the paired grant in Original mode', async t => {
+  const f = await setup(t), pair = await f.create(), route = `/${pair.id}`, device = await f.join(pair)
+  const state = { ...f.state(), controlsAvailable: true, karaoke: true, canSwitchMode: true }
+  await f.request('PUT', route, pair.hostToken, state)
+  for (const karaoke of [undefined, 'false', 0]) {
+    assert.equal((await f.request('POST', route + '/commands', device.token,
+      { commandId: 'invalid-mode-request', action: 'setMode', karaoke })).status, 400)
+  }
+  const command = { commandId: 'original-mode-request', action: 'setMode', karaoke: false }
+  assert.equal((await f.request('POST', route + '/commands', device.token, command)).status, 200)
+  assert.equal((await f.request('POST', route + '/commands', device.token, command)).status, 200)
+  const incoming = (await f.request('PUT', route, pair.hostToken, state)).data.data.commands
+  assert.equal(incoming.length, 1); assert.equal(incoming[0].karaoke, false)
+  assert.equal(incoming[0].action, 'setMode')
+  assert.equal((await f.request('POST', route + '/commands', device.token, { ...command, karaoke: true })).status, 409)
+  await f.request('PUT', route, pair.hostToken, { ...state, karaoke: false,
+    acknowledgements: [{ id: command.commandId, status: 'applied' }] })
+  const read = (await f.request('GET', route, device.token)).data.data
+  assert.equal(read.state.karaoke, false); assert.equal(read.state.playing, true)
+  assert.equal(read.state.canSwitchMode, true); assert.equal(read.device.id, device.id)
+  assert.equal((await f.request('POST', route + '/commands', device.token, command)).data.data.command.status, 'applied')
+  assert.equal((await f.request('POST', route + '/commands', device.token,
+    { commandId: 'karaoke-mode-request', action: 'setMode', karaoke: true })).status, 200)
+})
+
+test('audio mode requests honor host control permissions and instrumental availability', async t => {
+  const f = await setup(t), pair = await f.create(), route = `/${pair.id}`, device = await f.join(pair)
+  const state = { ...f.state(), controlsAvailable: true, karaoke: false, canSwitchMode: false }
+  await f.request('PUT', route, pair.hostToken, state)
+  const command = { commandId: 'switch-mode-permission', action: 'setMode', karaoke: true }
+  assert.equal((await f.request('POST', route + '/commands', device.token, command)).data.code, 'songUnavailable')
+  await f.request('PUT', route, pair.hostToken, { ...state, canSwitchMode: true })
+  await f.request('PATCH', route + '/devices/' + device.id, pair.hostToken, { canControl: false })
+  assert.equal((await f.request('POST', route + '/commands', device.token, command)).data.code, 'controlsDisabled')
+  await f.request('PATCH', route + '/devices/' + device.id, pair.hostToken, { canControl: true })
+  assert.equal((await f.request('POST', route + '/commands', device.token, command)).status, 200)
+  await f.request('DELETE', route + '/devices/' + device.id, pair.hostToken)
+  assert.equal((await f.request('POST', route + '/commands', device.token, command)).data.code, 'removed')
 })
 
 test('stale hosts stop being live; guide polling cannot keep an abandoned session alive', async t => {

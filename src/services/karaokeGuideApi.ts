@@ -40,12 +40,13 @@ export interface KaraokeDeviceGrant {
   name: string
   expiresAt: number
 }
-export type KaraokeRemoteAction = 'play' | 'pause' | 'stop' | 'skip' | 'seek' | 'enqueue' | 'singNow' | 'removeQueued'
+export type KaraokeRemoteAction = 'play' | 'pause' | 'stop' | 'skip' | 'seek' | 'enqueue' | 'singNow' | 'removeQueued' | 'setMode'
 export interface KaraokeRemoteCommand {
   id: string
   action: KaraokeRemoteAction
   songId?: number
   position?: number
+  karaoke?: boolean
   expiresAt: number
 }
 export interface KaraokeCommandResult { id: string; status: 'pending' | 'applied' | 'failed'; code?: string }
