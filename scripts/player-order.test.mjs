@@ -151,6 +151,43 @@ test('descending ID order survives replacement queues and later requests while r
   await player.nextSong(); assert.equal(player.currentSong.id, 42)
 })
 
+test('choosing descending IDs clears an old device range ending at 1335 without losing other preferences', async () => {
+  const storage = new Map([['music-player-song-range', JSON.stringify({ min: 1, max: 1335 })], ['language', 'zh']])
+  const { environment } = audioEnvironment()
+  const player = setup(async () => {}, () => false, { ...environment, localStorage: {
+    getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key),
+  } })
+  player.initializeAudio()
+  const queue = [song(1359), song(1358), song(1357), song(1335)]
+  await player.playSong(queue[0], queue, 0)
+  assert.equal(player.songRangeMax, 1335)
+  player.setPlaybackOrder('id-desc')
+  assert.equal(player.isSongRangeActive, false)
+  assert.equal(storage.has('music-player-song-range'), false)
+  assert.equal(storage.get('language'), 'zh')
+  await player.nextSong(); assert.equal(player.currentSong.id, 1358)
+  player.audioElement.dispatchEvent(new Event('ended'))
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(player.currentSong.id, 1357)
+  // A range explicitly applied after choosing the order is still respected.
+  player.setSongRange(1, 1335)
+  await player.nextSong(); assert.equal(player.currentSong.id, 1335)
+})
+
+test('batch requests deduplicate, preserve selection order and retain the queue limit', async () => {
+  const player = setup()
+  assert.deepEqual(Array.from(player.enqueueSongs([song(7), song(4), song(7)])), [7, 4])
+  assert.deepEqual(Array.from(player.enqueueSongs(Array.from({ length: 60 }, (_, i) => song(i + 1)))),
+    Array.from({ length: 50 }, (_, i) => i + 1).filter(id => id !== 7 && id !== 4))
+  assert.equal(player.requestedQueue.length, 50)
+  assert.deepEqual(Array.from(player.requestedQueue.slice(0, 4), song => song.id), [7, 4, 1, 2])
+  assert.equal(new Set(player.queue.map(song => song.id)).size, 50)
+  await player.nextSong(); assert.equal(player.currentSong.id, 7)
+  await player.nextSong(); assert.equal(player.currentSong.id, 4)
+  player.setPartyAudioOwnership(true)
+  assert.deepEqual(Array.from(player.enqueueSongs([song(99)])), [])
+})
+
 test('switching playback order cancels old preloads and returning to regular shuffle preserves playlist order', async () => {
   const pending = deferred()
   let first = true

@@ -38,7 +38,7 @@ async function evaluate(session, expression) {
   return result.result.value
 }
 const store = name => `document.querySelector('#app').__vue_app__.config.globalProperties.$pinia._s.get('${name}')`
-async function page(origin, route, width = 320, language = 'en') {
+async function page(origin, route, width = 320, language = 'en', savedStorage = {}) {
   const { browserContextId } = await cdp('Target.createBrowserContext'); contexts.push(browserContextId)
   const { targetId } = await cdp('Target.createTarget', { url: 'about:blank', browserContextId })
   const { sessionId } = await cdp('Target.attachToTarget', { targetId, flatten: true })
@@ -46,8 +46,18 @@ async function page(origin, route, width = 320, language = 'en') {
   await cdp('Emulation.setDeviceMetricsOverride', { width, height: 820, deviceScaleFactor: 1, mobile: width < 600 }, sessionId)
   await cdp('Page.addScriptToEvaluateOnNewDocument', { source: `
     localStorage.setItem('language', '${language}'); localStorage.setItem('auth_token', 'fixture-host'); localStorage.setItem('music-player-karaoke-mode', 'true');
+    for (const [key, value] of Object.entries(${JSON.stringify(savedStorage)})) localStorage.setItem(key, value);
     if (!localStorage.getItem('music-visualizer-settings')) localStorage.setItem('music-visualizer-settings', JSON.stringify({ v: 2, type: 'circle', colorScheme: 'blue' }));
     window.__visualizerSources = []; window.__visualizerAnalysers = []; window.__waveSamples = 0;
+    window.__barFrame = [];
+    const fillRect = CanvasRenderingContext2D.prototype.fillRect;
+    CanvasRenderingContext2D.prototype.fillRect = function(x, y, width, height) {
+      if (this.canvas.matches('.visualizer-canvas') && height >= 6 && width < this.canvas.width / 2) {
+        if (x === 0) window.__barFrame = [];
+        window.__barFrame.push({ x, y, width, height, color: this.fillStyle });
+      }
+      return fillRect.call(this, x, y, width, height);
+    };
     if (window.AudioContext) {
       const source = AudioContext.prototype.createMediaElementSource, analyser = AudioContext.prototype.createAnalyser;
       AudioContext.prototype.createMediaElementSource = function(element) {
@@ -679,18 +689,63 @@ try {
   check(await evaluate(host, `document.fullscreenElement === window.__rotationStage && window.__visualizerSources.length === 1`), 'Sing now from the browsable list keeps host fullscreen and its audio graph')
   await evaluate(otherPhone, `document.querySelector('[data-browse-pagination] [data-action="previous-page"]').click()`)
   await poll(() => evaluate(otherPhone, `${store('karaokeDevice')}.browseCatalog.page === 1`), 'previous browse page')
+  await poll(() => evaluate(otherPhone, `${store('karaokeDevice')}.canControl`), 'paired batch controls ready')
+  await evaluate(otherPhone, `document.querySelector('[data-song-browser] [data-song-id="6"] input').click(); document.querySelector('[data-song-browser] [data-song-id="7"] input').click(); document.querySelector('[data-browse-pagination] [data-action="next-page"]').click()`)
+  await poll(() => evaluate(otherPhone, `${store('karaokeDevice')}.browseCatalog.page === 2`), 'paired selections move to another page')
+  await evaluate(otherPhone, `document.querySelector('[data-song-browser] [data-song-id="31"] input').click()`)
+  check(await evaluate(otherPhone, `document.querySelector('[data-song-browser] [data-action="enqueue-selected"]').textContent.includes('(3)')`), 'paired batch selection survives browse pagination')
+  loseCommandResponse = true
+  await evaluate(otherPhone, `document.querySelector('[data-song-browser] [data-action="enqueue-selected"]').click()`)
+  await poll(() => evaluate(host, `[6, 7, 31].every(id => ${store('player')}.requestedQueue.some(song => song.id === id))`), 'paired batch acknowledgement and retry')
+  await poll(() => evaluate(otherPhone, `document.querySelector('[data-song-browser] [data-action="enqueue-selected"]').disabled && !document.querySelector('[data-song-browser] [data-action="cancel-batch"]')`), 'paired batch complete')
+  check(await evaluate(host, `(() => { const ids = ${store('player')}.requestedQueue.map(song => song.id); return ids.filter(id => [6,7,31].includes(id)).join(',') === '6,7,31' && new Set(ids).size === ids.length && document.fullscreenElement === window.__rotationStage; })()`), 'paired batch adds in selection order without duplicates after a lost response and keeps host fullscreen')
+  await evaluate(otherPhone, `document.querySelector('[data-browse-pagination] [data-action="previous-page"]').click()`)
+  await poll(() => evaluate(otherPhone, `${store('karaokeDevice')}.browseCatalog.page === 1`), 'restore paired browse page')
+  await poll(() => evaluate(otherPhone, `${store('karaokeDevice')}.canControl`), 'paired cancellation ready')
+  dropHostUpdates = true
+  await evaluate(otherPhone, `for (const id of [8,9,10]) document.querySelector('[data-song-browser] [data-song-id="' + id + '"] input').click()`)
+  await evaluate(otherPhone, `document.querySelector('[data-song-browser] [data-action="enqueue-selected"]').click()`)
+  await poll(() => evaluate(otherPhone, `!!document.querySelector('[data-song-browser] [data-action="cancel-batch"]')`), 'paired batch cancellation renders')
+  await evaluate(otherPhone, `document.querySelector('[data-song-browser] [data-action="cancel-batch"]').click()`)
+  dropHostUpdates = false
+  await poll(() => evaluate(host, `${store('player')}.requestedQueue.some(song => song.id === 8)`), 'acknowledge one in-flight song after cancellation')
+  await poll(() => evaluate(otherPhone, `!document.querySelector('[data-song-browser] [data-action="cancel-batch"]')`), 'paired batch cancellation completes')
+  check(await evaluate(host, `!${store('player')}.requestedQueue.some(song => song.id === 9 || song.id === 10)`) && await evaluate(otherPhone, `document.querySelector('[data-song-browser] [data-action="enqueue-selected"]').textContent.includes('(2)') && document.querySelector('[data-song-browser] [data-song-id="9"] input').checked`), 'cancelling a paired batch finishes the in-flight request and retains unsent selections')
+  await screenshot(otherPhone, '-paired-batch')
+  await evaluate(otherPhone, `document.querySelector('[data-song-browser] [data-action="clear-selection"]').click(); (() => { const input = document.querySelector('input[type="search"]'); input.value = '20'; input.dispatchEvent(new Event('input', { bubbles: true })); input.form.requestSubmit(); })()`)
+  await poll(() => evaluate(otherPhone, `document.querySelectorAll('[data-song-search-results] [data-song-id]').length === 1 && !!document.querySelector('[data-song-search-results] [data-song-id="20"]') && ${store('karaokeDevice')}.canControl`), 'paired search batch ready')
+  await evaluate(otherPhone, `document.querySelector('[data-song-search-results] [data-song-id="20"] input').click()`)
+  await evaluate(otherPhone, `document.querySelector('[data-song-search-results] [data-action="enqueue-selected"]').click()`)
+  await poll(() => evaluate(host, `${store('player')}.requestedQueue.some(song => song.id === 20)`), 'paired batch from search results')
+  check(true, 'paired search results also support batch additions independently of browse selections')
   check(await evaluate(otherPhone, `document.querySelector('.karaoke-vocal-guide').scrollWidth <= document.querySelector('.karaoke-vocal-guide').clientWidth`), '320px song browsing, search and queue fit without horizontal overflow')
   await cdp('Page.bringToFront', {}, host)
   await evaluate(host, `document.fullscreenElement.querySelector('[data-action="toggle-stage-songs"]').click()`)
   await poll(() => evaluate(host, `document.querySelectorAll('#karaoke-stage-songs [data-song-id]').length === 25`), 'fullscreen browser bounds its first page')
+  await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-song-id="4"] input').click(); document.querySelector('#karaoke-stage-songs [data-song-id="5"] input').click()`)
   await evaluate(host, `window.__browseLyricTop = document.fullscreenElement.querySelector('.stage-browse-lyric').getBoundingClientRect().top; document.querySelector('#karaoke-stage-songs').scrollTop = 10000`)
   check(await browseLyricVisible() && await evaluate(host, `document.querySelector('#karaoke-stage-songs').scrollTop > 0 && document.fullscreenElement.querySelector('.stage-browse-lyric').getBoundingClientRect().top === window.__browseLyricTop`), 'scrolling a full page of songs keeps the live lyric fixed above the list')
   await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-action="next-page"]').click()`)
   await poll(() => evaluate(host, `document.querySelectorAll('#karaoke-stage-songs [data-song-id]').length === 8 && !!document.querySelector('#karaoke-stage-songs [data-song-id="33"]')`), 'fullscreen browse page two')
   check(await toolbarVisible(), 'fullscreen browsing paginates the karaoke catalog while playback controls remain visible')
+  await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-song-id="30"] input').click()`)
   await evaluate(host, `(() => { const input = document.querySelector('#karaoke-stage-songs input'); input.value = '33'; input.dispatchEvent(new Event('input', { bubbles: true })); })()`)
   await poll(() => evaluate(host, `document.querySelectorAll('#karaoke-stage-songs [data-song-id]').length === 1 && !!document.querySelector('#karaoke-stage-songs [data-song-id="33"]')`), 'fullscreen song ID search from page two')
   check(true, 'searching by song ID resets fullscreen pagination and finds songs from other pages')
+  check(await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-action="enqueue-selected"]').textContent.includes('(3)')`), 'fullscreen batch selection survives pagination and searching')
+  await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-action="enqueue-selected"]').click()`)
+  check(await evaluate(host, `(() => { const ids = ${store('player')}.requestedQueue.map(song => song.id); return ids.slice(-3).join(',') === '4,5,30' && document.querySelector('#karaoke-stage-songs [data-action="enqueue-selected"]').disabled && document.fullscreenElement === window.__rotationStage; })()`), 'fullscreen adds selected songs from multiple pages in order and clears successful selections')
+  await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-action="select-page"]').click(); document.querySelector('#karaoke-stage-songs [data-action="select-page"]').click()`)
+  check(await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-action="enqueue-selected"]').disabled`), 'Select page toggles the current search results without selecting other pages')
+  await evaluate(host, `window.__beforeBatchQueue = ${store('player')}.requestedQueue; ${store('player')}.requestedQueue = Array.from({ length: 49 }, (_, i) => ({ id: 1000 + i, title: 'Queued fixture ' + i }));
+    (() => { const input = document.querySelector('#karaoke-stage-songs input[type="search"]'); input.value = ''; input.dispatchEvent(new Event('input', { bubbles: true })); })()`)
+  await poll(() => evaluate(host, `!!document.querySelector('#karaoke-stage-songs [data-song-id="3"]')`), 'batch limit fixture')
+  await evaluate(host, `for (const id of [1,2,3]) document.querySelector('#karaoke-stage-songs [data-song-id="' + id + '"] input').click()`)
+  await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-action="enqueue-selected"]').click()`)
+  check(await evaluate(host, `${store('player')}.requestedQueue.length === 50 && ${store('player')}.requestedQueue.at(-1).id === 1 && document.querySelector('#karaoke-stage-songs [data-action="enqueue-selected"]').textContent.includes('(2)') && document.querySelector('#karaoke-stage-songs [data-song-id="2"] input').checked && document.querySelector('#karaoke-stage-songs [data-song-id="3"] input').checked`), 'a full queue retains unadded batch selections without exceeding 50 songs')
+  await screenshot(host, '-batch-selected')
+  await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-action="clear-selection"]').click(); ${store('player')}.requestedQueue = window.__beforeBatchQueue`)
+  check(await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-action="enqueue-selected"]').disabled`), 'Clear selection removes the remaining batch choices')
   await evaluate(host, `${store('songs')}.songs.push({ id: 99, title: 'Unavailable fixture song', filename: 'link.99.mp3', isFavorite: false }); ${store('songs')}.songs.find(song => song.id === 33).title = '傳統歌曲';
     (() => { const input = document.querySelector('#karaoke-stage-songs input'); input.value = '传统'; input.dispatchEvent(new Event('input', { bubbles: true })); })()`)
   await poll(() => evaluate(host, `document.querySelectorAll('#karaoke-stage-songs [data-song-id]').length === 1 && !!document.querySelector('#karaoke-stage-songs [data-song-id="33"]')`), 'fullscreen variant-aware Chinese search')
@@ -699,7 +754,7 @@ try {
   await poll(() => evaluate(host, `!document.querySelector('#karaoke-stage-songs [data-song-id]') && !!document.querySelector('#karaoke-stage-songs .picker-empty')`), 'fullscreen excludes songs without instrumentals')
   check(true, 'fullscreen song browser only offers songs with karaoke instrumentals')
   await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-action="close-songs"]').click()`)
-  const freshHost = await page(origin, '/sing', 1100)
+  const freshHost = await page(origin, '/sing', 1100, 'en', { 'music-player-song-range': '{"min":1,"max":1335}' })
   await poll(() => evaluate(freshHost, `!!${store('player')}.currentSong && ${store('player')}.audioElement?.readyState >= 3 && !!document.querySelector('.karaoke-view .singing-guide')`), 'fresh fullscreen host')
   await evaluate(freshHost, `${store('ui')}.showVisualizer = false; ${store('player')}.shuffle = false; ${store('player')}.playSong(${store('songs')}.songs.find(song => song.id === 1), ${store('songs')}.songs)`)
   check(await evaluate(freshHost, `window.__visualizerSources.length === 0`), 'fresh host has no visualizer audio source before fullscreen')
@@ -708,6 +763,9 @@ try {
   await poll(() => evaluate(freshHost, `!!document.fullscreenElement?.querySelector('.music-visualizer') && window.__visualizerSources.length === 1`), 'fullscreen creates initial audio analyser')
   await poll(() => evaluate(freshHost, `(() => { const node = window.__visualizerAnalysers[0], values = new Uint8Array(node.frequencyBinCount); node.getByteFrequencyData(values); return values.some(value => value > 0); })()`), 'fresh fullscreen live signal')
   check(true, 'fullscreen starts rainbow-bar visualization with live audio when the regular visualizer was never opened')
+  check(await evaluate(freshHost, `!${store('player')}.isSongRangeActive && !localStorage.getItem('music-player-song-range') && localStorage.getItem('language') === 'en'`), 'fullscreen descending order clears a legacy saved ID ceiling without clearing other device preferences')
+  await poll(() => evaluate(freshHost, `window.__barFrame.length === 64`), 'full-width rainbow frame')
+  check(await evaluate(freshHost, `(() => { const canvas = document.querySelector('.visualizer-canvas'), bounds = canvas.getBoundingClientRect(), stage = document.fullscreenElement.getBoundingClientRect(), bars = window.__barFrame; return Math.abs(bounds.left - stage.left) < 1 && Math.abs(bounds.width - stage.width) < 1 && canvas.width === Math.round(stage.width) && bars[0].x === 0 && Math.abs(bars.at(-1).x + bars.at(-1).width - canvas.width) <= 2 && bars.every(bar => bar.height >= 6) && new Set(bars.map(bar => bar.color)).size > 50; })()`), 'rainbow bars and their canvas span the full fullscreen width with a visible baseline')
   check(await evaluate(freshHost, `!!document.fullscreenElement.querySelector('[data-stage-order="id-desc"]') && document.fullscreenElement.querySelector('[data-stage-command="next"]').disabled`), 'entering fullscreen with sequential playback selects descending IDs and disables Next at the smallest ID')
   await evaluate(freshHost, `${store('player')}.playSong(${store('songs')}.songs.find(song => song.id === 2), ${store('songs')}.songs, 1)`)
   await poll(() => evaluate(freshHost, `${store('player')}.audioElement.readyState >= 3 && ${store('player')}.isPlaying && !document.fullscreenElement.querySelector('[data-stage-command="next"]').disabled`), 'descending playback ready on ID 2')
@@ -735,5 +793,5 @@ try {
   if (chrome) { chrome.kill('SIGTERM'); await once(chrome, 'exit').catch(() => {}) }
   guide?.close()
   if (server) await new Promise(resolve => server.close(resolve))
-  await fs.rm(root, { recursive: true, force: true })
+  await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
 }

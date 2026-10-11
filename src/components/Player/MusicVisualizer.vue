@@ -1,6 +1,7 @@
 <template>
   <div 
     v-if="isVisible"
+    ref="visualizer"
     class="music-visualizer pointer-events-none"
     :class="embedded ? 'absolute inset-0' : 'fixed inset-0 z-40'"
     :data-embedded="embedded"
@@ -21,7 +22,7 @@
     <canvas 
       v-show="enabled || !embedded"
       ref="canvas"
-      class="visualizer-canvas fixed inset-0 w-full h-full"
+      class="visualizer-canvas absolute inset-0 w-full h-full"
       :style="{ backgroundColor: `rgba(0, 0, 0, ${backgroundOpacity})` }"
       aria-hidden="true"
       :width="canvasWidth"
@@ -29,7 +30,7 @@
     />
     
     <!-- Floating particles effect -->
-    <div v-show="enabled || !embedded" class="fixed inset-0 overflow-hidden" aria-hidden="true">
+    <div v-show="enabled || !embedded" class="absolute inset-0 overflow-hidden" aria-hidden="true">
       <div 
         v-for="particle in particles"
         :key="particle.id"
@@ -156,6 +157,8 @@ defineEmits<{
 
 // Refs
 const canvas = ref<HTMLCanvasElement>()
+const visualizer = ref<HTMLElement>()
+let resizeObserver: ResizeObserver | undefined
 const canvasWidth = ref(window.innerWidth)
 const canvasHeight = ref(window.innerHeight)
 
@@ -224,7 +227,7 @@ async function setupAudio() {
     
     // Create analyzer node
     analyser = audioContext.createAnalyser()
-    analyser.fftSize = 256
+    analyser.fftSize = visualizerType.value === 'bars' ? 2048 : 256
     analyser.smoothingTimeConstant = 0.8
     
     // Check if audio element already has a source node
@@ -351,12 +354,17 @@ function getSchemeHue(position: number, intensity: number): { h: number; s: numb
 // Visualizer rendering functions
 function drawBars(ctx: CanvasRenderingContext2D, dataArray: Uint8Array) {
   const count = Math.min(64, dataArray.length), barWidth = canvasWidth.value / count
-  
+  // Spread the musical spectrum across the stage instead of reserving most of the
+  // width for nearly silent ultrasonic bins. Log bands give bass and vocals room.
+  const nyquist = (analyser?.context.sampleRate || 48000) / 2
+  const minBin = Math.max(1, 50 / nyquist * dataArray.length)
+  const maxBin = Math.max(minBin, Math.min(dataArray.length, 12000 / nyquist * dataArray.length))
   for (let i = 0; i < count; i++) {
-    const start = Math.floor(i * dataArray.length / count), end = Math.floor((i + 1) * dataArray.length / count)
+    const start = Math.min(dataArray.length - 1, Math.floor(minBin * (maxBin / minBin) ** (i / count)))
+    const end = Math.min(dataArray.length, Math.max(start + 1, Math.ceil(minBin * (maxBin / minBin) ** ((i + 1) / count))))
     let intensity = 0
     for (let bin = start; bin < end; bin++) intensity = Math.max(intensity, dataArray[bin])
-    const barHeightValue = Math.max(2, (intensity / 255) * canvasHeight.value * barHeight.value)
+    const barHeightValue = Math.max(6, (intensity / 255) * canvasHeight.value * barHeight.value)
     
     ctx.fillStyle = getColor(i, count, intensity)
     ctx.fillRect(i * barWidth, canvasHeight.value - barHeightValue, Math.max(1, barWidth - 2), barHeightValue)
@@ -736,14 +744,22 @@ function animate() {
 
 // Handle window resize
 function handleResize() {
-  canvasWidth.value = window.innerWidth
-  canvasHeight.value = window.innerHeight
+  const bounds = visualizer.value?.getBoundingClientRect()
+  canvasWidth.value = Math.max(1, Math.round(bounds?.width || window.innerWidth))
+  canvasHeight.value = Math.max(1, Math.round(bounds?.height || window.innerHeight))
 }
+watch(visualizer, element => {
+  resizeObserver?.disconnect()
+  if (element) { resizeObserver?.observe(element); handleResize() }
+}, { flush: 'post' })
 
 // Lifecycle
 onMounted(async () => {
   generateParticles()
   window.addEventListener('resize', handleResize)
+  resizeObserver = new ResizeObserver(handleResize)
+  if (visualizer.value) resizeObserver.observe(visualizer.value)
+  handleResize()
   
   await nextTick()
   if (props.isVisible) {
@@ -754,6 +770,7 @@ onMounted(async () => {
 
 onUnmounted(async () => {
   window.removeEventListener('resize', handleResize)
+  resizeObserver?.disconnect()
   await cleanupAudio()
 })
 
@@ -821,6 +838,10 @@ watch([enabled, () => props.embedded], () => { if (props.isVisible) animate() })
 
 // Reset effect state when switching type
 watch(visualizerType, () => {
+  if (analyser) {
+    analyser.fftSize = visualizerType.value === 'bars' ? 2048 : 256
+    dataArray = new Uint8Array(analyser.frequencyBinCount)
+  }
   galaxyInitialized = false
   galaxyParticles = []
   galaxyRotation = 0

@@ -443,11 +443,21 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   function enqueueSong(song: Song) {
-    if (partyAudioOwned.value || requestedQueue.value.length >= 50 || requestedQueue.value.some(item => item.id === song.id)) return false
-    if (!queue.value.some(item => item.id === song.id)) queue.value.push(song)
-    requestedQueue.value.push(song)
-    void triggerReadAheadCache()
-    return true
+    return enqueueSongs([song]).length > 0
+  }
+
+  function enqueueSongs(songs: Song[]): number[] {
+    if (partyAudioOwned.value) return []
+    const requestedIds = new Set(requestedQueue.value.map(song => song.id))
+    const queueIds = new Set(queue.value.map(song => song.id)), added: number[] = []
+    for (const song of songs) {
+      if (requestedIds.has(song.id)) continue
+      if (requestedQueue.value.length >= 50) break
+      if (!queueIds.has(song.id)) { queue.value.push(song); queueIds.add(song.id) }
+      requestedQueue.value.push(song); requestedIds.add(song.id); added.push(song.id)
+    }
+    if (added.length) void triggerReadAheadCache()
+    return added
   }
 
   function removeQueuedSong(songId: number) {
@@ -806,6 +816,12 @@ export const usePlayerStore = defineStore('player', () => {
 
   function setPlaybackOrder(order: 'random' | 'id-desc') {
     if (partyAudioOwned.value) return
+    // Explicit ID order covers the catalog. A range restored from an older session
+    // otherwise silently jumps from a newly selected high ID back to its saved max.
+    if (order === 'id-desc') {
+      songRangeMin.value = 0; songRangeMax.value = 0
+      saveSongRange()
+    }
     sequentialOrder.value = order === 'id-desc' ? 'id-desc' : 'queue'
     shuffle.value = order === 'random'
     if (repeat.value === 'one') repeat.value = 'none'
@@ -1577,8 +1593,12 @@ export const usePlayerStore = defineStore('player', () => {
     if (saved) {
       try {
         const { min, max } = JSON.parse(saved)
-        songRangeMin.value = min || 0
-        songRangeMax.value = max || 0
+        if (Number.isSafeInteger(min) && Number.isSafeInteger(max) && min > 0 && max >= min) {
+          songRangeMin.value = min; songRangeMax.value = max
+        } else {
+          songRangeMin.value = 0; songRangeMax.value = 0
+          saveSongRange()
+        }
       } catch {
         songRangeMin.value = 0
         songRangeMax.value = 0
@@ -1671,6 +1691,7 @@ export const usePlayerStore = defineStore('player', () => {
     pause,
     stopPlayback,
     enqueueSong,
+    enqueueSongs,
     removeQueuedSong,
     togglePlay,
     nextSong,

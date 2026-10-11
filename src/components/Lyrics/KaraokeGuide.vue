@@ -45,6 +45,10 @@
       </div>
     </div>
 
+    <div v-if="fullscreen && player.isSongRangeActive" class="stage-range" role="status">
+      {{ $t('player.songRangeActive', { min: player.songRangeMin, max: player.songRangeMax }) }}
+      <button type="button" data-action="clear-stage-range" @click="player.clearSongRange()">{{ $t('player.songRangeClear') }}</button>
+    </div>
     <div class="stage-workspace">
       <div class="guide-layout" :inert="fullscreen && songsOpen || undefined">
         <div class="guide-main">
@@ -461,6 +465,8 @@ button:focus-visible, summary:focus-visible, input:focus-visible { outline: 2px 
 .stage-toolbar button { display: flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; min-height: 44px; border: 1px solid #56716b; border-radius: 8px; padding: 8px 4px; font-size: 12px; }
 .stage-toolbar button svg { width: 18px; height: 18px; flex-shrink: 0; }
 .stage-toolbar .stage-order-button { color: #7ef0b6; border-color: #7ef0b6; white-space: nowrap; }
+.stage-range { position: relative; z-index: 2; display: flex; align-items: center; gap: 12px; flex-shrink: 0; color: #ffe0a4; font-size: 12px; }
+.stage-range button { min-height: 44px; text-decoration: underline; }
 .stage-toolbar [aria-expanded="true"], .stage-mode [aria-pressed="true"], .stage-toolbar [data-stage-command="play"]:not(:disabled) { color: #7ef0b6; border-color: #7ef0b6; }
 .singing-guide:fullscreen .stage-workspace { position: relative; z-index: 1; flex: 1; min-height: 0; }
 .singing-guide:fullscreen .guide-layout { height: 100%; overflow-y: auto; padding: 0 4px 24px; overscroll-behavior: contain; }

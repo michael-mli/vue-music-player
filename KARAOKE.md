@@ -126,9 +126,19 @@ Fullscreen keeps **Play**, **Pause**, **Stop**, **Next**, **Karaoke / Original**
 a **Random / ID ↓** playback-order toggle in a fixed toolbar. **ID ↓** advances
 through songs from higher to lower IDs, including after choosing a song from the
 browser. Requested songs keep their FIFO priority. Selecting an order clears repeat-one
-without interrupting the current song; song ranges and repeat-all still apply.
+without interrupting the current song. Choosing **ID ↓** clears any previously saved
+ID range so older devices do not jump back to an old maximum (for example, 1335).
+A range deliberately applied afterward still works and is visible with a Clear action
+in fullscreen. Repeat-all still applies.
 **Search / browse** opens an independently searchable, paginated
-list of ready karaoke songs, including IDs and Add to queue / Sing now actions. The
+list of ready karaoke songs, including IDs and Add to queue / Sing now actions.
+Checkboxes and **Select page** support batch additions in both fullscreen and paired
+search/browse lists. Selections survive filtering and pagination and enter the queue
+in selection order. Duplicates are skipped, the 50-song limit is respected, and any
+unadded selections remain selected. Paired batches wait for each host acknowledgement
+and can be cancelled between requests; retries keep the same command ID.
+Rainbow bars span the stage width using logarithmic bands over the musical spectrum,
+with a visible baseline across the full width, including on resize and rotation. The
 current lyric line stays visible above the list while searching, browsing, or scrolling.
 **Full lyrics** expands an inline, scrollable dropdown below the song progress bar.
 It follows the current timed line automatically, including after seeks, and collapses

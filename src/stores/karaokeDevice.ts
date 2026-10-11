@@ -1,4 +1,4 @@
-import { computed, markRaw, ref } from 'vue'
+import { computed, markRaw, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { useAuthStore } from '@/stores/auth'
 import { guideRequest, KaraokeGuideError, karaokeRequestId, type KaraokeDeviceGrant,
@@ -206,6 +206,23 @@ export const useKaraokeDeviceStore = defineStore('karaokeDevice', () => {
     touch(); commandError.value = ''; commandNotice.value = ''
     pending.value = { commandId: karaokeRequestId(), action, ...values, createdAt: Date.now() }
     void transmit()
+    return pending.value.commandId
+  }
+  // Batch requests use the existing acknowledged, idempotent command channel. Wait
+  // for each host acknowledgement before sending another song, including retries.
+  async function enqueueSongAndWait(songId: number): Promise<boolean> {
+    const token = grant.value?.token, id = command('enqueue', { songId })
+    if (!id) return false
+    return new Promise(resolve => {
+      const timeout = window.setTimeout(() => finish(false), 35000)
+      const stopWatching = watch(() => [pending.value?.commandId, grant.value?.token], () => {
+        if (grant.value?.token !== token) finish(false)
+        else if (pending.value?.commandId !== id) finish(!pending.value && !commandError.value)
+      })
+      function finish(applied: boolean) {
+        window.clearTimeout(timeout); stopWatching(); resolve(applied)
+      }
+    })
   }
   async function search(query = '', page = 1) {
     const current = grant.value, attempt = ++searchGeneration
@@ -243,5 +260,5 @@ export const useKaraokeDeviceStore = defineStore('karaokeDevice', () => {
   }
   return { grant, snapshot, device, hostOnline, controlsAvailable, inGuide, listening, error, commandError, commandNotice,
     joining, pairCodeError, queue, lastReply, catalog, searching, searchError, pending, clock, canControl,
-    browseCatalog, browsing, browseError, start, stop, resume, setInGuide, touch, openPair, pairByCode, command, search, browse, rename }
+    browseCatalog, browsing, browseError, start, stop, resume, setInGuide, touch, openPair, pairByCode, command, enqueueSongAndWait, search, browse, rename }
 })

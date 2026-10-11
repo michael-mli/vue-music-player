@@ -14,7 +14,7 @@ function setup(request, { expired = false, hash = '' } = {}) {
   let time = 1000, nextTimer = 0
   const timers = new Map(), storage = new Map([['karaoke-device-pair', JSON.stringify({ sessionId: secret, token, deviceId: id, name: 'Phone', expiresAt: expired ? 0 : 10000 })]])
   const exports = {}, window = { location: { href: 'https://music.test/sing/guide' + hash }, history: { state: {}, replaceState() {} },
-    setTimeout(work) { const id = ++nextTimer; timers.set(id, work); return id }, clearTimeout(id) { timers.delete(id) } }
+    setTimeout(work, delay = 0) { const id = ++nextTimer; timers.set(id, { work, at: time + delay }); return id }, clearTimeout(id) { timers.delete(id) } }
   vm.runInNewContext(outputText, { exports, URL, URLSearchParams, performance,
     Date: class extends Date { static now() { return time } },
     localStorage: { getItem: key => storage.get(key) || null, removeItem: key => storage.delete(key), setItem: (key, value) => storage.set(key, value) },
@@ -25,8 +25,8 @@ function setup(request, { expired = false, hash = '' } = {}) {
   setActivePinia(createPinia())
   const store = exports.useKaraokeDeviceStore()
   return { store, storage, advance(ms) { time += ms }, async tick() {
-    const entry = timers.entries().next().value
-    if (entry) { timers.delete(entry[0]); entry[1]() }
+    const entry = [...timers.entries()].sort((a, b) => a[1].at - b[1].at)[0]
+    if (entry) { timers.delete(entry[0]); entry[1].work() }
     await new Promise(resolve => setImmediate(resolve))
   } }
 }
@@ -68,6 +68,44 @@ test('transient command failures retry the original request ID and accept the ho
   f.advance(2600); await f.tick(); await new Promise(resolve => setImmediate(resolve))
   assert.deepEqual(posts, ['unique-request-id-long', 'unique-request-id-long'])
   assert.equal(f.store.pending, null); assert.equal(f.store.commandNotice, 'commandApplied')
+})
+
+test('batch enqueue waits for host acknowledgement and reports applied or rejected songs', async () => {
+  let acknowledgement
+  const f = setup(async (_clock, _path, _token, method, body) => {
+    if (method === 'POST') return { command: { id: body.commandId, status: 'pending' } }
+    return { ...reply(), commands: acknowledgement ? [acknowledgement] : [] }
+  })
+  f.store.start(); await f.tick()
+  let resolved = false
+  const applied = f.store.enqueueSongAndWait(4).then(result => { resolved = true; return result })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(resolved, false)
+  assert.equal(f.store.canControl, false)
+  acknowledgement = { id: f.store.pending.commandId, status: 'applied' }
+  f.store.resume(); await f.tick()
+  assert.equal(await applied, true)
+  acknowledgement = null
+  const rejected = f.store.enqueueSongAndWait(5)
+  await new Promise(resolve => setImmediate(resolve))
+  acknowledgement = { id: f.store.pending.commandId, status: 'failed', code: 'queueFull' }
+  f.store.resume(); await f.tick()
+  assert.equal(await rejected, false)
+  assert.equal(f.store.commandError, 'queueFull')
+})
+
+test('removing a paired device stops an awaiting batch instead of sending its next song', async () => {
+  let removed = false
+  const f = setup(async (_clock, _path, _token, method, body) => {
+    if (removed) throw new GuideError('removed', 403)
+    return method === 'POST' ? { command: { id: body.commandId, status: 'pending' } } : reply()
+  })
+  f.store.start(); await f.tick()
+  const result = f.store.enqueueSongAndWait(4)
+  await new Promise(resolve => setImmediate(resolve))
+  removed = true; f.store.resume(); await f.tick()
+  assert.equal(await result, false)
+  assert.equal(f.store.grant, null)
 })
 
 test('rescanning the current QR replaces a removed saved grant rather than restoring it', async () => {

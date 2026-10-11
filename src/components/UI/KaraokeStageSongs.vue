@@ -15,9 +15,15 @@
         <p>{{ $t('karaoke.available', { count: filteredSongs.length }) }}</p>
         <p v-if="notice" role="status" class="picker-notice">{{ notice }}</p>
       </div>
+      <KaraokeSongBatch :count="selected.size" :eligible="selectablePage.length > 0" :all-selected="allPageSelected" :disabled="player.partyAudioOwned"
+        @select-page="selectPage(pageSongs)" @clear="selected.clear()" @add="enqueueSelected" />
       <p v-if="!filteredSongs.length" class="picker-empty">{{ $t(query ? 'search.noResults' : 'karaoke.empty') }}</p>
       <ul v-else class="picker-list">
         <li v-for="song in pageSongs" :key="song.id" :data-song-id="song.id" :class="{ 'is-current': player.currentSong?.id === song.id }">
+          <label class="picker-select">
+            <input type="checkbox" :checked="selected.has(song.id)" :disabled="player.partyAudioOwned || queued(song.id)"
+              :aria-label="$t('karaoke.selectSong', { title: song.title, id: song.id })" @change="toggle(song)" />
+          </label>
           <div class="picker-cover"><SongCover :song-id="song.id" :alt="song.title" /></div>
           <div class="picker-song">
             <p>{{ song.title }}</p>
@@ -44,6 +50,8 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import SongCover from '@/components/UI/SongCover.vue'
+import KaraokeSongBatch from '@/components/UI/KaraokeSongBatch.vue'
+import { useSongSelection } from '@/composables/useSongSelection'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
 import { karaokeService } from '@/services/karaokeService'
@@ -68,8 +76,17 @@ const pageSongs = computed(() => filteredSongs.value.slice((page.value - 1) * 25
 watch(query, () => { page.value = 1 })
 watch(totalPages, count => { page.value = Math.min(page.value, count) })
 const queued = (id: number) => player.requestedQueue.some(song => song.id === id)
+const { selected, selectedSongs, toggle, selectPage } = useSongSelection<Song>(queued)
+const selectablePage = computed(() => pageSongs.value.filter(song => !queued(song.id)))
+const allPageSelected = computed(() => selectablePage.value.length > 0 && selectablePage.value.every(song => selected.value.has(song.id)))
+function enqueueSelected() {
+  const added = player.enqueueSongs(selectedSongs.value)
+  for (const song of selectedSongs.value) if (queued(song.id)) selected.value.delete(song.id)
+  notice.value = t(selected.value.size ? 'karaoke.batchPartial' : 'karaoke.batchAdded', { count: added.length, remaining: selected.value.size })
+}
 function enqueue(song: Song) {
   notice.value = player.enqueueSong(song) ? t('karaoke.stageSongAdded', { title: song.title }) : t('karaoke.guide.queueFull')
+  if (queued(song.id)) selected.value.delete(song.id)
 }
 async function sing(song: Song) {
   if (busy.value || player.partyAudioOwned) return
@@ -109,6 +126,8 @@ onMounted(() => { searchInput.value?.focus(); void loadSongs() })
 .picker-list { margin-top: 12px; }
 .picker-list li { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 14px 0; border-top: 1px solid #38534f; }
 .picker-cover { width: 44px; height: 44px; border-radius: 6px; overflow: hidden; flex-shrink: 0; }
+.picker-select { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; flex-shrink: 0; cursor: pointer; }
+.picker-select input { width: 20px; height: 20px; accent-color: #1db954; }
 .picker-song { min-width: 0; flex: 1; overflow-wrap: anywhere; }
 .picker-song-info { margin-top: 4px; }
 .is-current .picker-song > p:first-child { color: #7ef0b6; }
