@@ -124,9 +124,10 @@ stage on supported browsers; playback controls remain available there.
 
 Fullscreen keeps **Play**, **Pause**, **Stop**, **Next**, and **Karaoke / Original**
 in a fixed toolbar. **Search / browse** opens an independently searchable, paginated
-list of ready karaoke songs, including IDs and Add to queue / Sing now actions.
-**Full lyrics** follows the current timed line automatically, including after seeks;
-its list scrolls without moving the playback controls. The current cover is the stage
+list of ready karaoke songs, including IDs and Add to queue / Sing now actions. The
+current lyric line stays visible above the list while searching, browsing, or scrolling.
+**Full lyrics**, below the song progress bar, follows the current timed line automatically,
+including after seeks; its list scrolls without moving the playback controls. The current cover is the stage
 background, with a saved **Hide cover / Show cover** preference. The queue, pairing QR,
 and visualization settings remain available inside fullscreen.
 

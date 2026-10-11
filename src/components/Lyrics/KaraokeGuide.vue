@@ -33,8 +33,6 @@
       <div class="stage-tools">
         <button ref="songsButton" type="button" data-action="toggle-stage-songs" :aria-expanded="songsOpen" aria-controls="karaoke-stage-songs"
           @click="toggleSongs">{{ $t('karaoke.stageSongs') }}</button>
-        <button ref="lyricsButton" type="button" data-action="toggle-stage-lyrics" :aria-expanded="allLyricsOpen" aria-controls="karaoke-stage-lyrics"
-          @click="toggleLyrics">{{ $t('karaoke.stageLyrics') }}</button>
         <button type="button" data-action="toggle-stage-cover" :aria-pressed="coverVisible" @click="coverVisible = !coverVisible">
           {{ $t(coverVisible ? 'karaoke.hideStageCover' : 'karaoke.showStageCover') }}
         </button>
@@ -112,6 +110,8 @@
                 :disabled="!player.duration" :aria-label="$t('karaoke.songPosition')" @input="seekSong" />
               <time>{{ formatTime(player.duration) }}</time>
             </div>
+            <button v-if="fullscreen" ref="lyricsButton" type="button" class="stage-lyrics-toggle" data-action="toggle-stage-lyrics"
+              :aria-expanded="allLyricsOpen" aria-controls="karaoke-stage-lyrics" @click="toggleLyrics">{{ $t('karaoke.stageLyrics') }}</button>
             <p v-if="fullscreenError" class="timing-note" role="status">{{ $t('karaoke.fullscreenUnavailable') }}</p>
             <details v-if="!fullscreen && lines.length" class="all-lyrics" @toggle="onLyricsToggle">
               <summary>{{ $t('karaoke.allLyrics') }}</summary>
@@ -163,7 +163,20 @@
           </section>
         </aside>
       </div>
-      <KaraokeStageSongs v-if="fullscreen && songsOpen" id="karaoke-stage-songs" class="stage-panel" @close="closeSongs" />
+      <div v-if="fullscreen && songsOpen" class="stage-song-browser">
+        <div class="stage-browse-lyric" :data-line-index="guide.index">
+          <p class="browse-current-line" :class="{ 'waiting-line': !guide.singing }">
+            <template v-if="loading">{{ $t('lyrics.loading') }}</template>
+            <template v-else-if="!lines.length">{{ $t('karaoke.noSynced') }}</template>
+            <template v-else-if="guide.singing && currentLine?.words?.length">
+              <span v-for="(word, index) in currentLine.words" :key="index" class="timed-word"
+                :style="{ '--word-progress': `${wordProgress(word) * 100}%` }">{{ word.text }}</span>
+            </template>
+            <template v-else>{{ guide.finished ? $t('karaoke.guideOutro') : displayedLine?.text }}</template>
+          </p>
+        </div>
+        <KaraokeStageSongs id="karaoke-stage-songs" class="stage-panel" @close="closeSongs" />
+      </div>
       <section v-if="fullscreen && allLyricsOpen" id="karaoke-stage-lyrics" class="stage-panel stage-full-lyrics"
         role="dialog" :aria-label="$t('karaoke.stageLyrics')" @keydown.esc.stop.prevent="closeLyrics">
         <header class="stage-lyrics-header">
@@ -265,7 +278,11 @@ function toggleSongs() {
   if (songsOpen.value) closeSongs()
   else { allLyricsOpen.value = false; songsOpen.value = true }
 }
-function closeLyrics() { allLyricsOpen.value = false; lyricsButton.value?.focus() }
+async function closeLyrics() {
+  allLyricsOpen.value = false
+  await nextTick()
+  lyricsButton.value?.focus()
+}
 async function toggleLyrics() {
   if (allLyricsOpen.value) { closeLyrics(); return }
   songsOpen.value = false; allLyricsOpen.value = true
@@ -400,6 +417,7 @@ onBeforeUnmount(() => {
 .song-timeline { margin-top: 16px; font-size: 11px; color: #afc5bd; font-variant-numeric: tabular-nums; }
 .song-timeline time { flex-shrink: 0; white-space: nowrap; }
 .song-timeline input { accent-color: #7ef0b6; width: 100%; min-width: 0; height: 24px; cursor: pointer; }
+.stage-lyrics-toggle { display: block; width: 100%; min-height: 44px; margin-top: 12px; padding: 8px 12px; border: 1px solid #56716b; border-radius: 8px; text-align: left; color: #afc5bd; font-size: 12px; }
 .all-lyrics { margin-top: 12px; font-size: 12px; color: #afc5bd; }
 .all-lyrics summary { cursor: pointer; padding: 8px 0; }
 .all-lyrics-list { max-height: 240px; overflow-y: auto; margin-top: 8px; }
@@ -424,13 +442,18 @@ button:focus-visible, summary:focus-visible, input:focus-visible { outline: 2px 
 .stage-playback, .stage-tools, .stage-mode { display: grid; gap: 6px; flex: 1 1 320px; min-width: 0; }
 .stage-playback { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .stage-mode { flex-basis: 160px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.stage-tools { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.stage-tools { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .stage-toolbar button { display: flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; min-height: 44px; border: 1px solid #56716b; border-radius: 8px; padding: 8px 4px; font-size: 12px; }
 .stage-toolbar button svg { width: 18px; height: 18px; flex-shrink: 0; }
 .stage-toolbar [aria-expanded="true"], .stage-mode [aria-pressed="true"], .stage-toolbar [data-stage-command="play"]:not(:disabled) { color: #7ef0b6; border-color: #7ef0b6; }
 .singing-guide:fullscreen .stage-workspace { position: relative; z-index: 1; flex: 1; min-height: 0; }
 .singing-guide:fullscreen .guide-layout { height: 100%; overflow-y: auto; padding: 0 4px 24px; overscroll-behavior: contain; }
 .stage-panel { position: absolute; inset: 0; z-index: 3; min-width: 0; padding: clamp(12px, 2vw, 24px); border: 1px solid #56716b; border-radius: 12px; background: #081b16; overflow-y: auto; overscroll-behavior: contain; }
+.stage-song-browser { position: absolute; inset: 0; z-index: 3; display: flex; flex-direction: column; gap: 8px; min-height: 0; border-radius: 12px; background: #081b16; }
+.stage-browse-lyric { flex-shrink: 0; max-height: 40%; overflow-y: auto; overscroll-behavior: contain; padding: 8px 12px; border: 1px solid #56716b; border-radius: 12px; background: #081b16; text-align: center; }
+.browse-current-line { color: #7ef0b6; font-size: clamp(18px, 2.5vw, 30px); font-weight: 750; line-height: 1.4; white-space: pre-wrap; }
+.browse-current-line.waiting-line { color: #edf5f2; }
+.stage-song-browser > .stage-panel { position: relative; inset: auto; flex: 1; min-height: 0; }
 .stage-full-lyrics { display: flex; flex-direction: column; overflow: hidden; }
 .stage-lyrics-header { display: flex; justify-content: space-between; align-items: start; gap: 16px; flex-shrink: 0; }
 .stage-lyrics-header > div { min-width: 0; }
@@ -445,6 +468,10 @@ button:focus-visible, summary:focus-visible, input:focus-visible { outline: 2px 
 @media (max-width: 600px) {
   .stage-playback button { gap: 4px; padding-inline: 2px; font-size: 11px; white-space: nowrap; }
   .stage-playback button svg { width: 16px; height: 16px; }
+}
+@media (max-height: 450px) {
+  .stage-browse-lyric { padding: 4px 8px; }
+  .browse-current-line { font-size: 16px; }
 }
 .singing-guide:fullscreen .guide-lyrics { max-width: 1100px; margin: auto; }
 .singing-guide:fullscreen .guide-footer { max-width: 800px; margin: auto; }
