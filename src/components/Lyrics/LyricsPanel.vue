@@ -65,16 +65,21 @@
       @touchstart="onUserInteract"
       @mousedown="onUserInteract"
     >
-      <div v-if="loading" class="text-center text-light-text-secondary dark:text-gray-400">
+      <KaraokeGuide
+        v-if="playerStore.karaokeMode && lyricsMode === 'auto' && currentSong"
+        :lines="syncedLines || []"
+        :loading="loading"
+        :plain-lyrics="lyrics"
+        compact
+      >
+        <template #plain-lyrics>
+          <div class="lyrics-content" v-html="processedLyrics" @click="handleLyricsClick"></div>
+        </template>
+      </KaraokeGuide>
+
+      <div v-else-if="loading" class="text-center text-light-text-secondary dark:text-gray-400">
         {{ $t('lyrics.loading') }}
       </div>
-
-      <KaraokeGuide
-        v-else-if="playerStore.karaokeMode && lyricsMode === 'auto' && hasSynced"
-        :key="currentSong?.id"
-        :lines="syncedLines!"
-        compact
-      />
 
       <!-- Synced (karaoke-style) lyrics: line-by-line with active highlight + click-to-seek.
            Hidden when the user picks the manual/original lyric view. -->
@@ -241,6 +246,7 @@ function seekToLine(line: LyricLine) {
 watch(currentSong, () => {
   userScrolling = false
   syncedLines.value = null
+  lyrics.value = ''
   if (scrollContainer.value) {
     scrollContainer.value.scrollTop = 0
   }
@@ -265,16 +271,20 @@ function closeImageModal() {
   imageModal.isOpen = false
 }
 
+let lyricsRequest = 0
 watch(currentSong, async (newSong) => {
+  const request = ++lyricsRequest
   if (newSong) {
     loading.value = true
     try {
-      lyrics.value = await songsStore.getSongLyrics(newSong.id)
+      const plain = await songsStore.getSongLyrics(newSong.id)
+      if (request === lyricsRequest) lyrics.value = plain
     } catch (error) {
-      lyrics.value = ''
+      if (request === lyricsRequest) lyrics.value = ''
     } finally {
-      loading.value = false
+      if (request === lyricsRequest) loading.value = false
     }
+    if (request !== lyricsRequest) return
 
     // Best-effort: fetch time-synced lyrics from LRCLIB. Runs after the plain lyrics so the
     // panel shows something immediately; if synced lyrics arrive (and the song hasn't
@@ -285,7 +295,7 @@ watch(currentSong, async (newSong) => {
         ? playerStore.duration
         : songService.getCachedDuration(newSong.id)
       const lines = await lyricsService.getSyncedLyrics(newSong, duration)
-      if (currentSong.value?.id === requestedId) {
+      if (request === lyricsRequest && currentSong.value?.id === requestedId) {
         syncedLines.value = lines
       }
     } catch {

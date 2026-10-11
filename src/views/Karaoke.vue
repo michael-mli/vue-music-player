@@ -93,9 +93,10 @@
         </div>
 
         <KaraokeGuide
-          v-if="lyricsMode === 'auto' && syncedLines.length"
-          :key="currentSong.id"
+          v-if="lyricsMode === 'auto'"
           :lines="syncedLines"
+          :loading="lyricsLoading"
+          :plain-lyrics="plainLyrics"
         />
 
         <!-- Plain lyrics fallback -->

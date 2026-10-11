@@ -163,7 +163,10 @@ The paired device can **Play**, **Pause**, **Stop song** (pause and reset to the
 beginning), **Skip song**, and seek the host. Search the host’s ready karaoke
 songs by title, artist, or song ID; **Add to queue** schedules songs in request
 order ahead of shuffle/repeat, and **Sing now** starts a selection immediately.
-Both devices show the requested queue, and either can remove a request. Commands
+Both devices show the requested queue, and either can remove a request. Expanded
+singing guides also show this live queue beside the lyrics (below them on narrow
+screens). Remote play, pause, stop, seeking, skip, and Sing now keep the host in
+fullscreen, including while new lyrics load or a song has only plain lyrics. Commands
 are acknowledged by the host and use stable request IDs so reconnecting cannot
 repeat a skip or add the same request twice.
 
