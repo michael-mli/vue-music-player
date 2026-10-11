@@ -270,7 +270,7 @@ try {
   await poll(() => evaluate(phone, `!document.querySelector('[data-remote-mode="karaoke"]').disabled`), 'paired mode ready')
   await evaluate(phone, `document.querySelector('[data-remote-mode="karaoke"]').click()`)
   await poll(() => evaluate(host, `${store('player')}.karaokeMode && !${store('player')}.audioElement.paused && ${store('player')}.audioElement.src.endsWith('/link.1.instrumental.mp3')`), 'paired switch to Karaoke')
-  await poll(() => evaluate(phone, `${store('karaokeDevice')}.snapshot.karaoke === true && !${store('karaokeDevice')}.pending`), 'paired Karaoke acknowledgement')
+  await poll(() => evaluate(phone, `${store('karaokeDevice')}.snapshot.karaoke === true && !document.querySelector('[data-remote-mode="original"]').disabled`), 'paired Karaoke acknowledgement and ready mode controls')
   check(await evaluate(phone, `${store('karaokeDevice')}.grant.token === window.__guideGrant && document.querySelector('audio').src.endsWith('/link.1.mp3') && !document.querySelector('audio').paused`) && await evaluate(host, `document.fullscreenElement.querySelector('[data-stage-mode="karaoke"]').getAttribute('aria-pressed') === 'true' && window.__visualizerSources.length === 1`), 'paired Karaoke button changes the host instrumental and synced indicators while preserving private original audio and visualizer')
   await evaluate(phone, `document.querySelector('[data-remote-mode="original"]').click()`)
   await poll(() => evaluate(host, `!${store('player')}.karaokeMode && !${store('player')}.audioElement.paused && ${store('player')}.audioElement.src.endsWith('/link.1.mp3')`), 'paired switch to Original')
