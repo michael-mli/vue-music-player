@@ -1,11 +1,15 @@
 <template>
   <div 
     v-if="isVisible"
-    class="fixed inset-0 z-40 pointer-events-none"
-    :style="{ backgroundColor: `rgba(0, 0, 0, ${backgroundOpacity})` }"
+    class="music-visualizer pointer-events-none"
+    :class="embedded ? 'absolute inset-0' : 'fixed inset-0 z-40'"
+    :data-embedded="embedded"
+    :data-visualizer-type="visualizerType"
+    :data-visualizer-color="colorScheme"
   >
     <!-- Close button -->
     <button 
+      v-if="!embedded"
       @click="$emit('close')"
       class="absolute top-4 right-4 z-50 p-2 rounded-full bg-black/20 hover:bg-black/40 text-white/80 hover:text-white transition-all duration-200 pointer-events-auto"
       :title="$t('common.close')"
@@ -15,14 +19,17 @@
     
     <!-- Visualizer Canvas -->
     <canvas 
+      v-show="enabled || !embedded"
       ref="canvas"
-      class="w-full h-full"
+      class="visualizer-canvas fixed inset-0 w-full h-full"
+      :style="{ backgroundColor: `rgba(0, 0, 0, ${backgroundOpacity})` }"
+      aria-hidden="true"
       :width="canvasWidth"
       :height="canvasHeight"
     />
     
     <!-- Floating particles effect -->
-    <div class="absolute inset-0 overflow-hidden">
+    <div v-show="enabled || !embedded" class="fixed inset-0 overflow-hidden" aria-hidden="true">
       <div 
         v-for="particle in particles"
         :key="particle.id"
@@ -41,16 +48,22 @@
     <!-- Settings panel -->
     <div 
       v-if="showSettings"
-      class="absolute bottom-4 left-4 bg-black/60 backdrop-blur-sm rounded-lg p-4 text-white pointer-events-auto"
+      id="music-visualizer-settings"
+      class="visualizer-settings fixed bottom-[72px] right-4 z-50 max-h-[70dvh] w-64 max-w-[calc(100%-32px)] overflow-y-auto border border-white/20 bg-black/90 backdrop-blur-sm rounded-lg p-4 text-white pointer-events-auto"
+      role="region" :aria-label="$t('visualizer.settings')"
     >
       <h3 class="text-sm font-medium mb-3">{{ $t('visualizer.settings') }}</h3>
+      <label v-if="embedded" class="mb-3 flex min-h-[44px] items-center gap-2 text-sm">
+        <input v-model="enabled" type="checkbox" class="accent-spotify-green" />{{ $t('visualizer.enabled') }}
+      </label>
       
       <!-- Visualizer Type -->
       <div class="mb-3">
-        <label class="text-xs text-white/80 block mb-1">{{ $t('visualizer.type') }}</label>
+        <label for="visualizer-type" class="text-xs text-white/80 block mb-1">{{ $t('visualizer.type') }}</label>
         <select 
+          id="visualizer-type"
           v-model="visualizerType"
-          class="w-full px-2 py-1 bg-white/10 rounded text-xs border border-white/20 focus:border-spotify-green focus:outline-none text-white"
+          class="min-h-[44px] w-full px-2 py-1 bg-white/10 rounded text-xs border border-white/20 focus:border-spotify-green focus:outline-none text-white"
         >
           <option value="bars" class="bg-gray-800 text-white">{{ $t('visualizer.bars') }}</option>
           <option value="circle" class="bg-gray-800 text-white">{{ $t('visualizer.circle') }}</option>
@@ -63,9 +76,10 @@
       
       <!-- Background Opacity -->
       <div class="mb-3">
-        <label class="text-xs text-white/80 block mb-1">{{ $t('visualizer.backgroundOpacity') }}</label>
+        <label for="visualizer-background" class="text-xs text-white/80 block mb-1">{{ $t('visualizer.backgroundOpacity') }}</label>
         <input 
-          v-model="backgroundOpacity"
+          id="visualizer-background"
+          v-model.number="backgroundOpacity"
           type="range"
           min="0"
           max="0.8"
@@ -76,23 +90,25 @@
       
       <!-- Color Scheme -->
       <div class="mb-3">
-        <label class="text-xs text-white/80 block mb-1">{{ $t('visualizer.colorScheme') }}</label>
+        <label for="visualizer-color" class="text-xs text-white/80 block mb-1">{{ $t('visualizer.colorScheme') }}</label>
         <select 
+          id="visualizer-color"
           v-model="colorScheme"
-          class="w-full px-2 py-1 bg-white/10 rounded text-xs border border-white/20 focus:border-spotify-green focus:outline-none text-white"
+          class="min-h-[44px] w-full px-2 py-1 bg-white/10 rounded text-xs border border-white/20 focus:border-spotify-green focus:outline-none text-white"
         >
-          <option value="spotify" class="bg-gray-800 text-white">Spotify Green</option>
-          <option value="rainbow" class="bg-gray-800 text-white">Rainbow</option>
-          <option value="blue" class="bg-gray-800 text-white">Blue Waves</option>
-          <option value="fire" class="bg-gray-800 text-white">Fire</option>
+          <option value="spotify" class="bg-gray-800 text-white">{{ $t('visualizer.spotify') }}</option>
+          <option value="rainbow" class="bg-gray-800 text-white">{{ $t('visualizer.rainbow') }}</option>
+          <option value="blue" class="bg-gray-800 text-white">{{ $t('visualizer.blue') }}</option>
+          <option value="fire" class="bg-gray-800 text-white">{{ $t('visualizer.fire') }}</option>
         </select>
       </div>
       
       <!-- Bar Height -->
       <div class="mb-3">
-        <label class="text-xs text-white/80 block mb-1">{{ $t('visualizer.barHeight') }}</label>
+        <label for="visualizer-height" class="text-xs text-white/80 block mb-1">{{ $t('visualizer.barHeight') }}</label>
         <input 
-          v-model="barHeight"
+          id="visualizer-height"
+          v-model.number="barHeight"
           type="range"
           min="0.2"
           max="1.0"
@@ -109,8 +125,9 @@
     <!-- Settings toggle -->
     <button 
       @click="showSettings = !showSettings"
-      class="absolute bottom-4 right-4 p-2 rounded-full bg-black/20 hover:bg-black/40 text-white/80 hover:text-white transition-all duration-200 pointer-events-auto"
+      class="visualizer-settings-button fixed bottom-4 right-4 z-50 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full border border-white/20 bg-black/70 hover:bg-black/90 text-white transition-all duration-200 pointer-events-auto"
       :title="$t('visualizer.settings')"
+      :aria-label="$t('visualizer.settings')" :aria-expanded="showSettings" aria-controls="music-visualizer-settings"
     >
       <CogIcon class="w-5 h-5" />
     </button>
@@ -120,15 +137,14 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { XMarkIcon, CogIcon } from '@heroicons/vue/24/outline'
-import { useI18n } from 'vue-i18n'
 import { usePlayerStore } from '@/stores/player'
 
-const { t } = useI18n()
 const playerStore = usePlayerStore()
 
 // Props
 interface Props {
   isVisible: boolean
+  embedded?: boolean
 }
 
 const props = defineProps<Props>()
@@ -149,6 +165,7 @@ const backgroundOpacity = ref(0.0)
 const colorScheme = ref<'spotify' | 'rainbow' | 'blue' | 'fire'>('rainbow')
 const barHeight = ref(0.2)
 const showSettings = ref(false)
+const enabled = ref(true)
 
 // Audio context and analyzer
 let audioContext: AudioContext | null = null
@@ -333,16 +350,16 @@ function getSchemeHue(position: number, intensity: number): { h: number; s: numb
 
 // Visualizer rendering functions
 function drawBars(ctx: CanvasRenderingContext2D, dataArray: Uint8Array) {
-  const barWidth = canvasWidth.value / dataArray.length * 2.5
-  let x = 0
+  const count = Math.min(64, dataArray.length), barWidth = canvasWidth.value / count
   
-  for (let i = 0; i < dataArray.length; i++) {
-    const barHeightValue = (dataArray[i] / 255) * canvasHeight.value * barHeight.value
+  for (let i = 0; i < count; i++) {
+    const start = Math.floor(i * dataArray.length / count), end = Math.floor((i + 1) * dataArray.length / count)
+    let intensity = 0
+    for (let bin = start; bin < end; bin++) intensity = Math.max(intensity, dataArray[bin])
+    const barHeightValue = Math.max(2, (intensity / 255) * canvasHeight.value * barHeight.value)
     
-    ctx.fillStyle = getColor(i, dataArray.length, dataArray[i])
-    ctx.fillRect(x, canvasHeight.value - barHeightValue, barWidth, barHeightValue)
-    
-    x += barWidth + 1
+    ctx.fillStyle = getColor(i, count, intensity)
+    ctx.fillRect(i * barWidth, canvasHeight.value - barHeightValue, Math.max(1, barWidth - 2), barHeightValue)
   }
 }
 
@@ -370,7 +387,9 @@ function drawCircle(ctx: CanvasRenderingContext2D, dataArray: Uint8Array) {
 }
 
 function drawWave(ctx: CanvasRenderingContext2D, dataArray: Uint8Array) {
-  ctx.strokeStyle = getColor(0, 1, 200)
+  const gradient = ctx.createLinearGradient(0, 0, canvasWidth.value, 0)
+  for (let stop = 0; stop <= 6; stop++) gradient.addColorStop(stop / 6, getColor(stop, 6, 200))
+  ctx.strokeStyle = gradient
   ctx.lineWidth = 2
   ctx.beginPath()
   
@@ -676,6 +695,9 @@ function drawTerrain(ctx: CanvasRenderingContext2D, dataArray: Uint8Array) {
 
 // Main animation loop
 function animate() {
+  if (animationId) cancelAnimationFrame(animationId)
+  animationId = null
+  if (!props.isVisible || (props.embedded && !enabled.value)) return
   if (!canvas.value || !analyser || !dataArray) return
   
   const ctx = canvas.value.getContext('2d')
@@ -684,8 +706,8 @@ function animate() {
   // Clear canvas — all effects render on transparent background
   ctx.clearRect(0, 0, canvasWidth.value, canvasHeight.value)
   
-  // Get frequency data
-  analyser.getByteFrequencyData(dataArray)
+  if (visualizerType.value === 'wave') analyser.getByteTimeDomainData(dataArray)
+  else analyser.getByteFrequencyData(dataArray)
   
   // Draw visualizer
   switch (visualizerType.value) {
@@ -765,15 +787,37 @@ watch(() => playerStore.audioElement, async (nextAudio, previousAudio) => {
 // users never deliberately picked (changing ANY setting saved all fields), so loads only
 // honor those two fields from v2-stamped saves.
 const SETTINGS_VERSION = 2
-watch([visualizerType, backgroundOpacity, colorScheme, barHeight], () => {
-  localStorage.setItem('music-visualizer-settings', JSON.stringify({
-    v: SETTINGS_VERSION,
-    type: visualizerType.value,
-    backgroundOpacity: backgroundOpacity.value,
-    colorScheme: colorScheme.value,
-    barHeight: barHeight.value
-  }))
-})
+let loadingSettings = false
+watch(() => props.embedded, () => {
+  loadingSettings = true
+  showSettings.value = false
+  visualizerType.value = 'bars'; backgroundOpacity.value = 0
+  colorScheme.value = 'rainbow'; barHeight.value = 0.2; enabled.value = true
+  try {
+    const settings = JSON.parse(localStorage.getItem(props.embedded ? 'karaoke-stage-visualizer-settings' : 'music-visualizer-settings') || 'null')
+    if (settings) {
+      if (['bars', 'circle', 'wave', 'galaxy', 'fountain', 'terrain'].includes(settings.type)) visualizerType.value = settings.type
+      const opacity = Number(settings.backgroundOpacity), height = Number(settings.barHeight)
+      if (settings.backgroundOpacity != null && Number.isFinite(opacity)) backgroundOpacity.value = Math.max(0, Math.min(0.8, opacity))
+      if (settings.v === SETTINGS_VERSION) {
+        if (['spotify', 'rainbow', 'blue', 'fire'].includes(settings.colorScheme)) colorScheme.value = settings.colorScheme
+        if (settings.barHeight != null && Number.isFinite(height)) barHeight.value = Math.max(0.2, Math.min(1, height))
+        enabled.value = settings.enabled !== false
+      }
+    }
+  } catch { /* Use defaults when preferences cannot be read. */ }
+  finally { loadingSettings = false }
+}, { immediate: true })
+watch([visualizerType, backgroundOpacity, colorScheme, barHeight, enabled], () => {
+  if (loadingSettings) return
+  try {
+    localStorage.setItem(props.embedded ? 'karaoke-stage-visualizer-settings' : 'music-visualizer-settings', JSON.stringify({
+      v: SETTINGS_VERSION, type: visualizerType.value, backgroundOpacity: backgroundOpacity.value,
+      colorScheme: colorScheme.value, barHeight: barHeight.value, enabled: enabled.value,
+    }))
+  } catch { /* Preferences are optional. */ }
+}, { flush: 'sync' })
+watch([enabled, () => props.embedded], () => { if (props.isVisible) animate() })
 
 // Reset effect state when switching type
 watch(visualizerType, () => {
@@ -789,22 +833,4 @@ watch(visualizerType, () => {
   }
 })
 
-// Load settings from localStorage
-onMounted(() => {
-  const saved = localStorage.getItem('music-visualizer-settings')
-  if (saved) {
-    try {
-      const settings = JSON.parse(saved)
-      visualizerType.value = settings.type || 'bars'
-      backgroundOpacity.value = settings.backgroundOpacity ?? 0.0
-      if (settings.v === SETTINGS_VERSION) {
-        colorScheme.value = settings.colorScheme || 'rainbow'
-        barHeight.value = settings.barHeight ?? 0.2
-      }
-      // pre-v2 saves: keep type/opacity but adopt the new rainbow/min-height defaults
-    } catch (error) {
-      console.error('Error loading visualizer settings:', error)
-    }
-  }
-})
 </script>

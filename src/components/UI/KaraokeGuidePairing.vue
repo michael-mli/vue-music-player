@@ -50,7 +50,9 @@
       <p v-if="!player.requestedQueue.length" class="mt-2 text-sm text-light-text-secondary dark:text-gray-400">{{ $t('karaoke.guide.emptyQueue') }}</p>
       <ol class="mt-2 space-y-2">
         <li v-for="(song, index) in player.requestedQueue" :key="song.id" class="flex items-center gap-2 text-sm">
-          <span class="min-w-0 flex-1 break-words">{{ index + 1 }}. {{ song.title }}</span>
+          <span class="min-w-0 flex-1 break-words">{{ index + 1 }}. {{ song.title }}
+            <span class="mt-1 block text-xs text-light-text-secondary dark:text-gray-400">{{ $t('music.songId') }}: {{ song.id }}</span>
+          </span>
           <button type="button" class="min-h-[44px] px-2 text-red-500 dark:text-red-300" :aria-label="$t('karaoke.guide.removeSong', { title: song.title })"
             @click="player.removeQueuedSong(song.id)">{{ $t('karaoke.guide.remove') }}</button>
         </li>

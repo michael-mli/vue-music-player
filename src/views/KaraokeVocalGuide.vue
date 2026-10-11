@@ -6,6 +6,7 @@
       <p class="mt-3 text-sm text-light-text-secondary dark:text-gray-400">{{ $t('karaoke.guide.listenerHint') }}</p>
       <div class="my-6 rounded-xl bg-light-bg dark:bg-black/20 p-4">
         <p class="break-words text-lg font-semibold">{{ snapshot?.song?.title || $t('karaoke.guide.noSong') }}</p>
+        <p v-if="snapshot?.song" class="mt-1 text-xs text-light-text-secondary dark:text-gray-400 guide-current-song-id">{{ $t('music.songId') }}: {{ snapshot.song.id }}</p>
         <p class="mt-2 text-sm text-light-text-secondary dark:text-gray-400" role="status">{{ $t(`karaoke.guide.${status}`) }}</p>
         <p v-if="snapshot?.song" class="mt-2 text-sm tabular-nums">{{ formatTime(position) }} / {{ formatTime(snapshot.duration) }}</p>
       </div>
@@ -45,30 +46,41 @@
         <p v-if="pair.searchError" role="alert" class="mt-2 text-sm text-red-500 dark:text-red-300">{{ $t(`karaoke.guide.${pair.searchError}`) }}</p>
         <p v-if="pair.catalog && !pair.catalog.ready" class="mt-3 text-sm" role="status">{{ $t('karaoke.guide.catalogUnavailable') }}</p>
         <p v-else-if="pair.catalog?.total === 0" class="mt-3 text-sm">{{ $t('karaoke.guide.noResults') }}</p>
-        <ul v-if="pair.catalog?.ready" class="mt-3 space-y-3">
-          <li v-for="song in pair.catalog.songs" :key="song.id" class="rounded-lg bg-light-bg dark:bg-black/20 p-3" :data-song-id="song.id">
-            <p class="break-words text-sm font-medium">{{ song.title }}</p>
-            <p v-if="song.artist" class="break-words text-xs text-light-text-secondary dark:text-gray-400">{{ song.artist }}</p>
-            <div class="mt-2 flex flex-wrap gap-2">
-              <button type="button" :disabled="!pair.canControl || pair.queue.some(item => item.id === song.id)" data-action="enqueue"
-                class="min-h-[44px] rounded-lg border border-light-border dark:border-white/20 px-3 text-sm disabled:opacity-40"
-                @click="pair.command('enqueue', { songId: song.id })">{{ $t(pair.queue.some(item => item.id === song.id) ? 'karaoke.guide.queued' : 'karaoke.guide.addSong') }}</button>
-              <button type="button" :disabled="!pair.canControl" data-action="singNow"
-                class="min-h-[44px] rounded-lg border border-light-border dark:border-white/20 px-3 text-sm disabled:opacity-40"
-                @click="pair.command('singNow', { songId: song.id })">{{ $t('karaoke.guide.singNow') }}</button>
-            </div>
-          </li>
-        </ul>
+        <KaraokeRemoteSongList v-if="pair.catalog?.ready" :songs="pair.catalog.songs" data-song-search-results />
         <div v-if="pair.catalog && pair.catalog.total > 25" class="mt-3 flex items-center justify-between gap-2 text-sm">
           <button type="button" :disabled="pair.searching || pair.catalog.page <= 1" class="min-h-[44px] disabled:opacity-40" @click="searchSongs(pair.catalog.page - 1)">{{ $t('karaoke.guide.previousPage') }}</button>
           <span>{{ pair.catalog.page }} / {{ Math.ceil(pair.catalog.total / 25) }}</span>
           <button type="button" :disabled="pair.searching || pair.catalog.page * 25 >= pair.catalog.total" class="min-h-[44px] disabled:opacity-40" @click="searchSongs(pair.catalog.page + 1)">{{ $t('karaoke.guide.nextPage') }}</button>
         </div>
+        <section class="mt-6 border-t border-light-border dark:border-white/10 pt-5" aria-labelledby="guide-browse-songs" :aria-busy="pair.browsing">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h3 id="guide-browse-songs" class="font-semibold">{{ $t('karaoke.guide.browseSongs') }}</h3>
+            <button type="button" :disabled="pair.browsing" data-action="refresh-catalog" class="min-h-[44px] text-sm text-spotify-green disabled:opacity-40"
+              @click="browseSongs(1)">{{ $t('karaoke.guide.refreshSongs') }}</button>
+          </div>
+          <p v-if="pair.browsing" role="status" class="mt-2 text-sm text-light-text-secondary dark:text-gray-400">{{ $t('karaoke.guide.loadingSongs') }}</p>
+          <p v-if="pair.browseError" role="alert" class="mt-2 text-sm text-red-500 dark:text-red-300">{{ $t(`karaoke.guide.${pair.browseError}`) }}</p>
+          <p v-else-if="pair.browseCatalog && !pair.browseCatalog.ready" role="status" class="mt-2 text-sm">{{ $t('karaoke.guide.catalogUnavailable') }}</p>
+          <template v-if="pair.browseCatalog?.ready">
+            <p class="mt-2 text-xs text-light-text-secondary dark:text-gray-400">{{ $t('library.totalSongs', { count: pair.browseCatalog.total }) }}</p>
+            <p v-if="!pair.browseCatalog.total" class="mt-3 text-sm">{{ $t('karaoke.guide.noResults') }}</p>
+            <KaraokeRemoteSongList :songs="pair.browseCatalog.songs" data-song-browser />
+            <div v-if="pair.browseCatalog.total > 25" class="mt-3 flex items-center justify-between gap-2 text-sm" data-browse-pagination>
+              <button type="button" data-action="previous-page" :disabled="pair.browsing || pair.browseCatalog.page <= 1" class="min-h-[44px] disabled:opacity-40"
+                @click="browseSongs(pair.browseCatalog.page - 1)">{{ $t('karaoke.guide.previousPage') }}</button>
+              <span>{{ pair.browseCatalog.page }} / {{ Math.ceil(pair.browseCatalog.total / 25) }}</span>
+              <button type="button" data-action="next-page" :disabled="pair.browsing || pair.browseCatalog.page * 25 >= pair.browseCatalog.total" class="min-h-[44px] disabled:opacity-40"
+                @click="browseSongs(pair.browseCatalog.page + 1)">{{ $t('karaoke.guide.nextPage') }}</button>
+            </div>
+          </template>
+        </section>
         <h3 class="mt-5 font-semibold">{{ $t('karaoke.guide.songQueue') }}</h3>
         <p v-if="!pair.queue.length" class="mt-2 text-sm text-light-text-secondary dark:text-gray-400">{{ $t('karaoke.guide.emptyQueue') }}</p>
         <ol class="mt-2 space-y-2">
-          <li v-for="(song, index) in pair.queue" :key="song.id" class="flex items-center gap-2 text-sm">
-            <span class="min-w-0 flex-1 break-words">{{ index + 1 }}. {{ song.title }}</span>
+          <li v-for="(song, index) in pair.queue" :key="song.id" :data-queued-song-id="song.id" class="flex items-center gap-2 text-sm">
+            <span class="min-w-0 flex-1 break-words">{{ index + 1 }}. {{ song.title }}
+              <span class="mt-1 block text-xs text-light-text-secondary dark:text-gray-400 remote-queue-song-id">{{ $t('music.songId') }}: {{ song.id }}</span>
+            </span>
             <button type="button" :disabled="!pair.canControl" class="min-h-[44px] px-2 text-red-500 dark:text-red-300 disabled:opacity-40"
               :aria-label="$t('karaoke.guide.removeSong', { title: song.title })" @click="pair.command('removeQueued', { songId: song.id })">{{ $t('karaoke.guide.remove') }}</button>
           </li>
@@ -96,6 +108,7 @@ import { useI18n } from 'vue-i18n'
 import { useWakeLock } from '@/composables/useWakeLock'
 import { useKaraokeDeviceStore } from '@/stores/karaokeDevice'
 import { guidePosition, guideCorrection } from '@/utils/karaokeGuideSync'
+import KaraokeRemoteSongList from '@/components/UI/KaraokeRemoteSongList.vue'
 
 const pair = useKaraokeDeviceStore(), { snapshot, hostOnline } = storeToRefs(pair), { t } = useI18n()
 const audio = ref<HTMLAudioElement | null>(null), enabled = ref(false), audioError = ref(''), position = ref(0)
@@ -107,12 +120,24 @@ const status = computed(() => ended.value ? pair.error : pair.error === 'reconne
   !snapshot.value ? 'connecting' : !hostOnline.value ? 'hostOffline' : !enabled.value ? 'ready' :
     snapshot.value.playing ? 'following' : 'paused')
 let syncTimer: number | undefined, disposed = false, playing = false, source = ''
+let catalogRetry: number | undefined, catalogAttempts = 0
 
 function readOffset() {
   try { return Math.max(-2000, Math.min(2000, Number(localStorage.getItem('karaoke-guide-offset')) || 0)) }
   catch { return 0 }
 }
 function searchSongs(page: number) { void pair.search(query.value, page) }
+async function browseSongs(page: number) {
+  window.clearTimeout(catalogRetry)
+  await pair.browse(page)
+  if (!disposed && pair.grant && pair.browseCatalog && !pair.browseCatalog.ready && ++catalogAttempts < 15) {
+    catalogRetry = window.setTimeout(() => { void browseSongs(page) }, 2000)
+  }
+}
+watch(() => pair.grant?.token, token => {
+  window.clearTimeout(catalogRetry); catalogAttempts = 0
+  if (token) void browseSongs(1)
+}, { immediate: true })
 function warnBeforeUnload(event: BeforeUnloadEvent) {
   if (!pair.grant) return
   event.preventDefault(); event.returnValue = ''
@@ -214,6 +239,7 @@ onBeforeUnmount(() => {
   disposed = true; stopGuide()
   pair.setInGuide(false)
   window.clearInterval(syncTimer)
+  window.clearTimeout(catalogRetry)
   window.removeEventListener('beforeunload', warnBeforeUnload)
   document.removeEventListener('visibilitychange', resumeSync)
   if (audio.value) { audio.value.removeAttribute('src'); audio.value.load() }

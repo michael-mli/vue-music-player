@@ -74,10 +74,13 @@
     />
     
     <!-- Music Visualizer -->
-    <MusicVisualizer v-if="!isDetachedPlayer"
-      :is-visible="showVisualizer"
-      @close="showVisualizer = false"
-    />
+    <Teleport :to="fullscreenStage || 'body'" :disabled="!fullscreenStage">
+      <MusicVisualizer v-if="!isDetachedPlayer"
+        :is-visible="showVisualizer || !!fullscreenStage"
+        :embedded="!!fullscreenStage"
+        @close="showVisualizer = false"
+      />
+    </Teleport>
 
     <!-- Floating karaoke recorder (shown while karaoke mode is on) -->
     <FloatingRecorder v-if="!isDetachedPlayer" />
@@ -167,7 +170,7 @@ const karaokeDevice = useKaraokeDeviceStore()
 // Reactive state
 // Lyrics/visualizer visibility lives in the ui store so other pages (e.g. the shared-song
 // Music view) can toggle the same panels.
-const { showLyrics, showVisualizer } = storeToRefs(useUiStore())
+const { showLyrics, showVisualizer, fullscreenStage } = storeToRefs(useUiStore())
 watch(isDetachedPlayer, (detached) => {
   playerStore.setPartyAudioOwnership(detached)
   if (detached) {

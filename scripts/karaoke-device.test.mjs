@@ -79,3 +79,33 @@ test('rescanning the current QR replaces a removed saved grant rather than resto
   assert.equal(JSON.parse(f.storage.get('karaoke-device-pair')).token, replacement)
   assert.equal(f.storage.has('karaoke-device-invitation'), false)
 })
+
+test('browsing pages and searching keep independent results and discard older browse responses', async () => {
+  const requests = [], f = setup((_clock, path) => new Promise(resolve => requests.push({ path, resolve })))
+  const first = f.store.browse(1), second = f.store.browse(2), search = f.store.search('Singer', 1)
+  assert.equal(f.store.browsing, true); assert.equal(f.store.searching, true)
+  assert.match(requests[1].path, /catalog\?page=2$/)
+  assert.match(requests[2].path, /q=Singer&page=1$/)
+  requests[1].resolve({ ready: true, page: 2, total: 30, songs: [{ id: 26, title: 'Browse song', artist: '' }] })
+  requests[2].resolve({ ready: true, page: 1, total: 1, songs: [{ id: 1, title: 'Search song', artist: 'Singer' }] })
+  await second; await search
+  requests[0].resolve({ ready: true, page: 1, total: 30, songs: [{ id: 1, title: 'Old page', artist: '' }] })
+  await first
+  assert.equal(f.store.browseCatalog.page, 2); assert.equal(f.store.browseCatalog.songs[0].id, 26)
+  assert.equal(f.store.catalog.songs[0].title, 'Search song')
+  assert.equal(f.store.browsing, false); assert.equal(f.store.searching, false)
+})
+
+test('revoking a paired grant clears browsed songs and rejects an outstanding catalog response', async () => {
+  let completeBrowse
+  const f = setup(async (_clock, path) => {
+    if (path.includes('/catalog')) return new Promise(resolve => { completeBrowse = resolve })
+    throw new GuideError('removed', 403)
+  })
+  const browsing = f.store.browse(1)
+  f.store.start(); await f.tick()
+  completeBrowse({ ready: true, page: 1, total: 1, songs: [{ id: 1, title: 'Old grant', artist: '' }] })
+  await browsing
+  assert.equal(f.store.grant, null); assert.equal(f.store.browseCatalog, null)
+  assert.equal(f.store.catalog, null); assert.equal(f.store.browsing, false)
+})

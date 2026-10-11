@@ -4,6 +4,7 @@
       <div>
         <p class="guide-eyebrow">{{ $t('karaoke.guideTitle') }}</p>
         <p class="guide-song">{{ player.currentSong?.title }}</p>
+        <p v-if="player.currentSong" class="guide-song-id">{{ $t('music.songId') }}: {{ player.currentSong.id }}</p>
       </div>
       <button v-if="fullscreenSupported" ref="expandButton" class="guide-icon-button" @click="toggleFullscreen"
         :aria-label="$t(fullscreen ? 'karaoke.exitStage' : 'karaoke.expandStage')"
@@ -125,6 +126,7 @@
               <span class="stage-queue-number">{{ index + 1 }}</span>
               <div>
                 <p>{{ song.title }}</p>
+                <p class="stage-queue-song-id">{{ $t('music.songId') }}: {{ song.id }}</p>
                 <p v-if="song.artist" class="stage-queue-artist">{{ song.artist }}</p>
               </div>
             </li>
@@ -136,10 +138,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { ArrowsPointingInIcon, ArrowsPointingOutIcon, ArrowPathIcon, ForwardIcon, PauseIcon, PlayIcon } from '@heroicons/vue/24/outline'
 import { usePlayerStore } from '@/stores/player'
 import { useKaraokeGuideStore } from '@/stores/karaokeGuide'
+import { useUiStore } from '@/stores/ui'
 import { singingGuideState } from '@/utils/lyricsTiming'
 import { lyricSeekTime } from '@/utils/lyricsOffset'
 import { useLyricsOffset } from '@/composables/useLyricsOffset'
@@ -150,6 +153,7 @@ import type { LyricLine, LyricWord } from '@/types'
 const props = defineProps<{ lines: LyricLine[]; compact?: boolean; loading?: boolean; plainLyrics?: string }>()
 const player = usePlayerStore()
 const pairing = useKaraokeGuideStore()
+const ui = useUiStore()
 const { offset } = useLyricsOffset(computed(() => player.currentSong?.id))
 const lyricTime = computed(() => player.currentTime - offset.value)
 const stage = ref<HTMLElement>()
@@ -210,6 +214,8 @@ async function toggleFullscreen() {
 function syncFullscreen() {
   const wasFullscreen = fullscreen.value
   fullscreen.value = document.fullscreenElement === stage.value
+  if (fullscreen.value) ui.fullscreenStage = stage.value || null
+  else if (ui.fullscreenStage === stage.value) ui.fullscreenStage = null
   if (wasFullscreen && !fullscreen.value) expandButton.value?.focus()
 }
 
@@ -217,7 +223,10 @@ onMounted(() => {
   fullscreenSupported.value = !!document.fullscreenEnabled
   document.addEventListener('fullscreenchange', syncFullscreen)
 })
-onUnmounted(() => document.removeEventListener('fullscreenchange', syncFullscreen))
+onBeforeUnmount(() => {
+  document.removeEventListener('fullscreenchange', syncFullscreen)
+  if (ui.fullscreenStage === stage.value) ui.fullscreenStage = null
+})
 </script>
 
 <style scoped>
@@ -236,6 +245,7 @@ onUnmounted(() => document.removeEventListener('fullscreenchange', syncFullscree
 .guide-header > div { min-width: 0; }
 .guide-eyebrow { font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #aac7c0; }
 .guide-song { font-size: 14px; margin-top: 4px; }
+.guide-song-id, .stage-queue-song-id { margin-top: 4px; color: #aac7c0; font-size: 11px; font-variant-numeric: tabular-nums; }
 .guide-main { min-width: 0; }
 .guide-fallback { display: grid; place-items: center; min-height: 280px; padding: 32px 8px; text-align: center; color: #c1d5d0; }
 .guide-plain-lyrics { white-space: pre-wrap; line-height: 1.8; max-height: 40vh; overflow-y: auto; width: 100%; }
@@ -303,7 +313,8 @@ button:focus-visible, summary:focus-visible, input:focus-visible { outline: 2px 
 .is-compact .guide-lyrics { padding: 18px 0; }
 .is-compact .guide-transport { gap: 4px; }
 .is-compact .guide-action { padding: 4px; font-size: 11px; }
-.singing-guide:fullscreen { border: 0; border-radius: 0; overflow-y: auto; width: 100%; height: 100%; padding: clamp(20px, 4vw, 64px); }
+.singing-guide:fullscreen { position: relative; isolation: isolate; container-type: normal; border: 0; border-radius: 0; overflow-y: auto; width: 100%; height: 100%; padding: clamp(20px, 4vw, 64px); }
+.singing-guide:fullscreen .guide-header, .singing-guide:fullscreen .guide-layout { position: relative; z-index: 1; }
 .singing-guide:fullscreen .guide-lyrics { max-width: 1100px; margin: auto; }
 .singing-guide:fullscreen .guide-footer { max-width: 800px; margin: auto; }
 .singing-guide:fullscreen .current-line { font-size: clamp(30px, 5vw, 76px); }

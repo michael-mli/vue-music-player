@@ -24,11 +24,13 @@ export const useKaraokeDeviceStore = defineStore('karaokeDevice', () => {
   const error = ref(''), commandError = ref(''), commandNotice = ref(''), joining = ref(false)
   const queue = ref<{ id: number; title: string }[]>([]), lastReply = ref(-Infinity)
   const catalog = ref<KaraokeCatalogReply | null>(null), searching = ref(false), searchError = ref('')
+  const browseCatalog = ref<KaraokeCatalogReply | null>(null), browsing = ref(false), browseError = ref('')
   const pending = ref<{ commandId: string; action: KaraokeRemoteAction; songId?: number; position?: number; createdAt: number } | null>(null)
   const clock = markRaw(new KaraokeGuideClock())
   const canControl = computed(() => !!grant.value && !!device.value?.canControl && hostOnline.value && controlsAvailable.value && !pending.value)
   let timer: number | undefined, polling = false, sending = false, running = false, needsActivity = false, searchGeneration = 0
   let retryAt = 0
+  let browseGeneration = 0
 
   function save() {
     try { if (grant.value) localStorage.setItem(storageKey, JSON.stringify(grant.value)); else localStorage.removeItem(storageKey) }
@@ -37,6 +39,9 @@ export const useKaraokeDeviceStore = defineStore('karaokeDevice', () => {
   function clear(reason: string) {
     grant.value = null; device.value = null; hostOnline.value = false; controlsAvailable.value = false
     listening.value = false; pending.value = null; error.value = reason
+    searchGeneration++; browseGeneration++
+    catalog.value = null; browseCatalog.value = null; searching.value = false; browsing.value = false
+    searchError.value = ''; browseError.value = ''
     window.clearTimeout(timer); save()
   }
   function terminal(reason: unknown) {
@@ -126,6 +131,9 @@ export const useKaraokeDeviceStore = defineStore('karaokeDevice', () => {
         grant.value = { sessionId: invitation.sessionId, token: result.device.token, deviceId: result.device.id,
           name: result.device.name, expiresAt: Date.now() + result.device.idleRemainingMs }
         refreshDevice(result.device); snapshot.value = null; queue.value = []; pending.value = null
+        searchGeneration++; browseGeneration++
+        catalog.value = null; browseCatalog.value = null; searching.value = false; browsing.value = false
+        searchError.value = ''; browseError.value = ''
       }
       if (grant.value) {
         error.value = ''
@@ -181,7 +189,19 @@ export const useKaraokeDeviceStore = defineStore('karaokeDevice', () => {
       if (grant.value?.token === current.token) refreshDevice(result.device)
     } catch (reason) { if (!terminal(reason)) commandError.value = 'manageFailed' }
   }
+  async function browse(page = 1) {
+    const current = grant.value, attempt = ++browseGeneration
+    if (!current) return
+    touch(); browsing.value = true; browseError.value = ''
+    try {
+      const result = await guideRequest<KaraokeCatalogReply>(clock,
+        `/${current.sessionId}/catalog?page=${page}`, current.token)
+      if (attempt === browseGeneration && grant.value?.token === current.token) browseCatalog.value = result
+    } catch (reason) {
+      if (attempt === browseGeneration && grant.value?.token === current.token && !terminal(reason)) browseError.value = 'browseFailed'
+    } finally { if (attempt === browseGeneration) browsing.value = false }
+  }
   return { grant, snapshot, device, hostOnline, controlsAvailable, inGuide, listening, error, commandError, commandNotice,
     joining, queue, lastReply, catalog, searching, searchError, pending, clock, canControl,
-    start, stop, resume, setInGuide, touch, openPair, command, search, rename }
+    browseCatalog, browsing, browseError, start, stop, resume, setInGuide, touch, openPair, command, search, browse, rename }
 })

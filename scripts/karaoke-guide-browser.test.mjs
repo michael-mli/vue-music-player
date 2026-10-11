@@ -44,7 +44,22 @@ async function page(origin, route, width = 320, language = 'en') {
   const { sessionId } = await cdp('Target.attachToTarget', { targetId, flatten: true })
   await cdp('Page.enable', {}, sessionId); await cdp('Runtime.enable', {}, sessionId)
   await cdp('Emulation.setDeviceMetricsOverride', { width, height: 820, deviceScaleFactor: 1, mobile: width < 600 }, sessionId)
-  await cdp('Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('language', '${language}'); localStorage.setItem('auth_token', 'fixture-host'); localStorage.setItem('music-player-karaoke-mode', 'true');` }, sessionId)
+  await cdp('Page.addScriptToEvaluateOnNewDocument', { source: `
+    localStorage.setItem('language', '${language}'); localStorage.setItem('auth_token', 'fixture-host'); localStorage.setItem('music-player-karaoke-mode', 'true');
+    if (!localStorage.getItem('music-visualizer-settings')) localStorage.setItem('music-visualizer-settings', JSON.stringify({ v: 2, type: 'circle', colorScheme: 'blue' }));
+    window.__visualizerSources = []; window.__visualizerAnalysers = []; window.__waveSamples = 0;
+    if (window.AudioContext) {
+      const source = AudioContext.prototype.createMediaElementSource, analyser = AudioContext.prototype.createAnalyser;
+      AudioContext.prototype.createMediaElementSource = function(element) {
+        const node = source.call(this, element); window.__visualizerSources.push({ element, context: this }); return node;
+      };
+      AudioContext.prototype.createAnalyser = function() {
+        const node = analyser.call(this), read = node.getByteTimeDomainData;
+        node.getByteTimeDomainData = function(values) { window.__waveSamples++; return read.call(this, values); };
+        window.__visualizerAnalysers.push(node); return node;
+      };
+    }
+  ` }, sessionId)
   await cdp('Page.navigate', { url: origin + route }, sessionId)
   await poll(() => evaluate(sessionId, `!!document.querySelector('#app')?.__vue_app__?.config.globalProperties.$pinia`), 'Vue mount')
   return sessionId
@@ -56,6 +71,12 @@ async function reloadPage(session) {
   await evaluate(session, 'window.__beforeReload = true')
   await cdp('Page.reload', {}, session)
   await poll(() => evaluate(session, `!window.__beforeReload && !!document.querySelector('#app')?.__vue_app__?.config.globalProperties.$pinia`), 'reload mounts a new document')
+}
+async function screenshot(session, suffix = '') {
+  if (!process.env.KARAOKE_GUIDE_SCREENSHOT) return
+  const file = path.parse(process.env.KARAOKE_GUIDE_SCREENSHOT)
+  const shot = await cdp('Page.captureScreenshot', { format: 'png' }, session)
+  await fs.writeFile(path.join(file.dir, file.name + suffix + '.png'), Buffer.from(shot.data, 'base64'))
 }
 try {
   const media = path.join(root, 'track.mp3')
@@ -80,7 +101,7 @@ try {
   app.get('/api/*', (_req, res) => res.json({ success: true, data: [] }))
   app.get('/data/song_number.txt', (_req, res) => res.type('text').send('2'))
   app.get('/data/metadata.json', (_req, res) => res.json({ '1': { title: 'First guide song', duration: 90 }, '2': { title: 'Second guide song', duration: 90 } }))
-  app.get('/karaoke/karaoke_manifest.json', (_req, res) => res.json({ version: 1, ids: [1, 2, 3] }))
+  app.get('/karaoke/karaoke_manifest.json', (_req, res) => res.json({ version: 1, ids: Array.from({ length: 33 }, (_, index) => index + 1) }))
   app.get(['/data/link.:id.mp3', '/karaoke/link.:id.instrumental.mp3'], (_req, res) => res.sendFile(media))
   app.get(['/lyrics/link.:id.l', '/data/lyrics/link.:id.l'], (_req, res) => res.type('text').send('Fixture song\nSing along'))
   app.get('/synced/link.:id.lrc', (_req, res) => res.type('text').send('[00:05.00]Sing along\n[00:10.00]Second line'))
@@ -130,6 +151,9 @@ try {
   await poll(() => evaluate(phone, `document.body?.innerText.includes('Paired · tap Start vocal guide')`), 'phone paired')
   check(await evaluate(phone, `document.querySelector('.karaoke-vocal-guide audio').paused && !${store('player')}.currentSong && ${store('songs')}.songs.length === 0`), 'phone waits for a tap and does not auto-play or load the music catalog')
   check(await evaluate(phone, `!location.hash && !document.querySelector('.player-controls') && !document.querySelector('.floating-recorder')`), 'guide removes its URL credential and hides the regular player and recorder')
+  await poll(() => evaluate(phone, `document.querySelectorAll('[data-song-browser] [data-song-id]').length === 2`), 'paired phone auto-loads its browsable catalog')
+  check(await evaluate(phone, `!!document.querySelector('[data-song-browser] [data-song-id="1"] img') && document.querySelector('[data-song-browser] [data-song-id="2"] .remote-song-id').textContent.includes('2') && document.querySelector('#guide-song-search').compareDocumentPosition(document.querySelector('#guide-browse-songs')) & Node.DOCUMENT_POSITION_FOLLOWING`), 'paired phone browses cover-and-title song rows with IDs below search without loading the host library')
+  await poll(() => evaluate(phone, `document.querySelector('.guide-current-song-id')?.textContent.includes('1')`), 'paired now-playing ID')
   await clickText(phone, 'Start vocal guide')
   await poll(() => evaluate(phone, `!document.querySelector('audio').paused && document.querySelector('audio').currentTime > 19`), 'mid-song guide playback')
   let drift
@@ -162,6 +186,9 @@ try {
   check(await evaluate(host, `!${store('player')}.audioElement.paused`), 'stopping the private guide leaves host playback running')
   await clickText(phone, 'Start vocal guide')
   await cdp('Page.bringToFront', {}, host)
+  await evaluate(host, `${store('ui')}.showVisualizer = true`)
+  await poll(() => evaluate(host, `!!document.querySelector('.music-visualizer') && window.__visualizerSources.length === 1`), 'regular visualizer audio source')
+  await evaluate(host, `window.__visualizerNode = document.querySelector('.music-visualizer')`)
   await evaluate(host, `window.__karaokeStage = document.querySelector('.karaoke-view .singing-guide'); window.__fullscreenExits = 0;
     document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) window.__fullscreenExits++; });
     window.__karaokeStage.querySelector('.guide-icon-button').click()`)
@@ -169,6 +196,21 @@ try {
   check(true, 'fullscreen singing stage includes the live requested-song queue')
   await poll(() => evaluate(host, `document.fullscreenElement.querySelector('.stage-pairing canvas')?.width === 224`), 'fullscreen pairing QR renders on entry')
   check(await evaluate(host, `document.fullscreenElement.querySelector('.stage-pairing canvas').toDataURL() === document.querySelector('#vocal-guide-pairing-title').closest('section').querySelector('canvas').toDataURL()`), 'fullscreen shows the same current QR invitation as the host pairing panel')
+  await poll(() => evaluate(host, `document.fullscreenElement.querySelector('.music-visualizer')?.dataset.visualizerType === 'bars'`), 'fullscreen visualization')
+  check(await evaluate(host, `document.fullscreenElement.querySelector('.music-visualizer') === window.__visualizerNode && window.__visualizerNode.dataset.visualizerColor === 'rainbow' && window.__visualizerSources.length === 1`), 'fullscreen defaults to rainbow bars and reuses the existing visualizer audio source')
+  await poll(() => evaluate(host, `(() => { const node = window.__visualizerAnalysers[0], values = new Uint8Array(node.frequencyBinCount); node.getByteFrequencyData(values); return values.some(value => value > 0); })()`), 'live visualizer signal')
+  check(true, 'fullscreen visualization receives live audio frequency data')
+  await evaluate(host, `document.fullscreenElement.querySelector('.visualizer-settings-button').click()`)
+  check(await evaluate(host, `document.fullscreenElement.querySelector('#visualizer-type').options.length === 6 && document.fullscreenElement.querySelector('#visualizer-color').value === 'rainbow'`), 'fullscreen settings expose all six visualizations and color schemes')
+  for (const type of ['circle', 'wave', 'galaxy', 'fountain', 'terrain', 'bars']) {
+    await evaluate(host, `(() => { const select = document.querySelector('#visualizer-type'); select.value = '${type}'; select.dispatchEvent(new Event('change', { bubbles: true })); })()`)
+    await poll(() => evaluate(host, `document.fullscreenElement?.querySelector('.music-visualizer')?.dataset.visualizerType === '${type}'`), 'visualization ' + type)
+    if (type === 'wave') await poll(() => evaluate(host, `window.__waveSamples > 0`), 'waveform reads live waveform samples')
+  }
+  check(true, 'all six visualization styles render, including live waveform samples')
+  await evaluate(host, `document.querySelector('#music-visualizer-settings input[type="checkbox"]').click()`)
+  check(await evaluate(host, `document.fullscreenElement === window.__karaokeStage && document.fullscreenElement.querySelector('.visualizer-canvas').style.display === 'none' && !${store('player')}.audioElement.paused`), 'turning off visualization keeps host audio and fullscreen active')
+  await evaluate(host, `document.querySelector('#music-visualizer-settings input[type="checkbox"]').click(); document.fullscreenElement.querySelector('.visualizer-settings-button').click()`)
   async function stillFullscreen(label) {
     check(await evaluate(host, `document.fullscreenElement === window.__karaokeStage && window.__fullscreenExits === 0`), label)
   }
@@ -191,24 +233,29 @@ try {
   check(true, 'phone controls host play, pause, seek and stop/reset')
   await control('play')
   await evaluate(phone, `(() => { const input = document.querySelector('input[type="search"]'); input.value = 'Second'; input.dispatchEvent(new Event('input', { bubbles: true })); input.form.requestSubmit(); })()`)
-  await poll(() => evaluate(phone, `!!document.querySelector('[data-song-id="2"]') && !document.querySelector('[data-song-id="1"]')`), 'remote song search')
-  await evaluate(phone, `document.querySelector('[data-song-id="2"] [data-action="enqueue"]').click()`)
+  await poll(() => evaluate(phone, `!!document.querySelector('[data-song-search-results] [data-song-id="2"]') && !document.querySelector('[data-song-search-results] [data-song-id="1"]')`), 'remote song search')
+  await evaluate(phone, `document.querySelector('[data-song-search-results] [data-song-id="2"] [data-action="enqueue"]').click()`)
   await poll(() => evaluate(host, `${store('player')}.requestedQueue[0]?.id === 2`), 'remote song added')
   await poll(() => evaluate(phone, `${store('karaokeDevice')}.queue[0]?.id === 2 && !${store('karaokeDevice')}.pending`), 'queue sync')
   await evaluate(phone, `(() => { const input = document.querySelector('input[type="search"]'); input.value = 'First'; input.dispatchEvent(new Event('input', { bubbles: true })); input.form.requestSubmit(); })()`)
-  await poll(() => evaluate(phone, `!!document.querySelector('[data-song-id="1"]')`), 'search second request')
-  await evaluate(phone, `document.querySelector('[data-song-id="1"] [data-action="enqueue"]').click()`)
+  await poll(() => evaluate(phone, `!!document.querySelector('[data-song-search-results] [data-song-id="1"]')`), 'search second request')
+  await evaluate(phone, `document.querySelector('[data-song-search-results] [data-song-id="1"] [data-action="enqueue"]').click()`)
   await poll(() => evaluate(host, `${store('player')}.requestedQueue.length === 2`), 'two remote requests')
   await evaluate(host, `${store('player')}.shuffle = true; ${store('player')}.repeat = 'one'`)
   await poll(() => evaluate(host, `JSON.stringify([...document.fullscreenElement.querySelectorAll('[data-queued-song-id]')].map(item => Number(item.dataset.queuedSongId))) === '[2,1]'`), 'fullscreen queue order')
   check(true, 'phone requests appear in order inside fullscreen without opening another page')
-  if (process.env.KARAOKE_GUIDE_SCREENSHOT) {
-    const shot = await cdp('Page.captureScreenshot', { format: 'png' }, host)
-    await fs.writeFile(process.env.KARAOKE_GUIDE_SCREENSHOT, Buffer.from(shot.data, 'base64'))
-  }
+  await poll(() => evaluate(phone, `document.querySelector('[data-queued-song-id="2"] .remote-queue-song-id')?.textContent.includes('2')`), 'paired queue ID')
+  check(await evaluate(host, `document.fullscreenElement.querySelector('[data-queued-song-id="2"] .stage-queue-song-id').textContent.includes('2') && document.fullscreenElement.querySelector('.guide-song-id').textContent.includes('1')`), 'host and paired queues and now-playing song show actual song IDs')
+  check(await evaluate(phone, `document.querySelectorAll('[data-song-browser] [data-song-id]').length === 2 && document.querySelectorAll('[data-song-search-results] [data-song-id]').length === 1`), 'search results remain separate from the full browsable list')
+  await screenshot(host)
+  await evaluate(phone, `document.querySelector('#guide-song-search').scrollIntoView({ block: 'start' })`)
+  await screenshot(phone, '-phone')
   await cdp('Emulation.setDeviceMetricsOverride', { width: 320, height: 820, deviceScaleFactor: 1, mobile: true }, host)
   check(await evaluate(host, `document.fullscreenElement.scrollWidth <= document.fullscreenElement.clientWidth && !!document.fullscreenElement.querySelector('.stage-queue')`), '320px fullscreen retains the queue without horizontal overflow')
   check(await evaluate(host, `(() => { const bounds = document.fullscreenElement.querySelector('.stage-pairing canvas').getBoundingClientRect(); return bounds.width > 150 && Math.abs(bounds.width - bounds.height) < 1; })()`), 'fullscreen QR remains square and scannable at 320px')
+  await evaluate(host, `document.fullscreenElement.querySelector('.visualizer-settings-button').click()`)
+  check(await evaluate(host, `(() => { const panel = document.querySelector('#music-visualizer-settings').getBoundingClientRect(), button = document.querySelector('.visualizer-settings-button'), bounds = button.getBoundingClientRect(); return panel.left >= 0 && panel.right <= innerWidth && document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)?.closest('button') === button; })()`), '320px fullscreen settings fit the viewport and remain clickable above lyrics')
+  await evaluate(host, `document.fullscreenElement.querySelector('.visualizer-settings-button').click()`)
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1100, height: 820, deviceScaleFactor: 1, mobile: false }, host)
   await evaluate(host, `window.__getSongLyrics = ${store('songs')}.getSongLyrics;
     ${store('songs')}.getSongLyrics = async (...args) => { await new Promise(resolve => setTimeout(resolve, 1500)); return window.__getSongLyrics(...args); }`)
@@ -225,8 +272,8 @@ try {
   await poll(() => evaluate(host, `${store('player')}.currentSong.id === 1 && ${store('player')}.requestedQueue.length === 0`), 'FIFO second request')
   check(true, 'phone searches ready karaoke songs and adds a synchronized FIFO queue')
   await evaluate(phone, `(() => { const input = document.querySelector('input[type="search"]'); input.value = 'Second'; input.dispatchEvent(new Event('input', { bubbles: true })); input.form.requestSubmit(); })()`)
-  await poll(() => evaluate(phone, `!!document.querySelector('[data-song-id="2"]') && ${store('karaokeDevice')}.canControl`), 'sing now search')
-  await evaluate(phone, `document.querySelector('[data-song-id="2"] [data-action="singNow"]').click()`)
+  await poll(() => evaluate(phone, `!!document.querySelector('[data-song-search-results] [data-song-id="2"]') && ${store('karaokeDevice')}.canControl`), 'sing now search')
+  await evaluate(phone, `document.querySelector('[data-song-search-results] [data-song-id="2"] [data-action="singNow"]').click()`)
   await poll(() => evaluate(host, `${store('player')}.currentSong.id === 2`), 'sing now starts host')
   await stillFullscreen('remote Sing now keeps the host fullscreen')
   check(true, 'Sing now starts the selected song on the host')
@@ -234,12 +281,12 @@ try {
   await poll(() => evaluate(host, `!${store('karaokeGuide')}.catalogBusy`), 'host catalog idle')
   await new Promise(resolve => setTimeout(resolve, 800))
   await evaluate(phone, `(() => { const input = document.querySelector('input[type="search"]'); input.value = 'Plain'; input.dispatchEvent(new Event('input', { bubbles: true })); input.form.requestSubmit(); })()`)
-  await poll(() => evaluate(phone, `!!document.querySelector('[data-song-id="3"]') && ${store('karaokeDevice')}.canControl`), 'plain song search')
-  await evaluate(phone, `document.querySelector('[data-song-id="3"] [data-action="singNow"]').click()`)
+  await poll(() => evaluate(phone, `!!document.querySelector('[data-song-search-results] [data-song-id="3"]') && ${store('karaokeDevice')}.canControl`), 'plain song search')
+  await evaluate(phone, `document.querySelector('[data-song-search-results] [data-song-id="3"] [data-action="singNow"]').click()`)
   await poll(() => evaluate(host, `${store('player')}.currentSong.id === 3 && !!document.fullscreenElement?.querySelector('.guide-plain-lyrics')`), 'plain lyrics fallback in fullscreen')
   await stillFullscreen('songs without synchronized lyrics keep fullscreen and display plain lyrics')
   await poll(() => evaluate(phone, `${store('karaokeDevice')}.canControl`), 'plain song request acknowledged')
-  await evaluate(phone, `document.querySelector('[data-song-id="3"] [data-action="enqueue"]').click()`)
+  await evaluate(phone, `document.querySelector('[data-song-search-results] [data-song-id="3"] [data-action="enqueue"]').click()`)
   await poll(() => evaluate(host, `!!document.fullscreenElement?.querySelector('[data-queued-song-id="3"]')`), 'new queue entry in fullscreen')
   await poll(() => evaluate(phone, `${store('karaokeDevice')}.canControl && ${store('karaokeDevice')}.queue.length === 1`), 'queue removal ready')
   await evaluate(phone, `document.querySelector('button[aria-label="Remove Plain guide song from the queue"]').click()`)
@@ -248,9 +295,22 @@ try {
   await evaluate(host, `${store('player')}.playSong(${store('songs')}.songs.find(song => song.id === 2), ${store('songs')}.songs, 1)`)
   await poll(() => evaluate(phone, `document.querySelector('audio').src.endsWith('/data/link.2.mp3') && !document.querySelector('audio').paused && document.body?.innerText.includes('Second guide song')`), 'song change sync')
   check(true, 'paired guide automatically follows song changes')
+  await evaluate(host, `document.fullscreenElement.querySelector('.visualizer-settings-button').click()`)
+  await poll(() => evaluate(host, `!!document.querySelector('#visualizer-type')`), 'open settings before saving preferences')
+  await evaluate(host, `
+    for (const [id, value] of [['visualizer-type', 'wave'], ['visualizer-color', 'fire']]) {
+      const select = document.getElementById(id); select.value = value; select.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    for (const [id, value] of [['visualizer-background', '0.3'], ['visualizer-height', '0.5']]) {
+      const input = document.getElementById(id); input.value = value; input.dispatchEvent(new Event('input', { bubbles: true }));
+    }`)
+  await poll(() => evaluate(host, `(() => { const saved = JSON.parse(localStorage.getItem('karaoke-stage-visualizer-settings')); return saved.colorScheme === 'fire' && saved.backgroundOpacity === 0.3 && saved.barHeight === 0.5; })()`), 'saved fullscreen visualization preferences')
+  await screenshot(host, '-settings')
   await evaluate(host, `document.fullscreenElement.querySelector('.guide-icon-button').click()`)
   await poll(() => evaluate(host, `!document.fullscreenElement`), 'explicit fullscreen exit')
   check(true, 'host can explicitly leave fullscreen')
+  await poll(() => evaluate(host, `document.querySelector('.music-visualizer')?.dataset.visualizerType === 'circle' && document.querySelector('.music-visualizer')?.dataset.visualizerColor === 'blue'`), 'restore regular visualizer preferences')
+  check(await evaluate(host, `document.querySelector('.music-visualizer') === window.__visualizerNode && window.__visualizerSources.length === 1 && window.__visualizerSources[0].context.state === 'running'`), 'leaving fullscreen restores regular visualization settings and keeps the original audio graph running')
   await evaluate(host, `document.querySelector('#app').__vue_app__.config.globalProperties.$router.push('/library')`)
   await evaluate(host, `${store('player')}.seek(35)`)
   await poll(() => evaluate(phone, `document.querySelector('audio').currentTime > 34 && document.querySelector('audio').currentTime < 39`), 'pairing while browsing')
@@ -259,6 +319,11 @@ try {
   await poll(() => evaluate(host, `document.fullscreenElement === window.__sidebarStage`), 'lyrics sidebar fullscreen')
   await poll(() => evaluate(host, `document.fullscreenElement.querySelector('.stage-pairing canvas')?.width === 224`), 'sidebar fullscreen QR renders on entry')
   check(true, 'expanding the lyrics sidebar also displays the pairing QR')
+  check(await evaluate(host, `document.fullscreenElement.querySelector('.music-visualizer').dataset.visualizerType === 'wave' && document.fullscreenElement.querySelector('.music-visualizer').dataset.visualizerColor === 'fire' && window.__visualizerSources.length === 1`), 'fullscreen remembers the chosen visualization and color across stage instances')
+  await evaluate(host, `document.fullscreenElement.querySelector('.visualizer-settings-button').click()`)
+  await poll(() => evaluate(host, `!!document.querySelector('#visualizer-height')`), 'saved sliders in fullscreen settings')
+  check(await evaluate(host, `document.querySelector('#visualizer-background').value === '0.3' && document.querySelector('#visualizer-height').value === '0.5'`), 'fullscreen restores the chosen background opacity and bar height')
+  await evaluate(host, `document.fullscreenElement.querySelector('.visualizer-settings-button').click()`)
   await poll(() => evaluate(phone, `${store('karaokeDevice')}.canControl`), 'sidebar control ready')
   await evaluate(phone, `${store('karaokeDevice')}.command('singNow', { songId: 1 })`)
   await poll(() => evaluate(host, `${store('player')}.currentSong.id === 1 && document.fullscreenElement?.querySelector('.guide-song').textContent.includes('First guide song')`), 'sidebar song change')
@@ -351,6 +416,44 @@ try {
       && canvas.toDataURL() === document.querySelector('#vocal-guide-pairing-title').closest('section').querySelector('canvas').toDataURL();
   })()`), 'rotated fullscreen QR')
   check(await evaluate(host, `document.fullscreenElement === window.__rotationStage`), 'fullscreen QR updates to the rotated invitation without leaving fullscreen')
+  // A larger host catalog checks remote browsing independently of search and playback.
+  await evaluate(host, `${store('songs')}.songs.push(...Array.from({ length: 30 }, (_, index) => ({ id: index + 4, title: 'Browse song ' + (index + 4), filename: 'link.' + (index + 4) + '.mp3', duration: 90, isFavorite: false })))`)
+  await poll(() => evaluate(host, `!${store('karaokeGuide')}.catalogBusy`), 'expanded catalog upload idle')
+  await poll(async () => {
+    await evaluate(otherPhone, `document.querySelector('[data-action="refresh-catalog"]').click()`)
+    return await evaluate(otherPhone, `${store('karaokeDevice')}.browseCatalog?.total === 33`)
+  }, 'expanded paired catalog')
+  await poll(() => evaluate(otherPhone, `!${store('karaokeDevice')}.browsing && document.querySelectorAll('[data-song-browser] [data-song-id]').length === 25`), 'first browse page')
+  await evaluate(otherPhone, `document.querySelector('[data-browse-pagination] [data-action="next-page"]').click()`)
+  await poll(() => evaluate(otherPhone, `${store('karaokeDevice')}.browseCatalog.page === 2 && document.querySelectorAll('[data-song-browser] [data-song-id]').length === 8`), 'second browse page')
+  await evaluate(otherPhone, `(() => { const input = document.querySelector('input[type="search"]'); input.value = 'First'; input.dispatchEvent(new Event('input', { bubbles: true })); input.form.requestSubmit(); })()`)
+  await poll(() => evaluate(otherPhone, `document.querySelectorAll('[data-song-search-results] [data-song-id]').length === 1 && !!document.querySelector('[data-song-search-results] [data-song-id="1"]')`), 'search while browsing page two')
+  check(await evaluate(otherPhone, `${store('karaokeDevice')}.browseCatalog.page === 2 && !!document.querySelector('[data-song-browser] [data-song-id="32"]') && ${store('songs')}.songs.length === 0`), 'paired song browsing paginates and retains its page while searching without loading the normal library')
+  await poll(() => evaluate(otherPhone, `${store('karaokeDevice')}.canControl`), 'browse request ready')
+  await evaluate(otherPhone, `document.querySelector('[data-song-browser] [data-song-id="32"] [data-action="enqueue"]').click()`)
+  await poll(() => evaluate(host, `${store('player')}.requestedQueue.some(song => song.id === 32)`), 'enqueue from browsed page')
+  check(await evaluate(host, `document.fullscreenElement === window.__rotationStage && document.fullscreenElement.querySelector('[data-queued-song-id="32"] .stage-queue-song-id').textContent.includes('32')`), 'adding a browsed song updates the host fullscreen queue with its song ID')
+  await poll(() => evaluate(otherPhone, `${store('karaokeDevice')}.canControl`), 'browse Sing now ready')
+  await evaluate(otherPhone, `document.querySelector('[data-song-browser] [data-song-id="33"] [data-action="singNow"]').click()`)
+  await poll(() => evaluate(host, `${store('player')}.currentSong.id === 33 && document.fullscreenElement?.querySelector('.guide-song-id').textContent.includes('33')`), 'Sing now from browsed page')
+  check(await evaluate(host, `document.fullscreenElement === window.__rotationStage && window.__visualizerSources.length === 1`), 'Sing now from the browsable list keeps host fullscreen and its audio graph')
+  await evaluate(otherPhone, `document.querySelector('[data-browse-pagination] [data-action="previous-page"]').click()`)
+  await poll(() => evaluate(otherPhone, `${store('karaokeDevice')}.browseCatalog.page === 1`), 'previous browse page')
+  check(await evaluate(otherPhone, `document.querySelector('.karaoke-vocal-guide').scrollWidth <= document.querySelector('.karaoke-vocal-guide').clientWidth`), '320px song browsing, search and queue fit without horizontal overflow')
+  const freshHost = await page(origin, '/sing', 1100)
+  await poll(() => evaluate(freshHost, `!!${store('player')}.currentSong && ${store('player')}.audioElement?.readyState >= 3 && !!document.querySelector('.karaoke-view .singing-guide')`), 'fresh fullscreen host')
+  await evaluate(freshHost, `${store('ui')}.showVisualizer = false; ${store('player')}.play()`)
+  check(await evaluate(freshHost, `window.__visualizerSources.length === 0`), 'fresh host has no visualizer audio source before fullscreen')
+  await cdp('Page.bringToFront', {}, freshHost)
+  await evaluate(freshHost, `document.querySelector('.karaoke-view .singing-guide .guide-icon-button').click()`)
+  await poll(() => evaluate(freshHost, `!!document.fullscreenElement?.querySelector('.music-visualizer') && window.__visualizerSources.length === 1`), 'fullscreen creates initial audio analyser')
+  await poll(() => evaluate(freshHost, `(() => { const node = window.__visualizerAnalysers[0], values = new Uint8Array(node.frequencyBinCount); node.getByteFrequencyData(values); return values.some(value => value > 0); })()`), 'fresh fullscreen live signal')
+  check(true, 'fullscreen starts rainbow-bar visualization with live audio when the regular visualizer was never opened')
+  await evaluate(freshHost, `document.querySelector('#app').__vue_app__.config.globalProperties.$router.push('/library')`)
+  await poll(() => evaluate(freshHost, `!document.fullscreenElement && !${store('ui')}.fullscreenStage`), 'unmount fullscreen stage clears visualizer destination')
+  await evaluate(freshHost, `${store('ui')}.showVisualizer = true`)
+  await poll(() => evaluate(freshHost, `document.querySelector('.music-visualizer')?.dataset.embedded === 'false'`), 'visualizer returns to regular page after stage removal')
+  check(await evaluate(freshHost, `window.__visualizerSources.length === 1 && window.__visualizerSources[0].context.state === 'running'`), 'removing a fullscreen stage returns the visualizer to the app without recreating or closing its audio source')
   const invalid = await page(origin, '/sing/guide', 320, 'zh')
   await poll(() => evaluate(invalid, `document.body?.innerText.includes('配对链接无效')`), 'localized invalid pair')
   check(true, 'missing pairing links show a localized recovery message')
