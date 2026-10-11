@@ -623,6 +623,13 @@
       "searchFailed": "Could not search songs. Check your connection and try again.",
       "manageFailed": "Could not save the device change. Try again."
     },
+    "stageControls": "Karaoke playback and songs",
+    "stageStop": "Stop",
+    "stageSongs": "Search / browse",
+    "stageLyrics": "Full lyrics",
+    "hideStageCover": "Hide cover",
+    "showStageCover": "Show cover",
+    "stageSongAdded": "Added “{title}” to the queue",
     "songPages": "Karaoke song pages",
     "songPage": "Page {page} of {total}",
     "guideTitle": "Singing guide",

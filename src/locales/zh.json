@@ -623,6 +623,13 @@
       "searchFailed": "无法搜索歌曲，请检查网络后重试。",
       "manageFailed": "无法保存设备更改，请重试。"
     },
+    "stageControls": "卡拉OK播放和点歌",
+    "stageStop": "停止",
+    "stageSongs": "搜索 / 浏览",
+    "stageLyrics": "完整歌词",
+    "hideStageCover": "隐藏封面",
+    "showStageCover": "显示封面",
+    "stageSongAdded": "已将《{title}》加入待唱列表",
     "songPages": "卡拉OK歌曲分页",
     "songPage": "第 {page} 页，共 {total} 页",
     "guideTitle": "演唱指引",

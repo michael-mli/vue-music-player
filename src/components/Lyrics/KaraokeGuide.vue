@@ -1,5 +1,8 @@
 <template>
   <section ref="stage" class="singing-guide" :class="{ 'is-compact': compact }" :aria-label="$t('karaoke.guideTitle')">
+    <div v-if="fullscreen && coverVisible && player.currentSong" class="stage-cover" aria-hidden="true">
+      <SongCover :song-id="player.currentSong.id" alt="" />
+    </div>
     <header class="guide-header">
       <div>
         <p class="guide-eyebrow">{{ $t('karaoke.guideTitle') }}</p>
@@ -14,132 +17,170 @@
       </button>
     </header>
 
-    <div class="guide-layout">
-      <div class="guide-main">
-        <LyricsTimingControl v-if="player.currentSong && lines.length" :song-id="player.currentSong.id" :lines="lines" on-stage class="mt-4" />
-
-        <div class="guide-status">
-          <span class="status-indicator" :class="{ 'is-playing': player.isPlaying }" aria-hidden="true"></span>
-          <span>{{ $t(loading ? 'lyrics.loading' : !lines.length ? 'karaoke.noSynced' : !player.isPlaying ? 'karaoke.guidePaused' : guide.finished ? 'karaoke.guideFinished'
-            : guide.singing ? 'karaoke.singNow' : guide.index < 0 ? 'karaoke.guideIntro' : 'karaoke.guideInterlude') }}</span>
-          <span class="guide-count" v-if="lyricNumber">{{ lyricNumber }} / {{ lyricCount }}</span>
-        </div>
-
-        <div v-if="lines.length" class="guide-lyrics">
-          <button class="previous-line" :disabled="guide.previous < 0" @click="seekLine(guide.previous)">
-            {{ lines[guide.previous]?.text || '\u00a0' }}
-          </button>
-
-          <div class="current-phrase">
-            <div class="phrase-label">
-              <span>{{ $t(guide.finished ? 'karaoke.guideFinished' : guide.singing ? 'karaoke.singNow' : 'karaoke.getReady') }}</span>
-              <span v-if="guide.countdown" class="entry-countdown">{{ $t('karaoke.singIn', { seconds: guide.countdown }) }}</span>
-            </div>
-            <div v-if="guide.countdown > 0 && guide.countdown <= 4" class="countdown-dots" aria-hidden="true">
-              <span v-for="dot in 4" :key="dot" :class="{ filled: dot <= guide.countdown }"></span>
-            </div>
-            <p class="current-line" :class="{ 'waiting-line': !guide.singing }">
-              <template v-if="guide.singing && currentLine?.words?.length">
-                <span v-for="(word, index) in currentLine.words" :key="index" class="timed-word"
-                  :style="{ '--word-progress': `${wordProgress(word) * 100}%` }">{{ word.text }}</span>
-              </template>
-              <template v-else>{{ guide.finished ? $t('karaoke.guideOutro') : displayedLine?.text }}</template>
-            </p>
-            <div class="phrase-track" role="progressbar" :aria-label="$t('karaoke.lineProgress')"
-              :aria-valuenow="Math.round(guide.progress * 100)" aria-valuemin="0" aria-valuemax="100">
-              <div :style="{ transform: `scaleX(${guide.progress})` }"></div>
-            </div>
-            <p class="timing-note">{{ $t(currentLine?.words?.length && guide.singing ? 'karaoke.wordTiming' : 'karaoke.lineTiming') }}</p>
-          </div>
-
-          <div class="upcoming-lyrics">
-            <p class="guide-eyebrow">{{ $t('karaoke.upNext') }}</p>
-            <button v-for="(entry, index) in previewLines" :key="entry.index" class="upcoming-line"
-              :class="{ 'second-upcoming': index > 0 }" @click="seekLine(entry.index)">
-              <span>{{ entry.line.text }}</span><time>{{ formatTime(lyricSeekTime(entry.line.time, offset, player.duration)) }}</time>
-            </button>
-            <p v-if="!previewLines.length" class="no-upcoming">{{ $t('karaoke.noMoreLines') }}</p>
-          </div>
-        </div>
-
-        <div v-else class="guide-fallback" role="status">
-          <p v-if="loading">{{ $t('lyrics.loading') }}</p>
-          <div v-else-if="plainLyrics" class="guide-plain-lyrics"><slot name="plain-lyrics">{{ plainLyrics }}</slot></div>
-          <p v-else>{{ $t('karaoke.noSynced') }}</p>
-        </div>
-
-        <footer class="guide-footer">
-          <div class="guide-transport">
-            <button class="guide-action" :disabled="replayIndex < 0" @click="seekLine(replayIndex, 2)"
-              :title="$t('karaoke.replayHint')"><ArrowPathIcon class="w-4 h-4" />{{ $t('karaoke.replayLine') }}</button>
-            <button class="guide-play" @click="player.togglePlay()" :aria-label="$t(player.isPlaying ? 'player.pause' : 'player.play')">
-              <PauseIcon v-if="player.isPlaying" class="w-5 h-5" /><PlayIcon v-else class="w-5 h-5" />
-            </button>
-            <button class="guide-action" :disabled="!guide.upcoming.length || guide.finished" @click="seekLine(guide.upcoming[0].index)">
-              {{ $t('karaoke.nextLine') }}<ForwardIcon class="w-4 h-4" /></button>
-          </div>
-          <div class="song-timeline">
-            <time>{{ formatTime(player.currentTime) }}</time>
-            <input type="range" min="0" :max="player.duration || 0" step="0.1" :value="player.currentTime"
-              :disabled="!player.duration" :aria-label="$t('karaoke.songPosition')" @input="seekSong" />
-            <time>{{ formatTime(player.duration) }}</time>
-          </div>
-          <p v-if="fullscreenError" class="timing-note" role="status">{{ $t('karaoke.fullscreenUnavailable') }}</p>
-          <details v-if="lines.length" class="all-lyrics" @toggle="onLyricsToggle">
-            <summary>{{ $t('karaoke.allLyrics') }}</summary>
-            <div v-if="allLyricsOpen" v-memo="[sungLines, guide.index, offset, player.duration]" class="all-lyrics-list">
-              <button v-for="entry in sungLines" :key="entry.index" @click="seekLine(entry.index)"
-                :aria-current="entry.index === guide.index ? 'true' : undefined">
-                <time>{{ formatTime(lyricSeekTime(entry.line.time, offset, player.duration)) }}</time><span>{{ entry.line.text }}</span>
-              </button>
-            </div>
-          </details>
-        </footer>
+    <div v-if="fullscreen" class="stage-toolbar" role="group" :aria-label="$t('karaoke.stageControls')">
+      <div class="stage-playback">
+        <button type="button" data-stage-command="play" :disabled="!player.currentSong || player.partyAudioOwned || player.isPlaying" @click="player.play()"><PlayIcon />{{ $t('player.play') }}</button>
+        <button type="button" data-stage-command="pause" :disabled="!player.currentSong || player.partyAudioOwned || !player.isPlaying" @click="player.pause()"><PauseIcon />{{ $t('player.pause') }}</button>
+        <button type="button" data-stage-command="stop" :disabled="!player.currentSong || player.partyAudioOwned" @click="player.stopPlayback()"><StopIcon />{{ $t('karaoke.stageStop') }}</button>
+        <button type="button" data-stage-command="next" :disabled="!player.canPlayNext || player.partyAudioOwned" @click="player.nextSong()"><ForwardIcon />{{ $t('player.next') }}</button>
       </div>
-      <aside v-if="fullscreen" class="stage-sidebar">
-        <section v-if="player.karaokeMode && !player.partyAudioOwned" class="stage-pairing" :aria-label="$t('karaoke.guide.pairTitle')">
-          <h2 class="stage-pairing-title">{{ $t('karaoke.guide.pairTitle') }}</h2>
-          <template v-if="pairing.pairUrl">
-            <KaraokeGuideQr :value="pairing.pairUrl" class="stage-pairing-qr">
-              <template #fallback>
-                <label class="mt-2 block text-xs">{{ $t('karaoke.guide.pairLink') }}
-                  <input :value="pairing.pairUrl" readonly class="mt-1 min-h-[44px] w-full rounded border border-gray-300 px-2 text-black"
-                    @focus="($event.target as HTMLInputElement).select()" />
-                </label>
-              </template>
-            </KaraokeGuideQr>
-            <p role="status" class="stage-pairing-status">{{ pairing.connectedDevices
-              ? $t('karaoke.guide.paired', { count: pairing.connectedDevices }) : $t('karaoke.guide.waiting') }}</p>
-          </template>
-          <template v-else>
-            <p class="stage-pairing-hint">{{ $t('karaoke.guide.pairHint') }}</p>
-            <button type="button" class="stage-pair-button" :disabled="pairing.busy || !player.currentSong"
-              @click="pairing.start()">{{ $t(pairing.busy ? 'karaoke.guide.creating' : 'karaoke.guide.pairButton') }}</button>
-          </template>
-          <p v-if="pairing.error" role="alert" class="stage-pairing-error">{{ $t(`karaoke.guide.${pairing.error}`) }}</p>
-        </section>
-        <section class="stage-queue" :aria-label="$t('karaoke.guide.songQueue')">
-          <h2 class="stage-queue-title">{{ $t('karaoke.guide.songQueue') }} <span>{{ player.requestedQueue.length }}</span></h2>
-          <p v-if="!player.requestedQueue.length" class="stage-queue-empty">{{ $t('karaoke.guide.emptyQueue') }}</p>
-          <ol v-else class="stage-queue-list">
-            <li v-for="(song, index) in player.requestedQueue" :key="song.id" :data-queued-song-id="song.id">
-              <span class="stage-queue-number">{{ index + 1 }}</span>
-              <div>
-                <p>{{ song.title }}</p>
-                <p class="stage-queue-song-id">{{ $t('music.songId') }}: {{ song.id }}</p>
-                <p v-if="song.artist" class="stage-queue-artist">{{ song.artist }}</p>
+      <div class="stage-tools">
+        <button ref="songsButton" type="button" data-action="toggle-stage-songs" :aria-expanded="songsOpen" aria-controls="karaoke-stage-songs"
+          @click="toggleSongs">{{ $t('karaoke.stageSongs') }}</button>
+        <button ref="lyricsButton" type="button" data-action="toggle-stage-lyrics" :aria-expanded="allLyricsOpen" aria-controls="karaoke-stage-lyrics"
+          @click="toggleLyrics">{{ $t('karaoke.stageLyrics') }}</button>
+        <button type="button" data-action="toggle-stage-cover" :aria-pressed="coverVisible" @click="coverVisible = !coverVisible">
+          {{ $t(coverVisible ? 'karaoke.hideStageCover' : 'karaoke.showStageCover') }}
+        </button>
+      </div>
+    </div>
+
+    <div class="stage-workspace">
+      <div class="guide-layout" :inert="fullscreen && (songsOpen || allLyricsOpen) || undefined">
+        <div class="guide-main">
+          <LyricsTimingControl v-if="player.currentSong && lines.length" :song-id="player.currentSong.id" :lines="lines" on-stage class="mt-4" />
+
+          <div class="guide-status">
+            <span class="status-indicator" :class="{ 'is-playing': player.isPlaying }" aria-hidden="true"></span>
+            <span>{{ $t(loading ? 'lyrics.loading' : !lines.length ? 'karaoke.noSynced' : !player.isPlaying ? 'karaoke.guidePaused' : guide.finished ? 'karaoke.guideFinished'
+              : guide.singing ? 'karaoke.singNow' : guide.index < 0 ? 'karaoke.guideIntro' : 'karaoke.guideInterlude') }}</span>
+            <span class="guide-count" v-if="lyricNumber">{{ lyricNumber }} / {{ lyricCount }}</span>
+          </div>
+
+          <div v-if="lines.length" class="guide-lyrics">
+            <button class="previous-line" :disabled="guide.previous < 0" @click="seekLine(guide.previous)">
+              {{ lines[guide.previous]?.text || '\u00a0' }}
+            </button>
+
+            <div class="current-phrase">
+              <div class="phrase-label">
+                <span>{{ $t(guide.finished ? 'karaoke.guideFinished' : guide.singing ? 'karaoke.singNow' : 'karaoke.getReady') }}</span>
+                <span v-if="guide.countdown" class="entry-countdown">{{ $t('karaoke.singIn', { seconds: guide.countdown }) }}</span>
               </div>
-            </li>
-          </ol>
-        </section>
-      </aside>
+              <div v-if="guide.countdown > 0 && guide.countdown <= 4" class="countdown-dots" aria-hidden="true">
+                <span v-for="dot in 4" :key="dot" :class="{ filled: dot <= guide.countdown }"></span>
+              </div>
+              <p class="current-line" :class="{ 'waiting-line': !guide.singing }">
+                <template v-if="guide.singing && currentLine?.words?.length">
+                  <span v-for="(word, index) in currentLine.words" :key="index" class="timed-word"
+                    :style="{ '--word-progress': `${wordProgress(word) * 100}%` }">{{ word.text }}</span>
+                </template>
+                <template v-else>{{ guide.finished ? $t('karaoke.guideOutro') : displayedLine?.text }}</template>
+              </p>
+              <div class="phrase-track" role="progressbar" :aria-label="$t('karaoke.lineProgress')"
+                :aria-valuenow="Math.round(guide.progress * 100)" aria-valuemin="0" aria-valuemax="100">
+                <div :style="{ transform: `scaleX(${guide.progress})` }"></div>
+              </div>
+              <p class="timing-note">{{ $t(currentLine?.words?.length && guide.singing ? 'karaoke.wordTiming' : 'karaoke.lineTiming') }}</p>
+            </div>
+
+            <div class="upcoming-lyrics">
+              <p class="guide-eyebrow">{{ $t('karaoke.upNext') }}</p>
+              <button v-for="(entry, index) in previewLines" :key="entry.index" class="upcoming-line"
+                :class="{ 'second-upcoming': index > 0 }" @click="seekLine(entry.index)">
+                <span>{{ entry.line.text }}</span><time>{{ formatTime(lyricSeekTime(entry.line.time, offset, player.duration)) }}</time>
+              </button>
+              <p v-if="!previewLines.length" class="no-upcoming">{{ $t('karaoke.noMoreLines') }}</p>
+            </div>
+          </div>
+
+          <div v-else class="guide-fallback" role="status">
+            <p v-if="loading">{{ $t('lyrics.loading') }}</p>
+            <div v-else-if="plainLyrics" class="guide-plain-lyrics"><slot name="plain-lyrics">{{ plainLyrics }}</slot></div>
+            <p v-else>{{ $t('karaoke.noSynced') }}</p>
+          </div>
+
+          <footer class="guide-footer">
+            <div class="guide-transport">
+              <button class="guide-action" :disabled="replayIndex < 0" @click="seekLine(replayIndex, 2)"
+                :title="$t('karaoke.replayHint')"><ArrowPathIcon class="w-4 h-4" />{{ $t('karaoke.replayLine') }}</button>
+              <button class="guide-play" @click="player.togglePlay()" :aria-label="$t(player.isPlaying ? 'player.pause' : 'player.play')">
+                <PauseIcon v-if="player.isPlaying" class="w-5 h-5" /><PlayIcon v-else class="w-5 h-5" />
+              </button>
+              <button class="guide-action" :disabled="!guide.upcoming.length || guide.finished" @click="seekLine(guide.upcoming[0].index)">
+                {{ $t('karaoke.nextLine') }}<ForwardIcon class="w-4 h-4" /></button>
+            </div>
+            <div class="song-timeline">
+              <time>{{ formatTime(player.currentTime) }}</time>
+              <input type="range" min="0" :max="player.duration || 0" step="0.1" :value="player.currentTime"
+                :disabled="!player.duration" :aria-label="$t('karaoke.songPosition')" @input="seekSong" />
+              <time>{{ formatTime(player.duration) }}</time>
+            </div>
+            <p v-if="fullscreenError" class="timing-note" role="status">{{ $t('karaoke.fullscreenUnavailable') }}</p>
+            <details v-if="!fullscreen && lines.length" class="all-lyrics" @toggle="onLyricsToggle">
+              <summary>{{ $t('karaoke.allLyrics') }}</summary>
+              <div v-if="allLyricsOpen" ref="lyricsScroller" v-memo="[sungLines, guide.index, offset, player.duration]" class="all-lyrics-list">
+                <button v-for="entry in sungLines" :key="entry.index" @click="seekLine(entry.index)"
+                  :data-line-index="entry.index"
+                  :aria-current="entry.index === guide.index ? 'true' : undefined">
+                  <time>{{ formatTime(lyricSeekTime(entry.line.time, offset, player.duration)) }}</time><span>{{ entry.line.text }}</span>
+                </button>
+              </div>
+            </details>
+          </footer>
+        </div>
+        <aside v-if="fullscreen" class="stage-sidebar">
+          <section v-if="player.karaokeMode && !player.partyAudioOwned" class="stage-pairing" :aria-label="$t('karaoke.guide.pairTitle')">
+            <h2 class="stage-pairing-title">{{ $t('karaoke.guide.pairTitle') }}</h2>
+            <template v-if="pairing.pairUrl">
+              <KaraokeGuideQr :value="pairing.pairUrl" class="stage-pairing-qr">
+                <template #fallback>
+                  <label class="mt-2 block text-xs">{{ $t('karaoke.guide.pairLink') }}
+                    <input :value="pairing.pairUrl" readonly class="mt-1 min-h-[44px] w-full rounded border border-gray-300 px-2 text-black"
+                      @focus="($event.target as HTMLInputElement).select()" />
+                  </label>
+                </template>
+              </KaraokeGuideQr>
+              <p role="status" class="stage-pairing-status">{{ pairing.connectedDevices
+                ? $t('karaoke.guide.paired', { count: pairing.connectedDevices }) : $t('karaoke.guide.waiting') }}</p>
+            </template>
+            <template v-else>
+              <p class="stage-pairing-hint">{{ $t('karaoke.guide.pairHint') }}</p>
+              <button type="button" class="stage-pair-button" :disabled="pairing.busy || !player.currentSong"
+                @click="pairing.start()">{{ $t(pairing.busy ? 'karaoke.guide.creating' : 'karaoke.guide.pairButton') }}</button>
+            </template>
+            <p v-if="pairing.error" role="alert" class="stage-pairing-error">{{ $t(`karaoke.guide.${pairing.error}`) }}</p>
+          </section>
+          <section class="stage-queue" :aria-label="$t('karaoke.guide.songQueue')">
+            <h2 class="stage-queue-title">{{ $t('karaoke.guide.songQueue') }} <span>{{ player.requestedQueue.length }}</span></h2>
+            <p v-if="!player.requestedQueue.length" class="stage-queue-empty">{{ $t('karaoke.guide.emptyQueue') }}</p>
+            <ol v-else class="stage-queue-list">
+              <li v-for="(song, index) in player.requestedQueue" :key="song.id" :data-queued-song-id="song.id">
+                <span class="stage-queue-number">{{ index + 1 }}</span>
+                <div>
+                  <p>{{ song.title }}</p>
+                  <p class="stage-queue-song-id">{{ $t('music.songId') }}: {{ song.id }}</p>
+                  <p v-if="song.artist" class="stage-queue-artist">{{ song.artist }}</p>
+                </div>
+              </li>
+            </ol>
+          </section>
+        </aside>
+      </div>
+      <KaraokeStageSongs v-if="fullscreen && songsOpen" id="karaoke-stage-songs" class="stage-panel" @close="closeSongs" />
+      <section v-if="fullscreen && allLyricsOpen" id="karaoke-stage-lyrics" class="stage-panel stage-full-lyrics"
+        role="dialog" :aria-label="$t('karaoke.stageLyrics')" @keydown.esc.stop.prevent="closeLyrics">
+        <header class="stage-lyrics-header">
+          <div><h2>{{ $t('karaoke.stageLyrics') }}</h2><p>{{ player.currentSong?.title }}</p></div>
+          <button ref="closeLyricsButton" type="button" data-action="close-lyrics" @click="closeLyrics">{{ $t('common.close') }}</button>
+        </header>
+        <p v-if="loading" class="stage-lyrics-message" role="status">{{ $t('lyrics.loading') }}</p>
+        <div v-else-if="lines.length" ref="lyricsScroller" v-memo="[sungLines, guide.index, offset, player.duration]" class="all-lyrics-list stage-lyrics-list">
+          <button v-for="entry in sungLines" :key="entry.index" :data-line-index="entry.index" @click="seekLine(entry.index)"
+            :aria-current="entry.index === guide.index ? 'true' : undefined">
+            <time>{{ formatTime(lyricSeekTime(entry.line.time, offset, player.duration)) }}</time><span>{{ entry.line.text }}</span>
+          </button>
+        </div>
+        <div v-else-if="plainLyrics" class="stage-plain-lyrics">{{ plainLyrics }}</div>
+        <p v-else class="stage-lyrics-message" role="status">{{ $t('lyrics.noLyrics') }}</p>
+      </section>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
-import { ArrowsPointingInIcon, ArrowsPointingOutIcon, ArrowPathIcon, ForwardIcon, PauseIcon, PlayIcon } from '@heroicons/vue/24/outline'
+import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { ArrowsPointingInIcon, ArrowsPointingOutIcon, ArrowPathIcon, ForwardIcon, PauseIcon, PlayIcon, StopIcon } from '@heroicons/vue/24/outline'
 import { usePlayerStore } from '@/stores/player'
 import { useKaraokeGuideStore } from '@/stores/karaokeGuide'
 import { useUiStore } from '@/stores/ui'
@@ -148,6 +189,8 @@ import { lyricSeekTime } from '@/utils/lyricsOffset'
 import { useLyricsOffset } from '@/composables/useLyricsOffset'
 import LyricsTimingControl from '@/components/Lyrics/LyricsTimingControl.vue'
 import KaraokeGuideQr from '@/components/UI/KaraokeGuideQr.vue'
+import KaraokeStageSongs from '@/components/UI/KaraokeStageSongs.vue'
+import SongCover from '@/components/UI/SongCover.vue'
 import type { LyricLine, LyricWord } from '@/types'
 
 const props = defineProps<{ lines: LyricLine[]; compact?: boolean; loading?: boolean; plainLyrics?: string }>()
@@ -162,7 +205,14 @@ const fullscreen = ref(false)
 const fullscreenSupported = ref(false)
 const fullscreenError = ref(false)
 const allLyricsOpen = ref(false)
-watch(() => player.currentSong?.id, () => { allLyricsOpen.value = false })
+const songsOpen = ref(false)
+const coverVisible = ref(readCoverPreference())
+const songsButton = ref<HTMLButtonElement>(), lyricsButton = ref<HTMLButtonElement>(), closeLyricsButton = ref<HTMLButtonElement>()
+const lyricsScroller = ref<HTMLElement>()
+watch(() => player.currentSong?.id, () => { if (!fullscreen.value) allLyricsOpen.value = false })
+watch(coverVisible, value => {
+  try { localStorage.setItem('karaoke-stage-cover', String(value)) } catch { /* Optional display preference. */ }
+})
 const guide = computed(() => singingGuideState(props.lines, player.currentTime, player.duration, offset.value))
 const currentLine = computed(() => props.lines[guide.value.index])
 const sungLines = computed(() => props.lines.map((line, index) => ({ line, index })).filter(({ line }) => line.text.trim()))
@@ -198,6 +248,46 @@ function onLyricsToggle(event: Event) {
   allLyricsOpen.value = (event.target as HTMLDetailsElement).open
 }
 
+function readCoverPreference() {
+  try { return localStorage.getItem('karaoke-stage-cover') !== 'false' } catch { return true }
+}
+function closeSongs() { songsOpen.value = false; songsButton.value?.focus() }
+function toggleSongs() {
+  if (songsOpen.value) closeSongs()
+  else { allLyricsOpen.value = false; songsOpen.value = true }
+}
+function closeLyrics() { allLyricsOpen.value = false; lyricsButton.value?.focus() }
+async function toggleLyrics() {
+  if (allLyricsOpen.value) { closeLyrics(); return }
+  songsOpen.value = false; allLyricsOpen.value = true
+  await nextTick()
+  closeLyricsButton.value?.focus()
+}
+
+// Scroll this list alone: scrolling ancestors would move the playback controls
+// or pull the fullscreen stage away from its current layout.
+function scrollCurrentLyrics() {
+  const list = lyricsScroller.value
+  if (!allLyricsOpen.value || !list) return
+  const active = list.querySelector<HTMLElement>('[aria-current="true"]')
+    || list.querySelector<HTMLElement>(`[data-line-index="${guide.value.upcoming[0]?.index}"]`)
+    || list.querySelector<HTMLElement>('[data-line-index]')
+  if (!active) return
+  const top = list.scrollTop + active.getBoundingClientRect().top - list.getBoundingClientRect().top
+    - (list.clientHeight - active.offsetHeight) / 2
+  list.scrollTo({ top: Math.max(0, top), behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
+}
+watch([allLyricsOpen, () => guide.value.index, sungLines, offset], scrollCurrentLyrics, { flush: 'post' })
+let lyricsResize: ResizeObserver | undefined
+watch(lyricsScroller, list => {
+  lyricsResize?.disconnect()
+  if (list && typeof ResizeObserver !== 'undefined') {
+    lyricsResize = new ResizeObserver(scrollCurrentLyrics)
+    lyricsResize.observe(list)
+  }
+  scrollCurrentLyrics()
+}, { flush: 'post' })
+
 function formatTime(time: number) {
   const seconds = Math.max(0, Math.floor(time || 0))
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
@@ -214,8 +304,9 @@ async function toggleFullscreen() {
 function syncFullscreen() {
   const wasFullscreen = fullscreen.value
   fullscreen.value = document.fullscreenElement === stage.value
-  if (fullscreen.value) ui.fullscreenStage = stage.value || null
+  if (fullscreen.value) { coverVisible.value = readCoverPreference(); ui.fullscreenStage = stage.value || null }
   else if (ui.fullscreenStage === stage.value) ui.fullscreenStage = null
+  if (wasFullscreen !== fullscreen.value) { songsOpen.value = false; allLyricsOpen.value = false }
   if (wasFullscreen && !fullscreen.value) expandButton.value?.focus()
 }
 
@@ -224,6 +315,7 @@ onMounted(() => {
   document.addEventListener('fullscreenchange', syncFullscreen)
 })
 onBeforeUnmount(() => {
+  lyricsResize?.disconnect()
   document.removeEventListener('fullscreenchange', syncFullscreen)
   if (ui.fullscreenStage === stage.value) ui.fullscreenStage = null
 })
@@ -313,14 +405,43 @@ button:focus-visible, summary:focus-visible, input:focus-visible { outline: 2px 
 .is-compact .guide-lyrics { padding: 18px 0; }
 .is-compact .guide-transport { gap: 4px; }
 .is-compact .guide-action { padding: 4px; font-size: 11px; }
-.singing-guide:fullscreen { position: relative; isolation: isolate; container-type: normal; border: 0; border-radius: 0; overflow-y: auto; width: 100%; height: 100%; padding: clamp(20px, 4vw, 64px); }
-.singing-guide:fullscreen .guide-header, .singing-guide:fullscreen .guide-layout { position: relative; z-index: 1; }
+.singing-guide:fullscreen { position: relative; isolation: isolate; container-type: normal; display: flex; flex-direction: column; border: 0; border-radius: 0; overflow: hidden; width: 100%; height: 100%; padding: clamp(12px, 3vw, 40px); }
+.stage-cover { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+.stage-cover::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, #071310db, #071310b8 45%, #071310ed); }
+.stage-cover :deep(img) { object-position: center; }
+.singing-guide:fullscreen .guide-header { position: relative; z-index: 2; flex-shrink: 0; }
+.singing-guide:fullscreen .guide-song { max-width: min(70vw, 800px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stage-toolbar { position: relative; z-index: 2; flex-shrink: 0; display: flex; flex-wrap: wrap; gap: 8px; padding: 8px; margin: 12px 0; border: 1px solid #56716b; border-radius: 12px; background: #081b16eb; }
+.stage-playback, .stage-tools { display: grid; gap: 6px; flex: 1 1 320px; min-width: 0; }
+.stage-playback { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.stage-tools { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.stage-toolbar button { display: flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; min-height: 44px; border: 1px solid #56716b; border-radius: 8px; padding: 8px 4px; font-size: 12px; }
+.stage-toolbar button svg { width: 18px; height: 18px; flex-shrink: 0; }
+.stage-toolbar [aria-expanded="true"], .stage-toolbar [data-stage-command="play"]:not(:disabled) { color: #7ef0b6; border-color: #7ef0b6; }
+.singing-guide:fullscreen .stage-workspace { position: relative; z-index: 1; flex: 1; min-height: 0; }
+.singing-guide:fullscreen .guide-layout { height: 100%; overflow-y: auto; padding: 0 4px 24px; overscroll-behavior: contain; }
+.stage-panel { position: absolute; inset: 0; z-index: 3; min-width: 0; padding: clamp(12px, 2vw, 24px); border: 1px solid #56716b; border-radius: 12px; background: #081b16; overflow-y: auto; overscroll-behavior: contain; }
+.stage-full-lyrics { display: flex; flex-direction: column; overflow: hidden; }
+.stage-lyrics-header { display: flex; justify-content: space-between; align-items: start; gap: 16px; flex-shrink: 0; }
+.stage-lyrics-header > div { min-width: 0; }
+.stage-lyrics-header h2 { font-size: 20px; font-weight: 700; }
+.stage-lyrics-header p { margin-top: 4px; font-size: 12px; color: #b6cdc5; }
+.stage-lyrics-header button { min-height: 44px; flex-shrink: 0; padding: 8px 12px; border: 1px solid #56716b; border-radius: 8px; font-size: 12px; }
+.stage-lyrics-list { flex: 1; min-height: 0; max-height: none; font-size: clamp(16px, 2.4vw, 28px); margin-top: 16px; }
+.stage-lyrics-list button { padding: 16px 10px; line-height: 1.6; }
+.stage-lyrics-list time { margin-top: .4em; color: #aac7c0; font-size: 12px; }
+.stage-plain-lyrics { margin-top: 16px; overflow-y: auto; white-space: pre-wrap; line-height: 1.8; font-size: clamp(16px, 2.4vw, 28px); }
+.stage-lyrics-message { padding: 24px 0; color: #b6cdc5; }
+@media (max-width: 600px) {
+  .stage-playback button { gap: 4px; padding-inline: 2px; font-size: 11px; white-space: nowrap; }
+  .stage-playback button svg { width: 16px; height: 16px; }
+}
 .singing-guide:fullscreen .guide-lyrics { max-width: 1100px; margin: auto; }
 .singing-guide:fullscreen .guide-footer { max-width: 800px; margin: auto; }
 .singing-guide:fullscreen .current-line { font-size: clamp(30px, 5vw, 76px); }
 @media (min-width: 900px) {
   .singing-guide:fullscreen .guide-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 300px); gap: clamp(24px, 4vw, 64px); align-items: start; }
-  .singing-guide:fullscreen .stage-sidebar { position: sticky; top: 0; max-height: calc(100dvh - 150px); overflow-y: auto; }
+  .singing-guide:fullscreen .stage-sidebar { position: sticky; top: 0; max-height: calc(100dvh - 240px); overflow-y: auto; }
   .singing-guide:fullscreen .stage-queue-list { max-height: clamp(96px, calc(100dvh - 590px), 320px); }
 }
 @container (max-width: 340px) {
