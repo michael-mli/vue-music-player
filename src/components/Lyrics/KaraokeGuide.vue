@@ -40,7 +40,7 @@
     </div>
 
     <div class="stage-workspace">
-      <div class="guide-layout" :inert="fullscreen && (songsOpen || allLyricsOpen) || undefined">
+      <div class="guide-layout" :inert="fullscreen && songsOpen || undefined">
         <div class="guide-main">
           <LyricsTimingControl v-if="player.currentSong && lines.length" :song-id="player.currentSong.id" :lines="lines" on-stage class="mt-4" />
 
@@ -111,7 +111,21 @@
               <time>{{ formatTime(player.duration) }}</time>
             </div>
             <button v-if="fullscreen" ref="lyricsButton" type="button" class="stage-lyrics-toggle" data-action="toggle-stage-lyrics"
-              :aria-expanded="allLyricsOpen" aria-controls="karaoke-stage-lyrics" @click="toggleLyrics">{{ $t('karaoke.stageLyrics') }}</button>
+              :aria-expanded="allLyricsOpen" aria-controls="karaoke-stage-lyrics" @click="toggleLyrics">
+              <ChevronDownIcon class="w-4 h-4" :class="{ 'rotate-180': allLyricsOpen }" />{{ $t('karaoke.stageLyrics') }}
+            </button>
+            <section v-if="fullscreen && allLyricsOpen" id="karaoke-stage-lyrics" ref="lyricsDropdown" class="stage-full-lyrics"
+              :aria-label="$t('karaoke.stageLyrics')" @keydown.esc.stop.prevent="closeLyrics">
+              <p v-if="loading" class="stage-lyrics-message" role="status">{{ $t('lyrics.loading') }}</p>
+              <div v-else-if="lines.length" ref="lyricsScroller" v-memo="[sungLines, guide.index, offset, player.duration]" class="all-lyrics-list stage-lyrics-list">
+                <button v-for="entry in sungLines" :key="entry.index" :data-line-index="entry.index" @click="seekLine(entry.index)"
+                  :aria-current="entry.index === guide.index ? 'true' : undefined">
+                  <time>{{ formatTime(lyricSeekTime(entry.line.time, offset, player.duration)) }}</time><span>{{ entry.line.text }}</span>
+                </button>
+              </div>
+              <div v-else-if="plainLyrics" class="stage-plain-lyrics">{{ plainLyrics }}</div>
+              <p v-else class="stage-lyrics-message" role="status">{{ $t('lyrics.noLyrics') }}</p>
+            </section>
             <p v-if="fullscreenError" class="timing-note" role="status">{{ $t('karaoke.fullscreenUnavailable') }}</p>
             <details v-if="!fullscreen && lines.length" class="all-lyrics" @toggle="onLyricsToggle">
               <summary>{{ $t('karaoke.allLyrics') }}</summary>
@@ -177,29 +191,13 @@
         </div>
         <KaraokeStageSongs id="karaoke-stage-songs" class="stage-panel" @close="closeSongs" />
       </div>
-      <section v-if="fullscreen && allLyricsOpen" id="karaoke-stage-lyrics" class="stage-panel stage-full-lyrics"
-        role="dialog" :aria-label="$t('karaoke.stageLyrics')" @keydown.esc.stop.prevent="closeLyrics">
-        <header class="stage-lyrics-header">
-          <div><h2>{{ $t('karaoke.stageLyrics') }}</h2><p>{{ player.currentSong?.title }}</p></div>
-          <button ref="closeLyricsButton" type="button" data-action="close-lyrics" @click="closeLyrics">{{ $t('common.close') }}</button>
-        </header>
-        <p v-if="loading" class="stage-lyrics-message" role="status">{{ $t('lyrics.loading') }}</p>
-        <div v-else-if="lines.length" ref="lyricsScroller" v-memo="[sungLines, guide.index, offset, player.duration]" class="all-lyrics-list stage-lyrics-list">
-          <button v-for="entry in sungLines" :key="entry.index" :data-line-index="entry.index" @click="seekLine(entry.index)"
-            :aria-current="entry.index === guide.index ? 'true' : undefined">
-            <time>{{ formatTime(lyricSeekTime(entry.line.time, offset, player.duration)) }}</time><span>{{ entry.line.text }}</span>
-          </button>
-        </div>
-        <div v-else-if="plainLyrics" class="stage-plain-lyrics">{{ plainLyrics }}</div>
-        <p v-else class="stage-lyrics-message" role="status">{{ $t('lyrics.noLyrics') }}</p>
-      </section>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
-import { ArrowsPointingInIcon, ArrowsPointingOutIcon, ArrowPathIcon, ForwardIcon, PauseIcon, PlayIcon, StopIcon } from '@heroicons/vue/24/outline'
+import { ArrowsPointingInIcon, ArrowsPointingOutIcon, ArrowPathIcon, ChevronDownIcon, ForwardIcon, PauseIcon, PlayIcon, StopIcon } from '@heroicons/vue/24/outline'
 import { usePlayerStore } from '@/stores/player'
 import { useKaraokeGuideStore } from '@/stores/karaokeGuide'
 import { useUiStore } from '@/stores/ui'
@@ -229,7 +227,8 @@ const fullscreenError = ref(false)
 const allLyricsOpen = ref(false)
 const songsOpen = ref(false)
 const coverVisible = ref(readCoverPreference())
-const songsButton = ref<HTMLButtonElement>(), lyricsButton = ref<HTMLButtonElement>(), closeLyricsButton = ref<HTMLButtonElement>()
+const songsButton = ref<HTMLButtonElement>(), lyricsButton = ref<HTMLButtonElement>()
+const lyricsDropdown = ref<HTMLElement>()
 const lyricsScroller = ref<HTMLElement>()
 watch(() => player.currentSong?.id, () => { if (!fullscreen.value) allLyricsOpen.value = false })
 watch(coverVisible, value => {
@@ -287,7 +286,12 @@ async function toggleLyrics() {
   if (allLyricsOpen.value) { closeLyrics(); return }
   songsOpen.value = false; allLyricsOpen.value = true
   await nextTick()
-  closeLyricsButton.value?.focus()
+  // Reveal the expanded dropdown once; ongoing lyric following scrolls only its list.
+  const dropdown = lyricsDropdown.value, layout = dropdown?.closest<HTMLElement>('.guide-layout')
+  if (dropdown && layout) {
+    const below = dropdown.getBoundingClientRect().bottom - layout.getBoundingClientRect().bottom
+    if (below > 0) layout.scrollTop += below + 8
+  }
 }
 
 // Scroll this list alone: scrolling ancestors would move the playback controls
@@ -417,7 +421,8 @@ onBeforeUnmount(() => {
 .song-timeline { margin-top: 16px; font-size: 11px; color: #afc5bd; font-variant-numeric: tabular-nums; }
 .song-timeline time { flex-shrink: 0; white-space: nowrap; }
 .song-timeline input { accent-color: #7ef0b6; width: 100%; min-width: 0; height: 24px; cursor: pointer; }
-.stage-lyrics-toggle { display: block; width: 100%; min-height: 44px; margin-top: 12px; padding: 8px 12px; border: 1px solid #56716b; border-radius: 8px; text-align: left; color: #afc5bd; font-size: 12px; }
+.stage-lyrics-toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; margin-top: 12px; padding: 8px 12px; border: 1px solid #56716b; border-radius: 8px; text-align: left; color: #afc5bd; font-size: 12px; }
+.stage-lyrics-toggle[aria-expanded="true"] { border-bottom-left-radius: 0; border-bottom-right-radius: 0; color: #7ef0b6; }
 .all-lyrics { margin-top: 12px; font-size: 12px; color: #afc5bd; }
 .all-lyrics summary { cursor: pointer; padding: 8px 0; }
 .all-lyrics-list { max-height: 240px; overflow-y: auto; margin-top: 8px; }
@@ -454,17 +459,12 @@ button:focus-visible, summary:focus-visible, input:focus-visible { outline: 2px 
 .browse-current-line { color: #7ef0b6; font-size: clamp(18px, 2.5vw, 30px); font-weight: 750; line-height: 1.4; white-space: pre-wrap; }
 .browse-current-line.waiting-line { color: #edf5f2; }
 .stage-song-browser > .stage-panel { position: relative; inset: auto; flex: 1; min-height: 0; }
-.stage-full-lyrics { display: flex; flex-direction: column; overflow: hidden; }
-.stage-lyrics-header { display: flex; justify-content: space-between; align-items: start; gap: 16px; flex-shrink: 0; }
-.stage-lyrics-header > div { min-width: 0; }
-.stage-lyrics-header h2 { font-size: 20px; font-weight: 700; }
-.stage-lyrics-header p { margin-top: 4px; font-size: 12px; color: #b6cdc5; }
-.stage-lyrics-header button { min-height: 44px; flex-shrink: 0; padding: 8px 12px; border: 1px solid #56716b; border-radius: 8px; font-size: 12px; }
-.stage-lyrics-list { flex: 1; min-height: 0; max-height: none; font-size: clamp(16px, 2.4vw, 28px); margin-top: 16px; }
-.stage-lyrics-list button { padding: 16px 10px; line-height: 1.6; }
+.stage-full-lyrics { padding: 8px; border: 1px solid #56716b; border-top: 0; border-radius: 0 0 8px 8px; background: #081b16; }
+.stage-lyrics-list, .stage-plain-lyrics { max-height: clamp(120px, 35dvh, 320px); overflow-y: auto; overscroll-behavior: contain; margin-top: 0; font-size: clamp(16px, 2vw, 22px); }
+.stage-lyrics-list button { padding: 12px 8px; line-height: 1.6; }
 .stage-lyrics-list time { margin-top: .4em; color: #aac7c0; font-size: 12px; }
-.stage-plain-lyrics { margin-top: 16px; overflow-y: auto; white-space: pre-wrap; line-height: 1.8; font-size: clamp(16px, 2.4vw, 28px); }
-.stage-lyrics-message { padding: 24px 0; color: #b6cdc5; }
+.stage-plain-lyrics { padding: 8px; white-space: pre-wrap; line-height: 1.8; }
+.stage-lyrics-message { padding: 12px 8px; color: #b6cdc5; font-size: 13px; }
 @media (max-width: 600px) {
   .stage-playback button { gap: 4px; padding-inline: 2px; font-size: 11px; white-space: nowrap; }
   .stage-playback button svg { width: 16px; height: 16px; }

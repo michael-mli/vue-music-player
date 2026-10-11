@@ -267,9 +267,13 @@ try {
       button.scrollIntoView({ block: 'center', behavior: 'instant' });
       const rect = button.getBoundingClientRect();
       if (document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)?.closest('button') !== button) throw new Error('Full lyrics below the timeline must be clickable');
-      window.__lyricsParentScroll = document.fullscreenElement.querySelector('.guide-layout').scrollTop;
       button.click();
     })()`)
+    await poll(() => evaluate(host, `(() => {
+      const panel = document.querySelector('#karaoke-stage-lyrics'), layout = document.fullscreenElement.querySelector('.guide-layout');
+      return panel && panel.getBoundingClientRect().bottom <= layout.getBoundingClientRect().bottom;
+    })()`), 'inline dropdown revealed below timeline')
+    await evaluate(host, `window.__lyricsParentScroll = document.fullscreenElement.querySelector('.guide-layout').scrollTop`)
   }
   const browseLyricVisible = () => evaluate(host, `(() => {
     const lyric = document.fullscreenElement.querySelector('.stage-browse-lyric'), panel = document.querySelector('#karaoke-stage-songs');
@@ -361,6 +365,14 @@ try {
   })()`), 'Full lyrics is below the song progress bar instead of the top toolbar')
   await evaluate(host, `${store('player')}.pause(); ${store('player')}.seek(60)`)
   await openFullLyrics()
+  check(await evaluate(host, `(() => {
+    const panel = document.querySelector('#karaoke-stage-lyrics'), button = document.fullscreenElement.querySelector('[data-action="toggle-stage-lyrics"]');
+    const rect = panel.getBoundingClientRect(), timeline = document.fullscreenElement.querySelector('.song-timeline input').getBoundingClientRect();
+    return panel.closest('.guide-footer') && panel.getAttribute('role') !== 'dialog'
+      && rect.top >= button.getBoundingClientRect().bottom && rect.height < innerHeight / 2
+      && !document.fullscreenElement.querySelector('.guide-layout').inert
+      && document.elementFromPoint(timeline.x + timeline.width / 2, timeline.y + timeline.height / 2)?.matches('input[type="range"]');
+  })()`), 'Full lyrics expands a bounded inline dropdown below the timeline while the stage remains interactive')
   const currentLyricCentered = () => evaluate(host, `(() => {
     const list = document.querySelector('#karaoke-stage-lyrics .stage-lyrics-list'), active = list?.querySelector('[aria-current="true"]');
     if (!active) return false;
@@ -368,8 +380,9 @@ try {
     return Math.abs((a.top + a.bottom) / 2 - (b.top + b.bottom) / 2) < 32;
   })()`)
   await poll(currentLyricCentered, 'full lyrics opens centered on current line')
-  check(await toolbarVisible() && await evaluate(host, `document.querySelector('#karaoke-stage-lyrics .stage-lyrics-list').scrollTop > 0 && document.fullscreenElement.querySelector('.guide-layout').scrollTop === window.__lyricsParentScroll`), 'Full lyrics opens at the current line and scrolls its own window without moving the transport controls')
-  await evaluate(host, `window.__lyricsScroll = document.querySelector('#karaoke-stage-lyrics .stage-lyrics-list').scrollTop; ${store('player')}.seek(20)`)
+  check(await toolbarVisible() && await evaluate(host, `document.querySelector('#karaoke-stage-lyrics .stage-lyrics-list').scrollTop > 0 && document.fullscreenElement.querySelector('.guide-layout').scrollTop === window.__lyricsParentScroll`), 'the lyrics dropdown centers the current line and scrolls its own list without moving the transport controls')
+  await evaluate(host, `window.__lyricsScroll = document.querySelector('#karaoke-stage-lyrics .stage-lyrics-list').scrollTop;
+    (() => { const slider = document.fullscreenElement.querySelector('.song-timeline input'); slider.value = '20'; slider.dispatchEvent(new Event('input', { bubbles: true })); })()`)
   await poll(currentLyricCentered, 'full lyrics follows a backward seek')
   check(await evaluate(host, `document.querySelector('#karaoke-stage-lyrics [aria-current="true"]').dataset.lineIndex === '10' && document.querySelector('#karaoke-stage-lyrics .stage-lyrics-list').scrollTop < window.__lyricsScroll`), 'full lyrics auto-scrolls backward when the song is seeked')
   await evaluate(host, `${store('player')}.seek(20.8); document.fullscreenElement.querySelector('[data-stage-command="play"]').click()`)
@@ -381,8 +394,8 @@ try {
   check(await evaluate(host, `document.fullscreenElement === window.__karaokeStage`), 'clicking a full lyric line seeks the song and keeps fullscreen')
   await poll(currentLyricCentered, 'full lyrics recenters after clicking a line')
   await screenshot(host, '-full-lyrics')
-  await evaluate(host, `document.querySelector('[data-action="close-lyrics"]').click()`)
-  await poll(() => evaluate(host, `!document.querySelector('#karaoke-stage-lyrics') && document.activeElement === document.fullscreenElement.querySelector('[data-action="toggle-stage-lyrics"]')`), 'full lyrics closes and restores focus')
+  await evaluate(host, `document.querySelector('#karaoke-stage-lyrics').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`)
+  await poll(() => evaluate(host, `!document.querySelector('#karaoke-stage-lyrics') && document.activeElement === document.fullscreenElement.querySelector('[data-action="toggle-stage-lyrics"]')`), 'Escape collapses the lyrics dropdown and restores focus')
   await evaluate(host, `document.fullscreenElement.querySelector('[data-stage-command="play"]').click()`)
   async function stillFullscreen(label) {
     check(await evaluate(host, `document.fullscreenElement === window.__karaokeStage && window.__fullscreenExits === 0`), label)
@@ -436,9 +449,10 @@ try {
   await poll(() => evaluate(host, `!document.querySelector('#karaoke-stage-songs')`), 'close mobile browser to return to timeline')
   await openFullLyrics()
   await poll(() => evaluate(host, `!!document.querySelector('#karaoke-stage-lyrics .stage-lyrics-list')`), '320px full lyrics opens below timeline')
-  check(await toolbarVisible() && await evaluate(host, `document.querySelector('#karaoke-stage-lyrics').scrollWidth <= document.querySelector('#karaoke-stage-lyrics').clientWidth`), '320px Full lyrics remains accessible below the timeline and opens without covering playback controls')
+  check(await toolbarVisible() && await evaluate(host, `document.querySelector('#karaoke-stage-lyrics').scrollWidth <= document.querySelector('#karaoke-stage-lyrics').clientWidth && document.querySelector('#karaoke-stage-lyrics').clientHeight < innerHeight / 2`), '320px Full lyrics expands a scrollable dropdown below the timeline without covering playback controls')
   await screenshot(host, '-mobile-lyrics')
-  await evaluate(host, `document.querySelector('[data-action="close-lyrics"]').click()`)
+  await evaluate(host, `document.fullscreenElement.querySelector('[data-action="toggle-stage-lyrics"]').click()`)
+  await poll(() => evaluate(host, `!document.querySelector('#karaoke-stage-lyrics') && document.fullscreenElement.querySelector('[data-action="toggle-stage-lyrics"]').getAttribute('aria-expanded') === 'false'`), 'clicking Full lyrics again collapses the dropdown')
   check(await evaluate(host, `(() => { const bounds = document.fullscreenElement.querySelector('.stage-pairing canvas').getBoundingClientRect(); return bounds.width > 150 && Math.abs(bounds.width - bounds.height) < 1; })()`), 'fullscreen QR remains square and scannable at 320px')
   await evaluate(host, `document.fullscreenElement.querySelector('.visualizer-settings-button').click()`)
   check(await evaluate(host, `(() => { const panel = document.querySelector('#music-visualizer-settings').getBoundingClientRect(), button = document.querySelector('.visualizer-settings-button'), bounds = button.getBoundingClientRect(); return panel.left >= 0 && panel.right <= innerWidth && document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)?.closest('button') === button; })()`), '320px fullscreen settings fit the viewport and remain clickable above lyrics')
@@ -481,7 +495,7 @@ try {
   await poll(() => evaluate(host, `${store('player')}.currentSong.id === 3 && !!document.fullscreenElement?.querySelector('.guide-plain-lyrics')`), 'plain lyrics fallback in fullscreen')
   await poll(() => evaluate(host, `document.querySelector('#karaoke-stage-lyrics .stage-plain-lyrics')?.innerText.includes('Fixture song')`), 'full lyrics switches to plain lyrics on song change')
   check(await toolbarVisible(), 'full lyrics stays open across song changes and supports songs with plain lyrics')
-  await evaluate(host, `document.querySelector('[data-action="close-lyrics"]').click()`)
+  await evaluate(host, `document.fullscreenElement.querySelector('[data-action="toggle-stage-lyrics"]').click()`)
   await stillFullscreen('songs without synchronized lyrics keep fullscreen and display plain lyrics')
   await poll(() => evaluate(phone, `${store('karaokeDevice')}.canControl`), 'plain song request acknowledged')
   await evaluate(phone, `document.querySelector('[data-song-search-results] [data-song-id="3"] [data-action="enqueue"]').click()`)
