@@ -66,6 +66,7 @@ export const useKaraokeGuideStore = defineStore('karaokeGuide', () => {
   function receive(result: KaraokeHostReply) {
     if (!session.value) return
     session.value.guideToken = result.guideToken
+    session.value.pairCode = result.pairCode
     devices.value = result.devices; connectedDevices.value = result.connectedDevices
     for (const command of result.commands) {
       const prior = processed.get(command.id)

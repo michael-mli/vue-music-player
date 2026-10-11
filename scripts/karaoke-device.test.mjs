@@ -19,7 +19,8 @@ function setup(request, { expired = false, hash = '' } = {}) {
     Date: class extends Date { static now() { return time } },
     localStorage: { getItem: key => storage.get(key) || null, removeItem: key => storage.delete(key), setItem: (key, value) => storage.set(key, value) },
     window, document: { visibilityState: 'visible' }, navigator: { userAgent: 'Test phone' },
-    require: name => name === '@/services/karaokeGuideApi' ? { guideRequest: request, KaraokeGuideError: GuideError, karaokeRequestId: () => 'unique-request-id-long' }
+    require: name => name === '@/stores/auth' ? { useAuthStore: () => ({ token: 'fixture-identity', async ensureIdentity() {} }) }
+      : name === '@/services/karaokeGuideApi' ? { guideRequest: request, KaraokeGuideError: GuideError, karaokeRequestId: () => 'unique-request-id-long' }
       : name === '@/utils/karaokeGuideSync' ? { KaraokeGuideClock: class {} } : require(name) })
   setActivePinia(createPinia())
   const store = exports.useKaraokeDeviceStore()
@@ -122,4 +123,36 @@ test('revoking a paired grant clears browsed songs and rejects an outstanding ca
   await browsing
   assert.equal(f.store.grant, null); assert.equal(f.store.browseCatalog, null)
   assert.equal(f.store.catalog, null); assert.equal(f.store.browsing, false)
+})
+
+test('typing a formatted code includes app identity and replaces the grant only after a successful join', async () => {
+  const requests = [], replacement = 'd'.repeat(32), sessionId = 'e'.repeat(32)
+  const f = setup(async (_clock, path, _token, method, body) => {
+    requests.push({ path, method, body })
+    if (body.code === '111111') throw new GuideError('invalidCode', 404)
+    return { sessionId, device: { ...reply().device, username: 'BlueSinger', token: replacement } }
+  })
+  assert.equal(await f.store.pairByCode('123'), false); assert.equal(requests.length, 0)
+  assert.equal(await f.store.pairByCode('111111'), false)
+  assert.equal(f.store.grant.token, token); assert.equal(f.store.pairCodeError, 'invalidCode')
+  assert.equal(await f.store.pairByCode('234 567'), true)
+  assert.equal(requests.at(-1).path, '/pair'); assert.equal(requests.at(-1).body.code, '234567')
+  assert.equal(requests.at(-1).body.identityToken, 'fixture-identity')
+  assert.equal(requests.at(-1).body.deviceToken, token)
+  assert.equal(f.store.grant.token, replacement); assert.equal(f.store.grant.sessionId, sessionId)
+  assert.equal(f.store.device.username, 'BlueSinger'); assert.equal(f.store.pairCodeError, '')
+  assert.equal(JSON.parse(f.storage.get('karaoke-device-pair')).token, replacement)
+  assert.equal(f.storage.has('karaoke-device-code-attempt'), false)
+})
+
+test('retrying a code after a lost response reuses its enrolment key and retains the saved pairing meanwhile', async () => {
+  const keys = [], f = setup(async (_clock, _path, _token, _method, body) => {
+    keys.push(body.joinKey)
+    if (keys.length === 1) throw new GuideError('unavailable', 503)
+    return { sessionId: secret, device: { ...reply().device, token } }
+  })
+  assert.equal(await f.store.pairByCode('234567'), false)
+  assert.equal(f.store.grant.token, token); assert.ok(f.storage.has('karaoke-device-code-attempt'))
+  assert.equal(await f.store.pairByCode('234567'), true)
+  assert.equal(keys[0], keys[1]); assert.equal(f.storage.has('karaoke-device-code-attempt'), false)
 })

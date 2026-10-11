@@ -1,7 +1,7 @@
 import { getApiUrl } from '@/config'
 import { KaraokeGuideClock, type KaraokeGuideState } from '@/utils/karaokeGuideSync'
 
-export interface KaraokeGuideSession { id: string; hostToken: string; guideToken: string }
+export interface KaraokeGuideSession { id: string; hostToken: string; guideToken: string; pairCode: string }
 export class KaraokeGuideError extends Error {
   constructor(public code: string, public status = 0) { super(code) }
 }
@@ -29,6 +29,7 @@ export interface KaraokeGuideReply { state: KaraokeGuideState | null; hostOnline
 export interface KaraokePairedDevice {
   id: string
   name: string
+  username?: string
   canControl: boolean
   status: 'guide' | 'away' | 'offline'
   idleRemainingMs: number
@@ -53,6 +54,7 @@ export interface KaraokeCommandResult { id: string; status: 'pending' | 'applied
 export interface KaraokeHostReply {
   connectedDevices: number
   guideToken: string
+  pairCode: string
   devices: KaraokePairedDevice[]
   commands: KaraokeRemoteCommand[]
   deviceIdleMs: number

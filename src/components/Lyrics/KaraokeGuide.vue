@@ -143,7 +143,7 @@
           <section v-if="!player.partyAudioOwned && (player.karaokeMode || player.karaokeAvailable || pairing.session)" class="stage-pairing" :aria-label="$t('karaoke.guide.pairTitle')">
             <h2 class="stage-pairing-title">{{ $t('karaoke.guide.pairTitle') }}</h2>
             <template v-if="pairing.pairUrl">
-              <KaraokeGuideQr :value="pairing.pairUrl" class="stage-pairing-qr">
+              <KaraokeGuideQr compact :value="pairing.pairUrl" :code="pairing.session?.pairCode" class="stage-pairing-qr">
                 <template #fallback>
                   <label class="mt-2 block text-xs">{{ $t('karaoke.guide.pairLink') }}
                     <input :value="pairing.pairUrl" readonly class="mt-1 min-h-[44px] w-full rounded border border-gray-300 px-2 text-black"
@@ -153,6 +153,7 @@
               </KaraokeGuideQr>
               <p role="status" class="stage-pairing-status">{{ pairing.connectedDevices
                 ? $t('karaoke.guide.paired', { count: pairing.connectedDevices }) : $t('karaoke.guide.waiting') }}</p>
+              <KaraokePairedDevices compact class="mt-4 border-t border-white/10 pt-4" />
             </template>
             <template v-else>
               <p class="stage-pairing-hint">{{ $t('karaoke.guide.pairHint') }}</p>
@@ -206,6 +207,7 @@ import { lyricSeekTime } from '@/utils/lyricsOffset'
 import { useLyricsOffset } from '@/composables/useLyricsOffset'
 import LyricsTimingControl from '@/components/Lyrics/LyricsTimingControl.vue'
 import KaraokeGuideQr from '@/components/UI/KaraokeGuideQr.vue'
+import KaraokePairedDevices from '@/components/UI/KaraokePairedDevices.vue'
 import KaraokeStageSongs from '@/components/UI/KaraokeStageSongs.vue'
 import SongCover from '@/components/UI/SongCover.vue'
 import type { LyricLine, LyricWord } from '@/types'

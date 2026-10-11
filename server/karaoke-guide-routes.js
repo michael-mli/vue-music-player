@@ -1,15 +1,25 @@
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomInt } from 'node:crypto'
 import { performance } from 'node:perf_hooks'
 
 // The host owns playback. Each paired device gets a separately revocable grant.
 export function registerKaraokeGuideRoutes(app, {
   authMiddleware, now = () => performance.now(), lifetimeMs = 12 * 60 * 60 * 1000,
   idleMs = 120_000, deviceIdleMs = 30 * 60 * 1000, staleMs = 3000, maxSessions = 1000,
+  resolveUser = () => null, clientIp = req => req.ip,
 }) {
-  const sessions = new Map(), base = '/api/karaoke-guide/sessions'
+  const sessions = new Map(), pairCodes = new Map(), pairAttempts = new Map(), base = '/api/karaoke-guide/sessions'
   const secret = () => randomBytes(24).toString('base64url')
   const fail = (res, status, code) => res.status(status).json({ success: false, code })
   const bearer = req => req.headers.authorization?.replace(/^Bearer /, '')
+  function newCode(id) {
+    let code
+    do { code = String(randomInt(100000, 1000000)) } while (pairCodes.has(code))
+    pairCodes.set(code, id)
+    return code
+  }
+  function removeSession(id, session) {
+    pairCodes.delete(session.pairCode); sessions.delete(id)
+  }
   function revoke(session, device, reason) {
     session.devices.delete(device.id)
     session.revoked.set(device.token, reason)
@@ -21,11 +31,13 @@ export function registerKaraokeGuideRoutes(app, {
     }
     // Previously copied QR links cannot silently re-enrol a removed device.
     session.guideToken = secret()
+    const oldCode = session.pairCode
+    session.pairCode = newCode(session.id); pairCodes.delete(oldCode)
   }
   function sweep() {
     const time = now()
     for (const [id, session] of sessions) {
-      if (time >= session.expiresAt || time - session.updatedAt > idleMs) { sessions.delete(id); continue }
+      if (time >= session.expiresAt || time - session.updatedAt > idleMs) { removeSession(id, session); continue }
       for (const device of session.devices.values()) {
         if (time - device.lastActiveAt >= deviceIdleMs) revoke(session, device, 'idleExpired')
       }
@@ -36,6 +48,7 @@ export function registerKaraokeGuideRoutes(app, {
         if (time - command.createdAt > 5 * 60_000) session.commands.delete(id)
       }
     }
+    for (const [key, entry] of pairAttempts) if (time - entry.startedAt >= 60_000) pairAttempts.delete(key)
   }
   const cleanup = setInterval(sweep, 30_000)
   cleanup.unref()
@@ -59,41 +72,60 @@ export function registerKaraokeGuideRoutes(app, {
     fail(res, 403, session.revoked.get(token) || 'invalidPair'); return null
   }
   function publicDevice(device) {
-    return { id: device.id, name: device.name, canControl: device.canControl,
+    return { id: device.id, name: device.name, username: device.username, canControl: device.canControl,
       status: now() - device.lastSeenAt < 5000 ? device.mode : 'offline',
       idleRemainingMs: Math.max(0, deviceIdleMs - (now() - device.lastActiveAt)) }
   }
   function hostView(session) {
     const devices = [...session.devices.values()].map(publicDevice)
-    return { guideToken: session.guideToken, devices, deviceIdleMs,
+    return { guideToken: session.guideToken, pairCode: session.pairCode, devices, deviceIdleMs,
       connectedDevices: devices.filter(device => device.status === 'guide').length,
       commands: [...session.commands.values()].filter(command => command.status === 'pending')
         .map(({ id, action, songId, position, karaoke, expiresAt }) => ({ id, action, songId, position, karaoke, expiresAt })) }
   }
   app.post(base, authMiddleware, (req, res) => {
     sweep()
-    for (const [id, session] of sessions) if (session.owner === req.auth.sub) sessions.delete(id)
+    for (const [id, session] of sessions) if (session.owner === req.auth.sub) removeSession(id, session)
     if (sessions.size >= maxSessions) return fail(res, 503, 'unavailable')
     const id = secret(), hostToken = secret(), guideToken = secret(), time = now()
-    sessions.set(id, { owner: req.auth.sub, hostToken, guideToken, updatedAt: time,
+    const pairCode = newCode(id)
+    sessions.set(id, { id, pairCode, owner: req.auth.sub, hostToken, guideToken, updatedAt: time,
       expiresAt: time + lifetimeMs, state: null, devices: new Map(), revoked: new Map(),
       commands: new Map(), catalog: new Map(), staging: null, catalogReady: false, controlsAvailable: false, queue: [] })
-    reply(req, res, { id, hostToken, guideToken })
+    reply(req, res, { id, hostToken, guideToken, pairCode })
   })
-  app.post(`${base}/:id/devices`, (req, res) => {
-    const context = find(req, res, 'invite')
-    if (!context) return
-    const { session } = context, { joinKey, name } = req.body || {}
+  function join(req, res, session) {
+    const { joinKey, name, identityToken, deviceToken } = req.body || {}
     if (typeof joinKey !== 'string' || !/^[\w-]{16,64}$/.test(joinKey) ||
       typeof name !== 'string' || !name.trim() || name.length > 40) return fail(res, 400, 'invalidState')
-    let device = [...session.devices.values()].find(device => device.joinKey === joinKey)
+    const user = typeof identityToken === 'string' && identityToken.length <= 4096 ? resolveUser(identityToken) : null
+    let device = [...session.devices.values()].find(device => device.joinKey === joinKey || device.token === deviceToken)
     if (!device) {
       if (session.devices.size >= 10) return fail(res, 409, 'deviceLimit')
-      device = { id: secret(), token: secret(), joinKey, name: name.trim(), canControl: true,
+      device = { id: secret(), token: secret(), joinKey, name: name.trim(), username: user?.username || '', canControl: true,
         lastActiveAt: now(), lastSeenAt: now(), mode: 'guide', rateStart: now(), rateCount: 0 }
       session.devices.set(device.id, device)
     }
-    reply(req, res, { device: { ...publicDevice(device), token: device.token }, deviceIdleMs })
+    if (user?.username) device.username = user.username
+    device.lastActiveAt = now(); device.lastSeenAt = now(); device.mode = 'guide'
+    reply(req, res, { sessionId: session.id, device: { ...publicDevice(device), token: device.token }, deviceIdleMs })
+  }
+  app.post(`${base}/pair`, (req, res) => {
+    sweep()
+    // Short codes need a bounded attempt budget. Never return invitation or host credentials.
+    for (const [key, limit] of [['global', 300], [`ip:${clientIp(req)}`, 30]]) {
+      const entry = pairAttempts.get(key) || { startedAt: now(), count: 0 }
+      pairAttempts.set(key, entry)
+      if (++entry.count > limit) return fail(res, 429, 'pairCodeBusy')
+    }
+    const code = typeof req.body?.code === 'string' ? req.body.code.replace(/[\s-]/g, '') : ''
+    const session = /^\d{6}$/.test(code) ? sessions.get(pairCodes.get(code)) : null
+    if (!session) return fail(res, 404, 'invalidCode')
+    join(req, res, session)
+  })
+  app.post(`${base}/:id/devices`, (req, res) => {
+    const context = find(req, res, 'invite')
+    if (context) join(req, res, context.session)
   })
   app.patch(`${base}/:id/devices/:deviceId`, (req, res) => {
     const context = find(req, res, 'host')
@@ -231,7 +263,7 @@ export function registerKaraokeGuideRoutes(app, {
   })
   app.delete(`${base}/:id`, (req, res) => {
     if (!find(req, res, 'host')) return
-    sessions.delete(req.params.id); reply(req, res, {})
+    removeSession(req.params.id, sessions.get(req.params.id)); reply(req, res, {})
   })
-  return { close() { clearInterval(cleanup); sessions.clear() } }
+  return { close() { clearInterval(cleanup); sessions.clear(); pairCodes.clear(); pairAttempts.clear() } }
 }

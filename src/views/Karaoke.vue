@@ -35,6 +35,7 @@
         </button>
       </div>
 
+      <KaraokePairCodeEntry />
       <KaraokeGuidePairing />
 
       <!-- Now-singing lyrics stage -->
@@ -193,6 +194,7 @@ import SongCover from '@/components/UI/SongCover.vue'
 import SearchBar from '@/components/UI/SearchBar.vue'
 import KaraokeMicSetup from '@/components/UI/KaraokeMicSetup.vue'
 import KaraokeGuidePairing from '@/components/UI/KaraokeGuidePairing.vue'
+import KaraokePairCodeEntry from '@/components/UI/KaraokePairCodeEntry.vue'
 import KaraokeGuide from '@/components/Lyrics/KaraokeGuide.vue'
 import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'

@@ -167,7 +167,12 @@ function requireAdmin(req, res, next) {
 }
 
 const karaokeManifestPath = process.env.KARAOKE_MANIFEST_PATH || path.join(WEB_ROOT, 'karaoke', 'karaoke_manifest.json')
-registerKaraokeGuideRoutes(app, { authMiddleware })
+registerKaraokeGuideRoutes(app, { authMiddleware, clientIp: requestIp, resolveUser(token) {
+  try {
+    const claims = jwt.verify(token, JWT_SECRET)
+    return db.prepare('SELECT username FROM users WHERE id = ?').get(claims.sub) || null
+  } catch { return null }
+} })
 const ktvMetrics = createKtvMetrics()
 const ktvFeatures = ktvFeaturesFromEnv(process.env)
 app.use('/api/ktv', ktvMetrics.middleware)

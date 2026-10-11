@@ -159,7 +159,9 @@ share the settings. The audio and original LRC files are unchanged.
 ## Paired original vocal guide
 
 In regular Karaoke (`/sing`), enable karaoke mode, select a song, and click
-**Pair vocal guide**. Scan the QR code on another device and tap **Start vocal
+**Pair vocal guide**. Scan the QR code on another device, or enter the unique
+six-digit code shown above it in **Pair with a karaoke player** on that device’s
+Karaoke page (`/sing`) or guide page (`/sing/guide`). Then tap **Start vocal
 guide**. The main player keeps playing the instrumental; the paired device
 plays the original recording with vocals. Use headphones for a private guide.
 
@@ -192,9 +194,13 @@ Back/navigation shows a warning before stopping this device’s audio. Continuin
 keeps the pairing in local storage: **Return to paired karaoke** appears elsewhere
 in the app, including after a reload. Returning requires a fresh audio tap. Name
 your phone on the guide page to identify it in the host’s **Paired devices** list.
+Both regular and fullscreen karaoke show each device’s name, verified app username,
+connection state, idle time, and controls for allowing remote commands or removing it.
+The username comes from the device’s authenticated app identity (including guests),
+independently of its editable device name.
 The host can turn controls off while keeping listening available, or remove an
-individual device. Removal revokes that device and refreshes the QR invitation;
-other devices retain their grants. Up to 10 devices can pair with one host.
+individual device. Removal revokes that device and refreshes both the QR invitation
+and short code; other devices retain their grants. Up to 10 devices can pair with one host.
 
 A device expires after **30 minutes without listening or interaction**. Away,
 offline, untouched paused, and guide-stopped devices time out; active listening,
@@ -215,6 +221,9 @@ live in the QR link fragment; the guide removes that fragment after opening and
 exchanges the invitation for a separate device token, saved locally for returning.
 Only the host token can publish playback, update the song catalog, or manage
 other devices. Per-device control permissions are enforced on the backend. Live sync responses are never cached by the PWA.
+Short codes are unique among active sessions, expire with the session, and exchange
+directly for the same independently revocable device grant as a QR scan. Code attempts
+are rate limited; joining never reveals the host token or QR invitation credential.
 
 Run `npm run test:karaoke-guide` for route authorization, lifecycle, playback state,
 device permissions/removal, idle expiry, command deduplication/deadlines, catalog

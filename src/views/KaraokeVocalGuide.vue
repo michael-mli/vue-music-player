@@ -4,6 +4,7 @@
       <p class="text-sm font-medium text-spotify-green">{{ $t('navigation.karaoke') }}</p>
       <h1 class="mt-3 text-3xl font-bold">{{ $t('karaoke.guide.title') }}</h1>
       <p class="mt-3 text-sm text-light-text-secondary dark:text-gray-400">{{ $t('karaoke.guide.listenerHint') }}</p>
+      <KaraokePairCodeEntry v-if="!pair.grant" class="mt-5" />
       <div class="my-6 rounded-xl bg-light-bg dark:bg-black/20 p-4">
         <p class="break-words text-lg font-semibold">{{ snapshot?.song?.title || $t('karaoke.guide.noSong') }}</p>
         <p v-if="snapshot?.song" class="mt-1 text-xs text-light-text-secondary dark:text-gray-400 guide-current-song-id">{{ $t('music.songId') }}: {{ snapshot.song.id }}</p>
@@ -124,6 +125,7 @@ import { useKaraokeDeviceStore } from '@/stores/karaokeDevice'
 import { guidePosition } from '@/utils/karaokeGuideSync'
 import { KaraokeGuidePlayback } from '@/utils/karaokeGuidePlayback'
 import KaraokeRemoteSongList from '@/components/UI/KaraokeRemoteSongList.vue'
+import KaraokePairCodeEntry from '@/components/UI/KaraokePairCodeEntry.vue'
 
 const pair = useKaraokeDeviceStore(), { snapshot, hostOnline } = storeToRefs(pair), { t } = useI18n()
 const audio = ref<HTMLAudioElement | null>(null), enabled = ref(false), audioError = ref(''), position = ref(0)
@@ -132,7 +134,7 @@ const ended = computed(() => ['expired', 'invalidPair', 'removed', 'idleExpired'
 const error = computed(() => pair.error || audioError.value)
 const volume = ref(0.6), offset = ref(readOffset()), query = ref(''), deviceName = ref(pair.grant?.name || '')
 const wakeLock = useWakeLock()
-const status = computed(() => ended.value ? pair.error : pair.error === 'reconnecting' ? 'reconnecting' :
+const status = computed(() => ended.value ? pair.error : !pair.grant && !pair.joining ? 'notPaired' : pair.error === 'reconnecting' ? 'reconnecting' :
   !snapshot.value ? 'connecting' : !hostOnline.value ? 'hostOffline' : !enabled.value ? 'ready' : recoveringAudio.value ? 'recoveringAudio' :
     snapshot.value.playing ? 'following' : 'paused')
 let syncTimer: number | undefined, disposed = false, source = ''

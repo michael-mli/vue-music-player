@@ -12,7 +12,7 @@
         @click="guide.stop()">{{ $t('karaoke.guide.endPairing') }}</button>
     </div>
     <div v-if="guide.pairUrl" class="mt-4 flex flex-wrap items-center gap-5">
-      <KaraokeGuideQr :value="guide.pairUrl" />
+      <KaraokeGuideQr :value="guide.pairUrl" :code="guide.session?.pairCode" />
       <div class="min-w-0 flex-1 basis-48">
         <p role="status" class="text-sm text-spotify-green">{{ guide.connectedDevices
           ? $t('karaoke.guide.paired', { count: guide.connectedDevices }) : $t('karaoke.guide.waiting') }}</p>
@@ -27,25 +27,7 @@
       </div>
     </div>
     <div v-if="guide.session" class="mt-5 border-t border-light-border dark:border-white/10 pt-4">
-      <h3 class="font-semibold">{{ $t('karaoke.guide.devicesTitle') }} ({{ guide.devices.length }}/10)</h3>
-      <p class="mt-1 text-xs text-light-text-secondary dark:text-gray-400">{{ $t('karaoke.guide.idleHint') }}</p>
-      <ul class="mt-3 space-y-3">
-        <li v-for="device in guide.devices" :key="device.id" :data-device-id="device.id" class="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-light-bg dark:bg-black/20 p-3">
-          <div class="min-w-0">
-            <p class="break-words text-sm font-medium">{{ device.name }}</p>
-            <p class="mt-1 text-xs text-light-text-secondary dark:text-gray-400">{{ $t(`karaoke.guide.device${device.status}`) }} · {{ $t('karaoke.guide.idleRemaining', { minutes: Math.ceil(device.idleRemainingMs / 60000) }) }}</p>
-          </div>
-          <div class="flex flex-wrap items-center gap-3">
-            <label class="flex min-h-[44px] items-center gap-2 text-sm">
-              <input type="checkbox" :checked="device.canControl" :disabled="!!guide.managing" class="accent-spotify-green"
-                @change="guide.manageDevice(device.id, ($event.target as HTMLInputElement).checked)" />
-              {{ $t('karaoke.guide.allowControls') }}
-            </label>
-            <button type="button" :disabled="!!guide.managing" class="min-h-[44px] px-2 text-sm text-red-500 dark:text-red-300 disabled:opacity-40"
-              :aria-label="$t('karaoke.guide.removeDevice', { name: device.name })" @click="guide.manageDevice(device.id)">{{ $t('karaoke.guide.remove') }}</button>
-          </div>
-        </li>
-      </ul>
+      <KaraokePairedDevices />
       <h3 class="mt-4 font-semibold">{{ $t('karaoke.guide.songQueue') }}</h3>
       <p v-if="!player.requestedQueue.length" class="mt-2 text-sm text-light-text-secondary dark:text-gray-400">{{ $t('karaoke.guide.emptyQueue') }}</p>
       <ol class="mt-2 space-y-2">
@@ -67,6 +49,7 @@ import { ref, watch } from 'vue'
 import { usePlayerStore } from '@/stores/player'
 import { useKaraokeGuideStore } from '@/stores/karaokeGuide'
 import KaraokeGuideQr from '@/components/UI/KaraokeGuideQr.vue'
+import KaraokePairedDevices from '@/components/UI/KaraokePairedDevices.vue'
 
 const player = usePlayerStore(), guide = useKaraokeGuideStore()
 const copied = ref(false)

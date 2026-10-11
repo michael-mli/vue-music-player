@@ -11,7 +11,7 @@ async function setup(t, options = {}) {
   const guide = registerKaraokeGuideRoutes(app, { now: () => time, authMiddleware(req, res, next) {
     if (!['user-1', 'user-2'].includes(req.headers.authorization?.slice(7))) return res.sendStatus(401)
     req.auth = { sub: req.headers.authorization.slice(7) }; next()
-  }, ...options })
+  }, resolveUser: token => token === 'user-2' ? { username: 'BlueSinger' } : null, ...options })
   const server = app.listen(0, '127.0.0.1')
   await once(server, 'listening')
   t.after(async () => { guide.close(); await new Promise(resolve => server.close(resolve)) })
@@ -239,4 +239,70 @@ test('pairing limits devices without changing existing grants', async t => {
   for (let i = 0; i < 10; i++) assert.ok((await f.join(pair, `Phone ${i}`, `unique-device-join-key-${i}`)).token)
   const response = await f.request('POST', `/${pair.id}/devices`, pair.guideToken, { name: 'Extra', joinKey: 'extra-device-join-key' })
   assert.equal(response.status, 409); assert.equal(response.data.code, 'deviceLimit')
+})
+
+test('short codes are unique for live sessions and issue device grants with verified usernames', async t => {
+  const f = await setup(t), a = await f.create(), b = await f.create('user-2')
+  assert.match(a.pairCode, /^\d{6}$/); assert.match(b.pairCode, /^\d{6}$/)
+  assert.notEqual(a.pairCode, b.pairCode)
+  const body = { code: `${a.pairCode.slice(0, 3)} ${a.pairCode.slice(3)}`, name: 'Tablet',
+    joinKey: 'short-code-tablet-key', identityToken: 'user-2', username: 'ForgedUsername' }
+  const response = await f.request('POST', '/pair', '', body), data = response.data.data
+  assert.equal(response.status, 200); assert.equal(data.sessionId, a.id)
+  assert.equal(data.device.username, 'BlueSinger')
+  assert.equal(data.hostToken, undefined); assert.equal(data.guideToken, undefined); assert.equal(data.pairCode, undefined)
+  assert.notEqual(data.device.token, a.hostToken); assert.notEqual(data.device.token, a.guideToken)
+  assert.match(response.headers.get('cache-control'), /no-store/)
+  const host = (await f.request('PUT', `/${a.id}`, a.hostToken, f.state())).data.data
+  assert.equal(host.devices[0].username, 'BlueSinger'); assert.equal(host.devices[0].token, undefined)
+  assert.equal((await f.request('GET', `/${b.id}`, data.device.token)).status, 403)
+  assert.equal((await f.request('DELETE', `/${a.id}`, data.device.token)).status, 403)
+  const repeated = (await f.request('POST', '/pair', '', body)).data.data.device
+  assert.equal(repeated.token, data.device.token)
+  const restored = (await f.request('POST', '/pair', '', { ...body, joinKey: 'different-join-key-long', deviceToken: data.device.token })).data.data.device
+  assert.equal(restored.id, data.device.id)
+  assert.equal((await f.request('PUT', `/${a.id}`, a.hostToken, f.state())).data.data.devices.length, 1)
+})
+
+test('QR pairing resolves usernames from identity tokens and ignores unverified client usernames', async t => {
+  const f = await setup(t), pair = await f.create(), route = `/${pair.id}/devices`
+  const body = { name: 'Phone', joinKey: 'verified-qr-phone-key', identityToken: 'user-2', username: 'Fake' }
+  const device = (await f.request('POST', route, pair.guideToken, body)).data.data.device
+  assert.equal(device.username, 'BlueSinger')
+  const anonymous = (await f.request('POST', route, pair.guideToken,
+    { ...body, joinKey: 'anonymous-qr-phone-key', identityToken: 'fake-token' })).data.data.device
+  assert.equal(anonymous.username, '')
+  await f.request('PATCH', `/${pair.id}/device`, device.token, { name: 'Renamed phone', username: 'Fake' })
+  assert.equal((await f.request('GET', `/${pair.id}`, device.token)).data.data.device.username, 'BlueSinger')
+})
+
+test('removal, idle cleanup, replacement and session end invalidate short codes without revoking other devices', async t => {
+  const f = await setup(t, { deviceIdleMs: 1000 }), pair = await f.create(), route = `/${pair.id}`
+  const phone = await f.join(pair), tablet = await f.join(pair, 'Tablet', 'code-survivor-tablet-key')
+  const enrol = code => f.request('POST', '/pair', '', { code, name: 'New phone', joinKey: 'new-code-phone-key' })
+  const removed = (await f.request('DELETE', `${route}/devices/${phone.id}`, pair.hostToken)).data.data
+  assert.notEqual(removed.pairCode, pair.pairCode)
+  assert.equal((await enrol(pair.pairCode)).data.code, 'invalidCode')
+  assert.equal((await f.request('GET', route, tablet.token)).status, 200)
+  const fresh = await enrol(removed.pairCode)
+  assert.equal(fresh.status, 200)
+  f.advance(1001)
+  const idle = (await f.request('PUT', route, pair.hostToken, f.state())).data.data
+  assert.equal(idle.devices.length, 0); assert.notEqual(idle.pairCode, removed.pairCode)
+  assert.equal((await enrol(removed.pairCode)).data.code, 'invalidCode')
+  const replacement = await f.create()
+  assert.equal((await enrol(idle.pairCode)).data.code, 'invalidCode')
+  await f.request('DELETE', `/${replacement.id}`, replacement.hostToken)
+  assert.equal((await enrol(replacement.pairCode)).data.code, 'invalidCode')
+})
+
+test('short-code attempts are limited and expired hosts cannot be joined by code', async t => {
+  const f = await setup(t, { idleMs: 1000 }), pair = await f.create()
+  const body = { name: 'Phone', joinKey: 'bounded-pair-code-key', code: 'bad' }
+  for (let i = 0; i < 30; i++) assert.equal((await f.request('POST', '/pair', '', body)).status, 404)
+  assert.equal((await f.request('POST', '/pair', '', { ...body, code: pair.pairCode })).data.code, 'pairCodeBusy')
+  f.advance(60_001)
+  assert.equal((await f.request('POST', '/pair', '', { ...body, code: pair.pairCode })).data.code, 'invalidCode')
+  const fresh = await f.create()
+  assert.equal((await f.request('POST', '/pair', '', { ...body, code: fresh.pairCode })).status, 200)
 })

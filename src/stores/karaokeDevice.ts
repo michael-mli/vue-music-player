@@ -1,11 +1,12 @@
 import { computed, markRaw, ref } from 'vue'
 import { defineStore } from 'pinia'
+import { useAuthStore } from '@/stores/auth'
 import { guideRequest, KaraokeGuideError, karaokeRequestId, type KaraokeDeviceGrant,
   type KaraokeDeviceReply, type KaraokePairedDevice, type KaraokeCommandResult,
   type KaraokeRemoteAction, type KaraokeCatalogReply } from '@/services/karaokeGuideApi'
 import { KaraokeGuideClock, type KaraokeGuideState } from '@/utils/karaokeGuideSync'
 
-const storageKey = 'karaoke-device-pair', invitationKey = 'karaoke-device-invitation'
+const storageKey = 'karaoke-device-pair', invitationKey = 'karaoke-device-invitation', codeAttemptKey = 'karaoke-device-code-attempt'
 const validSecret = (value: unknown) => typeof value === 'string' && /^[\w-]{32}$/.test(value)
 function savedGrant(): KaraokeDeviceGrant | null {
   try {
@@ -18,10 +19,11 @@ function savedGrant(): KaraokeDeviceGrant | null {
 
 // App owns this store so navigating away keeps the grant, without keeping audio on.
 export const useKaraokeDeviceStore = defineStore('karaokeDevice', () => {
+  const auth = useAuthStore()
   const grant = ref<KaraokeDeviceGrant | null>(savedGrant())
   const snapshot = ref<KaraokeGuideState | null>(null), device = ref<KaraokePairedDevice | null>(null)
   const hostOnline = ref(false), controlsAvailable = ref(false), inGuide = ref(false), listening = ref(false)
-  const error = ref(''), commandError = ref(''), commandNotice = ref(''), joining = ref(false)
+  const error = ref(''), commandError = ref(''), commandNotice = ref(''), joining = ref(false), pairCodeError = ref('')
   const queue = ref<{ id: number; title: string }[]>([]), lastReply = ref(-Infinity)
   const catalog = ref<KaraokeCatalogReply | null>(null), searching = ref(false), searchError = ref('')
   const browseCatalog = ref<KaraokeCatalogReply | null>(null), browsing = ref(false), browseError = ref('')
@@ -100,7 +102,49 @@ export const useKaraokeDeviceStore = defineStore('karaokeDevice', () => {
   function stop() { running = false; window.clearTimeout(timer) }
   function resume() { if (document.visibilityState === 'visible') schedule(0) }
 
+  function defaultDeviceName() {
+    return /iPhone/.test(navigator.userAgent) ? 'iPhone' : /iPad/.test(navigator.userAgent) ? 'iPad' : /Android/.test(navigator.userAgent) ? 'Android phone' : 'Guide device'
+  }
+  function acceptPair(sessionId: string, value: KaraokePairedDevice & { token: string }) {
+    if (grant.value?.token !== value.token) {
+      grant.value = { sessionId, token: value.token, deviceId: value.id,
+        name: value.name, expiresAt: Date.now() + value.idleRemainingMs }
+      snapshot.value = null; queue.value = []; pending.value = null; listening.value = false
+      searchGeneration++; browseGeneration++
+      catalog.value = null; browseCatalog.value = null; searching.value = false; browsing.value = false
+      searchError.value = ''; browseError.value = ''; commandError.value = ''; commandNotice.value = ''
+    }
+    refreshDevice(value); error.value = ''
+    setInGuide(true); start()
+  }
+  async function pairByCode(rawCode: string): Promise<boolean> {
+    if (joining.value) return false
+    const code = rawCode.replace(/[\s-]/g, '')
+    pairCodeError.value = ''
+    if (!/^\d{6}$/.test(code)) { pairCodeError.value = 'invalidCode'; return false }
+    joining.value = true
+    try {
+      let attempt: { code: string; joinKey: string; expiresAt: number } | null = null
+      try { attempt = JSON.parse(localStorage.getItem(codeAttemptKey) || 'null') } catch { /* Optional persistence. */ }
+      if (!attempt || attempt.code !== code || attempt.expiresAt <= Date.now() || !/^[\w-]{16,64}$/.test(attempt.joinKey)) {
+        attempt = { code, joinKey: karaokeRequestId(), expiresAt: Date.now() + 300_000 }
+      }
+      try { localStorage.setItem(codeAttemptKey, JSON.stringify(attempt)) } catch { /* Optional persistence. */ }
+      await auth.ensureIdentity()
+      const result = await guideRequest<{ sessionId: string; device: KaraokePairedDevice & { token: string } }>(clock,
+        '/pair', '', 'POST', { code, joinKey: attempt.joinKey, name: defaultDeviceName(),
+          identityToken: auth.token, deviceToken: grant.value?.token })
+      acceptPair(result.sessionId, result.device)
+      try { localStorage.removeItem(codeAttemptKey); localStorage.removeItem(invitationKey) } catch { /* Optional persistence. */ }
+      return true
+    } catch (reason) {
+      pairCodeError.value = reason instanceof KaraokeGuideError ? reason.code : 'unavailable'
+      return false
+    } finally { joining.value = false }
+  }
+
   async function openPair() {
+    if (joining.value) return
     error.value = ''; joining.value = true
     const url = new URL(window.location.href), params = new URLSearchParams(url.hash.slice(1))
     let invitation: { sessionId: string; token: string; joinKey: string; expiresAt: number } | null = null
@@ -125,21 +169,17 @@ export const useKaraokeDeviceStore = defineStore('karaokeDevice', () => {
         } catch (reason) { if (!terminal(reason)) throw reason }
       }
       if (invitation && grant.value?.sessionId !== invitation.sessionId) {
-        const name = /iPhone/.test(navigator.userAgent) ? 'iPhone' : /iPad/.test(navigator.userAgent) ? 'iPad' : /Android/.test(navigator.userAgent) ? 'Android phone' : 'Guide device'
+        await auth.ensureIdentity()
         const result = await guideRequest<{ device: KaraokePairedDevice & { token: string } }>(clock,
-          `/${invitation.sessionId}/devices`, invitation.token, 'POST', { joinKey: invitation.joinKey, name })
-        grant.value = { sessionId: invitation.sessionId, token: result.device.token, deviceId: result.device.id,
-          name: result.device.name, expiresAt: Date.now() + result.device.idleRemainingMs }
-        refreshDevice(result.device); snapshot.value = null; queue.value = []; pending.value = null
-        searchGeneration++; browseGeneration++
-        catalog.value = null; browseCatalog.value = null; searching.value = false; browsing.value = false
-        searchError.value = ''; browseError.value = ''
+          `/${invitation.sessionId}/devices`, invitation.token, 'POST', { joinKey: invitation.joinKey,
+            name: defaultDeviceName(), identityToken: auth.token })
+        acceptPair(invitation.sessionId, result.device)
       }
       if (grant.value) {
         error.value = ''
         try { localStorage.removeItem(invitationKey) } catch { /* Optional. */ }
         setInGuide(true); start()
-      } else error.value = 'invalidPair'
+      } else error.value = ''
     } catch (reason) {
       if (terminal(reason)) { try { localStorage.removeItem(invitationKey) } catch { /* Optional. */ } }
       else error.value = reason instanceof KaraokeGuideError ? reason.code : 'reconnecting'
@@ -202,6 +242,6 @@ export const useKaraokeDeviceStore = defineStore('karaokeDevice', () => {
     } finally { if (attempt === browseGeneration) browsing.value = false }
   }
   return { grant, snapshot, device, hostOnline, controlsAvailable, inGuide, listening, error, commandError, commandNotice,
-    joining, queue, lastReply, catalog, searching, searchError, pending, clock, canControl,
-    browseCatalog, browsing, browseError, start, stop, resume, setInGuide, touch, openPair, command, search, browse, rename }
+    joining, pairCodeError, queue, lastReply, catalog, searching, searchError, pending, clock, canControl,
+    browseCatalog, browsing, browseError, start, stop, resume, setInGuide, touch, openPair, pairByCode, command, search, browse, rename }
 })
