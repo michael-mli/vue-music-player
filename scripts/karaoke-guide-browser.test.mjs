@@ -258,8 +258,8 @@ try {
   check(await evaluate(host, `document.fullscreenElement === window.__karaokeStage && document.fullscreenElement.querySelector('.visualizer-canvas').style.display === 'none' && !${store('player')}.audioElement.paused`), 'turning off visualization keeps host audio and fullscreen active')
   await evaluate(host, `document.querySelector('#music-visualizer-settings input[type="checkbox"]').click(); document.fullscreenElement.querySelector('.visualizer-settings-button').click()`)
   const toolbarVisible = () => evaluate(host, `(() => {
-    const buttons = [...document.fullscreenElement.querySelectorAll('[data-stage-command], [data-stage-mode]')];
-    return buttons.length === 6 && buttons.every(button => {
+    const buttons = [...document.fullscreenElement.querySelectorAll('[data-stage-command], [data-stage-mode], [data-action="toggle-stage-order"]')];
+    return buttons.length === 7 && buttons.every(button => {
       const rect = button.getBoundingClientRect();
       return rect.top >= 0 && rect.bottom <= innerHeight && rect.left >= 0 && rect.right <= innerWidth
         && document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)?.closest('button') === button;
@@ -289,6 +289,10 @@ try {
       && document.elementFromPoint(line.x + line.width / 2, line.y + line.height / 2)?.closest('.stage-browse-lyric') === lyric;
   })()`)
   check(await toolbarVisible(), 'fullscreen always shows separate clickable play, pause, stop and next controls')
+  await evaluate(host, `window.__orderSample = { id: ${store('player')}.currentSong.id, source: ${store('player')}.audioElement.src, time: ${store('player')}.audioElement.currentTime }; document.fullscreenElement.querySelector('[data-action="toggle-stage-order"]').click()`)
+  check(await toolbarVisible() && await evaluate(host, `!${store('player')}.shuffle && document.fullscreenElement.querySelector('[data-stage-order="id-desc"]').textContent.trim() === 'ID ↓' && ${store('player')}.currentSong.id === window.__orderSample.id && ${store('player')}.audioElement.src === window.__orderSample.source && !${store('player')}.audioElement.paused && ${store('player')}.audioElement.currentTime >= window.__orderSample.time && document.fullscreenElement === window.__karaokeStage`), 'fullscreen toggles to descending song ID without restarting the song or leaving fullscreen')
+  await evaluate(host, `document.fullscreenElement.querySelector('[data-action="toggle-stage-order"]').click()`)
+  check(await toolbarVisible() && await evaluate(host, `${store('player')}.shuffle && document.fullscreenElement.querySelector('[data-stage-order="random"]').textContent.trim() === 'Random'`), 'the always-visible playback-order button switches back to random')
   await evaluate(host, `window.__modePair = ${store('karaokeGuide')}.session.id; window.__modePairUrl = ${store('karaokeGuide')}.pairUrl;
     document.fullscreenElement.querySelector('[data-stage-mode="original"]').click()`)
   await poll(() => evaluate(host, `!${store('player')}.karaokeMode && !${store('player')}.audioElement.paused && ${store('player')}.audioElement.src.endsWith('/link.1.mp3')`), 'fullscreen switches to Original')
@@ -697,13 +701,22 @@ try {
   await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-action="close-songs"]').click()`)
   const freshHost = await page(origin, '/sing', 1100)
   await poll(() => evaluate(freshHost, `!!${store('player')}.currentSong && ${store('player')}.audioElement?.readyState >= 3 && !!document.querySelector('.karaoke-view .singing-guide')`), 'fresh fullscreen host')
-  await evaluate(freshHost, `${store('ui')}.showVisualizer = false; ${store('player')}.play()`)
+  await evaluate(freshHost, `${store('ui')}.showVisualizer = false; ${store('player')}.shuffle = false; ${store('player')}.playSong(${store('songs')}.songs.find(song => song.id === 1), ${store('songs')}.songs)`)
   check(await evaluate(freshHost, `window.__visualizerSources.length === 0`), 'fresh host has no visualizer audio source before fullscreen')
   await cdp('Page.bringToFront', {}, freshHost)
   await evaluate(freshHost, `document.querySelector('.karaoke-view .singing-guide .guide-icon-button').click()`)
   await poll(() => evaluate(freshHost, `!!document.fullscreenElement?.querySelector('.music-visualizer') && window.__visualizerSources.length === 1`), 'fullscreen creates initial audio analyser')
   await poll(() => evaluate(freshHost, `(() => { const node = window.__visualizerAnalysers[0], values = new Uint8Array(node.frequencyBinCount); node.getByteFrequencyData(values); return values.some(value => value > 0); })()`), 'fresh fullscreen live signal')
   check(true, 'fullscreen starts rainbow-bar visualization with live audio when the regular visualizer was never opened')
+  check(await evaluate(freshHost, `!!document.fullscreenElement.querySelector('[data-stage-order="id-desc"]') && document.fullscreenElement.querySelector('[data-stage-command="next"]').disabled`), 'entering fullscreen with sequential playback selects descending IDs and disables Next at the smallest ID')
+  await evaluate(freshHost, `${store('player')}.playSong(${store('songs')}.songs.find(song => song.id === 2), ${store('songs')}.songs, 1)`)
+  await poll(() => evaluate(freshHost, `${store('player')}.audioElement.readyState >= 3 && ${store('player')}.isPlaying && !document.fullscreenElement.querySelector('[data-stage-command="next"]').disabled`), 'descending playback ready on ID 2')
+  await evaluate(freshHost, `window.__orderStage = document.fullscreenElement; document.fullscreenElement.querySelector('[data-stage-command="next"]').click()`)
+  await poll(() => evaluate(freshHost, `${store('player')}.currentSong.id === 1 && ${store('player')}.audioElement.readyState >= 3 && ${store('player')}.isPlaying && document.fullscreenElement.querySelector('[data-stage-command="next"]').disabled`), 'descending Next advances from ID 2 to ID 1')
+  check(await evaluate(freshHost, `document.fullscreenElement === window.__orderStage && !!document.fullscreenElement.querySelector('[data-stage-order="id-desc"]') && window.__visualizerSources.length === 1`), 'descending ID order survives a new song queue and Next while preserving fullscreen and the audio graph')
+  await screenshot(freshHost, '-descending-order')
+  await evaluate(freshHost, `document.fullscreenElement.querySelector('[data-action="toggle-stage-order"]').click()`)
+  check(await evaluate(freshHost, `${store('player')}.shuffle && !document.fullscreenElement.querySelector('[data-stage-command="next"]').disabled && !!document.fullscreenElement.querySelector('[data-stage-order="random"]')`), 'random order enables Next again at the lowest song ID')
   await evaluate(freshHost, `document.querySelector('#app').__vue_app__.config.globalProperties.$router.push('/library')`)
   await poll(() => evaluate(freshHost, `!document.fullscreenElement && !${store('ui')}.fullscreenStage`), 'unmount fullscreen stage clears visualizer destination')
   await evaluate(freshHost, `${store('ui')}.showVisualizer = true`)

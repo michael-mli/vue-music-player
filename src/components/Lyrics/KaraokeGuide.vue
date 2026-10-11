@@ -24,11 +24,17 @@
         <button type="button" data-stage-command="stop" :disabled="!player.currentSong || player.partyAudioOwned" @click="player.stopPlayback()"><StopIcon />{{ $t('karaoke.stageStop') }}</button>
         <button type="button" data-stage-command="next" :disabled="!player.canPlayNext || player.partyAudioOwned" @click="player.nextSong()"><ForwardIcon />{{ $t('player.next') }}</button>
       </div>
-      <div class="stage-mode" role="group" :aria-label="$t('karaoke.guide.hostAudioMode')">
-        <button type="button" data-stage-mode="karaoke" :aria-pressed="player.karaokeMode"
-          :disabled="!player.karaokeAvailable || player.partyAudioOwned || player.isTransitioning" @click="switchMode(true)">{{ $t('karaoke.switchKaraoke') }}</button>
-        <button type="button" data-stage-mode="original" :aria-pressed="!player.karaokeMode"
-          :disabled="!player.karaokeAvailable || player.partyAudioOwned || player.isTransitioning" @click="switchMode(false)">{{ $t('karaoke.switchOriginal') }}</button>
+      <div class="stage-options">
+        <div class="stage-mode" role="group" :aria-label="$t('karaoke.guide.hostAudioMode')">
+          <button type="button" data-stage-mode="karaoke" :aria-pressed="player.karaokeMode"
+            :disabled="!player.karaokeAvailable || player.partyAudioOwned || player.isTransitioning" @click="switchMode(true)">{{ $t('karaoke.switchKaraoke') }}</button>
+          <button type="button" data-stage-mode="original" :aria-pressed="!player.karaokeMode"
+            :disabled="!player.karaokeAvailable || player.partyAudioOwned || player.isTransitioning" @click="switchMode(false)">{{ $t('karaoke.switchOriginal') }}</button>
+        </div>
+        <button type="button" class="stage-order-button" data-action="toggle-stage-order" :data-stage-order="player.shuffle ? 'random' : 'id-desc'"
+          :disabled="player.partyAudioOwned" :aria-label="$t(player.shuffle ? 'karaoke.stageOrderRandomHint' : 'karaoke.stageOrderIdHint')"
+          :title="$t(player.shuffle ? 'karaoke.stageOrderRandomHint' : 'karaoke.stageOrderIdHint')"
+          @click="player.setPlaybackOrder(player.shuffle ? 'id-desc' : 'random')">{{ $t(player.shuffle ? 'karaoke.stageOrderRandom' : 'karaoke.stageOrderId') }}</button>
       </div>
       <div class="stage-tools">
         <button ref="songsButton" type="button" data-action="toggle-stage-songs" :aria-expanded="songsOpen" aria-controls="karaoke-stage-songs"
@@ -336,6 +342,7 @@ async function toggleFullscreen() {
 function syncFullscreen() {
   const wasFullscreen = fullscreen.value
   fullscreen.value = document.fullscreenElement === stage.value
+  if (fullscreen.value && !wasFullscreen && !player.shuffle) player.setPlaybackOrder('id-desc')
   if (fullscreen.value) { coverVisible.value = readCoverPreference(); ui.fullscreenStage = stage.value || null }
   else if (ui.fullscreenStage === stage.value) ui.fullscreenStage = null
   if (wasFullscreen !== fullscreen.value) { songsOpen.value = false; allLyricsOpen.value = false }
@@ -448,10 +455,12 @@ button:focus-visible, summary:focus-visible, input:focus-visible { outline: 2px 
 .stage-toolbar { position: relative; z-index: 2; flex-shrink: 0; display: flex; flex-wrap: wrap; gap: 8px; padding: 8px; margin: 12px 0; border: 1px solid #56716b; border-radius: 12px; background: #081b16eb; }
 .stage-playback, .stage-tools, .stage-mode { display: grid; gap: 6px; flex: 1 1 320px; min-width: 0; }
 .stage-playback { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.stage-mode { flex-basis: 160px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.stage-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); flex: 1 1 230px; min-width: 0; gap: 6px; }
+.stage-mode { grid-column: span 2; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .stage-tools { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .stage-toolbar button { display: flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; min-height: 44px; border: 1px solid #56716b; border-radius: 8px; padding: 8px 4px; font-size: 12px; }
 .stage-toolbar button svg { width: 18px; height: 18px; flex-shrink: 0; }
+.stage-toolbar .stage-order-button { color: #7ef0b6; border-color: #7ef0b6; white-space: nowrap; }
 .stage-toolbar [aria-expanded="true"], .stage-mode [aria-pressed="true"], .stage-toolbar [data-stage-command="play"]:not(:disabled) { color: #7ef0b6; border-color: #7ef0b6; }
 .singing-guide:fullscreen .stage-workspace { position: relative; z-index: 1; flex: 1; min-height: 0; }
 .singing-guide:fullscreen .guide-layout { height: 100%; overflow-y: auto; padding: 0 4px 24px; overscroll-behavior: contain; }

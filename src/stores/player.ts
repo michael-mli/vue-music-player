@@ -21,6 +21,7 @@ export const usePlayerStore = defineStore('player', () => {
   const currentTime = ref(0)
   const duration = ref(0)
   const shuffle = ref(true)
+  const sequentialOrder = ref<'queue' | 'id-desc'>('queue')
   const repeat = ref<'none' | 'one' | 'all'>('none')
   const queue = ref<Song[]>([])
   // Explicit karaoke requests play in order before the normal/shuffled queue.
@@ -148,7 +149,9 @@ export const usePlayerStore = defineStore('player', () => {
   })
 
   const canPlayNext = computed(() => {
-    return requestedQueue.value.length > 0 || shuffle.value || currentIndex.value < queue.value.length - 1 || repeat.value === 'all'
+    return requestedQueue.value.length > 0 || shuffle.value || (sequentialOrder.value === 'id-desc'
+      ? nextIndexCandidates(1).length > 0
+      : currentIndex.value < queue.value.length - 1 || repeat.value === 'all')
   })
 
   const canPlayPrevious = computed(() => {
@@ -792,12 +795,23 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   function toggleShuffle() {
+    sequentialOrder.value = 'queue'
     shuffle.value = !shuffle.value
     
     // When shuffle mode changes, trigger new cache predictions
     if (currentSong.value) {
       triggerReadAheadCache()
     }
+  }
+
+  function setPlaybackOrder(order: 'random' | 'id-desc') {
+    if (partyAudioOwned.value) return
+    sequentialOrder.value = order === 'id-desc' ? 'id-desc' : 'queue'
+    shuffle.value = order === 'random'
+    if (repeat.value === 'one') repeat.value = 'none'
+    ++readAheadGeneration
+    nextUpIndex.value = -1
+    if (currentSong.value) void triggerReadAheadCache()
   }
 
   function toggleRepeat() {
@@ -1248,6 +1262,16 @@ export const usePlayerStore = defineStore('player', () => {
       return eligible.slice(0, max)
     }
 
+    if (sequentialOrder.value === 'id-desc') {
+      const ordered = queue.value.map((song, index) => ({ song, index }))
+        .filter(({ song }) => isSongInRange(song)).sort((a, b) => b.song.id - a.song.id)
+      const currentId = currentSong.value?.id ?? Infinity
+      const after = ordered.filter(({ song }) => song.id < currentId)
+      const candidates = repeat.value === 'all'
+        ? [...after, ...ordered.filter(({ song }) => song.id >= currentId)] : after
+      return candidates.slice(0, max).map(({ index }) => index)
+    }
+
     const out: number[] = []
     let idx = currentIndex.value + 1
     for (let c = 0; c < queue.value.length && out.length < max; c++, idx++) {
@@ -1658,6 +1682,7 @@ export const usePlayerStore = defineStore('player', () => {
     toggleMute,
     setRecordingDuck,
     toggleShuffle,
+    setPlaybackOrder,
     toggleRepeat,
     setSleepTimer,
     clearSleepTimer,

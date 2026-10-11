@@ -122,8 +122,12 @@ a line progress bar, replay with a two-second lead-in, next-line seeking, a song
 timeline, and an expandable full lyric list. Its fullscreen button opens a larger
 stage on supported browsers; playback controls remain available there.
 
-Fullscreen keeps **Play**, **Pause**, **Stop**, **Next**, and **Karaoke / Original**
-in a fixed toolbar. **Search / browse** opens an independently searchable, paginated
+Fullscreen keeps **Play**, **Pause**, **Stop**, **Next**, **Karaoke / Original**, and
+a **Random / ID ↓** playback-order toggle in a fixed toolbar. **ID ↓** advances
+through songs from higher to lower IDs, including after choosing a song from the
+browser. Requested songs keep their FIFO priority. Selecting an order clears repeat-one
+without interrupting the current song; song ranges and repeat-all still apply.
+**Search / browse** opens an independently searchable, paginated
 list of ready karaoke songs, including IDs and Add to queue / Sing now actions. The
 current lyric line stays visible above the list while searching, browsing, or scrolling.
 **Full lyrics** expands an inline, scrollable dropdown below the song progress bar.

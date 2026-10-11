@@ -635,6 +635,10 @@
       "manageFailed": "Could not save the device change. Try again."
     },
     "stageControls": "Karaoke playback and songs",
+    "stageOrderRandom": "Random",
+    "stageOrderId": "ID ↓",
+    "stageOrderRandomHint": "Playback order: random. Switch to descending song ID.",
+    "stageOrderIdHint": "Playback order: descending song ID. Switch to random.",
     "stageStop": "Stop",
     "stageSongs": "Search / browse",
     "stageLyrics": "Full lyrics",

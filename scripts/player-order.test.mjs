@@ -110,6 +110,67 @@ test('sequential mode follows custom playlist order and stops at its end', async
   assert.equal(player.currentSong.id, 1369)
 })
 
+test('descending ID playback follows IDs in an unsorted queue and stops at the smallest ID', async () => {
+  const { environment } = audioEnvironment(), player = setup(undefined, undefined, environment)
+  player.initializeAudio()
+  const queue = [song(30), song(9), song(80), song(42)]
+  await player.playSong(queue[3], queue, 3)
+  player.repeat = 'one'
+  player.setPlaybackOrder('id-desc')
+  assert.equal(player.shuffle, false); assert.equal(player.repeat, 'none')
+  assert.equal(player.canPlayNext, true)
+  await player.triggerReadAheadCache()
+  assert.equal(player.currentSong.id, 42)
+  player.audioElement.dispatchEvent(new Event('ended'))
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(player.currentSong.id, 30)
+  await player.nextSong(); assert.equal(player.currentSong.id, 9)
+  assert.equal(player.canPlayNext, false)
+  await player.nextSong(); assert.equal(player.currentSong.id, 9)
+  player.repeat = 'all'
+  await player.nextSong(); assert.equal(player.currentSong.id, 80)
+  await player.nextSong(); assert.equal(player.currentSong.id, 42)
+})
+
+test('descending ID order survives replacement queues and later requests while respecting the song range', async () => {
+  const player = setup(), queue = [song(30), song(9), song(80), song(42)]
+  await player.playSong(queue[3], queue, 3)
+  player.setPlaybackOrder('id-desc')
+  const replacement = [song(42), song(25), song(80), song(30), song(9)]
+  await player.playSong(replacement[0], replacement, 0)
+  player.enqueueSong(song(80)); player.enqueueSong(song(25))
+  await player.nextSong(); assert.equal(player.currentSong.id, 80)
+  await player.nextSong(); assert.equal(player.currentSong.id, 25)
+  await player.nextSong(); assert.equal(player.currentSong.id, 9)
+  await player.playSong(replacement[0], replacement, 0)
+  player.setSongRange(20, 50)
+  await player.nextSong(); assert.equal(player.currentSong.id, 30)
+  await player.nextSong(); assert.equal(player.currentSong.id, 25)
+  assert.equal(player.canPlayNext, false)
+  player.repeat = 'all'
+  await player.nextSong(); assert.equal(player.currentSong.id, 42)
+})
+
+test('switching playback order cancels old preloads and returning to regular shuffle preserves playlist order', async () => {
+  const pending = deferred()
+  let first = true
+  const player = setup(() => { if (first) { first = false; return pending.promise }; return Promise.resolve() })
+  const queue = [song(42), song(9), song(30)]
+  await player.playSong(queue[0], queue, 0)
+  player.shuffle = true
+  const oldPreload = player.triggerReadAheadCache()
+  player.setPlaybackOrder('id-desc')
+  await player.triggerReadAheadCache()
+  pending.resolve(); await oldPreload
+  await player.nextSong(); assert.equal(player.currentSong.id, 30)
+  player.setPlaybackOrder('random'); assert.equal(player.shuffle, true)
+  player.toggleShuffle()
+  await player.playSong(queue[0], queue, 0)
+  await player.nextSong(); assert.equal(player.currentSong.id, 9)
+  player.setPartyAudioOwnership(true)
+  player.setPlaybackOrder('random'); assert.equal(player.shuffle, false)
+})
+
 test('range filtering respects the end of the queue without repeat-all', async () => {
   const player = setup()
   const queue = [song(1370), song(1369), song(1368), song(1339)]

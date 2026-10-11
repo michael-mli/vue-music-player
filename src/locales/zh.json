@@ -635,6 +635,10 @@
       "manageFailed": "无法保存设备更改，请重试。"
     },
     "stageControls": "卡拉OK播放和点歌",
+    "stageOrderRandom": "随机",
+    "stageOrderId": "ID ↓",
+    "stageOrderRandomHint": "播放顺序：随机。点击切换为歌曲ID降序。",
+    "stageOrderIdHint": "播放顺序：歌曲ID降序。点击切换为随机。",
     "stageStop": "停止",
     "stageSongs": "搜索 / 浏览",
     "stageLyrics": "完整歌词",
