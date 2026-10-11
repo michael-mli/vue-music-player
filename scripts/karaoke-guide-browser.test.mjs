@@ -168,6 +168,44 @@ try {
   check(drift < 0.35, `mid-song media positions align (${drift.toFixed(3)}s drift)`)
   check(await evaluate(phone, `document.querySelector('audio').src.endsWith('/data/link.1.mp3')`), 'phone plays the original track with vocals')
   await poll(() => evaluate(host, `document.body?.innerText.includes('1 device(s) paired')`), 'host paired indicator')
+  await evaluate(phone, `(() => {
+    const audio = document.querySelector('audio'), load = audio.load.bind(audio);
+    window.__guideGrant = ${store('karaokeDevice')}.grant.token;
+    window.__guideLoads = 0;
+    audio.load = () => {
+      window.__guideLoads++;
+      for (const key of ['currentTime', 'paused', 'seeking', 'error']) delete audio[key];
+      return load();
+    };
+    const position = audio.currentTime;
+    audio.pause();
+    Object.defineProperties(audio, {
+      currentTime: { configurable: true, get: () => position, set: () => {} },
+      paused: { configurable: true, get: () => false },
+      seeking: { configurable: true, get: () => true },
+    });
+    audio.dispatchEvent(new Event('stalled'));
+  })()`)
+  await poll(() => evaluate(phone, `window.__guideLoads === 1 && !document.querySelector('audio').paused && !document.querySelector('audio').seeking && document.querySelector('audio').currentTime > 25`), 'stuck decoder reloads the same song')
+  await poll(async () => {
+    const [hostPosition, phonePosition] = await Promise.all([
+      evaluate(host, `${store('player')}.audioElement.currentTime`), evaluate(phone, `document.querySelector('audio').currentTime`),
+    ])
+    return Math.abs(hostPosition - phonePosition) < 0.35
+  }, 'recovered guide catches up to the host')
+  check(await evaluate(phone, `${store('karaokeDevice')}.grant.token === window.__guideGrant && document.querySelector('audio').src.endsWith('/data/link.1.mp3')`), 'stuck seeking recovers the current song and resyncs without repairing the pairing or skipping')
+  check(await evaluate(host, `${store('player')}.currentSong.id === 1 && !${store('player')}.audioElement.paused`), 'automatic guide recovery leaves host playback running on the same song')
+  await evaluate(phone, `(() => {
+    const audio = document.querySelector('audio');
+    Object.defineProperty(audio, 'error', { configurable: true, get: () => ({ code: 2 }) });
+    audio.dispatchEvent(new Event('error'));
+  })()`)
+  await poll(() => evaluate(phone, `document.body.innerText.includes('Recovering audio')`), 'transient audio error displays recovery status')
+  await poll(() => evaluate(phone, `window.__guideLoads === 2 && !document.querySelector('audio').paused && document.querySelector('audio').currentTime > 25`), 'transient media error automatically resumes')
+  check(await evaluate(phone, `!!document.querySelector('[data-action="repair-audio"]') && ${store('karaokeDevice')}.grant.token === window.__guideGrant`), 'transient media errors recover automatically and retain guide controls and the device grant')
+  await evaluate(phone, `(() => { const slider = document.querySelector('#vocal-guide-volume'); slider.value = '0.35'; slider.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('[data-action="repair-audio"]').click(); })()`)
+  await poll(() => evaluate(phone, `window.__guideLoads === 3 && !document.querySelector('audio').paused && document.querySelector('audio').currentTime > 25`), 'manual same-song repair')
+  check(await evaluate(phone, `document.querySelector('audio').volume === 0.35 && ${store('karaokeDevice')}.grant.token === window.__guideGrant`) && await evaluate(host, `${store('player')}.currentSong.id === 1 && !${store('player')}.audioElement.paused`), 'Repair audio resumes the current song while preserving volume, pairing and host playback')
   await evaluate(host, `${store('player')}.pause()`)
   await poll(() => evaluate(phone, `document.querySelector('audio').paused && document.body?.innerText.includes('Karaoke player paused')`), 'pause sync')
   await evaluate(host, `${store('player')}.seek(44)`)

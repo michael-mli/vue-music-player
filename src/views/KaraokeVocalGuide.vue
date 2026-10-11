@@ -13,6 +13,9 @@
       <button type="button" :disabled="ended || (!enabled && (!snapshot?.song || !hostOnline))"
         class="min-h-[48px] w-full rounded-full bg-spotify-green px-5 py-3 font-semibold text-black disabled:opacity-50"
         @click="enabled ? stopGuide() : startGuide()">{{ $t(enabled ? 'karaoke.guide.stop' : 'karaoke.guide.start') }}</button>
+      <button v-if="enabled" type="button" :disabled="ended || !hostOnline || !snapshot?.song"
+        class="mt-2 min-h-[44px] w-full text-sm text-spotify-green underline disabled:opacity-40"
+        data-action="repair-audio" @click="repairGuide">{{ $t('karaoke.guide.repairAudio') }}</button>
       <label for="vocal-guide-volume" class="mt-6 block text-sm">{{ $t('karaoke.guide.volume') }} · {{ Math.round(volume * 100) }}%</label>
       <input id="vocal-guide-volume" v-model.number="volume" type="range" min="0" max="1" step="0.01" class="mt-2 min-h-[44px] w-full accent-spotify-green" />
       <label for="vocal-guide-offset" class="mt-4 block text-sm">{{ $t('karaoke.guide.timing') }} · {{ offset > 0 ? '+' : '' }}{{ offset }} ms</label>
@@ -95,7 +98,7 @@
       <button v-if="!pair.grant && !ended" type="button" class="mt-3 min-h-[44px] text-sm text-spotify-green underline" @click="pair.openPair()">{{ $t('karaoke.guide.retry') }}</button>
       <p class="mt-6 text-xs text-light-text-secondary dark:text-gray-400">{{ $t('karaoke.guide.keepOpen') }}</p>
       <RouterLink to="/sing" class="mt-4 inline-flex min-h-[44px] items-center text-sm text-spotify-green">← {{ $t('karaoke.guide.back') }}</RouterLink>
-      <audio ref="audio" preload="auto" playsinline @loadedmetadata="sync(true)" @canplay="sync()" @error="audioFailed" />
+      <audio ref="audio" preload="auto" playsinline @loadedmetadata="sync(true)" @canplay="sync()" @seeked="playback?.seeked()" @ended="sync()" @error="audioFailed" />
     </div>
   </div>
 </template>
@@ -107,19 +110,22 @@ import { onBeforeRouteLeave } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useWakeLock } from '@/composables/useWakeLock'
 import { useKaraokeDeviceStore } from '@/stores/karaokeDevice'
-import { guidePosition, guideCorrection } from '@/utils/karaokeGuideSync'
+import { guidePosition } from '@/utils/karaokeGuideSync'
+import { KaraokeGuidePlayback } from '@/utils/karaokeGuidePlayback'
 import KaraokeRemoteSongList from '@/components/UI/KaraokeRemoteSongList.vue'
 
 const pair = useKaraokeDeviceStore(), { snapshot, hostOnline } = storeToRefs(pair), { t } = useI18n()
 const audio = ref<HTMLAudioElement | null>(null), enabled = ref(false), audioError = ref(''), position = ref(0)
+const recoveringAudio = ref(false)
 const ended = computed(() => ['expired', 'invalidPair', 'removed', 'idleExpired', 'deviceLimit'].includes(pair.error))
 const error = computed(() => pair.error || audioError.value)
 const volume = ref(0.6), offset = ref(readOffset()), query = ref(''), deviceName = ref(pair.grant?.name || '')
 const wakeLock = useWakeLock()
 const status = computed(() => ended.value ? pair.error : pair.error === 'reconnecting' ? 'reconnecting' :
-  !snapshot.value ? 'connecting' : !hostOnline.value ? 'hostOffline' : !enabled.value ? 'ready' :
+  !snapshot.value ? 'connecting' : !hostOnline.value ? 'hostOffline' : !enabled.value ? 'ready' : recoveringAudio.value ? 'recoveringAudio' :
     snapshot.value.playing ? 'following' : 'paused')
-let syncTimer: number | undefined, disposed = false, playing = false, source = ''
+let syncTimer: number | undefined, disposed = false, source = ''
+let playback: KaraokeGuidePlayback | null = null
 let catalogRetry: number | undefined, catalogAttempts = 0
 
 function readOffset() {
@@ -148,32 +154,22 @@ function formatTime(value: number) {
 }
 function stopGuide() {
   enabled.value = false; pair.listening = false
-  audio.value?.pause()
+  playback?.stop()
   wakeLock.setAuto(false)
   if (navigator.mediaSession) navigator.mediaSession.playbackState = 'paused'
-}
-function play() {
-  const element = audio.value
-  if (!element || playing || !element.paused) return
-  playing = true
-  void element.play().then(() => {
-    if (disposed || !enabled.value || !hostOnline.value || !snapshot.value?.playing) element.pause()
-    element.muted = false
-  }).catch(reason => {
-    if (disposed || reason?.name === 'AbortError') return
-    stopGuide(); audioError.value = reason?.name === 'NotAllowedError' ? 'tapAgain' : 'audioFailed'
-  }).finally(() => { playing = false })
 }
 function startGuide() {
   if (!audio.value || !snapshot.value?.song || ended.value || !hostOnline.value) return
   audioError.value = ''; enabled.value = true; pair.listening = true; pair.touch()
   wakeLock.setAuto(true)
-  if (audio.value.error) audio.value.load()
-  // Invoke play directly inside the tap, including when the host is paused, to
-  // unlock mobile audio. Keep the initial paused-host unlock silent.
-  audio.value.muted = !snapshot.value.playing
+  if (audio.value.error) playback?.repair()
   sync(true)
-  play()
+  playback?.unlock()
+}
+function repairGuide() {
+  if (!snapshot.value?.song || ended.value || !hostOnline.value) return
+  playback?.repair()
+  startGuide()
 }
 function sync(force = false) {
   const element = audio.value, state = snapshot.value
@@ -181,33 +177,22 @@ function sync(force = false) {
   const fresh = performance.now() - pair.lastReply < 2500 && hostOnline.value
   const target = guidePosition(state, pair.clock.serverNow(performance.now()), offset.value)
   position.value = state.playing && fresh ? target : state.position
-  if (!enabled.value || !fresh || !state.song) { element.pause(); return }
-  if (element.readyState >= 1) {
-    const correction = guideCorrection(element.currentTime, target, state.rate, state.playing)
-    if ((force || correction.seek) && !element.seeking) {
-      element.currentTime = Number.isFinite(element.duration) ? Math.min(target, Math.max(0, element.duration - 0.01)) : target
-    }
-    element.playbackRate = correction.rate
-  }
-  if (state.playing) play()
-  else element.pause()
-  if (navigator.mediaSession) navigator.mediaSession.playbackState = state.playing ? 'playing' : 'paused'
+  const allowed = enabled.value && fresh && !!state.song && !!pair.grant
+  playback?.sync({ allowed, playing: state.playing, position: target, rate: state.rate }, force)
+  if (navigator.mediaSession) navigator.mediaSession.playbackState = allowed && state.playing ? 'playing' : 'paused'
 }
 function audioFailed() {
   if (!source || disposed) return
-  stopGuide(); audioError.value = 'audioFailed'
+  playback?.handleError()
 }
 function resumeSync() {
   if (document.visibilityState !== 'visible') return
-  sync(true); pair.resume()
+  pair.resume(); sync(true)
 }
 function updateSource() {
   const url = snapshot.value?.song?.url
-  if (!audio.value || source === (url || '')) return
-  source = url || ''; audio.value.pause()
-  if (url) audio.value.src = url
-  else audio.value.removeAttribute('src')
-  audio.value.load()
+  if (!audio.value || !playback || source === (url || '')) return
+  source = url || ''; playback?.setSource(source)
   if (navigator.mediaSession && typeof MediaMetadata === 'function') {
     navigator.mediaSession.metadata = new MediaMetadata({ title: snapshot.value?.song?.title || '', artist: 'Karaoke · Vocal guide' })
   }
@@ -222,10 +207,19 @@ watch(offset, value => {
   sync(true)
 })
 onMounted(() => {
-  if (audio.value) audio.value.volume = volume.value
+  if (audio.value) {
+    audio.value.volume = volume.value
+    playback = new KaraokeGuidePlayback(audio.value, notice => {
+      recoveringAudio.value = notice === 'recoveringAudio'
+      if (notice === 'audioFailed' || notice === 'tapAgain') { stopGuide(); audioError.value = notice }
+      else if (notice === 'recoveringAudio') audioError.value = ''
+    })
+  }
   updateSource()
   void pair.openPair()
   window.addEventListener('beforeunload', warnBeforeUnload)
+  window.addEventListener('online', resumeSync)
+  window.addEventListener('pageshow', resumeSync)
   document.addEventListener('visibilitychange', resumeSync)
   if (navigator.mediaSession) {
     for (const [action, handler] of [['play', startGuide], ['pause', stopGuide], ['stop', stopGuide]] as const) {
@@ -237,10 +231,13 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   disposed = true; stopGuide()
+  playback?.dispose()
   pair.setInGuide(false)
   window.clearInterval(syncTimer)
   window.clearTimeout(catalogRetry)
   window.removeEventListener('beforeunload', warnBeforeUnload)
+  window.removeEventListener('online', resumeSync)
+  window.removeEventListener('pageshow', resumeSync)
   document.removeEventListener('visibilitychange', resumeSync)
   if (audio.value) { audio.value.removeAttribute('src'); audio.value.load() }
   if (navigator.mediaSession) {

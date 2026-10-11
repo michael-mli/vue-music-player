@@ -560,6 +560,8 @@
       "paused": "Karaoke player paused",
       "start": "Start vocal guide",
       "stop": "Stop guide on this device",
+      "repairAudio": "Repair audio · keep this song",
+      "recoveringAudio": "Recovering audio… Staying on the current song.",
       "volume": "Guide volume",
       "timing": "Guide timing",
       "timingHint": "If the guide sounds late, increase this value. If it sounds early, decrease it. Bluetooth devices may need an adjustment.",
