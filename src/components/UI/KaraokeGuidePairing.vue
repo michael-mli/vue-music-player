@@ -12,11 +12,7 @@
         @click="guide.stop()">{{ $t('karaoke.guide.endPairing') }}</button>
     </div>
     <div v-if="guide.pairUrl" class="mt-4 flex flex-wrap items-center gap-5">
-      <figure class="w-fit max-w-full rounded-xl bg-white p-3 text-center text-black">
-        <canvas ref="canvas" role="img" :aria-label="$t('karaoke.guide.qrLabel')" class="mx-auto max-w-full" />
-        <figcaption class="mt-2 max-w-[224px] text-xs">{{ $t('karaoke.guide.qrLabel') }}</figcaption>
-        <p v-if="qrFailed" role="status" class="mt-2 max-w-[224px] text-xs">{{ $t('karaoke.guide.qrFailed') }}</p>
-      </figure>
+      <KaraokeGuideQr :value="guide.pairUrl" />
       <div class="min-w-0 flex-1 basis-48">
         <p role="status" class="text-sm text-spotify-green">{{ guide.connectedDevices
           ? $t('karaoke.guide.paired', { count: guide.connectedDevices }) : $t('karaoke.guide.waiting') }}</p>
@@ -65,27 +61,16 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onUnmounted, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { usePlayerStore } from '@/stores/player'
 import { useKaraokeGuideStore } from '@/stores/karaokeGuide'
+import KaraokeGuideQr from '@/components/UI/KaraokeGuideQr.vue'
 
 const player = usePlayerStore(), guide = useKaraokeGuideStore()
-const canvas = ref<HTMLCanvasElement | null>(null), qrFailed = ref(false), copied = ref(false)
-let attempt = 0
-watch(() => guide.pairUrl, async value => {
-  const current = ++attempt
-  copied.value = false; qrFailed.value = false
-  if (!value) return
-  await nextTick()
-  try {
-    const qr = await import('qrcode')
-    if (current !== attempt || !canvas.value) return
-    await qr.toCanvas(canvas.value, value, { width: 224, margin: 4, errorCorrectionLevel: 'M' })
-  } catch { if (current === attempt) qrFailed.value = true }
-}, { immediate: true })
+const copied = ref(false)
+watch(() => guide.pairUrl, () => { copied.value = false })
 async function copyLink() {
   try { await navigator.clipboard.writeText(guide.pairUrl); copied.value = true }
   catch { (document.getElementById('karaoke-guide-link') as HTMLInputElement | null)?.select() }
 }
-onUnmounted(() => { attempt++ })
 </script>

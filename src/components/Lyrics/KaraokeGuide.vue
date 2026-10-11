@@ -95,18 +95,41 @@
           </details>
         </footer>
       </div>
-      <aside v-if="fullscreen" class="stage-queue" :aria-label="$t('karaoke.guide.songQueue')">
-        <h2 class="stage-queue-title">{{ $t('karaoke.guide.songQueue') }} <span>{{ player.requestedQueue.length }}</span></h2>
-        <p v-if="!player.requestedQueue.length" class="stage-queue-empty">{{ $t('karaoke.guide.emptyQueue') }}</p>
-        <ol v-else class="stage-queue-list">
-          <li v-for="(song, index) in player.requestedQueue" :key="song.id" :data-queued-song-id="song.id">
-            <span class="stage-queue-number">{{ index + 1 }}</span>
-            <div>
-              <p>{{ song.title }}</p>
-              <p v-if="song.artist" class="stage-queue-artist">{{ song.artist }}</p>
-            </div>
-          </li>
-        </ol>
+      <aside v-if="fullscreen" class="stage-sidebar">
+        <section v-if="player.karaokeMode && !player.partyAudioOwned" class="stage-pairing" :aria-label="$t('karaoke.guide.pairTitle')">
+          <h2 class="stage-pairing-title">{{ $t('karaoke.guide.pairTitle') }}</h2>
+          <template v-if="pairing.pairUrl">
+            <KaraokeGuideQr :value="pairing.pairUrl" class="stage-pairing-qr">
+              <template #fallback>
+                <label class="mt-2 block text-xs">{{ $t('karaoke.guide.pairLink') }}
+                  <input :value="pairing.pairUrl" readonly class="mt-1 min-h-[44px] w-full rounded border border-gray-300 px-2 text-black"
+                    @focus="($event.target as HTMLInputElement).select()" />
+                </label>
+              </template>
+            </KaraokeGuideQr>
+            <p role="status" class="stage-pairing-status">{{ pairing.connectedDevices
+              ? $t('karaoke.guide.paired', { count: pairing.connectedDevices }) : $t('karaoke.guide.waiting') }}</p>
+          </template>
+          <template v-else>
+            <p class="stage-pairing-hint">{{ $t('karaoke.guide.pairHint') }}</p>
+            <button type="button" class="stage-pair-button" :disabled="pairing.busy || !player.currentSong"
+              @click="pairing.start()">{{ $t(pairing.busy ? 'karaoke.guide.creating' : 'karaoke.guide.pairButton') }}</button>
+          </template>
+          <p v-if="pairing.error" role="alert" class="stage-pairing-error">{{ $t(`karaoke.guide.${pairing.error}`) }}</p>
+        </section>
+        <section class="stage-queue" :aria-label="$t('karaoke.guide.songQueue')">
+          <h2 class="stage-queue-title">{{ $t('karaoke.guide.songQueue') }} <span>{{ player.requestedQueue.length }}</span></h2>
+          <p v-if="!player.requestedQueue.length" class="stage-queue-empty">{{ $t('karaoke.guide.emptyQueue') }}</p>
+          <ol v-else class="stage-queue-list">
+            <li v-for="(song, index) in player.requestedQueue" :key="song.id" :data-queued-song-id="song.id">
+              <span class="stage-queue-number">{{ index + 1 }}</span>
+              <div>
+                <p>{{ song.title }}</p>
+                <p v-if="song.artist" class="stage-queue-artist">{{ song.artist }}</p>
+              </div>
+            </li>
+          </ol>
+        </section>
       </aside>
     </div>
   </section>
@@ -116,14 +139,17 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ArrowsPointingInIcon, ArrowsPointingOutIcon, ArrowPathIcon, ForwardIcon, PauseIcon, PlayIcon } from '@heroicons/vue/24/outline'
 import { usePlayerStore } from '@/stores/player'
+import { useKaraokeGuideStore } from '@/stores/karaokeGuide'
 import { singingGuideState } from '@/utils/lyricsTiming'
 import { lyricSeekTime } from '@/utils/lyricsOffset'
 import { useLyricsOffset } from '@/composables/useLyricsOffset'
 import LyricsTimingControl from '@/components/Lyrics/LyricsTimingControl.vue'
+import KaraokeGuideQr from '@/components/UI/KaraokeGuideQr.vue'
 import type { LyricLine, LyricWord } from '@/types'
 
 const props = defineProps<{ lines: LyricLine[]; compact?: boolean; loading?: boolean; plainLyrics?: string }>()
 const player = usePlayerStore()
+const pairing = useKaraokeGuideStore()
 const { offset } = useLyricsOffset(computed(() => player.currentSong?.id))
 const lyricTime = computed(() => player.currentTime - offset.value)
 const stage = ref<HTMLElement>()
@@ -213,7 +239,15 @@ onUnmounted(() => document.removeEventListener('fullscreenchange', syncFullscree
 .guide-main { min-width: 0; }
 .guide-fallback { display: grid; place-items: center; min-height: 280px; padding: 32px 8px; text-align: center; color: #c1d5d0; }
 .guide-plain-lyrics { white-space: pre-wrap; line-height: 1.8; max-height: 40vh; overflow-y: auto; width: 100%; }
-.stage-queue { margin-top: 24px; padding: 18px; border: 1px solid #38534f; border-radius: 14px; background: #ffffff05; min-width: 0; }
+.stage-sidebar { display: grid; gap: 20px; margin-top: 24px; min-width: 0; }
+.stage-queue, .stage-pairing { padding: 18px; border: 1px solid #38534f; border-radius: 14px; background: #ffffff05; min-width: 0; }
+.stage-pairing-title { font-size: 14px; font-weight: 700; }
+.stage-pairing-qr { margin: 12px auto 0; }
+.stage-pairing-status { margin-top: 12px; color: #7ef0b6; font-size: 12px; text-align: center; }
+.stage-pairing-hint { margin-top: 12px; color: #aac7c0; font-size: 13px; line-height: 1.6; }
+.stage-pair-button { margin-top: 12px; min-height: 44px; width: 100%; padding: 8px 12px; border-radius: 24px; background: #7ef0b6; color: #10221c; font-size: 13px; font-weight: 700; }
+.stage-pair-button:not(:disabled):hover { background: #a4f6cc; }
+.stage-pairing-error { margin-top: 12px; color: #fca5a5; font-size: 12px; }
 .stage-queue-title { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 14px; font-weight: 700; }
 .stage-queue-title > span { color: #7ef0b6; font-variant-numeric: tabular-nums; }
 .stage-queue-empty { margin-top: 16px; color: #aac7c0; font-size: 13px; line-height: 1.6; }
@@ -275,8 +309,8 @@ button:focus-visible, summary:focus-visible, input:focus-visible { outline: 2px 
 .singing-guide:fullscreen .current-line { font-size: clamp(30px, 5vw, 76px); }
 @media (min-width: 900px) {
   .singing-guide:fullscreen .guide-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 300px); gap: clamp(24px, 4vw, 64px); align-items: start; }
-  .singing-guide:fullscreen .stage-queue { position: sticky; top: 0; }
-  .singing-guide:fullscreen .stage-queue-list { max-height: calc(100dvh - 230px); }
+  .singing-guide:fullscreen .stage-sidebar { position: sticky; top: 0; max-height: calc(100dvh - 150px); overflow-y: auto; }
+  .singing-guide:fullscreen .stage-queue-list { max-height: clamp(96px, calc(100dvh - 590px), 320px); }
 }
 @container (max-width: 340px) {
   .guide-action { font-size: 11px; padding: 4px; gap: 4px; }

@@ -167,6 +167,8 @@ try {
     window.__karaokeStage.querySelector('.guide-icon-button').click()`)
   await poll(() => evaluate(host, `document.fullscreenElement === window.__karaokeStage && !!document.fullscreenElement.querySelector('.stage-queue')`), 'host fullscreen with queue')
   check(true, 'fullscreen singing stage includes the live requested-song queue')
+  await poll(() => evaluate(host, `document.fullscreenElement.querySelector('.stage-pairing canvas')?.width === 224`), 'fullscreen pairing QR renders on entry')
+  check(await evaluate(host, `document.fullscreenElement.querySelector('.stage-pairing canvas').toDataURL() === document.querySelector('#vocal-guide-pairing-title').closest('section').querySelector('canvas').toDataURL()`), 'fullscreen shows the same current QR invitation as the host pairing panel')
   async function stillFullscreen(label) {
     check(await evaluate(host, `document.fullscreenElement === window.__karaokeStage && window.__fullscreenExits === 0`), label)
   }
@@ -206,6 +208,7 @@ try {
   }
   await cdp('Emulation.setDeviceMetricsOverride', { width: 320, height: 820, deviceScaleFactor: 1, mobile: true }, host)
   check(await evaluate(host, `document.fullscreenElement.scrollWidth <= document.fullscreenElement.clientWidth && !!document.fullscreenElement.querySelector('.stage-queue')`), '320px fullscreen retains the queue without horizontal overflow')
+  check(await evaluate(host, `(() => { const bounds = document.fullscreenElement.querySelector('.stage-pairing canvas').getBoundingClientRect(); return bounds.width > 150 && Math.abs(bounds.width - bounds.height) < 1; })()`), 'fullscreen QR remains square and scannable at 320px')
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1100, height: 820, deviceScaleFactor: 1, mobile: false }, host)
   await evaluate(host, `window.__getSongLyrics = ${store('songs')}.getSongLyrics;
     ${store('songs')}.getSongLyrics = async (...args) => { await new Promise(resolve => setTimeout(resolve, 1500)); return window.__getSongLyrics(...args); }`)
@@ -254,6 +257,8 @@ try {
   check(true, 'guide stays paired when the host browses another page')
   await evaluate(host, `window.__sidebarStage = document.querySelector('.singing-guide.is-compact'); window.__sidebarStage.querySelector('.guide-icon-button').click()`)
   await poll(() => evaluate(host, `document.fullscreenElement === window.__sidebarStage`), 'lyrics sidebar fullscreen')
+  await poll(() => evaluate(host, `document.fullscreenElement.querySelector('.stage-pairing canvas')?.width === 224`), 'sidebar fullscreen QR renders on entry')
+  check(true, 'expanding the lyrics sidebar also displays the pairing QR')
   await poll(() => evaluate(phone, `${store('karaokeDevice')}.canControl`), 'sidebar control ready')
   await evaluate(phone, `${store('karaokeDevice')}.command('singNow', { songId: 1 })`)
   await poll(() => evaluate(host, `${store('player')}.currentSong.id === 1 && document.fullscreenElement?.querySelector('.guide-song').textContent.includes('First guide song')`), 'sidebar song change')
@@ -286,15 +291,22 @@ try {
     await cdp('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: 0, uploadThroughput: 0 }, phone)
   }
   await poll(() => evaluate(phone, `!document.querySelector('audio').paused`), 'phone reconnect restores guide')
+  await cdp('Page.bringToFront', {}, host)
+  await evaluate(host, `window.__pairStage = document.querySelector('.singing-guide.is-compact'); window.__pairStage.querySelector('.guide-icon-button').click()`)
+  await poll(() => evaluate(host, `document.fullscreenElement === window.__pairStage && document.fullscreenElement.querySelector('.stage-pairing canvas')?.width === 224`), 'fullscreen before ending session')
   await evaluate(host, `${store('karaokeGuide')}.stop()`)
   await poll(() => evaluate(phone, `document.querySelector('audio').paused && document.body?.innerText.includes('Pairing has ended')`), 'ending pairing')
   check(true, 'ending pairing stops guide audio and invalidates the link')
+  check(await evaluate(host, `document.fullscreenElement === window.__pairStage && !document.fullscreenElement.querySelector('.stage-pairing canvas') && !!document.fullscreenElement.querySelector('.stage-pair-button')`), 'ending pairing removes its old fullscreen QR and offers a fresh pairing')
   // A fresh session checks browser Back warnings and returning without rescanning.
-  await evaluate(host, `${store('karaokeGuide')}.start()`)
+  await evaluate(host, `document.fullscreenElement.querySelector('.stage-pair-button').click()`)
+  await poll(() => evaluate(host, `!!${store('karaokeGuide')}.pairUrl && document.fullscreenElement?.querySelector('.stage-pairing canvas')?.width === 224`), 'start pairing inside fullscreen')
+  check(await evaluate(host, `document.fullscreenElement === window.__pairStage`), 'host can start pairing and display a new QR without leaving fullscreen')
   const newLink = await evaluate(host, `${store('karaokeGuide')}.pairUrl`)
   const leavingPhone = await page(origin, '/library')
   await evaluate(leavingPhone, `document.querySelector('#app').__vue_app__.config.globalProperties.$router.push(${JSON.stringify(new URL(newLink).pathname + new URL(newLink).hash)})`)
   await poll(() => evaluate(leavingPhone, `document.body?.innerText.includes('Paired · tap Start vocal guide')`), 'returning phone paired')
+  check(await evaluate(host, `document.fullscreenElement === window.__pairStage`), 'joining the fullscreen pairing invitation keeps the host fullscreen')
   await clickText(leavingPhone, 'Start vocal guide')
   await poll(() => evaluate(leavingPhone, `!document.querySelector('.karaoke-vocal-guide audio').paused`), 'returning phone plays')
   const deviceId = await evaluate(leavingPhone, `${store('karaokeDevice')}.grant.deviceId`)
@@ -314,6 +326,8 @@ try {
   check(await evaluate(leavingPhone, `${store('karaokeDevice')}.grant.token === '${savedToken}' && document.querySelector('.karaoke-vocal-guide audio').paused`), 'confirmed Back stops guide audio; saved pairing returns after reload without another scan')
   await clickText(leavingPhone, 'Start vocal guide')
   await poll(() => evaluate(leavingPhone, `!document.querySelector('.karaoke-vocal-guide audio').paused`), 'resumed guide audio source')
+  await evaluate(host, `document.fullscreenElement.querySelector('.guide-icon-button').click()`)
+  await poll(() => evaluate(host, `!document.fullscreenElement`), 'exit before host page navigation')
   await evaluate(host, `document.querySelector('#app').__vue_app__.config.globalProperties.$router.push('/sing')`)
   await poll(() => evaluate(host, `!!document.querySelector('[data-device-id="${deviceId}"] input[type="checkbox"]')`), 'host device controls')
   await evaluate(host, `document.querySelector('[data-device-id="${deviceId}"] input[type="checkbox"]').click()`)
@@ -323,10 +337,20 @@ try {
   await poll(() => evaluate(leavingPhone, `${store('karaokeDevice')}.canControl`), 'host restores remote controls')
   const otherPhone = await page(origin, new URL(newLink).pathname + new URL(newLink).hash)
   await poll(() => evaluate(otherPhone, `!!${store('karaokeDevice')}.device`), 'second independent device')
+  await cdp('Page.bringToFront', {}, host)
+  await evaluate(host, `window.__rotationStage = document.querySelector('.karaoke-view .singing-guide'); window.__rotationStage.querySelector('.guide-icon-button').click()`)
+  await poll(() => evaluate(host, `document.fullscreenElement === window.__rotationStage && document.fullscreenElement.querySelector('.stage-pairing canvas')?.width === 224`), 'fullscreen before invitation rotation')
+  const oldQr = await evaluate(host, `document.fullscreenElement.querySelector('.stage-pairing canvas').toDataURL()`)
   await evaluate(host, `document.querySelector('[data-device-id="${deviceId}"] button').click()`)
   await poll(() => evaluate(leavingPhone, `document.body?.innerText.includes('The host removed this device') && !${store('karaokeDevice')}.grant && document.querySelector('.karaoke-vocal-guide audio').paused`), 'host removes device')
   check(await evaluate(otherPhone, `!!${store('karaokeDevice')}.grant && ${store('karaokeDevice')}.hostOnline`), 'host removal clears only the selected phone; another paired device stays connected')
   check(await evaluate(host, `${store('karaokeGuide')}.pairUrl !== ${JSON.stringify(newLink)}`), 'removing a device refreshes the QR invitation')
+  await poll(() => evaluate(host, `(() => {
+    const canvas = document.fullscreenElement?.querySelector('.stage-pairing canvas');
+    return canvas?.getContext('2d').getImageData(0, 0, 1, 1).data[3] === 255 && canvas.toDataURL() !== ${JSON.stringify(oldQr)}
+      && canvas.toDataURL() === document.querySelector('#vocal-guide-pairing-title').closest('section').querySelector('canvas').toDataURL();
+  })()`), 'rotated fullscreen QR')
+  check(await evaluate(host, `document.fullscreenElement === window.__rotationStage`), 'fullscreen QR updates to the rotated invitation without leaving fullscreen')
   const invalid = await page(origin, '/sing/guide', 320, 'zh')
   await poll(() => evaluate(invalid, `document.body?.innerText.includes('配对链接无效')`), 'localized invalid pair')
   check(true, 'missing pairing links show a localized recovery message')
