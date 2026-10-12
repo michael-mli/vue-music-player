@@ -38,9 +38,18 @@
         </li>
       </ul>
       <nav v-if="totalPages > 1" class="picker-pagination" :aria-label="$t('karaoke.songPages')">
-        <button type="button" data-action="previous-page" :disabled="page <= 1" @click="changePage(-1)">{{ $t('karaoke.guide.previousPage') }}</button>
-        <span>{{ $t('karaoke.songPage', { page, total: totalPages }) }}</span>
-        <button type="button" data-action="next-page" :disabled="page >= totalPages" @click="changePage(1)">{{ $t('karaoke.guide.nextPage') }}</button>
+        <div class="picker-page-buttons">
+          <button type="button" data-action="first-page" :disabled="page <= 1" @click="goToPage(1)">{{ $t('karaoke.guide.firstPage') }}</button>
+          <button type="button" data-action="previous-page" :disabled="page <= 1" @click="goToPage(page - 1)">{{ $t('karaoke.guide.previousPage') }}</button>
+          <span role="status">{{ $t('karaoke.songPage', { page, total: totalPages }) }}</span>
+          <button type="button" data-action="next-page" :disabled="page >= totalPages" @click="goToPage(page + 1)">{{ $t('karaoke.guide.nextPage') }}</button>
+          <button type="button" data-action="last-page" :disabled="page >= totalPages" @click="goToPage(totalPages)">{{ $t('karaoke.guide.lastPage') }}</button>
+        </div>
+        <form class="picker-page-jump" @submit.prevent="goToPage(pageInput)">
+          <label for="karaoke-stage-page-number">{{ $t('karaoke.guide.goToPage') }}</label>
+          <input id="karaoke-stage-page-number" v-model="pageInput" type="number" inputmode="numeric" min="1" :max="totalPages" step="1" required />
+          <button type="submit" data-action="goto-page">{{ $t('karaoke.guide.goToPageButton') }}</button>
+        </form>
       </nav>
     </template>
   </section>
@@ -61,6 +70,7 @@ import type { Song } from '@/types'
 defineEmits<{ close: [] }>()
 const player = usePlayerStore(), songs = useSongsStore(), { t } = useI18n()
 const query = ref(''), page = ref(1), loading = ref(false), loadFailed = ref(false), busy = ref(false), notice = ref('')
+const pageInput = ref<number | string>(1)
 const searchInput = ref<HTMLInputElement>()
 const picker = ref<HTMLElement>()
 let lastScrollTop = 0
@@ -84,6 +94,7 @@ const totalPages = computed(() => Math.max(1, Math.ceil(filteredSongs.value.leng
 const pageSongs = computed(() => filteredSongs.value.slice((page.value - 1) * 25, page.value * 25))
 watch(query, () => { page.value = 1 })
 watch(totalPages, count => { page.value = Math.min(page.value, count) })
+watch(page, current => { pageInput.value = current })
 const queued = (id: number) => player.requestedQueue.some(song => song.id === id)
 const { selected, selectedSongs, toggle, selectPage } = useSongSelection<Song>(queued)
 const selectablePage = computed(() => pageSongs.value.filter(song => !queued(song.id)))
@@ -107,9 +118,12 @@ async function sing(song: Song) {
   } catch { notice.value = t('karaoke.guide.songUnavailable') }
   finally { busy.value = false }
 }
-function changePage(direction: number) {
-  page.value += direction
-  searchInput.value?.closest('section')?.scrollTo({ top: 0 })
+function goToPage(target: number | string) {
+  const requested = Number(target)
+  if (!Number.isInteger(requested) || String(target).trim() === '') return
+  page.value = Math.min(totalPages.value, Math.max(1, requested))
+  pageInput.value = page.value
+  picker.value?.scrollTo({ top: 0 })
 }
 async function loadSongs() {
   loading.value = true; loadFailed.value = false
@@ -142,6 +156,8 @@ onMounted(() => { void loadSongs() })
 .is-current .picker-song > p:first-child { color: #7ef0b6; }
 .picker-actions { flex-wrap: wrap; }
 .picker-pagination { margin-top: 16px; font-size: 12px; }
+.picker-page-buttons, .picker-page-jump { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.picker-page-jump input { width: 72px; min-height: 44px; padding: 8px; background: #ffffff0d; border: 1px solid #56716b; border-radius: 8px; color: #fff; }
 .picker-empty { padding: 24px 0; color: #b6cdc5; }
 button { min-height: 44px; padding: 8px 12px; border: 1px solid #56716b; border-radius: 8px; font-size: 12px; }
 button:disabled { opacity: .4; }
