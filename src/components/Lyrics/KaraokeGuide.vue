@@ -188,7 +188,7 @@
           </section>
         </aside>
       </div>
-      <div v-if="fullscreen && songsOpen" class="stage-song-browser">
+      <div v-show="fullscreen && songsOpen" class="stage-song-browser">
         <div class="stage-browse-lyric" :data-line-index="guide.index">
           <p class="browse-current-line" :class="{ 'waiting-line': !guide.singing }">
             <template v-if="loading">{{ $t('lyrics.loading') }}</template>
@@ -200,7 +200,9 @@
             <template v-else>{{ guide.finished ? $t('karaoke.guideOutro') : displayedLine?.text }}</template>
           </p>
         </div>
-        <KaraokeStageSongs id="karaoke-stage-songs" class="stage-panel" @close="closeSongs" />
+        <KeepAlive>
+          <KaraokeStageSongs v-if="fullscreen && songsOpen" ref="songsPicker" id="karaoke-stage-songs" class="stage-panel" @close="closeSongs" />
+        </KeepAlive>
       </div>
     </div>
   </section>
@@ -238,6 +240,9 @@ const fullscreenSupported = ref(false)
 const fullscreenError = ref(false)
 const allLyricsOpen = ref(false)
 const songsOpen = ref(false)
+const songsPicker = ref<InstanceType<typeof KaraokeStageSongs>>()
+// Capture before KeepAlive detaches the panel, when its scroll box still has size.
+watch(songsOpen, open => { if (!open) songsPicker.value?.rememberVisit() }, { flush: 'sync' })
 const coverVisible = ref(readCoverPreference())
 const songsButton = ref<HTMLButtonElement>(), lyricsButton = ref<HTMLButtonElement>()
 const lyricsDropdown = ref<HTMLElement>()

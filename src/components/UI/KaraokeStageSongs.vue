@@ -1,5 +1,5 @@
 <template>
-  <section class="stage-song-picker" :aria-label="$t('karaoke.guide.browseSongs')" @keydown.esc.stop.prevent="$emit('close')">
+  <section ref="picker" class="stage-song-picker" :aria-label="$t('karaoke.guide.browseSongs')" @keydown.esc.stop.prevent="$emit('close')">
     <header class="picker-header">
       <h2>{{ $t('karaoke.guide.browseSongs') }}</h2>
       <button type="button" data-action="close-songs" @click="$emit('close')">{{ $t('common.close') }}</button>
@@ -38,16 +38,16 @@
         </li>
       </ul>
       <nav v-if="totalPages > 1" class="picker-pagination" :aria-label="$t('karaoke.songPages')">
-        <button type="button" data-action="previous-page" :disabled="page <= 1" @click="changePage(-1)">{{ $t('player.previous') }}</button>
+        <button type="button" data-action="previous-page" :disabled="page <= 1" @click="changePage(-1)">{{ $t('karaoke.guide.previousPage') }}</button>
         <span>{{ $t('karaoke.songPage', { page, total: totalPages }) }}</span>
-        <button type="button" data-action="next-page" :disabled="page >= totalPages" @click="changePage(1)">{{ $t('player.next') }}</button>
+        <button type="button" data-action="next-page" :disabled="page >= totalPages" @click="changePage(1)">{{ $t('karaoke.guide.nextPage') }}</button>
       </nav>
     </template>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import SongCover from '@/components/UI/SongCover.vue'
 import KaraokeSongBatch from '@/components/UI/KaraokeSongBatch.vue'
@@ -62,6 +62,15 @@ defineEmits<{ close: [] }>()
 const player = usePlayerStore(), songs = useSongsStore(), { t } = useI18n()
 const query = ref(''), page = ref(1), loading = ref(false), loadFailed = ref(false), busy = ref(false), notice = ref('')
 const searchInput = ref<HTMLInputElement>()
+const picker = ref<HTMLElement>()
+let lastScrollTop = 0
+function rememberVisit() { lastScrollTop = picker.value?.scrollTop || 0 }
+defineExpose({ rememberVisit })
+onActivated(async () => {
+  await nextTick()
+  searchInput.value?.focus({ preventScroll: true })
+  picker.value?.scrollTo({ top: lastScrollTop })
+})
 const availableSongs = computed(() => songs.songs.filter(song => karaokeService.isAvailable(song.id)))
 const filteredSongs = computed(() => {
   const words = normalizeForSearch(query.value.trim()).split(/\s+/).filter(Boolean)
@@ -111,7 +120,7 @@ async function loadSongs() {
   catch { loadFailed.value = true }
   finally { loading.value = false }
 }
-onMounted(() => { searchInput.value?.focus(); void loadSongs() })
+onMounted(() => { void loadSongs() })
 </script>
 
 <style scoped>

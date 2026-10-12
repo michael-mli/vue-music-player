@@ -134,7 +134,9 @@ in fullscreen. Repeat-all still applies.
 list of ready karaoke songs, including IDs and Add to queue / Sing now actions.
 Checkboxes and **Select page** support batch additions in both fullscreen and paired
 search/browse lists. Selections survive filtering and pagination and enter the queue
-in selection order. Duplicates are skipped, the 50-song limit is respected, and any
+in selection order. Closing and reopening the fullscreen browser restores its query,
+page, scroll position, and selections for the current stage. Duplicates are skipped,
+the 50-song limit is respected, and any
 unadded selections remain selected. Paired batches wait for each host acknowledgement
 and can be cancelled between requests; retries keep the same command ID.
 Rainbow bars span the stage width using logarithmic bands over the musical spectrum,
