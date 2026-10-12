@@ -270,12 +270,12 @@ const lyricNumbers = computed(() => {
 const lyricCount = computed(() => lyricNumbers.value[props.lines.length - 1] ?? 0)
 const lyricNumber = computed(() => lyricNumbers.value[guide.value.index] ?? 0)
 const displayedLine = computed(() => guide.value.singing ? currentLine.value : guide.value.upcoming[0]?.line)
-// Keep the same element through playback/word ticks, but distinguish repeated lines and songs.
+// A ready preview and its word highlighting are the same line. Animate changes of line/song.
 const displayedLineKey = computed(() => {
   const state = guide.value
   const index = state.singing ? state.index : state.upcoming[0]?.index ?? -1
   const phase = props.loading ? 'loading' : !props.lines.length ? 'empty'
-    : state.finished ? 'finished' : state.singing ? 'singing' : 'waiting'
+    : state.finished ? 'finished' : 'line'
   return `${player.currentSong?.id ?? 'none'}:${phase}:${index}`
 })
 function hideLeavingLine(element: Element) { element.setAttribute('aria-hidden', 'true') }

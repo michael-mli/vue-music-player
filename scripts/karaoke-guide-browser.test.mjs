@@ -116,6 +116,24 @@ async function checkLyricTransition(session, selector, from, to, label) {
   await poll(() => evaluate(session, `document.querySelector(${JSON.stringify(selector)}).parentElement.children.length === 1`), 'outgoing lyric is removed after ' + label)
   if (wasPlaying) await evaluate(session, `${store('player')}.play()`)
 }
+async function checkLyricCue(session, selector, from, to, wordTimed, label) {
+  const wasPlaying = await evaluate(session, `${store('player')}.isPlaying`)
+  const startsSinging = to > from
+  await evaluate(session, `${store('player')}.pause(); ${store('player')}.seek(${from})`)
+  await poll(() => evaluate(session, `(() => { const line = document.querySelector(${JSON.stringify(selector)}); return line && line.parentElement.children.length === 1 && line.classList.contains('waiting-line') === ${startsSinging} && !line.getAnimations().length; })()`), 'lyric settles before ' + label)
+  const sample = await evaluate(session, `(async () => {
+    const before = document.querySelector(${JSON.stringify(selector)}), viewport = before.parentElement, text = before.textContent;
+    ${store('player')}.seek(${to});
+    await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
+    const current = viewport.firstElementChild;
+    return { count: viewport.children.length, sameElement: current === before, sameText: current.textContent === text,
+      singing: !current.classList.contains('waiting-line'), visible: !current.hasAttribute('aria-hidden'),
+      wordSpans: current.querySelectorAll('.timed-word').length, animations: current.getAnimations().length };
+  })()`)
+  check(sample.count === 1 && sample.sameElement && sample.sameText && sample.singing === startsSinging && sample.visible &&
+    (wordTimed ? sample.wordSpans === 2 : sample.wordSpans === 0) && sample.animations === 0, label + ': ' + JSON.stringify(sample))
+  if (wasPlaying) await evaluate(session, `${store('player')}.play()`)
+}
 try {
   const media = path.join(root, 'track.mp3')
   await promisify(execFile)('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=90', '-codec:a', 'libmp3lame', '-b:a', '64k', media])
@@ -144,7 +162,9 @@ try {
   app.get(['/lyrics/link.:id.mp3.l', '/data/lyrics/link.:id.mp3.l', '/lyrics/link.:id.l', '/data/lyrics/link.:id.l'], (_req, res) => res.type('text').send('Fixture song\nSing along'))
   app.get('/synced/link.:id.lrc', (req, res) => res.type('text').send(Array.from({ length: 45 }, (_, index) => {
     const seconds = index * 2
-    if (req.params.id === '2' && index === 0) return '[00:00.00]<00:00.00>Sing <00:01.00>along · line 1<00:02.00>'
+    if (req.params.id === '2' && index === 0) return '[00:00.00]<00:00.00>Sing <00:01.00>along · line 1<00:01.50>'
+    if (req.params.id === '2' && index === 1) return '[00:02.00]<00:02.00>Sing <00:03.00>along · line 2<00:03.50>'
+    if (req.params.id === '2' && index === 2) return '[00:04.00]'
     const text = index === 10 || index === 11 ? 'Repeated chorus' : `Sing along · line ${index + 1}`
     return `[${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}.00]${text}`
   }).join('\n')))
@@ -870,6 +890,20 @@ try {
   await evaluate(freshHost, `window.__wordLine = document.querySelector('.karaoke-view .current-line'); window.__wordFill = window.__wordLine.querySelector('.timed-word').style.getPropertyValue('--word-progress'); ${store('player')}.seek(.8)`)
   await poll(() => evaluate(freshHost, `document.querySelector('.karaoke-view .current-line .timed-word').style.getPropertyValue('--word-progress') !== window.__wordFill`), 'word highlight advances within the current lyric')
   check(await evaluate(freshHost, `document.querySelector('.karaoke-view .current-line') === window.__wordLine && !window.__wordLine.getAnimations().length && parseFloat(window.__wordLine.querySelector('.timed-word').style.getPropertyValue('--word-progress')) > 75`), 'word highlighting updates on the same current lyric without restarting its entry animation')
+  await evaluate(freshHost, `document.exitFullscreen()`)
+  await poll(() => evaluate(freshHost, `!document.fullscreenElement`), 'regular karaoke for the word cue regression')
+  await checkLyricCue(freshHost, '.karaoke-view .current-line', 1.75, 2.25, true, 'regular karaoke shows one lyric when a ready preview becomes word highlighting')
+  await checkLyricCue(freshHost, '.karaoke-view .current-line', 2.25, 1.75, false, 'backward seeking to the ready preview reuses the same visible lyric')
+  await evaluate(freshHost, `document.querySelector('.karaoke-view .guide-icon-button').click()`)
+  await poll(() => evaluate(freshHost, `!!document.fullscreenElement`), 'fullscreen for the word cue regression')
+  await checkLyricCue(freshHost, '.karaoke-view .current-line', 1.75, 2.25, true, 'fullscreen karaoke keeps one lyric at the word timing cue')
+  await evaluate(freshHost, `document.fullscreenElement.querySelector('[data-action="toggle-stage-songs"]').click()`)
+  await poll(() => evaluate(freshHost, `!!document.querySelector('#karaoke-stage-songs')`), 'browse panel for the word cue regression')
+  await checkLyricCue(freshHost, '.karaoke-view .browse-current-line', 1.75, 2.25, true, 'fullscreen browsing keeps one lyric at the word timing cue')
+  await checkLyricCue(freshHost, '.karaoke-view .browse-current-line', 4.5, 6.25, false, 'line-synced lyrics also reuse the ready preview at their singing cue')
+  await evaluate(freshHost, `document.querySelector('#karaoke-stage-songs [data-action="close-songs"]').click()`)
+  await checkLyricTransition(freshHost, '.karaoke-view .current-line', .25, 2.25, 'different word-timed lyric lines retain their outgoing and incoming animations')
+  await evaluate(freshHost, `${store('player')}.seek(.8)`)
   await evaluate(freshHost, `${store('player')}.play()`)
   await evaluate(freshHost, `window.__orderStage = document.fullscreenElement; document.fullscreenElement.querySelector('[data-stage-command="next"]').click()`)
   await poll(() => evaluate(freshHost, `${store('player')}.currentSong.id === 1 && ${store('player')}.audioElement.readyState >= 3 && ${store('player')}.isPlaying && document.fullscreenElement.querySelector('[data-stage-command="next"]').disabled`), 'descending Next advances from ID 2 to ID 1')
