@@ -88,6 +88,34 @@ async function screenshot(session, suffix = '') {
   const shot = await cdp('Page.captureScreenshot', { format: 'png' }, session)
   await fs.writeFile(path.join(file.dir, file.name + suffix + '.png'), Buffer.from(shot.data, 'base64'))
 }
+async function checkLyricTransition(session, selector, from, to, label) {
+  const wasPlaying = await evaluate(session, `${store('player')}.isPlaying`)
+  await evaluate(session, `${store('player')}.pause(); ${store('player')}.seek(${from})`)
+  await poll(() => evaluate(session, `(() => { const line = document.querySelector(${JSON.stringify(selector)}); return line && line.parentElement.children.length === 1 && !line.getAnimations().length; })()`), 'lyric settles before ' + label)
+  const sample = await evaluate(session, `(async () => {
+    const previous = document.querySelector(${JSON.stringify(selector)}), viewport = previous.parentElement;
+    const height = viewport.getBoundingClientRect().height, text = previous.textContent;
+    ${store('player')}.seek(${to});
+    // Vue applies the target styles in its own double requestAnimationFrame.
+    await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
+    const leaving = viewport.querySelector('.lyric-line-leave-active'), entering = viewport.querySelector('.lyric-line-enter-active');
+    if (!leaving || !entering) throw new Error('Expected outgoing and incoming lyric animations');
+    const animations = [...leaving.getAnimations(), ...entering.getAnimations()];
+    for (const animation of animations) { animation.pause(); animation.currentTime = 140; }
+    const outgoing = getComputedStyle(leaving), incoming = getComputedStyle(entering);
+    const result = { sameOutgoing: leaving === previous && leaving.textContent === text,
+      outgoingY: new DOMMatrix(outgoing.transform).m42, incomingY: new DOMMatrix(incoming.transform).m42,
+      outgoingOpacity: Number(outgoing.opacity), incomingOpacity: Number(incoming.opacity),
+      stableHeight: Math.abs(viewport.getBoundingClientRect().height - height) < 1,
+      hiddenOutgoing: leaving.getAttribute('aria-hidden') === 'true' && !entering.hasAttribute('aria-hidden') };
+    for (const animation of animations) animation.finish();
+    return result;
+  })()`)
+  check(sample.sameOutgoing && sample.hiddenOutgoing && sample.stableHeight && sample.outgoingY < 0 && sample.incomingY > 0 &&
+    sample.outgoingOpacity > 0 && sample.outgoingOpacity < 1 && sample.incomingOpacity > 0 && sample.incomingOpacity < 1, label + ': ' + JSON.stringify(sample))
+  await poll(() => evaluate(session, `document.querySelector(${JSON.stringify(selector)}).parentElement.children.length === 1`), 'outgoing lyric is removed after ' + label)
+  if (wasPlaying) await evaluate(session, `${store('player')}.play()`)
+}
 try {
   const media = path.join(root, 'track.mp3')
   await promisify(execFile)('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=90', '-codec:a', 'libmp3lame', '-b:a', '64k', media])
@@ -114,9 +142,11 @@ try {
   app.get('/karaoke/karaoke_manifest.json', (_req, res) => res.json({ version: 1, ids: Array.from({ length: 33 }, (_, index) => index + 1) }))
   app.get(['/data/link.:id.mp3', '/karaoke/link.:id.instrumental.mp3'], (_req, res) => res.sendFile(media))
   app.get(['/lyrics/link.:id.mp3.l', '/data/lyrics/link.:id.mp3.l', '/lyrics/link.:id.l', '/data/lyrics/link.:id.l'], (_req, res) => res.type('text').send('Fixture song\nSing along'))
-  app.get('/synced/link.:id.lrc', (_req, res) => res.type('text').send(Array.from({ length: 45 }, (_, index) => {
+  app.get('/synced/link.:id.lrc', (req, res) => res.type('text').send(Array.from({ length: 45 }, (_, index) => {
     const seconds = index * 2
-    return `[${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}.00]Sing along · line ${index + 1}`
+    if (req.params.id === '2' && index === 0) return '[00:00.00]<00:00.00>Sing <00:01.00>along · line 1<00:02.00>'
+    const text = index === 10 || index === 11 ? 'Repeated chorus' : `Sing along · line ${index + 1}`
+    return `[${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}.00]${text}`
   }).join('\n')))
   app.get(['/poster/link.:id.jpg', '/data/poster/link.:id.jpg'], (req, res) => res.type('svg').send(`<svg xmlns="http://www.w3.org/2000/svg" width="900" height="900"><rect width="900" height="900" fill="${req.params.id === '1' ? '#4b306d' : '#336678'}"/><circle cx="450" cy="450" r="240" fill="#c8a16a"/><text x="400" y="490" font-size="120">${Number(req.params.id)}</text></svg>`))
   const dist = path.resolve(process.env.KARAOKE_GUIDE_TEST_DIST || 'dist')
@@ -241,6 +271,16 @@ try {
   check(await evaluate(host, `!${store('player')}.audioElement.paused`), 'stopping the private guide leaves host playback running')
   await clickText(phone, 'Start vocal guide')
   await cdp('Page.bringToFront', {}, host)
+  await checkLyricTransition(host, '.karaoke-view .current-line', 20.2, 22.2, 'regular karaoke animates both directions of a line change even when consecutive lyrics have identical text')
+  await evaluate(host, `(() => {
+    const line = document.querySelector('.karaoke-view .current-line'); window.__lyricEvents = [];
+    window.__lyricListener = event => { if (event.propertyName === 'transform') window.__lyricEvents.push({ text: event.target.textContent, leaving: event.target.classList.contains('lyric-line-leave-active'), entering: event.target.classList.contains('lyric-line-enter-active') }); };
+    line.parentElement.addEventListener('transitionrun', window.__lyricListener);
+    ${store('player')}.seek(23.6); ${store('player')}.play();
+  })()`)
+  await poll(() => evaluate(host, `window.__lyricEvents.some(event => event.leaving && event.text === 'Repeated chorus') && window.__lyricEvents.some(event => event.entering && event.text.includes('line 13'))`), 'natural playback runs outgoing and incoming lyric transitions')
+  check(await evaluate(host, `${store('player')}.isPlaying`), 'normal audio playback animates the finished lyric out and the next lyric in without pausing')
+  await evaluate(host, `document.querySelector('.karaoke-view .current-line').parentElement.removeEventListener('transitionrun', window.__lyricListener)`)
   await evaluate(host, `${store('ui')}.showVisualizer = true`)
   await poll(() => evaluate(host, `!!document.querySelector('.music-visualizer') && window.__visualizerSources.length === 1`), 'regular visualizer audio source')
   await evaluate(host, `window.__visualizerNode = document.querySelector('.music-visualizer')`)
@@ -249,6 +289,11 @@ try {
     window.__karaokeStage.querySelector('.guide-icon-button').click()`)
   await poll(() => evaluate(host, `document.fullscreenElement === window.__karaokeStage && !!document.fullscreenElement.querySelector('.stage-queue')`), 'host fullscreen with queue')
   check(true, 'fullscreen singing stage includes the live requested-song queue')
+  await checkLyricTransition(host, '.karaoke-view .current-line', 30.2, 18.2, 'fullscreen lyrics animate outgoing and incoming lines when seeking backward')
+  await evaluate(host, `(async () => { ${store('player')}.pause(); for (const time of [20.2, 22.2, 18.2, 20.2]) { ${store('player')}.seek(time); await new Promise(requestAnimationFrame); } })()`)
+  await poll(() => evaluate(host, `(() => { const viewport = document.querySelector('.karaoke-view .lyric-line-window'); return viewport.children.length === 1 && viewport.firstElementChild.textContent === 'Repeated chorus' && !viewport.firstElementChild.hasAttribute('aria-hidden') && !viewport.firstElementChild.getAnimations().length; })()`), 'rapid seeks remove stale lyric transitions')
+  check(await evaluate(host, `document.fullscreenElement === window.__karaokeStage`), 'rapid seeking settles on one visible current lyric while preserving fullscreen')
+  await evaluate(host, `${store('player')}.play()`)
   await poll(() => evaluate(host, `document.fullscreenElement.querySelector('.stage-pairing canvas')?.width === 224`), 'fullscreen pairing QR renders on entry')
   check(await evaluate(host, `document.fullscreenElement.querySelector('.stage-pairing canvas').toDataURL() === document.querySelector('#vocal-guide-pairing-title').closest('section').querySelector('canvas').toDataURL()`), 'fullscreen shows the same current QR invitation as the host pairing panel')
   check(await evaluate(host, `(() => { const panel = document.fullscreenElement.querySelector('.stage-pairing'), code = panel.querySelector('[data-pair-code]'); return code.innerText.replace(/\\s/g, '').includes(${store('karaokeGuide')}.session.pairCode) && code.getBoundingClientRect().bottom <= panel.querySelector('canvas').getBoundingClientRect().top && panel.querySelector('[data-device-username]').textContent.includes('@Fixture'); })()`), 'fullscreen shows the quick code above its QR and the paired device username below it')
@@ -349,6 +394,12 @@ try {
   await evaluate(host, `${store('player')}.pause(); ${store('player')}.seek(40)`)
   await poll(() => evaluate(host, `document.fullscreenElement.querySelector('.stage-browse-lyric')?.dataset.lineIndex === '20' && document.fullscreenElement.querySelector('.browse-current-line').textContent.includes('line 21')`), 'browsing lyric follows seeking')
   check(await browseLyricVisible(), 'search and browsing show the current lyric above the song panel and follow seeking')
+  await checkLyricTransition(host, '.karaoke-view .browse-current-line', 40.2, 42.2, 'the fullscreen search/browse lyric animates out and in without resizing its header')
+  await cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] }, host)
+  await evaluate(host, `${store('player')}.seek(44.2)`)
+  await poll(() => evaluate(host, `document.fullscreenElement.querySelectorAll('.browse-current-line').length === 1 && document.fullscreenElement.querySelector('.browse-current-line').textContent.includes('line 23')`), 'reduced motion updates the current lyric')
+  check(await evaluate(host, `matchMedia('(prefers-reduced-motion: reduce)').matches && !document.fullscreenElement.querySelector('.browse-current-line').getAnimations().length`) && await toolbarVisible(), 'reduced-motion users receive the new lyric without movement or hidden playback controls')
+  await cdp('Emulation.setEmulatedMedia', { features: [] }, host)
   await evaluate(host, `${store('player')}.seek(41.6); ${store('player')}.play()`)
   await poll(() => evaluate(host, `Number(document.fullscreenElement.querySelector('.stage-browse-lyric')?.dataset.lineIndex) >= 21`), 'browsing lyric follows playback')
   check(await browseLyricVisible() && await toolbarVisible(), 'live lyrics advance while browsing without hiding the song panel or transport')
@@ -814,6 +865,12 @@ try {
   check(await evaluate(freshHost, `!!document.fullscreenElement.querySelector('[data-stage-order="id-desc"]') && document.fullscreenElement.querySelector('[data-stage-command="next"]').disabled`), 'entering fullscreen with sequential playback selects descending IDs and disables Next at the smallest ID')
   await evaluate(freshHost, `${store('player')}.playSong(${store('songs')}.songs.find(song => song.id === 2), ${store('songs')}.songs, 1)`)
   await poll(() => evaluate(freshHost, `${store('player')}.audioElement.readyState >= 3 && ${store('player')}.isPlaying && !document.fullscreenElement.querySelector('[data-stage-command="next"]').disabled`), 'descending playback ready on ID 2')
+  await evaluate(freshHost, `${store('player')}.pause(); ${store('player')}.seek(.2)`)
+  await poll(() => evaluate(freshHost, `document.querySelectorAll('.karaoke-view .current-line').length === 1 && document.querySelectorAll('.karaoke-view .current-line .timed-word').length === 2 && !document.querySelector('.karaoke-view .current-line').getAnimations().length`), 'enhanced lyric word timing is ready')
+  await evaluate(freshHost, `window.__wordLine = document.querySelector('.karaoke-view .current-line'); window.__wordFill = window.__wordLine.querySelector('.timed-word').style.getPropertyValue('--word-progress'); ${store('player')}.seek(.8)`)
+  await poll(() => evaluate(freshHost, `document.querySelector('.karaoke-view .current-line .timed-word').style.getPropertyValue('--word-progress') !== window.__wordFill`), 'word highlight advances within the current lyric')
+  check(await evaluate(freshHost, `document.querySelector('.karaoke-view .current-line') === window.__wordLine && !window.__wordLine.getAnimations().length && parseFloat(window.__wordLine.querySelector('.timed-word').style.getPropertyValue('--word-progress')) > 75`), 'word highlighting updates on the same current lyric without restarting its entry animation')
+  await evaluate(freshHost, `${store('player')}.play()`)
   await evaluate(freshHost, `window.__orderStage = document.fullscreenElement; document.fullscreenElement.querySelector('[data-stage-command="next"]').click()`)
   await poll(() => evaluate(freshHost, `${store('player')}.currentSong.id === 1 && ${store('player')}.audioElement.readyState >= 3 && ${store('player')}.isPlaying && document.fullscreenElement.querySelector('[data-stage-command="next"]').disabled`), 'descending Next advances from ID 2 to ID 1')
   check(await evaluate(freshHost, `document.fullscreenElement === window.__orderStage && !!document.fullscreenElement.querySelector('[data-stage-order="id-desc"]') && window.__visualizerSources.length === 1`), 'descending ID order survives a new song queue and Next while preserving fullscreen and the audio graph')

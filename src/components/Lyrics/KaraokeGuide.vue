@@ -74,13 +74,17 @@
               <div v-if="guide.countdown > 0 && guide.countdown <= 4" class="countdown-dots" aria-hidden="true">
                 <span v-for="dot in 4" :key="dot" :class="{ filled: dot <= guide.countdown }"></span>
               </div>
-              <p class="current-line" :class="{ 'waiting-line': !guide.singing }">
-                <template v-if="guide.singing && currentLine?.words?.length">
-                  <span v-for="(word, index) in currentLine.words" :key="index" class="timed-word"
-                    :style="{ '--word-progress': `${wordProgress(word) * 100}%` }">{{ word.text }}</span>
-                </template>
-                <template v-else>{{ guide.finished ? $t('karaoke.guideOutro') : displayedLine?.text }}</template>
-              </p>
+              <div class="lyric-line-window">
+                <Transition name="lyric-line" @before-leave="hideLeavingLine" @before-enter="showEnteringLine">
+                  <p :key="displayedLineKey" class="current-line" :class="{ 'waiting-line': !guide.singing }">
+                    <template v-if="guide.singing && currentLine?.words?.length">
+                      <span v-for="(word, index) in currentLine.words" :key="index" class="timed-word"
+                        :style="{ '--word-progress': `${wordProgress(word) * 100}%` }">{{ word.text }}</span>
+                    </template>
+                    <template v-else>{{ guide.finished ? $t('karaoke.guideOutro') : displayedLine?.text }}</template>
+                  </p>
+                </Transition>
+              </div>
               <div class="phrase-track" role="progressbar" :aria-label="$t('karaoke.lineProgress')"
                 :aria-valuenow="Math.round(guide.progress * 100)" aria-valuemin="0" aria-valuemax="100">
                 <div :style="{ transform: `scaleX(${guide.progress})` }"></div>
@@ -190,15 +194,19 @@
       </div>
       <div v-show="fullscreen && songsOpen" class="stage-song-browser">
         <div class="stage-browse-lyric" :data-line-index="guide.index">
-          <p class="browse-current-line" :class="{ 'waiting-line': !guide.singing }">
-            <template v-if="loading">{{ $t('lyrics.loading') }}</template>
-            <template v-else-if="!lines.length">{{ $t('karaoke.noSynced') }}</template>
-            <template v-else-if="guide.singing && currentLine?.words?.length">
-              <span v-for="(word, index) in currentLine.words" :key="index" class="timed-word"
-                :style="{ '--word-progress': `${wordProgress(word) * 100}%` }">{{ word.text }}</span>
-            </template>
-            <template v-else>{{ guide.finished ? $t('karaoke.guideOutro') : displayedLine?.text }}</template>
-          </p>
+          <div class="lyric-line-window">
+            <Transition name="lyric-line" @before-leave="hideLeavingLine" @before-enter="showEnteringLine">
+              <p :key="displayedLineKey" class="browse-current-line" :class="{ 'waiting-line': !guide.singing }">
+                <template v-if="loading">{{ $t('lyrics.loading') }}</template>
+                <template v-else-if="!lines.length">{{ $t('karaoke.noSynced') }}</template>
+                <template v-else-if="guide.singing && currentLine?.words?.length">
+                  <span v-for="(word, index) in currentLine.words" :key="index" class="timed-word"
+                    :style="{ '--word-progress': `${wordProgress(word) * 100}%` }">{{ word.text }}</span>
+                </template>
+                <template v-else>{{ guide.finished ? $t('karaoke.guideOutro') : displayedLine?.text }}</template>
+              </p>
+            </Transition>
+          </div>
         </div>
         <KeepAlive>
           <KaraokeStageSongs v-if="fullscreen && songsOpen" ref="songsPicker" id="karaoke-stage-songs" class="stage-panel" @close="closeSongs" />
@@ -262,6 +270,16 @@ const lyricNumbers = computed(() => {
 const lyricCount = computed(() => lyricNumbers.value[props.lines.length - 1] ?? 0)
 const lyricNumber = computed(() => lyricNumbers.value[guide.value.index] ?? 0)
 const displayedLine = computed(() => guide.value.singing ? currentLine.value : guide.value.upcoming[0]?.line)
+// Keep the same element through playback/word ticks, but distinguish repeated lines and songs.
+const displayedLineKey = computed(() => {
+  const state = guide.value
+  const index = state.singing ? state.index : state.upcoming[0]?.index ?? -1
+  const phase = props.loading ? 'loading' : !props.lines.length ? 'empty'
+    : state.finished ? 'finished' : state.singing ? 'singing' : 'waiting'
+  return `${player.currentSong?.id ?? 'none'}:${phase}:${index}`
+})
+function hideLeavingLine(element: Element) { element.setAttribute('aria-hidden', 'true') }
+function showEnteringLine(element: Element) { element.removeAttribute('aria-hidden') }
 const previewLines = computed(() => guide.value.finished ? [] : guide.value.singing ? guide.value.upcoming : guide.value.upcoming.slice(1))
 const replayIndex = computed(() => guide.value.singing ? guide.value.index
   : guide.value.upcoming[0]?.index ?? guide.value.previous)
@@ -418,6 +436,12 @@ onBeforeUnmount(() => {
 .phrase-label { min-height: 28px; justify-content: center; flex-wrap: wrap; color: #7ef0b6; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; }
 .entry-countdown { color: #ffe0a4; background: #443923; border-radius: 20px; padding: 4px 10px; font-variant-numeric: tabular-nums; }
 .current-line { font-size: clamp(26px, 5.5cqw, 56px); font-weight: 750; line-height: 1.45; margin: 14px 0 22px; color: #7ef0b6; white-space: pre-wrap; }
+.lyric-line-window { display: grid; overflow: hidden; }
+.lyric-line-window > p { grid-area: 1 / 1; min-width: 0; }
+.lyric-line-enter-active, .lyric-line-leave-active { transition: transform 320ms cubic-bezier(.22, 1, .36, 1), opacity 280ms ease; }
+.lyric-line-leave-active { pointer-events: none; user-select: none; }
+.lyric-line-enter-from { opacity: 0; transform: translateY(.65em); }
+.lyric-line-leave-to { opacity: 0; transform: translateY(-.65em); }
 .waiting-line { color: #edf5f2; }
 .timed-word { background: linear-gradient(to right, #7ef0b6 var(--word-progress), #edf5f2 var(--word-progress)); background-clip: text; -webkit-background-clip: text; color: transparent; }
 .phrase-track { max-width: 440px; margin: auto; height: 4px; border-radius: 4px; background: #314740; overflow: hidden; }
@@ -507,5 +531,9 @@ button:focus-visible, summary:focus-visible, input:focus-visible { outline: 2px 
   .guide-action { font-size: 11px; padding: 4px; gap: 4px; }
   .guide-transport { gap: 6px; }
   .upcoming-line { gap: 8px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lyric-line-enter-active, .lyric-line-leave-active { transition: none; }
+  .lyric-line-enter-from, .lyric-line-leave-to { transform: none; }
 }
 </style>
