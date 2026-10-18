@@ -82,8 +82,10 @@
       />
     </Teleport>
 
-    <!-- Floating karaoke recorder (shown while karaoke mode is on) -->
-    <FloatingRecorder v-if="!isDetachedPlayer" />
+    <!-- Floating karaoke recorder (shown while karaoke mode is on); fullscreen hides anything outside the stage -->
+    <Teleport :to="fullscreenStage || 'body'" :disabled="!fullscreenStage">
+      <FloatingRecorder v-if="!isDetachedPlayer" :embedded="!!fullscreenStage" />
+    </Teleport>
     
     <!-- PWA Install Prompt -->
     <InstallPrompt 

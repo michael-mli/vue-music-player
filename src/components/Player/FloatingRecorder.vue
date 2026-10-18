@@ -1,8 +1,10 @@
 <template>
   <!-- Floating karaoke recorder — appears whenever karaoke mode is on, on any page -->
+  <!-- On the fullscreen stage there is no player bar; sit above the visualizer settings button instead. -->
   <div
     v-if="visible"
-    class="fixed right-4 bottom-36 sm:bottom-28 z-40 flex flex-col items-end gap-2"
+    class="floating-recorder fixed right-4 z-40 flex flex-col items-end gap-2"
+    :class="embedded ? 'bottom-[72px]' : 'bottom-36 sm:bottom-28'"
   >
     <!-- Finished recording: playback + download popover -->
     <div
@@ -58,6 +60,7 @@ import { usePlayerStore } from '@/stores/player'
 import { useKaraokeRecorder } from '@/composables/useKaraokeRecorder'
 import { getInstrumentalUrl } from '@/config'
 
+defineProps<{ embedded?: boolean }>()
 const playerStore = usePlayerStore()
 const recorder = useKaraokeRecorder()
 

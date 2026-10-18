@@ -309,6 +309,9 @@ try {
     window.__karaokeStage.querySelector('.guide-icon-button').click()`)
   await poll(() => evaluate(host, `document.fullscreenElement === window.__karaokeStage && !!document.fullscreenElement.querySelector('.stage-queue')`), 'host fullscreen with queue')
   check(true, 'fullscreen singing stage includes the live requested-song queue')
+  await poll(() => evaluate(host, `!!document.fullscreenElement.querySelector('.floating-recorder')`), 'fullscreen karaoke recorder')
+  check(await evaluate(host, `(() => { const record = document.fullscreenElement.querySelector('.floating-recorder > button'), bounds = record.getBoundingClientRect(), settings = document.fullscreenElement.querySelector('.visualizer-settings-button').getBoundingClientRect();
+    return ${store('player')}.karaokeMode && document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)?.closest('button') === record && bounds.bottom <= settings.top; })()`), 'fullscreen Karaoke mode keeps the red record button visible and clickable above the visualizer settings')
   await checkLyricTransition(host, '.karaoke-view .current-line', 30.2, 18.2, 'fullscreen lyrics animate outgoing and incoming lines when seeking backward')
   await evaluate(host, `(async () => { ${store('player')}.pause(); for (const time of [20.2, 22.2, 18.2, 20.2]) { ${store('player')}.seek(time); await new Promise(requestAnimationFrame); } })()`)
   await poll(() => evaluate(host, `(() => { const viewport = document.querySelector('.karaoke-view .lyric-line-window'); return viewport.children.length === 1 && viewport.firstElementChild.textContent === 'Repeated chorus' && !viewport.firstElementChild.hasAttribute('aria-hidden') && !viewport.firstElementChild.getAnimations().length; })()`), 'rapid seeks remove stale lyric transitions')
@@ -371,6 +374,7 @@ try {
   await evaluate(host, `window.__modePair = ${store('karaokeGuide')}.session.id; window.__modePairUrl = ${store('karaokeGuide')}.pairUrl;
     document.fullscreenElement.querySelector('[data-stage-mode="original"]').click()`)
   await poll(() => evaluate(host, `!${store('player')}.karaokeMode && !${store('player')}.audioElement.paused && ${store('player')}.audioElement.src.endsWith('/link.1.mp3')`), 'fullscreen switches to Original')
+  check(await evaluate(host, `!document.querySelector('.floating-recorder')`), 'fullscreen Original mode hides the record button')
   await poll(() => evaluate(phone, `${store('karaokeDevice')}.snapshot.karaoke === false && document.querySelector('[data-remote-mode="original"]').getAttribute('aria-pressed') === 'true' && !document.querySelector('audio').paused`), 'paired mode indicator follows host')
   check(await evaluate(host, `${store('karaokeGuide')}.session.id === window.__modePair && ${store('karaokeGuide')}.pairUrl === window.__modePairUrl && !!document.fullscreenElement.querySelector('.stage-pairing canvas') && document.fullscreenElement === window.__karaokeStage && window.__fullscreenExits === 0`), 'fullscreen Original switch keeps pairing, QR and fullscreen active; the phone continues its vocal guide')
   await poll(() => evaluate(phone, `!document.querySelector('[data-remote-mode="karaoke"]').disabled`), 'paired mode ready')
