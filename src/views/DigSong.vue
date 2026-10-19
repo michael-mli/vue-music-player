@@ -244,9 +244,15 @@ function seekPreview(line: LyricLine) {
 function onPreviewTimeupdate(event: Event) {
   previewTime.value = (event.target as HTMLAudioElement).currentTime || 0
 }
+// Scroll only the lyrics box: scrollIntoView would also pull the page back up to
+// the preview while the user is browsing results further down.
 watch(activePreviewLine, (index) => {
-  if (index < 0 || !previewPlaying.value) return
-  previewLyricsBox.value?.querySelector(`[data-line="${index}"]`)?.scrollIntoView({ block: 'nearest' })
+  const box = previewLyricsBox.value
+  const line = box?.querySelector<HTMLElement>(`[data-line="${index}"]`)
+  if (!box || !line || !previewPlaying.value) return
+  const top = line.getBoundingClientRect().top - box.getBoundingClientRect().top
+  if (top < 0) box.scrollTop += top
+  else if (top + line.offsetHeight > box.clientHeight) box.scrollTop += top + line.offsetHeight - box.clientHeight
 })
 function onPreviewPlay() {
   playerStore.pause()
