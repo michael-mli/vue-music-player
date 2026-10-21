@@ -106,6 +106,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { digService } from '@/services/digService'
 import type { DigJob, DigSong } from '@/services/digService'
@@ -121,6 +122,7 @@ const { t, te } = useI18n()
 const auth = useAuthStore()
 const songsStore = useSongsStore()
 const playerStore = usePlayerStore()
+const route = useRoute()
 const previewAudio = ref<HTMLAudioElement | null>(null)
 const previewSong = ref<DigSong | null>(null)
 const previewLoading = ref(false)
@@ -471,6 +473,11 @@ watch(() => auth.user?.id, (userId) => {
       void poll()
     }
   } catch { /* Search can retry identity setup. */ }
+}, { immediate: true })
+watch(() => route.query.q, (keyword) => {
+  if (typeof keyword !== 'string' || !keyword.trim()) return
+  query.value = keyword
+  void search(1)
 }, { immediate: true })
 onUnmounted(() => {
   disposed = true

@@ -13,6 +13,8 @@ import { registerKaraokeGuideRoutes } from '../server/karaoke-guide-routes.js'
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'karaoke-guide-browser-'))
 const app = express(), contexts = [], pending = new Map(), errors = [], dialogs = []
+let fixtureMaxSong = 2, fixtureImports = [], fixtureExtraKaraokeIds = []
+const fixtureMetadata = { '1': { title: 'First guide song', duration: 90 }, '2': { title: 'Second guide song', duration: 90 } }
 let server, guide, chrome, socket, nextId = 0, passed = 0, dropHostUpdates = false, dialogChoice = true, loseCommandResponse = false
 const check = (value, message) => { assert.ok(value, message); passed++; console.log('PASS', message) }
 async function poll(work, label, attempts = 150) {
@@ -154,13 +156,13 @@ try {
     req.auth = { sub: 1 }; next()
   }, resolveUser: token => token === 'fixture-host' ? { username: 'Fixture' } : null })
   app.get('/api/categories', (_req, res) => res.json({ success: true, data: { categories: [], assignments: [], lockedSongIds: [] } }))
-  app.get('/api/*', (_req, res) => res.json({ success: true, data: [] }))
-  app.get('/data/song_number.txt', (_req, res) => res.type('text').send('2'))
-  app.get('/data/metadata.json', (_req, res) => res.json({ '1': { title: 'First guide song', duration: 90 }, '2': { title: 'Second guide song', duration: 90 } }))
-  app.get('/karaoke/karaoke_manifest.json', (_req, res) => res.json({ version: 1, ids: Array.from({ length: 33 }, (_, index) => index + 1) }))
-  app.get(['/data/link.:id.mp3', '/karaoke/link.:id.instrumental.mp3'], (_req, res) => res.sendFile(media))
-  app.get(['/lyrics/link.:id.mp3.l', '/data/lyrics/link.:id.mp3.l', '/lyrics/link.:id.l', '/data/lyrics/link.:id.l'], (_req, res) => res.type('text').send('Fixture song\nSing along'))
-  app.get('/synced/link.:id.lrc', (req, res) => res.type('text').send(Array.from({ length: 45 }, (_, index) => {
+  app.get('/api/dig/library', (_req, res) => res.json({ success: true, data: fixtureImports }))
+  app.get('/data/song_number.txt', (_req, res) => res.type('text').send(String(fixtureMaxSong)))
+  app.get('/data/metadata.json', (_req, res) => res.json(fixtureMetadata))
+  app.get('/karaoke/karaoke_manifest.json', (_req, res) => res.json({ version: 1, ids: [...Array.from({ length: 33 }, (_, index) => index + 1), ...fixtureExtraKaraokeIds] }))
+  app.get(['/data/link.:id.mp3', '/karaoke/link.:id.instrumental.mp3', '/api/dig/files/link.:id.mp3'], (_req, res) => res.sendFile(media))
+  app.get(['/lyrics/link.:id.mp3.l', '/data/lyrics/link.:id.mp3.l', '/lyrics/link.:id.l', '/data/lyrics/link.:id.l', '/api/dig/files/lyrics/link.:id.mp3.l'], (_req, res) => res.type('text').send('Fixture song\nSing along'))
+  app.get(['/synced/link.:id.lrc', '/api/dig/files/synced/link.:id.lrc'], (req, res) => res.type('text').send(Array.from({ length: 45 }, (_, index) => {
     const seconds = index * 2
     if (req.params.id === '2' && index === 0) return '[00:00.00]<00:00.00>Sing <00:01.00>along · line 1<00:01.50>'
     if (req.params.id === '2' && index === 1) return '[00:02.00]<00:02.00>Sing <00:03.00>along · line 2<00:03.50>'
@@ -168,7 +170,8 @@ try {
     const text = index === 10 || index === 11 ? 'Repeated chorus' : `Sing along · line ${index + 1}`
     return `[${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}.00]${text}`
   }).join('\n')))
-  app.get(['/poster/link.:id.jpg', '/data/poster/link.:id.jpg'], (req, res) => res.type('svg').send(`<svg xmlns="http://www.w3.org/2000/svg" width="900" height="900"><rect width="900" height="900" fill="${req.params.id === '1' ? '#4b306d' : '#336678'}"/><circle cx="450" cy="450" r="240" fill="#c8a16a"/><text x="400" y="490" font-size="120">${Number(req.params.id)}</text></svg>`))
+  app.get(['/poster/link.:id.jpg', '/data/poster/link.:id.jpg', '/api/dig/poster/:id'], (req, res) => res.type('svg').send(`<svg xmlns="http://www.w3.org/2000/svg" width="900" height="900"><rect width="900" height="900" fill="${req.params.id === '1' ? '#4b306d' : '#336678'}"/><circle cx="450" cy="450" r="240" fill="#c8a16a"/><text x="400" y="490" font-size="120">${Number(req.params.id)}</text></svg>`))
+  app.get('/api/*', (_req, res) => res.json({ success: true, data: [] }))
   const dist = path.resolve(process.env.KARAOKE_GUIDE_TEST_DIST || 'dist')
   app.use(express.static(dist)); app.get('*', (_req, res) => res.sendFile(path.join(dist, 'index.html')))
   server = app.listen(0, '127.0.0.1'); await once(server, 'listening')
@@ -452,6 +455,47 @@ try {
   check(await evaluate(host, `document.fullscreenElement === window.__karaokeStage && ${store('player')}.audioElement.src.includes('.instrumental.mp3') && ${store('player')}.requestedQueue.length === 0`), 'Sing now starts the selected instrumental without leaving fullscreen or leaving a duplicate request queued')
   await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-action="close-songs"]').click()`)
   await poll(() => evaluate(host, `!document.querySelector('#karaoke-stage-songs') && document.activeElement === document.fullscreenElement.querySelector('[data-action="toggle-stage-songs"]')`), 'song browser closes and restores focus')
+  // Publish new files and an imported song after this fullscreen session has already loaded its browser.
+  const grantIdentity = `JSON.stringify((({ sessionId, deviceId, token }) => ({ sessionId, deviceId, token }))(${store('karaokeDevice')}.grant))`
+  const discoveryGrant = await evaluate(phone, grantIdentity)
+  await evaluate(host, `(() => {
+    const player = ${store('player')}, song = ${store('songs')}.songs.find(song => song.id === 1);
+    song.isFavorite = true;
+    window.__discovery = { document, audio: player.audioElement, src: player.audioElement.src,
+      time: player.audioElement.currentTime, songId: player.currentSong.id, queue: player.requestedQueue,
+      sessionId: ${store('karaokeGuide')}.session.id, lyrics: song.lyrics, loads: 0 };
+    player.audioElement.addEventListener('loadstart', () => { window.__discovery.loads++ });
+  })()`)
+  fixtureMaxSong = 3
+  fixtureMetadata['3'] = { title: 'Fresh catalog song', artist: 'Fresh artist', duration: 90 }
+  fixtureMetadata['2'].artist = 'Updated artist'
+  fixtureImports = [{ id: 5000, title: 'Fresh imported song', artist: 'Fresh artist', filename: 'link.5000.mp3', duration: 90, isFavorite: false }]
+  fixtureExtraKaraokeIds = [5000]
+  await evaluate(host, `document.fullscreenElement.querySelector('[data-action="toggle-stage-songs"]').click()`)
+  await poll(() => evaluate(host, `!!document.querySelector('#karaoke-stage-songs [data-song-id="5000"]') && !!document.querySelector('#karaoke-stage-songs [data-song-id="3"]')`), 'reopening fullscreen browser discovers new catalog and imported songs')
+  check(await evaluate(host, `(() => {
+    const before = window.__discovery, player = ${store('player')}, song = ${store('songs')}.songs.find(song => song.id === 1);
+    return document === before.document && document.fullscreenElement === window.__karaokeStage && player.audioElement === before.audio
+      && player.audioElement.src === before.src && !player.audioElement.paused && player.audioElement.currentTime >= before.time
+      && player.currentSong.id === before.songId && player.requestedQueue === before.queue && before.loads === 0
+      && ${store('karaokeGuide')}.session.id === before.sessionId && song.isFavorite && song.lyrics === before.lyrics
+      && ${store('songs')}.songs.find(song => song.id === 2).artist === 'Updated artist';
+  })()`), 'reopening refreshes metadata and instrumental availability while preserving playback, fullscreen, queue, favorites, lyrics and pairing')
+  await poll(async () => {
+    await evaluate(phone, `${store('karaokeDevice')}.search('Fresh', 1)`)
+    return evaluate(phone, `${store('karaokeDevice')}.catalog.total === 2`)
+  }, 'refreshed catalog reaches the paired phone')
+  check(await evaluate(phone, grantIdentity) === discoveryGrant, 'the paired phone keeps its existing device grant after the host refreshes songs')
+  await poll(() => evaluate(phone, `${store('karaokeDevice')}.canControl && !!document.querySelector('[data-song-search-results] [data-song-id="5000"]')`), 'new song remote controls ready')
+  await evaluate(phone, `document.querySelector('[data-song-search-results] [data-song-id="5000"] [data-action="enqueue"]').click()`)
+  await poll(() => evaluate(host, `${store('player')}.requestedQueue.some(song => song.id === 5000)`), 'paired phone requests a newly discovered song')
+  check(true, 'the existing paired device can enqueue a song added after karaoke started')
+  await evaluate(host, `${store('player')}.removeQueuedSong(5000); document.querySelector('#karaoke-stage-songs [data-action="close-songs"]').click()`)
+  fixtureMaxSong = 2; fixtureImports = []; fixtureExtraKaraokeIds = []
+  delete fixtureMetadata['3']; delete fixtureMetadata['2'].artist
+  await evaluate(host, `document.fullscreenElement.querySelector('[data-action="toggle-stage-songs"]').click()`)
+  await poll(() => evaluate(host, `document.querySelectorAll('#karaoke-stage-songs [data-song-id]').length === 2`), 'restore discovery fixture catalog')
+  await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-action="close-songs"]').click()`)
   check(await evaluate(host, `(() => {
     const button = document.fullscreenElement.querySelector('[data-action="toggle-stage-lyrics"]'), timeline = document.fullscreenElement.querySelector('.song-timeline');
     return button.closest('.guide-footer') && button.getBoundingClientRect().top >= timeline.getBoundingClientRect().bottom && !document.fullscreenElement.querySelector('.stage-toolbar [data-action="toggle-stage-lyrics"]');
@@ -578,7 +622,8 @@ try {
   await poll(() => evaluate(host, `${store('player')}.currentSong.id === 2`), 'sing now starts host')
   await stillFullscreen('remote Sing now keeps the host fullscreen')
   check(true, 'Sing now starts the selected song on the host')
-  await evaluate(host, `${store('songs')}.songs.push({ id: 3, title: 'Plain guide song', filename: 'link.3.mp3', duration: 90, lyricsMode: 'manual', isFavorite: false })`)
+  fixtureImports.push({ id: 3, title: 'Plain guide song', filename: 'link.3.mp3', duration: 90, lyricsMode: 'manual', isFavorite: false })
+  await evaluate(host, `${store('songs')}.addImportedSong(${JSON.stringify(fixtureImports[0])})`)
   await poll(() => evaluate(host, `!${store('karaokeGuide')}.catalogBusy`), 'host catalog idle')
   await new Promise(resolve => setTimeout(resolve, 800))
   await evaluate(phone, `(() => { const input = document.querySelector('input[type="search"]'); input.value = 'Plain'; input.dispatchEvent(new Event('input', { bubbles: true })); input.form.requestSubmit(); })()`)
@@ -742,6 +787,7 @@ try {
   })()`), 'rotated fullscreen QR')
   check(await evaluate(host, `document.fullscreenElement === window.__rotationStage`), 'fullscreen QR updates to the rotated invitation without leaving fullscreen')
   // A larger host catalog checks remote browsing independently of search and playback.
+  fixtureImports.push(...Array.from({ length: 30 }, (_, index) => ({ id: index + 4, title: 'Browse song ' + (index + 4), filename: 'link.' + (index + 4) + '.mp3', duration: 90, isFavorite: false })))
   await evaluate(host, `${store('songs')}.songs.push(...Array.from({ length: 30 }, (_, index) => ({ id: index + 4, title: 'Browse song ' + (index + 4), filename: 'link.' + (index + 4) + '.mp3', duration: 90, isFavorite: false })))`)
   await poll(() => evaluate(host, `!${store('karaokeGuide')}.catalogBusy`), 'expanded catalog upload idle')
   await poll(async () => {
@@ -798,47 +844,47 @@ try {
   await evaluate(host, `document.fullscreenElement.querySelector('[data-action="toggle-stage-songs"]').click()`)
   await poll(() => evaluate(host, `document.querySelectorAll('#karaoke-stage-songs [data-song-id]').length === 25`), 'fullscreen browser bounds its first page')
   await evaluate(host, `(() => { const input = document.querySelector('#karaoke-stage-songs input[type="search"]'); input.value = 'song'; input.dispatchEvent(new Event('input', { bubbles: true })); })()`)
-  await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-song-id="4"] input').click(); document.querySelector('#karaoke-stage-songs [data-song-id="5"] input').click()`)
+  await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-song-id="24"] input').click(); document.querySelector('#karaoke-stage-songs [data-song-id="25"] input').click()`)
   await evaluate(host, `window.__browseLyricTop = document.fullscreenElement.querySelector('.stage-browse-lyric').getBoundingClientRect().top; document.querySelector('#karaoke-stage-songs').scrollTop = 10000`)
   check(await browseLyricVisible() && await evaluate(host, `document.querySelector('#karaoke-stage-songs').scrollTop > 0 && document.fullscreenElement.querySelector('.stage-browse-lyric').getBoundingClientRect().top === window.__browseLyricTop`), 'scrolling a full page of songs keeps the live lyric fixed above the list')
   await evaluate(host, `window.__browserVisit = { node: document.querySelector('#karaoke-stage-songs'), scroll: document.querySelector('#karaoke-stage-songs').scrollTop }; document.querySelector('#karaoke-stage-songs [data-action="close-songs"]').click()`)
   await poll(() => evaluate(host, `!document.querySelector('#karaoke-stage-songs')`), 'close scrolled browser')
   await evaluate(host, `document.fullscreenElement.querySelector('[data-action="toggle-stage-songs"]').click()`)
   await poll(() => evaluate(host, `document.querySelector('#karaoke-stage-songs')?.scrollTop === window.__browserVisit.scroll`), 'restore scrolled browser')
-  check(await evaluate(host, `document.querySelector('#karaoke-stage-songs') === window.__browserVisit.node && document.querySelector('#karaoke-stage-songs input[type="search"]').value === 'song' && [4,5].every(id => document.querySelector('#karaoke-stage-songs [data-song-id="' + id + '"] input').checked)`) && await toolbarVisible() && await browseLyricVisible(), 'closing and reopening restores the browser scroll, search and selections without hiding live lyrics or playback controls')
+  check(await evaluate(host, `document.querySelector('#karaoke-stage-songs') === window.__browserVisit.node && document.querySelector('#karaoke-stage-songs input[type="search"]').value === 'song' && [24,25].every(id => document.querySelector('#karaoke-stage-songs [data-song-id="' + id + '"] input').checked)`) && await toolbarVisible() && await browseLyricVisible(), 'closing and reopening restores the browser scroll, search and selections without hiding live lyrics or playback controls')
   check(await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-action="first-page"]').disabled && !document.querySelector('#karaoke-stage-songs [data-action="last-page"]').disabled && document.querySelector('#karaoke-stage-page-number').value === '1'`), 'fullscreen first-page navigation disables the first button and displays the current page in the jump field')
   await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-action="last-page"]').click()`)
-  await poll(() => evaluate(host, `document.querySelectorAll('#karaoke-stage-songs [data-song-id]').length === 8 && !!document.querySelector('#karaoke-stage-songs [data-song-id="33"]')`), 'jump to the last fullscreen browser page')
+  await poll(() => evaluate(host, `document.querySelectorAll('#karaoke-stage-songs [data-song-id]').length === 8 && !!document.querySelector('#karaoke-stage-songs [data-song-id="1"]')`), 'jump to the last fullscreen browser page')
   check(await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-action="last-page"]').disabled && document.querySelector('#karaoke-stage-songs [data-action="next-page"]').disabled && document.querySelector('#karaoke-stage-page-number').value === '2' && document.querySelector('#karaoke-stage-songs').scrollTop === 0`), 'Last page reaches the final results, updates the jump field and disables forward navigation')
   await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-action="first-page"]').click()`)
   await poll(() => evaluate(host, `document.querySelectorAll('#karaoke-stage-songs [data-song-id]').length === 25 && document.querySelector('#karaoke-stage-page-number').value === '1'`), 'return to the first fullscreen browser page')
-  check(await evaluate(host, `[4,5].every(id => document.querySelector('#karaoke-stage-songs [data-song-id="' + id + '"] input').checked)`) && await toolbarVisible() && await browseLyricVisible(), 'First page retains batch selections, live lyrics and playback controls')
+  check(await evaluate(host, `[24,25].every(id => document.querySelector('#karaoke-stage-songs [data-song-id="' + id + '"] input').checked)`) && await toolbarVisible() && await browseLyricVisible(), 'First page retains batch selections, live lyrics and playback controls')
   await evaluate(host, `(() => { const input = document.querySelector('#karaoke-stage-page-number'); input.value = '2'; input.dispatchEvent(new Event('input', { bubbles: true })); input.form.requestSubmit(); })()`)
   await poll(() => evaluate(host, `document.querySelectorAll('#karaoke-stage-songs [data-song-id]').length === 8 && document.querySelector('#karaoke-stage-page-number').value === '2'`), 'submit a fullscreen page number')
   check(await evaluate(host, `document.fullscreenElement === window.__rotationStage && document.querySelector('#karaoke-stage-songs input[type="search"]').value === 'song'`), 'Go jumps directly to a page in the current search without leaving fullscreen')
   for (const invalid of ['', '0', '3', '1.5']) {
     await evaluate(host, `(() => { const input = document.querySelector('#karaoke-stage-page-number'); input.value = ${JSON.stringify(invalid)}; input.dispatchEvent(new Event('input', { bubbles: true })); input.form.requestSubmit(); })()`)
-    check(await evaluate(host, `!document.querySelector('#karaoke-stage-page-number').validity.valid && document.querySelectorAll('#karaoke-stage-songs [data-song-id]').length === 8 && !!document.querySelector('#karaoke-stage-songs [data-song-id="33"]')`), 'page jump rejects invalid input ' + JSON.stringify(invalid) + ' without changing results')
+    check(await evaluate(host, `!document.querySelector('#karaoke-stage-page-number').validity.valid && document.querySelectorAll('#karaoke-stage-songs [data-song-id]').length === 8 && !!document.querySelector('#karaoke-stage-songs [data-song-id="1"]')`), 'page jump rejects invalid input ' + JSON.stringify(invalid) + ' without changing results')
   }
   await evaluate(host, `(() => { const input = document.querySelector('#karaoke-stage-page-number'); input.value = '1'; input.dispatchEvent(new Event('input', { bubbles: true })); input.focus(); })()`)
   await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' }, host)
   await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 }, host)
   await poll(() => evaluate(host, `document.querySelectorAll('#karaoke-stage-songs [data-song-id]').length === 25 && document.querySelector('#karaoke-stage-page-number').value === '1'`), 'Enter submits the page jump')
-  check(await evaluate(host, `[4,5].every(id => document.querySelector('#karaoke-stage-songs [data-song-id="' + id + '"] input').checked)`), 'Enter navigates to the requested page and retains its selected songs')
+  check(await evaluate(host, `[24,25].every(id => document.querySelector('#karaoke-stage-songs [data-song-id="' + id + '"] input').checked)`), 'Enter navigates to the requested page and retains its selected songs')
   await cdp('Emulation.setDeviceMetricsOverride', { width: 320, height: 820, deviceScaleFactor: 1, mobile: true }, host)
   await evaluate(host, `document.querySelector('#karaoke-stage-songs').scrollTop = 10000`)
   check(await evaluate(host, `(() => { const picker = document.querySelector('#karaoke-stage-songs'); return picker.scrollWidth <= picker.clientWidth && [...picker.querySelectorAll('.picker-pagination button, .picker-pagination input')].every(control => { const rect = control.getBoundingClientRect(); return rect.left >= 0 && rect.right <= 320 && rect.height >= 44; }); })()`), 'fullscreen page controls wrap at 320px without horizontal overflow and retain touch targets')
   await screenshot(host, '-page-navigation-mobile')
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1100, height: 820, deviceScaleFactor: 1, mobile: false }, host)
   await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-action="next-page"]').click()`)
-  await poll(() => evaluate(host, `document.querySelectorAll('#karaoke-stage-songs [data-song-id]').length === 8 && !!document.querySelector('#karaoke-stage-songs [data-song-id="33"]')`), 'fullscreen browse page two')
+  await poll(() => evaluate(host, `document.querySelectorAll('#karaoke-stage-songs [data-song-id]').length === 8 && !!document.querySelector('#karaoke-stage-songs [data-song-id="1"]')`), 'fullscreen browse page two')
   check(await toolbarVisible(), 'fullscreen browsing paginates the karaoke catalog while playback controls remain visible')
-  await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-song-id="30"] input').click()`)
+  await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-song-id="4"] input').click()`)
   await evaluate(host, `document.querySelector('#karaoke-stage-songs').scrollTop = 200; window.__pageTwoScroll = document.querySelector('#karaoke-stage-songs').scrollTop; document.fullscreenElement.querySelector('[data-action="toggle-stage-songs"]').click()`)
   await poll(() => evaluate(host, `!document.querySelector('#karaoke-stage-songs')`), 'toolbar closes browser on page two')
   await evaluate(host, `document.fullscreenElement.querySelector('[data-action="toggle-stage-songs"]').click()`)
   await poll(() => evaluate(host, `document.querySelectorAll('#karaoke-stage-songs [data-song-id]').length === 8 && document.querySelector('#karaoke-stage-songs').scrollTop === window.__pageTwoScroll`), 'reopen on the last browser page and position')
-  check(await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-song-id="30"] input').checked && document.querySelector('#karaoke-stage-songs [data-action="enqueue-selected"]').textContent.includes('(3)') && document.querySelector('#karaoke-stage-songs input[type="search"]').value === 'song'`), 'the toolbar reopens the same search page and preserves selections from both pages')
+  check(await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-song-id="4"] input').checked && document.querySelector('#karaoke-stage-songs [data-action="enqueue-selected"]').textContent.includes('(3)') && document.querySelector('#karaoke-stage-songs input[type="search"]').value === 'song'`), 'the toolbar reopens the same search page and preserves selections from both pages')
   await evaluate(host, `document.querySelector('#app').__vue_app__.config.globalProperties.$i18n.locale = 'zh'`)
   await poll(() => evaluate(host, `document.querySelector('#karaoke-stage-songs [data-action="previous-page"]').textContent === '上一页' && document.querySelector('#karaoke-stage-songs [data-action="next-page"]').textContent === '下一页' && document.querySelector('#karaoke-stage-songs [data-action="first-page"]').textContent === '首页' && document.querySelector('#karaoke-stage-songs [data-action="last-page"]').textContent === '末页' && document.querySelector('#karaoke-stage-songs [data-action="goto-page"]').textContent === '跳转'`), 'Chinese pagination labels')
   check(true, 'fullscreen pagination localizes first, last, previous, next and page jump controls in Chinese')
@@ -854,11 +900,11 @@ try {
   await poll(() => evaluate(host, `document.querySelector('#karaoke-stage-songs input[type="search"]')?.value === '33' && document.querySelectorAll('#karaoke-stage-songs [data-song-id]').length === 1`), 'restore the filtered browser after Escape')
   check(await evaluate(host, `!!document.querySelector('#karaoke-stage-songs [data-song-id="33"]') && document.querySelector('#karaoke-stage-songs [data-action="enqueue-selected"]').textContent.includes('(3)')`), 'Escape and reopen preserve filtered results and selections')
   await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-action="enqueue-selected"]').click()`)
-  check(await evaluate(host, `(() => { const ids = ${store('player')}.requestedQueue.map(song => song.id); return ids.slice(-3).join(',') === '4,5,30' && document.querySelector('#karaoke-stage-songs [data-action="enqueue-selected"]').disabled && document.fullscreenElement === window.__rotationStage; })()`), 'fullscreen adds selected songs from multiple pages in order and clears successful selections')
+  check(await evaluate(host, `(() => { const ids = ${store('player')}.requestedQueue.map(song => song.id); return ids.slice(-3).join(',') === '24,25,4' && document.querySelector('#karaoke-stage-songs [data-action="enqueue-selected"]').disabled && document.fullscreenElement === window.__rotationStage; })()`), 'fullscreen adds selected songs from multiple pages in order and clears successful selections')
   await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-action="select-page"]').click(); document.querySelector('#karaoke-stage-songs [data-action="select-page"]').click()`)
   check(await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-action="enqueue-selected"]').disabled`), 'Select page toggles the current search results without selecting other pages')
   await evaluate(host, `window.__beforeBatchQueue = ${store('player')}.requestedQueue; ${store('player')}.requestedQueue = Array.from({ length: 49 }, (_, i) => ({ id: 1000 + i, title: 'Queued fixture ' + i }));
-    (() => { const input = document.querySelector('#karaoke-stage-songs input[type="search"]'); input.value = ''; input.dispatchEvent(new Event('input', { bubbles: true })); })()`)
+    (() => { const input = document.querySelector('#karaoke-stage-songs input[type="search"]'); input.value = 'guide song'; input.dispatchEvent(new Event('input', { bubbles: true })); })()`)
   await poll(() => evaluate(host, `!!document.querySelector('#karaoke-stage-songs [data-song-id="3"]')`), 'batch limit fixture')
   await evaluate(host, `for (const id of [1,2,3]) document.querySelector('#karaoke-stage-songs [data-song-id="' + id + '"] input').click()`)
   await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-action="enqueue-selected"]').click()`)
@@ -874,6 +920,7 @@ try {
   await poll(() => evaluate(host, `!document.querySelector('#karaoke-stage-songs [data-song-id]') && !!document.querySelector('#karaoke-stage-songs .picker-empty')`), 'fullscreen excludes songs without instrumentals')
   check(true, 'fullscreen song browser only offers songs with karaoke instrumentals')
   await evaluate(host, `document.querySelector('#karaoke-stage-songs [data-action="close-songs"]').click()`)
+  fixtureImports = []
   const freshHost = await page(origin, '/sing', 1100, 'en', { 'music-player-song-range': '{"min":1,"max":1335}' })
   await poll(() => evaluate(freshHost, `!!${store('player')}.currentSong && ${store('player')}.audioElement?.readyState >= 3 && !!document.querySelector('.karaoke-view .singing-guide')`), 'fresh fullscreen host')
   await evaluate(freshHost, `${store('ui')}.showVisualizer = false; ${store('player')}.shuffle = false; ${store('player')}.playSong(${store('songs')}.songs.find(song => song.id === 1), ${store('songs')}.songs)`)

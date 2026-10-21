@@ -158,7 +158,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   ArrowsRightLeftIcon,
   HeartIcon,
@@ -176,6 +177,7 @@ import type { Song } from '@/types'
 const { t } = useI18n()
 const playerStore = usePlayerStore()
 const songsStore = useSongsStore()
+const router = useRouter()
 
 const recentSongs = computed(() =>
   songsStore.songs.slice(0, 12)
@@ -186,6 +188,19 @@ const isFiltering = computed(() => songsStore.quickQuery.trim().length > 0)
 const filteredSongs = computed(() => songsStore.quickFilteredSongs)
 const resultLimit = ref(50)
 const visibleResults = computed(() => filteredSongs.value.slice(0, resultLimit.value))
+
+// Wait for typing and local catalog/lyrics loading to settle before digging elsewhere.
+watch(() => [songsStore.quickQuery, songsStore.quickScope, filteredSongs.value.length,
+  songsStore.loading, songsStore.lyricsPreloading, songsStore.error], (_, __, onCleanup) => {
+  resultLimit.value = 50
+  const keyword = songsStore.quickQuery.trim()
+  const waitingForLyrics = songsStore.lyricsPreloading && ['all', 'lyrics'].includes(songsStore.quickScope)
+  if (!keyword || filteredSongs.value.length || songsStore.loading || waitingForLyrics || songsStore.error) return
+  const timer = window.setTimeout(() => {
+    void router.replace({ name: 'DigSong', query: { q: keyword } })
+  }, 800)
+  onCleanup(() => window.clearTimeout(timer))
+}, { immediate: true })
 
 function playFilteredSong(song: Song) {
   const queue = filteredSongs.value

@@ -56,7 +56,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onActivated, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import SongCover from '@/components/UI/SongCover.vue'
 import KaraokeSongBatch from '@/components/UI/KaraokeSongBatch.vue'
@@ -77,6 +77,7 @@ let lastScrollTop = 0
 function rememberVisit() { lastScrollTop = picker.value?.scrollTop || 0 }
 defineExpose({ rememberVisit })
 onActivated(async () => {
+  await loadSongs()
   await nextTick()
   searchInput.value?.focus({ preventScroll: true })
   picker.value?.scrollTo({ top: lastScrollTop })
@@ -128,13 +129,12 @@ function goToPage(target: number | string) {
 async function loadSongs() {
   loading.value = true; loadFailed.value = false
   try {
-    await Promise.all([songs.songs.length ? Promise.resolve() : songs.fetchSongs(), karaokeService.ensureLoaded()])
+    await Promise.all([songs.fetchSongs(true), karaokeService.ensureLoaded(true)])
     loadFailed.value = !!songs.error && !songs.songs.length
   }
   catch { loadFailed.value = true }
   finally { loading.value = false }
 }
-onMounted(() => { void loadSongs() })
 </script>
 
 <style scoped>

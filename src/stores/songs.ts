@@ -27,7 +27,6 @@ export const useSongsStore = defineStore('songs', () => {
 
   // Background lyrics preload for quick search; true while it's still running.
   const lyricsPreloading = ref(false)
-  let lyricsPreloadStarted = false
 
   // Quick filter — instant, client-side, shared by the per-page search bar.
   // Scope narrows matching to one metadata field ('all' = title + id + all metadata).
@@ -140,13 +139,13 @@ export const useSongsStore = defineStore('songs', () => {
 
   // Actions
   let songsRequest: Promise<void> | null = null
-  function fetchSongs(): Promise<void> {
+  function fetchSongs(refresh = false): Promise<void> {
     // App and the active route can mount together; share their initial load.
-    if (!songsRequest) songsRequest = loadSongs().finally(() => { songsRequest = null })
+    if (!songsRequest) songsRequest = loadSongs(refresh).finally(() => { songsRequest = null })
     return songsRequest
   }
 
-  async function loadSongs() {
+  async function loadSongs(refresh: boolean) {
     try {
       loading.value = true
       error.value = null
@@ -161,16 +160,33 @@ export const useSongsStore = defineStore('songs', () => {
         raw = response.data
       }
 
-      songs.value = raw
-
       // Merge offline-built metadata (artist/album/year/genre) — non-fatal if absent
-      await loadMetadata()
+      const catalog = await withMetadata(raw, refresh)
       try {
         const imported = await digService.library()
-        for (const song of imported.data) addImportedSong(song)
+        for (const song of imported.data) mergeImportedSong(song, catalog)
       } catch (error) {
+        // A transient import-library failure must not hide songs already in use.
+        const loadedIds = new Set(catalog.map(song => song.id))
+        for (const song of songs.value) {
+          if (!loadedIds.has(song.id)) mergeImportedSong(song, catalog)
+        }
         console.warn('Could not load imported songs:', error)
       }
+      // Publish the complete catalog together so a partial refresh cannot reset browse pagination.
+      // Read local state after the requests, including lyrics/favorites changed while they ran.
+      const previous = new Map(songs.value.map(song => [song.id, song]))
+      songs.value = catalog.map(song => {
+        const cached = previous.get(song.id)
+        return cached ? {
+          ...cached,
+          ...song,
+          title: song.title.startsWith('Song ') ? cached.title : song.title,
+          duration: song.duration || cached.duration,
+          lyrics: song.lyrics ?? cached.lyrics,
+          isFavorite: cached.isFavorite,
+        } : song
+      })
       await loadCategories()
       // Warm the lyrics cache in the background so quick search (header/Library/Home)
       // can match lyrics content, not just title/metadata.
@@ -185,20 +201,28 @@ export const useSongsStore = defineStore('songs', () => {
 
   // Make an imported song immediately available to playback and library search.
   function addImportedSong(song: Song) {
+    mergeImportedSong(song, songs.value)
+  }
+
+  function mergeImportedSong(song: Song, catalog: Song[]) {
     registerImportedSongIds([song.id], song.lyricsMode === 'manual' ? [song.id] : [])
     try {
       songService.seedTitleCache(new Map([[song.id, song.title]]))
     } catch { /* Storage quotas must not hide a successfully imported song. */ }
-    const index = songs.value.findIndex((item) => item.id === song.id)
-    if (index < 0) songs.value.push(song)
-    else songs.value[index] = { ...songs.value[index], ...song, isFavorite: songs.value[index].isFavorite }
-    songs.value.sort((a, b) => b.id - a.id)
+    const index = catalog.findIndex((item) => item.id === song.id)
+    if (index < 0) catalog.push(song)
+    else catalog[index] = { ...catalog[index], ...song, isFavorite: catalog[index].isFavorite }
+    catalog.sort((a, b) => b.id - a.id)
   }
 
   // Merge /data/metadata.json into the song list so quick search can scope by field.
-  async function loadMetadata() {
-    const meta = await metadataService.load()
-    if (meta.size === 0) return
+  async function loadMetadata(refresh = false) {
+    songs.value = await withMetadata(songs.value, refresh)
+  }
+
+  async function withMetadata(catalog: Song[], refresh: boolean): Promise<Song[]> {
+    const meta = await metadataService.load(refresh)
+    if (meta.size === 0) return catalog
 
     // Server-built titles → title cache, so fetchUncachedTitles has (almost) nothing
     // left to derive from lyrics files and first launch skips the slow title build.
@@ -208,7 +232,7 @@ export const useSongsStore = defineStore('songs', () => {
     }
     songService.seedTitleCache(titleSeed)
 
-    songs.value = songs.value.map(song => {
+    return catalog.map(song => {
       const m = meta.get(song.id)
       if (!m) return song
       return {
@@ -219,7 +243,7 @@ export const useSongsStore = defineStore('songs', () => {
         genre: m.genre || song.genre,
         language: m.language || song.language,
         duration: song.duration || m.duration || 0,
-        title: song.title.startsWith('Song ') && m.title ? m.title : song.title
+        title: (refresh || song.title.startsWith('Song ')) && m.title ? m.title : song.title
       }
     })
   }
@@ -276,15 +300,16 @@ export const useSongsStore = defineStore('songs', () => {
   // metadata. The /search page reuses the same in-memory cache, so once this has run
   // (or run once before) its per-song fetches short-circuit too.
   async function preloadLyrics() {
-    if (lyricsPreloadStarted) return
-    lyricsPreloadStarted = true
+    if (lyricsPreloading.value) return
     lyricsPreloading.value = true
     try {
       const CHUNK = 12
-      for (let i = 0; i < songs.value.length; i += CHUNK) {
-        const batch = songs.value.slice(i, i + CHUNK)
+      const attempted = new Set<number>()
+      while (true) {
+        const batch = songs.value.filter(song => !song.lyrics && !attempted.has(song.id)).slice(0, CHUNK)
+        if (!batch.length) break
         await Promise.all(batch.map(async (song) => {
-          if (song.lyrics) return
+          attempted.add(song.id)
           try {
             const response = await songService.getMockLyrics(song.id)
             if (response.success && response.data) {
@@ -300,9 +325,7 @@ export const useSongsStore = defineStore('songs', () => {
           }
         }))
         // Yield to keep the UI responsive while the library is large
-        if (i + CHUNK < songs.value.length) {
-          await new Promise(resolve => setTimeout(resolve, 10))
-        }
+        await new Promise(resolve => setTimeout(resolve, 10))
       }
     } finally {
       lyricsPreloading.value = false

@@ -12,6 +12,7 @@ import WebSocket from '../server/node_modules/ws/wrapper.mjs'
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dig-preview-browser-'))
 const app = express(), pending = new Map(), errors = []
+const searches = []
 let server, chrome, socket, nextId = 0, passed = 0
 const check = (value, message) => { assert.ok(value, message); passed++; console.log('PASS', message) }
 async function poll(work, label, attempts = 150) {
@@ -46,9 +47,9 @@ try {
   const user = { id: 1, username: 'Fixture', name: 'Fixture', role: 'user', kind: 'guest' }
   app.get('/api/auth/me', (_req, res) => res.json({ success: true, data: user }))
   app.post('/api/auth/guest', (_req, res) => res.json({ success: true, data: { token: 'fixture', user } }))
-  app.get('/api/dig/search', (_req, res) => res.json({ success: true, data: { page: 1, totalPages: 1, excluded: 0, songs: Array.from({ length: 30 }, (_, index) => ({
+  app.get('/api/dig/search', (req, res) => { searches.push(req.query.q); res.json({ success: true, data: { page: 1, totalPages: 1, excluded: 0, songs: Array.from({ length: 30 }, (_, index) => ({
     key: `song-${index + 1}`, title: `Dug song ${index + 1}`, artist: 'Fixture artist', album: 'Fixture album', duration: 90, source: 'fixture', libraryId: null, verification: 'verified',
-  })) } }))
+  })) } }) })
   app.post('/api/dig/preview', (_req, res) => res.json({ success: true, data: { token: 'preview-token' } }))
   app.get('/api/dig/preview/:token', (_req, res) => res.sendFile(media))
   app.post('/api/dig/lyrics', (_req, res) => res.json({ success: true, data: { lrc: Array.from({ length: 80 }, (_, index) =>
@@ -91,15 +92,30 @@ try {
   await cdp('Page.enable', {}, tab); await cdp('Runtime.enable', {}, tab)
   await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 820, deviceScaleFactor: 1, mobile: true }, tab)
   await cdp('Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('language', 'en'); localStorage.setItem('auth_token', 'fixture');` }, tab)
-  await cdp('Page.navigate', { url: origin + '/dig' }, tab)
-  await poll(() => evaluate(tab, `!!document.querySelector('#dig-query')`), 'dig page')
+  await cdp('Page.navigate', { url: origin + '/' }, tab)
+  await poll(() => evaluate(tab, `!!document.querySelector('.home-view input')`), 'home page')
   // The app auto-starts a library song on load; its playback would rightly stop the preview.
   const player = `document.querySelector('#app').__vue_app__.config.globalProperties.$pinia._s.get('player')`
   await poll(() => evaluate(tab, `!!${player}.currentSong`), 'library auto-start')
   await evaluate(tab, `${player}.pause()`)
 
+  const enterHomeQuery = query => evaluate(tab, `(() => { const input = document.querySelector('.home-view input'); input.value = ${JSON.stringify(query)}; input.dispatchEvent(new Event('input', { bubbles: true })); })()`)
+  await enterHomeQuery('no match yet')
+  await enterHomeQuery('Library song')
+  await new Promise(resolve => setTimeout(resolve, 1000))
+  check(await evaluate(tab, `location.pathname === '/' && document.querySelector('.home-view').innerText.includes('Library song')`) && searches.length === 0,
+    'a matching homepage query cancels the pending no-result redirect')
+  await enterHomeQuery('')
+  await new Promise(resolve => setTimeout(resolve, 900))
+  check(await evaluate(tab, `location.pathname === '/'`) && searches.length === 0, 'an empty homepage query stays on the homepage')
+  const keyword = '未收录 & fresh + song?'
+  await enterHomeQuery(keyword)
+  await poll(() => evaluate(tab, `location.pathname === '/dig' && document.querySelector('#dig-query')?.value === ${JSON.stringify(keyword)} && document.querySelectorAll('ul[aria-busy] > li').length === 30`), 'homepage fallback searches Song Digging')
+  check(searches.length === 1 && searches[0] === keyword && await evaluate(tab, `new URLSearchParams(location.search).get('q') === ${JSON.stringify(keyword)}`),
+    'an empty homepage search redirects and automatically digs using the same Unicode and punctuation keyword')
+
   await evaluate(tab, `(() => { const input = document.querySelector('#dig-query'); input.value = 'fixture'; input.dispatchEvent(new Event('input')); input.form.requestSubmit(); })()`)
-  await poll(() => evaluate(tab, `document.querySelectorAll('ul[aria-busy] > li').length === 30`), 'search results')
+  await poll(() => evaluate(tab, `document.querySelector('ul[aria-busy]')?.getAttribute('aria-busy') === 'false' && document.querySelectorAll('ul[aria-busy] > li').length === 30`), 'search results')
   await evaluate(tab, `document.querySelector('ul[aria-busy] > li button[aria-pressed]').click()`)
   const previewState = `(() => { const audio = document.querySelector('audio[controls]'); return { paused: audio.paused, time: audio.currentTime, error: audio.error?.code, active: ${activeLine},
     messages: [...document.querySelectorAll('[role=alert], [role=status]')].map(element => element.textContent.trim()) }; })()`

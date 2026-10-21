@@ -23,7 +23,7 @@ class KaraokeService {
   private refreshTimer: number | null = null
 
   /** Kick off (or reuse) the manifest fetch. Safe to call repeatedly. */
-  ensureLoaded(): Promise<void> {
+  ensureLoaded(refresh = false): Promise<void> {
     if (!config.karaokeEnabled) return Promise.resolve()
     // Automatic ingestion can publish an instrumental while the app stays open.
     // Refresh visible sessions and make membership reactive for player controls.
@@ -33,7 +33,7 @@ class KaraokeService {
       }, 60000)
     }
     if (this.loadPromise) return this.loadPromise
-    if (Date.now() - this.lastFetched < 60000) return Promise.resolve()
+    if (!refresh && Date.now() - this.lastFetched < 60000) return Promise.resolve()
     this.lastFetched = Date.now()
 
     this.loadPromise = (async () => {
