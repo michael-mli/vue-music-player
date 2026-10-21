@@ -96,6 +96,8 @@ try {
   await poll(() => evaluate(tab, `!!document.querySelector('.home-view input')`), 'home page')
   // The app auto-starts a library song on load; its playback would rightly stop the preview.
   const player = `document.querySelector('#app').__vue_app__.config.globalProperties.$pinia._s.get('player')`
+  const router = `document.querySelector('#app').__vue_app__.config.globalProperties.$router`
+  const songs = `document.querySelector('#app').__vue_app__.config.globalProperties.$pinia._s.get('songs')`
   await poll(() => evaluate(tab, `!!${player}.currentSong`), 'library auto-start')
   await evaluate(tab, `${player}.pause()`)
 
@@ -113,6 +115,19 @@ try {
   await poll(() => evaluate(tab, `location.pathname === '/dig' && document.querySelector('#dig-query')?.value === ${JSON.stringify(keyword)} && document.querySelectorAll('ul[aria-busy] > li').length === 30`), 'homepage fallback searches Song Digging')
   check(searches.length === 1 && searches[0] === keyword && await evaluate(tab, `new URLSearchParams(location.search).get('q') === ${JSON.stringify(keyword)}`),
     'an empty homepage search redirects and automatically digs using the same Unicode and punctuation keyword')
+  check(await evaluate(tab, `${songs}.quickQuery === '' && document.querySelector('#dig-query').value === ${JSON.stringify(keyword)}`),
+    'switching to Song Digging clears the homepage keyword while preserving the digging keyword')
+
+  await evaluate(tab, `history.back()`)
+  await poll(() => evaluate(tab, `document.querySelector('.home-view input')?.value === ''`), 'Back returns to a cleared homepage search')
+  await new Promise(resolve => setTimeout(resolve, 900))
+  check(await evaluate(tab, `location.pathname === '/' && !${songs}.quickQuery`) && searches.length === 1,
+    'browser Back leaves the homepage search empty without redirecting back to the previous digging query')
+  await enterHomeQuery('Library song')
+  await poll(() => evaluate(tab, `location.pathname === '/' && ${songs}.quickQuery === 'Library song' && ${songs}.quickFilteredSongs.length === 1`), 'search again after returning home')
+  await evaluate(tab, `${router}.push('/dig')`)
+  await poll(() => evaluate(tab, `!!document.querySelector('#dig-query')`), 'manual navigation to Song Digging')
+  check(await evaluate(tab, `${songs}.quickQuery === ''`), 'manually opening Song Digging also clears the homepage search')
 
   await evaluate(tab, `(() => { const input = document.querySelector('#dig-query'); input.value = 'fixture'; input.dispatchEvent(new Event('input')); input.form.requestSubmit(); })()`)
   await poll(() => evaluate(tab, `document.querySelector('ul[aria-busy]')?.getAttribute('aria-busy') === 'false' && document.querySelectorAll('ul[aria-busy] > li').length === 30`), 'search results')

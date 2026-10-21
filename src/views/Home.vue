@@ -159,7 +159,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import {
   ArrowsRightLeftIcon,
   HeartIcon,
@@ -179,6 +179,10 @@ const playerStore = usePlayerStore()
 const songsStore = useSongsStore()
 const router = useRouter()
 
+onBeforeRouteLeave(to => {
+  if (to.name === 'DigSong') songsStore.clearQuickFilter()
+})
+
 const recentSongs = computed(() =>
   songsStore.songs.slice(0, 12)
 )
@@ -197,7 +201,7 @@ watch(() => [songsStore.quickQuery, songsStore.quickScope, filteredSongs.value.l
   const waitingForLyrics = songsStore.lyricsPreloading && ['all', 'lyrics'].includes(songsStore.quickScope)
   if (!keyword || filteredSongs.value.length || songsStore.loading || waitingForLyrics || songsStore.error) return
   const timer = window.setTimeout(() => {
-    void router.replace({ name: 'DigSong', query: { q: keyword } })
+    void router.push({ name: 'DigSong', query: { q: keyword } })
   }, 800)
   onCleanup(() => window.clearTimeout(timer))
 }, { immediate: true })
