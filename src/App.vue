@@ -446,8 +446,12 @@ watch(() => playerStore.karaokeMode, (on) => {
   if (!on) releaseAllMicStreams()
 })
 
+// The singing stage in the lyrics panel is the default view while music plays, so open
+// it whenever playback starts (phones included). Song changes mid-play keep isPlaying
+// true, so a panel the user closed stays closed until playback is paused and restarted.
 watch(() => playerStore.isPlaying, (isPlaying) => {
   if (isPlaying) {
+    if (!isDetachedPlayer.value && route.name !== 'Karaoke') showLyrics.value = true
     resetInactivityTimer()
   } else {
     clearInactivityTimer()
