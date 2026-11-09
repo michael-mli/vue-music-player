@@ -31,7 +31,7 @@
         </div>
         <!-- Auto-scroll toggle -->
         <button 
-          v-if="!(playerStore.karaokeMode && lyricsMode === 'auto' && hasSynced)"
+          v-if="!(lyricsMode === 'auto' && hasSynced)"
           @click="toggleAutoScroll"
           class="p-1 rounded-full transition-colors duration-200"
           :class="autoScroll 
@@ -51,22 +51,17 @@
       </div>
     </div>
     
-    <LyricsTimingControl
-      v-if="currentSong && !playerStore.karaokeMode && lyricsMode === 'auto' && hasSynced"
-      :song-id="currentSong.id"
-      :lines="syncedLines!"
-      class="mx-4 mt-3"
-    />
-
-    <div 
+    <div
       ref="scrollContainer"
       class="flex-1 overflow-y-auto spotify-scrollbar p-4 pb-8 lg:pb-4"
       @scroll="onUserScroll"
       @touchstart="onUserInteract"
       @mousedown="onUserInteract"
     >
+      <!-- Same singing stage as Karaoke mode, for regular play too. It carries its own
+           timing control and falls back to plain lyrics when the song has no sync data. -->
       <KaraokeGuide
-        v-if="playerStore.karaokeMode && lyricsMode === 'auto' && currentSong"
+        v-if="lyricsMode === 'auto' && currentSong"
         :lines="syncedLines || []"
         :loading="loading"
         :plain-lyrics="lyrics"
@@ -79,23 +74,6 @@
 
       <div v-else-if="loading" class="text-center text-light-text-secondary dark:text-gray-400">
         {{ $t('lyrics.loading') }}
-      </div>
-
-      <!-- Synced (karaoke-style) lyrics: line-by-line with active highlight + click-to-seek.
-           Hidden when the user picks the manual/original lyric view. -->
-      <div v-else-if="lyricsMode === 'auto' && hasSynced" class="synced-lyrics space-y-2">
-        <p
-          v-for="(line, i) in syncedLines"
-          :key="i"
-          :data-line="i"
-          @click="seekToLine(line)"
-          :class="[
-            'cursor-pointer transition-all duration-200 leading-snug',
-            i === activeIndex
-              ? 'text-spotify-green font-semibold text-lg'
-              : 'text-light-text-secondary dark:text-gray-400 hover:text-light-text-primary dark:hover:text-white'
-          ]"
-        >{{ line.text || '♪' }}</p>
       </div>
 
       <div
@@ -128,12 +106,9 @@ import { usePlayerStore } from '@/stores/player'
 import { useSongsStore } from '@/stores/songs'
 import ImageModal from '@/components/UI/ImageModal.vue'
 import KaraokeGuide from '@/components/Lyrics/KaraokeGuide.vue'
-import LyricsTimingControl from '@/components/Lyrics/LyricsTimingControl.vue'
-import { useLyricsOffset } from '@/composables/useLyricsOffset'
-import { lyricSeekTime } from '@/utils/lyricsOffset'
 import { escapeHtml, processLyricsContent } from '@/utils/htmlSanitizer'
 import { hasManualLyrics } from '@/config'
-import { lyricsService, activeLineIndex } from '@/services/lyricsService'
+import { lyricsService } from '@/services/lyricsService'
 import { songService } from '@/services/songService'
 import { useLyricsMode } from '@/composables/useLyricsMode'
 import type { LyricLine } from '@/types'
@@ -145,7 +120,6 @@ defineEmits<{
 
 const playerStore = usePlayerStore()
 const songsStore = useSongsStore()
-const { offset } = useLyricsOffset(computed(() => playerStore.currentSong?.id))
 
 // Shared manual/synced lyric display mode (persisted, mirrored in Karaoke.vue).
 const { mode: lyricsMode, setMode: setLyricsMode } = useLyricsMode()
@@ -154,11 +128,9 @@ const lyrics = ref('')
 const loading = ref(false)
 const scrollContainer = ref<HTMLElement>()
 
-// Synced lyrics (LRCLIB). When present, we render the line-by-line karaoke view instead
-// of the plain-text view, and highlight the active line driven by playback time.
+// Synced lyrics (LRCLIB). When present, the singing stage follows them line by line
+// instead of showing the plain-text view.
 const syncedLines = ref<LyricLine[] | null>(null)
-const activeIndex = computed(() => lyricsMode.value === 'auto' && syncedLines.value
-  ? activeLineIndex(syncedLines.value, playerStore.currentTime - offset.value) : -1)
 // Whether the current song actually has synced lyrics to switch between.
 const hasSynced = computed(() => !!syncedLines.value && syncedLines.value.length > 0)
 
@@ -205,9 +177,8 @@ function onUserScroll() {
   // We use the userScrolling flag set by touch/mousedown
 }
 
-// Drive synced-line highlighting / fall back to proportional auto-scroll for plain lyrics.
+// Proportional auto-scroll for plain lyrics; the singing stage follows synced lyrics itself.
 watch(() => playerStore.currentTime, () => {
-  // Synced highlighting uses the adjusted lyric clock; plain scrolling uses audio time.
   if (lyricsMode.value === 'auto' && syncedLines.value && syncedLines.value.length) {
     return
   }
@@ -224,23 +195,6 @@ watch(() => playerStore.currentTime, () => {
   const targetScroll = progress * maxScroll
   el.scrollTo({ top: targetScroll, behavior: 'smooth' })
 })
-
-// Also responds to offset edits while paused and newly loaded lyrics.
-watch(activeIndex, scrollActiveLineIntoView, { flush: 'post' })
-
-// Center the active synced line in the scroll viewport (unless the user is scrolling).
-function scrollActiveLineIntoView() {
-  if (playerStore.karaokeMode || !autoScroll.value || userScrolling || !scrollContainer.value || activeIndex.value < 0) return
-  const el = scrollContainer.value.querySelector(
-    `[data-line="${activeIndex.value}"]`
-  ) as HTMLElement | null
-  if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' })
-}
-
-// Clicking a synced line seeks playback to that line's timestamp.
-function seekToLine(line: LyricLine) {
-  playerStore.seek(lyricSeekTime(line.time, offset.value, playerStore.duration))
-}
 
 // Reset scroll position and synced-lyric state when song changes
 watch(currentSong, () => {
