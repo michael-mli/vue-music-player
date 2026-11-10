@@ -57,6 +57,28 @@
             {{ $t('navigation.ktvParty') }}
           </RouterLink>
         </li>
+        <li>
+          <!-- Same panel as the player bar's lyrics icon; closes the mobile menu so the overlay shows. -->
+          <button
+            type="button"
+            data-action="toggle-lyrics-menu"
+            :aria-pressed="lyricsOpen"
+            :disabled="!player.currentSong"
+            @click="ui.toggleLyrics(); emit('close-mobile')"
+            class="flex w-full items-center px-4 py-3 rounded-md text-sm font-medium text-light-text-secondary dark:text-gray-300 transition-colors duration-200 hover:bg-light-border dark:hover:bg-spotify-light disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+            :title="$t('player.toggleLyrics')"
+          >
+            <DocumentTextIcon class="w-5 h-5 mr-3" :class="{ 'text-spotify-green': lyricsOpen }" />
+            {{ $t('lyrics.title') }}
+            <span
+              class="ml-auto inline-flex h-5 w-9 items-center rounded-full p-0.5 transition-colors duration-200"
+              :class="lyricsOpen ? 'bg-spotify-green' : 'bg-gray-400/40'"
+              aria-hidden="true"
+            >
+              <span class="h-4 w-4 rounded-full bg-white shadow transition-transform duration-200" :class="{ 'translate-x-4': lyricsOpen }"></span>
+            </span>
+          </button>
+        </li>
         <li v-if="auth.isAdmin">
           <RouterLink
             to="/admin"
@@ -236,11 +258,14 @@ import {
   PencilSquareIcon,
   PlusIcon,
   Cog6ToothIcon,
+  DocumentTextIcon,
   TrashIcon,
   XMarkIcon,
 } from '@heroicons/vue/24/outline'
 import { usePlaylistsStore } from '@/stores/playlists'
 import { useAuthStore } from '@/stores/auth'
+import { usePlayerStore } from '@/stores/player'
+import { useUiStore } from '@/stores/ui'
 import type { Playlist } from '@/types'
 import LanguageSwitcher from './LanguageSwitcher.vue'
 import CreatePlaylistModal from './CreatePlaylistModal.vue'
@@ -257,6 +282,10 @@ const router = useRouter()
 const { t } = useI18n()
 const playlistsStore = usePlaylistsStore()
 const auth = useAuthStore()
+const player = usePlayerStore()
+const ui = useUiStore()
+// The lyrics panel only renders once a song is loaded (see App.vue).
+const lyricsOpen = computed(() => ui.showLyrics && !!player.currentSong)
 
 const showCreatePlaylist = ref(false)
 const editingPlaylistId = ref<string | null>(null)
