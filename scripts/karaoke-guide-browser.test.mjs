@@ -675,6 +675,19 @@ try {
   await evaluate(host, `${store('player')}.play()`)
   await poll(() => evaluate(host, `${store('player')}.isPlaying && !!document.querySelector('.singing-guide.is-compact .current-line')`), 'playback reopens the singing stage')
   check(await evaluate(host, `(() => { const bounds = document.querySelector('.singing-guide.is-compact').getBoundingClientRect(); return bounds.width > 300 && bounds.height > 0; })()`), 'starting playback opens the singing stage by default on a phone-width screen')
+  const navigationUncovered = `(() => {
+    const panel = document.querySelector('.singing-guide.is-compact').closest('aside').getBoundingClientRect();
+    const header = document.querySelector('header'), menu = [...header.querySelectorAll('button')].find(button => button.offsetParent);
+    const menuBox = menu.getBoundingClientRect(), headerBox = header.getBoundingClientRect();
+    const sidebar = [...document.querySelectorAll('aside.w-64')].find(item => item.offsetParent);
+    const sideBox = sidebar?.getBoundingClientRect();
+    return panel.top >= headerBox.bottom - 1 && document.elementFromPoint(menuBox.x + menuBox.width / 2, menuBox.y + menuBox.height / 2)?.closest('header') === header
+      && (!sidebar || panel.left >= sideBox.right - 1 && document.elementFromPoint(sideBox.x + sideBox.width / 2, sideBox.y + 80)?.closest('aside') === sidebar);
+  })()`
+  check(await evaluate(host, navigationUncovered), 'the phone lyrics overlay leaves the header navigation uncovered and clickable')
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 800, height: 820, deviceScaleFactor: 1, mobile: false }, host)
+  await poll(() => evaluate(host, `innerWidth === 800 && !!${store('ui')}.showLyrics && !![...document.querySelectorAll('aside.w-64')].find(item => item.offsetParent)`), 'tablet lyrics overlay beside the sidebar')
+  check(await evaluate(host, navigationUncovered), 'the tablet lyrics overlay leaves the header and sidebar navigation uncovered and clickable')
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1100, height: 820, deviceScaleFactor: 1, mobile: false }, host)
   await evaluate(host, `${store('player')}.setKaraokeMode(true)`)
   await evaluate(host, `window.__sidebarStage =document.querySelector('.singing-guide.is-compact'); window.__sidebarStage.querySelector('.guide-icon-button').click()`)

@@ -43,8 +43,9 @@
         <!-- Header -->
         <Header v-if="!isImmersiveRoute" @toggle-sidebar="showMobileSidebar = !showMobileSidebar" />
         
-        <!-- Content Area with Lyrics -->
-        <div class="flex-1 min-h-0 overflow-hidden flex flex-col lg:flex-row">
+        <!-- Content Area with Lyrics. Positioned so the mobile lyrics overlay covers only
+             this area and leaves the header and sidebar navigation usable. -->
+        <div class="relative flex-1 min-h-0 overflow-hidden flex flex-col lg:flex-row">
           <!-- Router View -->
           <div class="flex-1 min-h-0 min-w-0 overflow-hidden">
             <RouterView />
